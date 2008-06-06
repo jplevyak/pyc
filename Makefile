@@ -3,6 +3,7 @@
 all: defaulttarget
 
 USE_PLIB=1
+MODULE=pyc
 DEBUG=1
 #OPTIMIZE=1
 #PROFILE=1
@@ -15,11 +16,10 @@ MINOR=0
 
 include ../plib/Makefile
 
-CFLAGS += -I../plib -I/usr/include/python2.5
-LIBS += -L../plib -lplib_gc -lpython2.5
+CFLAGS += -I../plib -I../ifalib -I/usr/include/python2.5
+LIBS += -L../plib -lplib_gc -L../ifalib -lifa -lpython2.5
 
-AUX_FILES = pyc/Makefile pyc/LICENSE pyc/README pyc/index.html pyc/manual.html pyc/faq.html pyc/pyc.1 pyc/pyc.cat
-TAR_FILES = $(AUX_FILES) $(TEST_FILES) pyc/BUILD_VERSION 
+AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODULE)/pyc.1 $(MODULE)/pyc.cat
 
 LIB_SRCS = 
 LIB_OBJS = $(LIB_SRCS:%.cc=%.o)
