@@ -1,0 +1,43 @@
+pyc(1)                              Manual                              pyc(1)
+
+
+
+NAME
+       pyc - Python Compiler
+
+SYNOPSIS
+       pyc [options]
+
+DESCRIPTION
+       Pyc is program for associative machine interaction.
+
+OPTIONS
+       -v     Increase verbosity.
+
+       -d     Increase debugging.
+
+       -h     Display help.
+
+FEATURES
+       The features are covered in the documentation.  See the README file.
+
+FILES
+       None.
+
+NO WARRANTIES
+       This  program  is  distributed  in the hope that it will be useful, but
+       WITHOUT ANY  WARRANTY;  without  even  the  implied  warranty  of  MER-
+       CHANTABILITY  or  FITNESS  FOR A PARTICULAR PURPOSE.  See the COPYRIGHT
+       for more details.
+
+       Pyc Home Page: http://pyc.sourceforge.net/
+
+       The BSD General Public License.
+
+AUTHOR
+       John Plevyak.  Use <jplevyak at users.sourceforge.net> to contact.
+
+
+
+
+PYC                                Aug 2008                             pyc(1)
