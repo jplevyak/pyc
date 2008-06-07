@@ -60,6 +60,9 @@ static void init_system() {
   assert(!getrlimit(RLIMIT_NOFILE, &nfiles));
 }
 
+void compile(mod_ty mod) {
+}
+
 int main(int argc, char *argv[]) {
   init_config();
   INIT_RAND(0x1234567);
@@ -83,6 +86,7 @@ int main(int argc, char *argv[]) {
   mod_ty mod = PyParser_ASTFromFile(fp, filename, Py_file_input, 0, 0, 0, 0, arena);
   if (!mod)
     error("unable to parse file '%s'", filename);
+  compile(mod);
   PyArena_Free(arena);
   Py_Finalize();
   Service::stop_all();

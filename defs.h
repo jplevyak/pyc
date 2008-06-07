@@ -5,6 +5,7 @@
 #define _defs_H_
 
 #include "plib.h"
+#include "ifa.h"
 
 void get_version(char *);
 
