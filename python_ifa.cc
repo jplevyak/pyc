@@ -1009,7 +1009,7 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
       add_comprehension(e->v.GeneratorExp.generators, exprs);
       break;
     case Yield_kind: // expr? value
-     add(e->v.Yield.value, exprs); break;
+      add(e->v.Yield.value, exprs); break;
     case Compare_kind: // expr left, cmpop* ops, expr* comparators
       add(e->v.Compare.left, exprs);
       add(e->v.Compare.comparators, exprs);
@@ -1081,8 +1081,8 @@ static void exit_scope() {
   PycAST *ast = getAST(_ast); \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
-    for_Vec(stmt_ty, x, stmts) { _fn(x); ast->children.add(getAST(x)); }  \
-    for_Vec(expr_ty, x, exprs) { _fn(x); ast->children.add(getAST(x)); }  \
+    for_Vec(stmt_ty, x, stmts) { _fn(x); ast->pre_scope_children.add(getAST(x)); }  \
+    for_Vec(expr_ty, x, exprs) { _fn(x); ast->pre_scope_children.add(getAST(x)); }  \
   } \
   enter_scope(_ast); \
   {                                                                       \
@@ -1218,6 +1218,9 @@ build_syms(mod_ty mod) {
 
 #define RECURSE(_ast, _fn) \
   PycAST *ast = getAST(_ast); \
+  forv_Vec(PycAST, x, ast->pre_scope_children) \
+    if (x->xstmt) _fn(x->xstmt); else if (x->xexpr) _fn(x->xexpr); \
+  enter_scope(_ast); \
   forv_Vec(PycAST, x, ast->children) \
     if (x->xstmt) _fn(x->xstmt); else if (x->xexpr) _fn(x->xexpr);
 

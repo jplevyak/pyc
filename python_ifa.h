@@ -43,6 +43,7 @@ class PycAST : public IFAAST {
 
   stmt_ty xstmt;
   expr_ty xexpr;
+  Vec<PycAST *> pre_scope_children;
   Vec<PycAST *> children;
 
   Code *code;           // IF1 Code (including children)
