@@ -3,7 +3,6 @@
 */
 #include "defs.h"
 
-#define VARARG_END     0ll
 #define USE_FLOAT_128
 
 #define OPERATOR_CHAR(_c) \
@@ -28,8 +27,6 @@ class AnalysisOp : public gc { public:
   AnalysisOp(char *aname, char *aninternal_name, Prim *ap) 
     : name(aname), internal_name(aninternal_name), ptfn(0), prim(ap) {}
 };
-
-typedef struct symtable *symtab_ty;
 
 class ScopeLookupCache : public Map<char *, Vec<Fun *> *> {};
 static ScopeLookupCache universal_lookup_cache;
@@ -369,7 +366,7 @@ build_builtin_symbols() {
   sym_closure = dtClosure->asymbol->sym;
   sym_symbol = dtSymbol->asymbol->sym;
 
-  new_lub_type(sym_any, "any", VARARG_END);
+  new_lub_type(sym_any, "any", 0);
   new_primitive_type(sym_nil_type, "nil_type");
   new_primitive_type(sym_unknown_type, "unknown_type");
   new_primitive_type(sym_void_type, "void_type");
@@ -1254,8 +1251,18 @@ static void add(stmt_ty s, Vec<stmt_ty> &stmts) {
   if (s) stmts.add(s);
 }
 
+static void add_comprehension(asdl_seq *comp, Vec<expr_ty> &exprs) {
+  for (int i = 0; i < asdl_seq_LEN(comp); i++) {
+    comprehension_ty c = (comprehension_ty)asdl_seq_GET(comp, i);
+    add(c->target, exprs);
+    add(c->iter, exprs);
+    add(c->ifs, exprs);
+  }
+}
+
 static void get_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   switch (s->kind) {
+    default: assert(!"case");
     case FunctionDef_kind:
       add(s->v.FunctionDef.args->args, exprs);
       add(s->v.FunctionDef.args->defaults, exprs);
@@ -1326,7 +1333,82 @@ static void get_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   }
 }
 
-static void get_next(expr_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+static void get_next(slice_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+  switch (s->kind) {
+    default: assert(!"case");
+    case Ellipsis_kind: break;
+    case Slice_kind: // (expr? lower, expr? upper, expr? step)
+      add(s->v.Slice.lower, exprs); 
+      add(s->v.Slice.upper, exprs); 
+      add(s->v.Slice.step, exprs); 
+      break;
+    case ExtSlice_kind: // (slice* dims)
+      for (int i = 0; i < asdl_seq_LEN(s->v.ExtSlice.dims); i++)
+        get_next((slice_ty)asdl_seq_GET(s->v.ExtSlice.dims, i), stmts, exprs);
+      break;
+    case Index_kind: // (expr value)
+      add(s->v.Index.value, exprs); break;
+  }
+}
+
+static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+  switch (e->kind) {
+    default: assert(!"case");
+    case BoolOp_kind: // boolop op, expr* values
+      add(e->v.BoolOp.values, exprs); break;
+    case BinOp_kind: // expr left, operator op, expr right
+      add(e->v.BinOp.left, exprs);
+      add(e->v.BinOp.right, exprs);
+      break;
+    case UnaryOp_kind: // unaryop op, expr operand
+      add(e->v.UnaryOp.operand, exprs); break;
+    case Lambda_kind: // arguments args, expr body
+      add(e->v.Lambda.args->args, exprs);
+      add(e->v.Lambda.args->defaults, exprs);
+      add(e->v.Lambda.body, exprs); 
+      break;
+    case IfExp_kind: // expr test, expr body, expr orelse
+      add(e->v.IfExp.test, exprs); 
+      add(e->v.IfExp.body, exprs); 
+      add(e->v.IfExp.orelse, exprs); 
+      break;
+    case Dict_kind: // expr* keys, expr* values
+      add(e->v.Dict.keys, exprs); 
+      add(e->v.Dict.values, exprs); 
+      break;
+    case ListComp_kind: // expr elt, comprehension* generators
+      add(e->v.ListComp.elt, exprs); 
+      add_comprehension(e->v.ListComp.generators, exprs);
+      break;
+    case GeneratorExp_kind: // expr elt, comprehension* generators
+      add(e->v.GeneratorExp.elt, exprs); 
+      add_comprehension(e->v.GeneratorExp.generators, exprs);
+      break;
+    case Yield_kind: // expr? value
+     add(e->v.Yield.value, exprs); break;
+    case Compare_kind: // expr left, cmpop* ops, expr* comparators
+      add(e->v.Compare.left, exprs);
+      add(e->v.Compare.comparators, exprs);
+      break;
+    case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
+    case Repr_kind: // expr value
+     add(e->v.Repr.value, exprs); break;
+    case Num_kind: // object n) -- a number as a PyObject
+    case Str_kind: // string s) -- need to specify raw, unicode, etc
+      break;
+    case Attribute_kind: // expr value, identifier attr, expr_context ctx
+      add(e->v.Attribute.value, exprs); break;
+    case Subscript_kind: // expr value, slice slice, expr_context ctx
+     add(e->v.Subscript.value, exprs); 
+     get_next(e->v.Subscript.slice, stmts, exprs);
+     break;
+    case Name_kind: // identifier id, expr_context ctx
+      break;
+    case List_kind: // expr* elts, expr_context ctx
+     add(e->v.List.elts, exprs); break;
+    case Tuple_kind: // expr *elts, expr_context ctx
+     add(e->v.Tuple.elts, exprs); break;
+  }
 }
 
 static int build(stmt_ty s);
@@ -1397,26 +1479,44 @@ static int
 build(expr_ty e) {
   RECURSE(e, build);
   switch (e->kind) {
-    case BoolOp_kind:
-    case BinOp_kind:
-    case UnaryOp_kind:
-    case Lambda_kind:
-    case IfExp_kind:
-    case Dict_kind:
-    case ListComp_kind:
-    case GeneratorExp_kind:
-    case Yield_kind:
-    case Compare_kind:
-    case Call_kind:
-    case Repr_kind:
-    case Num_kind:
-    case Str_kind:
-    case Attribute_kind:
-    case Subscript_kind:
-    case Name_kind:
-    case List_kind:
-    case Tuple_kind:
-      break;
+    case BoolOp_kind: // boolop op, expr* values
+      printf("BoolOp\n"); break;
+    case BinOp_kind: // expr left, operator op, expr right
+      printf("BinOp\n"); break;
+    case UnaryOp_kind: // unaryop op, expr operand
+      printf("UnaryOp\n"); break;
+    case Lambda_kind: // arguments args, expr body
+      printf("Lambda\n"); break;
+    case IfExp_kind: // expr test, expr body, expr orelse
+      printf("IfExp\n"); break;
+    case Dict_kind: // expr* keys, expr* values
+      printf("Dict\n"); break;
+    case ListComp_kind: // expr elt, comprehension* generators
+      printf("ListComp\n"); break;
+    case GeneratorExp_kind: // expr elt, comprehension* generators
+      printf("GeneratorExp\n"); break;
+    case Yield_kind: // expr? value
+      printf("Yield\n"); break;
+    case Compare_kind: // expr left, cmpop* ops, expr* comparators
+      printf("Compare\n"); break;
+    case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
+      printf("Call\n"); break;
+    case Repr_kind: // expr value
+      printf("Repr\n"); break;
+    case Num_kind: // object n) -- a number as a PyObject
+      printf("Num\n"); break;
+    case Str_kind: // string s) -- need to specify raw, unicode, etc
+      printf("Str\n"); break;
+    case Attribute_kind: // expr value, identifier attr, expr_context ctx
+      printf("Attribute\n"); break;
+    case Subscript_kind: // expr value, slice slice, expr_context ctx
+      printf("Subscript\n"); break;
+    case Name_kind: // identifier id, expr_context ctx
+      printf("Name\n"); break;
+    case List_kind: // expr* elts, expr_context ctx
+      printf("List\n"); break;
+    case Tuple_kind: // expr *elts, expr_context ctx
+      printf("Tuple\n"); break;
   }
   return 0;
 }
