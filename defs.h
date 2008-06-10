@@ -8,12 +8,16 @@
 #include <Python-ast.h>
 #include <symtable.h>
 // namespace contamination from python headers
+#if FREE != 4
+#error fixme
+#endif
 #ifdef FREE
 #undef FREE
 #endif
 #ifdef List
 #undef List
 #endif
+#define PYTHON_FREE 4
 #include "plib.h"
 #include "ifa.h"
 #include "fa.h"

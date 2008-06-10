@@ -3,6 +3,10 @@
 */
 #include "defs.h"
 
+/* TODO
+   move static variables into an object
+ */
+
 #define USE_FLOAT_128
 
 #define OPERATOR_CHAR(_c) \
@@ -13,6 +17,7 @@
 #define _EXTERN
 #define _INIT = NULL
 #include "python_ops.h"
+
 
 class LabelMap : public Map<char *, stmt_ty *> {};
 
@@ -516,407 +521,6 @@ build_builtin_symbols() {
 #undef S
 }
 
-static Stmt *
-label_target(Stmt *stmt) {
-  Stmt *target = stmt;
-  while (target && target->astType == STMT_LABEL)
-    target = dynamic_cast<LabelStmt*>(target)->stmt;
-  if (!target)
-    target = stmt;
-  return target;
-}
-
-static int
-define_labels(Stmt *ast, LabelMap *labelmap) {
-  Stmt *stmt = dynamic_cast<Stmt *>(ast);
-  switch (stmt->astType) {
-    case STMT_LABEL: {
-      Stmt *target = label_target(stmt);
-      switch (target->astType) {
-        default:
-          target->ainfo->label[0] = if1_alloc_label(if1);
-          target->ainfo->label[1] = target->ainfo->label[0];
-          break;
-      }
-      labelmap->put(if1_cannonicalize_string(if1, dynamic_cast<LabelStmt*>(stmt)->defLabel->sym->name), target);
-      break;
-    }
-    default: break;
-  }
-  GET_AST_CHILDREN(ast, getStuff);
-  forv_Stmt(a, getStuff.asts)
-    if (isSomeStmt(a->astType))
-      define_labels(a, labelmap);
-  return 0;
-}
-
-static int
-resolve_labels(Stmt *ast, LabelMap *labelmap,
-               Label *return_label, Label *break_label = 0, Label *continue_label = 0)
-{
-  Stmt *stmt = dynamic_cast<Stmt *>(ast);
-  switch (stmt->astType) {
-    case STMT_RETURN:
-      stmt->ainfo->label[0] = return_label;
-      break;
-    case STMT_GOTO: {
-      GotoStmt *s = dynamic_cast<GotoStmt*>(ast);
-      Stmt *target = labelmap->get(if1_cannonicalize_string(if1, s->label->name));
-      if (!target)
-        return show_error("unresolved label %s", s->ainfo, s->label->name);
-      else 
-        stmt->ainfo->label[0] = target->ainfo->label[0];
-      break;
-    }
-    default: break;
-  }
-  GET_AST_CHILDREN(ast, getStuff);
-  forv_Stmt(a, getStuff.asts)
-    if (isSomeStmt(a->astType))
-      if (resolve_labels(a, labelmap, return_label, break_label, continue_label) < 0)
-        return -1;
-  return 0;
-}
-
-static int 
-gen_expr_stmt(Stmt *a) {
-  ExprStmt *expr = dynamic_cast<ExprStmt*>(a);
-  expr->ainfo->code = expr->expr->ainfo->code;
-  return 0;
-}
-
-static int
-gen_cond(PycAST *ast, PycAST *xcond, PycAST *xthen, PycAST *xelse) {
-  if1_if(if1, &ast->code, xcond->code, xcond->rval, 
-         xthen->code, xthen->rval, xelse ? xelse->code : 0, 
-         xelse ? xelse->rval : 0, ast->rval, ast);
-  return 0;
-}
-
-static astType_t
-undef_or_fn_expr(Expr *ast) {
-  if (ast && ast->astType == EXPR_SYM) { 
-    SymExpr* v = dynamic_cast<SymExpr* >(ast);
-    return v->var->astType;
-  }
-  return (astType_t)0;
-}
-
-static Sym *
-gen_primitive(CallExpr *s, Vec<Expr *> &args, Vec<Sym *> &rvals) {
-  AnalysisOp *op = s->primitive->analysisOp;
-  if (!op)
-    INT_FATAL(s, "unknown primitive");
-  Prim *p = op->prim;
-  if (!p) {
-    rvals.insert(0, make_symbol(op->internal_name));
-    return sym_primitive;
-  } else if (p->pos == 0) {
-    // unary or n-ary operation
-    rvals.insert(0, make_symbol(p->string));
-    return sym_primitive;
-  } else {
-    // binary operation requires the symbol in the center
-    rvals.insert(0, rvals.v[0]);
-    rvals.v[1] = make_symbol(p->string);
-    return sym_operator;
-  }
-}
-
-static int
-gen_call_expr(CallExpr *s) {
-  PycAST *ast = s->ainfo;
-  ast->rval = new_sym();
-  ast->rval->ast = ast;
-  if (s->baseExpr)
-    if1_gen(if1, &ast->code, s->baseExpr->ainfo->code);
-  Vec<Expr *> args;
-  s->argList->getElements(args);
-  if (args.n == 1 && !args.v[0])
-    args.n--;
-  Vec<Sym *> rvals;
-  Vec<char *> arg_names;
-  int some_name = 0;
-  arg_names.fill(args.n);
-  for (int i = 0; i < args.n; i++) {
-    Expr *a = args.v[i];
-    if1_gen(if1, &ast->code, a->ainfo->code);
-    assert(a->ainfo->rval);
-    rvals.add(a->ainfo->rval);
-    if (NamedExpr *n = dynamic_cast<NamedExpr*>(a)) {
-      arg_names.v[i] = if1_cannonicalize_string(if1, n->name);
-      some_name = 1;
-    }
-  }
-  Vec<Sym*> trvals;
-  astType_t base_symbol = undef_or_fn_expr(s->baseExpr);
-  Sym *base = NULL;
-  char *n = s->baseExpr ? s->baseExpr->ainfo->rval->name : 0;
-  if (s->isPrimitive(PRIMITIVE_GET_MEMBER) ||
-             s->isPrimitive(PRIMITIVE_SET_MEMBER)) {
-    rvals.insert(1, make_symbol(s->isPrimitive(PRIMITIVE_GET_MEMBER) ? sym_period->name: sym_setter->name));
-    assert(!some_name);
-    if (rvals.v[2]->imm.const_kind != IF1_CONST_KIND_STRING) {
-      rvals.v[2] = make_symbol("_invalid_member_access");
-    } else
-      rvals.v[2] = make_symbol(rvals.v[2]->imm.v_string);
-    base = sym_operator;
-  } else if (s->primitive) {
-    base = gen_primitive(s, args, rvals);
-  } else if (base_symbol == SYMBOL_UNRESOLVED) {
-    assert(n);
-    base = make_symbol(n);
-  } else if (base_symbol == SYMBOL_FN)
-    base = dynamic_cast<Symbol*>(dynamic_cast<SymExpr*>(s->baseExpr)->var)->asymbol->sym;
-  else {
-    base = s->baseExpr ? s->baseExpr->ainfo->rval : 0;
-  }
-  if (base) {
-    trvals.add(base);
-    arg_names.insert(0, NULL);
-  }
-  forv_Sym(r, rvals)
-    trvals.add(r);
-  Code *send = if1_send1(if1, &ast->code);
-  if (some_name)
-    send->names.move(arg_names);
-  send->ast = ast;
-  forv_Sym(r, trvals)
-    if1_add_send_arg(if1, send, r);
-  if1_add_send_result(if1, send, ast->rval);
-  send->partial = s->partialTag == PARTIAL_OK ? Partial_OK :
-    (s->partialTag == PARTIAL_NEVER ? Partial_NEVER : Partial_ALWAYS);
-  ast->sym = ast->rval;
-  return 0;
-}
-
-static int
-gen_when(WhenStmt *s, SelectStmt *ss, Label *l) {
-  Vec<Expr*> cases;
-  s->caseExprs->getElements(cases);
-  Sym *cond = NULL;
-  forv_Expr(x, cases) {
-    if (gen_if1(x) < 0) return -1;
-    if1_gen(if1, &s->ainfo->code, x->ainfo->code);
-    Sym *tmp = new_sym();
-    Code *c = if1_send(if1, &s->ainfo->code, 3, 1, make_symbol("=="),
-                       ss->caseExpr->ainfo->rval, x->ainfo->rval, tmp);
-    c->ast = s->ainfo;
-    c->partial = Partial_NEVER;
-    if (!cond)
-      cond = tmp;
-    else {
-      Sym *new_cond = new_sym();
-      c = if1_send(if1, &s->ainfo->code, 4, 1, sym_operator, cond, make_symbol("&&"), tmp, new_cond);
-      c->ast = s->ainfo;
-      c->partial = Partial_NEVER;
-      cond = new_cond;
-    }
-  }
-  if (gen_if1(s->doStmt) < 0) return -1;
-  if (cond) {
-    Code *ifgoto = if1_if_goto(if1, &s->ainfo->code, cond, s->ainfo);
-    if1_if_label_true(if1, ifgoto, if1_label(if1, &s->ainfo->code, s->ainfo));
-    if1_gen(if1, &s->ainfo->code, s->doStmt->ainfo->code);
-    if1_goto(if1, &s->ainfo->code, l);
-    if1_if_label_false(if1, ifgoto, if1_label(if1, &s->ainfo->code, s->ainfo));
-  } else {
-    if1_gen(if1, &s->ainfo->code, s->doStmt->ainfo->code);
-    if1_goto(if1, &s->ainfo->code, l);
-  }
-  return 0;
-}
-
-static int
-gen_select(Stmt *a) {
-  SelectStmt *s = dynamic_cast<SelectStmt*>(a);
-  Vec<WhenStmt*> whens;
-  s->whenStmts->getElements(whens);
-  gen_if1(s->caseExpr);
-  if1_gen(if1, &s->ainfo->code, s->caseExpr->ainfo->code);
-  Label *l = if1_alloc_label(if1);
-  forv_Vec(WhenStmt, x, whens) {
-    if (gen_when(x, s, l) < 0) return -1;
-    if1_gen(if1, &s->ainfo->code, x->ainfo->code);
-  }
-  if1_label(if1, &s->ainfo->code, s->ainfo, l);
-  return 0;
-}
-
-static int
-gen_assignment(CallExpr *assign) {
-  Expr *lhs = assign->get(1), *rhs = assign->get(2);
-  if (!lhs->ainfo->sym)
-    show_error("assignment to non-lvalue", assign->ainfo);
-  if1_gen(if1, &assign->ainfo->code, lhs->ainfo->code);
-  if1_gen(if1, &assign->ainfo->code, rhs->ainfo->code);
-  Sym *rval = rhs->ainfo->rval;
-  if (!rval->nesting_depth) {
-    rval = new_sym();
-    rval->ast = assign->ainfo;
-    if1_move(if1, &assign->ainfo->code, rhs->ainfo->rval, rval, assign->ainfo);
-  }
-  if (!assign->isPrimitive(PRIMITIVE_MOVE)) {
-    Sym *old_rval = rval;
-    rval = new_sym();
-    rval->ast = assign->ainfo;
-    if (f_equal_method) {
-      fail("not implemented");
-#if 0
-      Code *c = if1_send(if1, &assign->ainfo->code, 4, 1, make_symbol("="), method_token,
-                         lhs->ainfo->rval, old_rval, rval);
-      c->ast = assign->ainfo;
-      c->partial = Partial_NEVER;
-#endif
-    } else {
-      Code *c = if1_send(if1, &assign->ainfo->code, 3, 1, make_symbol("="), 
-                         lhs->ainfo->rval, old_rval, rval);
-      c->ast = assign->ainfo;
-      c->partial = Partial_NEVER;
-    }
-  } else
-    if1_move(if1, &assign->ainfo->code, rval, lhs->ainfo->sym, assign->ainfo);
-  assign->ainfo->rval = rval;
-  return 0;
-}
-
-static int
-gen_if1(Stmt *ast) {
-  // special cases
-  switch (ast->astType) {
-    default: break;
-    case STMT_WHEN: return 0;
-    case STMT_SELECT: gen_select(ast); return 0;
-  }
-  // recurse
-  if (dynamic_cast<Expr*>(ast) || dynamic_cast<Stmt*>(ast)) {
-    GET_AST_CHILDREN(ast, getStuff);
-    DefExpr* def_expr = dynamic_cast<DefExpr*>(ast);
-    if (!def_expr || !dynamic_cast<Symbol*>(def_expr->sym))
-      forv_Stmt(a, getStuff.asts)
-        if (gen_if1(a) < 0)
-          return -1;
-  }
-  // bottom's up
-  switch (ast->astType) {
-    case STMT: assert(!ast); break;
-    case STMT_LABEL: {
-      LabelStmt *s = dynamic_cast<LabelStmt*>(ast);
-      Stmt *target = label_target(s);
-      if1_label(if1, &s->ainfo->code, s->stmt->ainfo, target->ainfo->label[0]);
-      if1_gen(if1, &s->ainfo->code, s->stmt->ainfo->code);
-      break;
-    }
-    case STMT_GOTO: {
-      Stmt *s = dynamic_cast<Stmt*>(ast);
-      Code *c = if1_goto(if1, &s->ainfo->code, s->ainfo->label[0]);
-      c->ast = s->ainfo;
-      break;
-    }
-    case STMT_EXPR:
-      if (ExprStmt* exprStmt = dynamic_cast<ExprStmt*>(ast)) {
-        if (dynamic_cast<DefExpr*>(exprStmt->expr)) {
-          // do nothing
-        } else {
-          if (gen_expr_stmt(ast) < 0)
-            return -1;
-        }
-      }
-      break;
-    case STMT_RETURN: {
-      ReturnStmt *s = dynamic_cast<ReturnStmt*>(ast);
-      Sym *fn = s->getFunction()->asymbol->sym;
-      if (s->expr) {
-        fn->fun_returns_value = 1;
-        if1_gen(if1, &s->ainfo->code, s->expr->ainfo->code);
-        if (s->expr->ainfo->rval == NULL) s->expr->print(stdout);
-        if1_move(if1, &s->ainfo->code, s->expr->ainfo->rval, fn->ret, s->ainfo);
-      } else 
-        if1_move(if1, &s->ainfo->code, sym_void, fn->ret, s->ainfo);
-      Code *c = if1_goto(if1, &s->ainfo->code, s->ainfo->label[0]);
-      c->ast = s->ainfo;
-      break;
-    }
-    case STMT_BLOCK: {
-      BlockStmt *s = dynamic_cast<BlockStmt*>(ast);
-      Vec<Stmt *> stmts;
-      s->body->getElements(stmts);
-      forv_Stmt(ss, stmts)
-        if1_gen(if1, &s->ainfo->code, ss->ainfo->code);
-      break;
-    }
-    case STMT_COND: {
-      CondStmt *s = dynamic_cast<CondStmt*>(ast);
-      gen_cond(s->ainfo, s->condExpr->ainfo, s->thenStmt->ainfo, 
-               s->elseStmt ? s->elseStmt->ainfo : 0); 
-      break;
-    }
-    case STMT_WHEN: assert(!"case"); break;
-    case STMT_SELECT: assert(!"case"); break;
-    case EXPR: {
-      Expr *s = dynamic_cast<Expr*>(ast);
-      assert(!ast); 
-      s->ainfo->rval = sym_nil;
-      break;
-    }
-    case EXPR_SYM: {
-      SymExpr* s = dynamic_cast<SymExpr*>(ast);
-      Sym *sym = (s->var->astType == SYMBOL_TYPE) 
-        ? (((TypeSymbol*)s->var)->definition->asymbol->sym)
-        : s->var->asymbol->sym;
-      s->ainfo->sym = sym;
-      s->ainfo->rval = sym;
-      break;
-    }
-    case EXPR_DEF: {
-      DefExpr* s = dynamic_cast<DefExpr*>(ast);
-      if (s->sym->asymbol && !s->sym->asymbol->sym->ast)
-        s->sym->asymbol->sym->ast = s->ainfo;
-      break;
-    }
-    case EXPR_CALL: {
-      CallExpr* call = dynamic_cast<CallExpr*>(ast);
-      if (call->isAssign()) {
-        if (gen_assignment(call) < 0) return -1;
-      } else {
-        if (gen_call_expr(call) < 0) return -1;
-      }
-      break;
-    }
-    case EXPR_NAMED: {
-      NamedExpr *s = dynamic_cast<NamedExpr *>(ast);
-      if1_gen(if1, &s->ainfo->code, s->actual->ainfo->code);
-      s->ainfo->rval = s->actual->ainfo->rval;
-      break;
-    }
-  case EXPR_IMPORT: break;
-  case SYMBOL:
-  case SYMBOL_UNRESOLVED:
-  case SYMBOL_MODULE:
-  case SYMBOL_VAR:
-  case SYMBOL_ARG:
-  case SYMBOL_TYPE:
-  case SYMBOL_FN:
-  case SYMBOL_ENUM:
-  case SYMBOL_LABEL:
-  case TYPE:
-  case TYPE_PRIMITIVE:
-  case TYPE_FN:
-  case TYPE_ENUM:
-  case TYPE_USER:
-  case TYPE_LITERAL:
-  case TYPE_CLASS:
-  case TYPE_META:
-  case TYPE_SUM:
-  case TYPE_VARIABLE:
-  case AST_TYPE_END:
-  case LIST:
-  case OBJECT:
-    break;
-  }
-  return 0;
-}
-
 static int
 is_this_fun(Symbol *f) {
   return !strcmp(f->asymbol->sym->name, "this");
@@ -1411,18 +1015,191 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   }
 }
 
-static int build(stmt_ty s);
-static int build(expr_ty e);
+struct PycScope : public gc {
+  Symbol *ste;
+  PyObject *u_private;
+};
 
-#define RECURSE(_ast, _fn) \
-  do {\
+static PycScope *scope = 0;
+static Vec<PycScope *> scope_stack;
+
+static void enter_scope(void *key) {
+  if (scope) scope_stack.add(scope);
+  scope = new PycScope;
+  scope->ste = PySymtable_Lookup(symtab, key);
+  if (scope_stack.n) 
+    scope->u_private = scope_stack.last()->u_private;
+  else
+    scope->u_private = 0;
+  assert(scope->ste);
+}
+
+static void enter_scope(stmt_ty x) {
+  if (x->kind == FunctionDef_kind ||
+      x->kind == ClassDef_kind)
+    enter_scope((void*)x);
+}
+
+static void enter_scope(expr_ty x) {
+  if (x->kind == Lambda_kind ||
+      x->kind == GeneratorExp_kind)
+    enter_scope((void*)x);
+}
+
+static void enter_scope(mod_ty x) {
+  enter_scope((void*)x);
+}
+
+static void exit_scope() {
+  scope = scope_stack.pop();
+}
+
+#define BUILD_RECURSE(_ast, _fn) \
+  PycAST *ast = getAST(_ast); \
+  {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_next(_ast, stmts, exprs); \
-    for_Vec(stmt_ty, x, stmts) _fn(x); for_Vec(expr_ty, x, exprs) _fn(x); \
-  } while(0)
+    for_Vec(stmt_ty, x, stmts) { _fn(x); ast->children.add(getAST(x)); }  \
+    for_Vec(expr_ty, x, exprs) { _fn(x); ast->children.add(getAST(x)); }  \
+  } \
+
+static int build_syms(stmt_ty s);
+static int build_syms(expr_ty e);
 
 static int
-build(stmt_ty s) {
-  RECURSE(s, build);
+build_syms(stmt_ty s) {
+  enter_scope(s);
+  BUILD_RECURSE(s, build_syms);
+  switch (s->kind) {
+    case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
+      break;
+    case ClassDef_kind: // identifier name, expr* bases, stmt* body
+      printf("ClassDef\n"); break;
+    case Return_kind: // expr? value
+      printf("Return\n"); break;
+    case Delete_kind: // expr * targets
+      printf("Delete\n"); break;
+    case Assign_kind: // expr* targets, expr value
+      printf("Assign\n"); break;
+    case AugAssign_kind: // expr target, operator op, expr value
+      printf("AugAssign\n"); break;
+    case Print_kind: // epxr? dest, expr *values, bool nl
+      printf("Print\n"); break;
+    case For_kind: // expr target, expr, iter, stmt* body, stmt* orelse
+      printf("For\n"); break;
+    case While_kind: // expr test, stmt*body, stmt*orelse
+      printf("While\n"); break;
+    case If_kind: // expr tet, stmt* body, stmt* orelse
+      printf("If\n"); break;
+    case With_kind: // expr content_expr, expr? optional_vars, stmt *body
+      printf("With\n"); break;
+    case Raise_kind: // expr? type, expr? int, expr? tback
+      printf("Raise\n"); break;
+    case TryExcept_kind: // stmt* body, excepthandler *handlers, stmt *orelse
+      printf("TryExcept\n"); break;
+    case TryFinally_kind: // stmt *body, stmt *finalbody
+      printf("TryFinally\n"); break;
+    case Assert_kind: // expr test, expr? msg
+      printf("Assert\n"); break;
+    case Import_kind: // alias* name
+      printf("Import\n"); break;
+    case ImportFrom_kind: // identifier module, alias *names, int? level
+      printf("ImportFrom\n"); break;
+    case Exec_kind: // expr body, expr? globals, expr? locals
+      printf("Exec\n"); break;
+    case Global_kind: // identifier* names
+      printf("Global\n"); break;
+    case Expr_kind: // expr value
+      printf("Expr\n"); break;
+    case Pass_kind:
+      printf("Pass\n"); break;
+    case Break_kind:
+      printf("Break\n"); break;
+    case Continue_kind:
+      printf("Continue\n"); break;
+      break;
+  }
+  exit_scope();
+  return 0;
+}
+
+static int
+build_syms(expr_ty e) {
+  enter_scope(e);
+  BUILD_RECURSE(e, build_syms);
+  switch (e->kind) {
+    case BoolOp_kind: // boolop op, expr* values
+      printf("BoolOp\n"); break;
+    case BinOp_kind: // expr left, operator op, expr right
+      printf("BinOp\n"); break;
+    case UnaryOp_kind: // unaryop op, expr operand
+      printf("UnaryOp\n"); break;
+    case Lambda_kind: // arguments args, expr body
+      printf("Lambda\n"); break;
+    case IfExp_kind: // expr test, expr body, expr orelse
+      printf("IfExp\n"); break;
+    case Dict_kind: // expr* keys, expr* values
+      printf("Dict\n"); break;
+    case ListComp_kind: // expr elt, comprehension* generators
+      printf("ListComp\n"); break;
+    case GeneratorExp_kind: // expr elt, comprehension* generators
+      printf("GeneratorExp\n"); break;
+    case Yield_kind: // expr? value
+      printf("Yield\n"); break;
+    case Compare_kind: // expr left, cmpop* ops, expr* comparators
+      printf("Compare\n"); break;
+    case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
+      printf("Call\n"); break;
+    case Repr_kind: // expr value
+      printf("Repr\n"); break;
+    case Num_kind: // object n) -- a number as a PyObject
+      printf("Num\n"); break;
+    case Str_kind: // string s) -- need to specify raw, unicode, etc
+      printf("Str\n"); break;
+    case Attribute_kind: // expr value, identifier attr, expr_context ctx
+      printf("Attribute\n"); break;
+    case Subscript_kind: // expr value, slice slice, expr_context ctx
+      printf("Subscript\n"); break;
+    case Name_kind: // identifier id, expr_context ctx
+      printf("Name\n"); break;
+    case List_kind: // expr* elts, expr_context ctx
+      printf("List\n"); break;
+    case Tuple_kind: // expr *elts, expr_context ctx
+      printf("Tuple\n"); break;
+  }
+  exit_scope();
+  return 0;
+}
+
+static int build_syms_stmts(asdl_seq *stmts) {
+  for (int i = 0; i < asdl_seq_LEN(stmts); i++)
+    if (build_syms((stmt_ty)asdl_seq_GET(stmts, i))) return -1;
+  return 0;
+}
+
+static int
+build_syms(mod_ty mod) {
+  enter_scope(mod);
+  switch (mod->kind) {
+    case Module_kind: return build_syms_stmts(mod->v.Module.body);
+    case Expression_kind: return build_syms(mod->v.Expression.body);
+    case Interactive_kind: return build_syms_stmts(mod->v.Interactive.body);
+    case Suite_kind: assert(!"handled");
+  }
+  exit_scope();
+  return 0;
+}
+
+#define RECURSE(_ast, _fn) \
+  PycAST *ast = getAST(_ast); \
+  forv_Vec(PycAST, x, ast->children) \
+    if (x->xstmt) _fn(x->xstmt); else if (x->xexpr) _fn(x->xexpr);
+
+static int build_if1(stmt_ty s);
+static int build_if1(expr_ty e);
+
+static int
+build_if1(stmt_ty s) {
+  RECURSE(s, build_if1);
   switch (s->kind) {
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
       printf("FunctionDef\n"); break;
@@ -1476,8 +1253,8 @@ build(stmt_ty s) {
 }
 
 static int
-build(expr_ty e) {
-  RECURSE(e, build);
+build_if1(expr_ty e) {
+  RECURSE(e, build_if1);
   switch (e->kind) {
     case BoolOp_kind: // boolop op, expr* values
       printf("BoolOp\n"); break;
@@ -1521,18 +1298,18 @@ build(expr_ty e) {
   return 0;
 }
 
-static int build_stmts(asdl_seq *stmts) {
+static int build_if1_stmts(asdl_seq *stmts) {
   for (int i = 0; i < asdl_seq_LEN(stmts); i++)
-    if (build((stmt_ty)asdl_seq_GET(stmts, i))) return -1;
+    if (build_if1((stmt_ty)asdl_seq_GET(stmts, i))) return -1;
   return 0;
 }
 
 static int
-build(mod_ty mod) {
+build_if1(mod_ty mod) {
   switch (mod->kind) {
-    case Module_kind: return build_stmts(mod->v.Module.body);
-    case Expression_kind: return build(mod->v.Expression.body);
-    case Interactive_kind: return build_stmts(mod->v.Interactive.body);
+    case Module_kind: return build_if1_stmts(mod->v.Module.body);
+    case Expression_kind: return build_if1(mod->v.Expression.body);
+    case Interactive_kind: return build_if1_stmts(mod->v.Interactive.body);
     case Suite_kind: assert(!"handled");
   }
   return 0;
@@ -1542,7 +1319,7 @@ int
 ast_to_if1(mod_ty module, struct symtable *asymtab) {
   ifa_init(new PycCallbacks);
   symtab = asymtab;
-  build(module);
+  if (build_syms(module) < 0) return -1;
   build_builtin_symbols();
   //Vec<Symbol *> types;
   //build_types(syms, &types);
@@ -1550,6 +1327,7 @@ ast_to_if1(mod_ty module, struct symtable *asymtab) {
   if1_set_primitive_types(if1);
   //build_classes(syms);
   finalize_types(if1, false);
+  if (build_if1(module) < 0) return -1;
   //if (build_functions(syms) < 0) return -1;
   finalize_symbols(if1);
   //build_type_hierarchy();
