@@ -5,8 +5,6 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include "defs.h"
-#include <Python.h>
-#include <Python-ast.h>
 
 int do_unit_tests = 0;
 
@@ -60,7 +58,23 @@ static void init_system() {
   assert(!getrlimit(RLIMIT_NOFILE, &nfiles));
 }
 
-void compile(mod_ty mod) {
+void
+analyze(char *fn) {
+  if (ifa_analyze(fn) < 0)
+    fail("program does not type");
+  if (fgraph)
+    ifa_graph(fn);
+  if (fdump_html) {
+    char mktree_dir[512];
+    strcpy(mktree_dir, system_dir);
+    strcat(mktree_dir, "/etc/www");
+    ifa_html(fn, mktree_dir);
+  }
+  if (fcg) {
+    ifa_cg(fn);
+    ifa_compile(fn);
+  }
+  return;
 }
 
 int main(int argc, char *argv[]) {
@@ -86,7 +100,21 @@ int main(int argc, char *argv[]) {
   mod_ty mod = PyParser_ASTFromFile(fp, filename, Py_file_input, 0, 0, 0, 0, arena);
   if (!mod)
     error("unable to parse file '%s'", filename);
-  compile(mod);
+  else {
+    PyFutureFeatures *pyc_future = PyFuture_FromAST(mod, filename);
+    if (!pyc_future)
+      error("unable to parse futures for file '%s'", filename);
+    else {
+      struct symtable *pyc_symtab = PySymtable_Build(mod, filename, pyc_future);
+      if (!pyc_symtab)
+        error("unable to generate symtab for file '%s'", filename);
+      else {
+        ast_to_if1(mod, pyc_symtab);
+        analyze(filename);
+        PySymtable_Free(pyc_symtab);
+      }
+    }
+  }
   PyArena_Free(arena);
   Py_Finalize();
   Service::stop_all();
