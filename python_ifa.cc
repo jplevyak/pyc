@@ -864,17 +864,28 @@ static void add_comprehension(asdl_seq *comp, Vec<expr_ty> &exprs) {
   }
 }
 
+static void get_pre_scope_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+  switch (s->kind) {
+    default: 
+      break;
+    case FunctionDef_kind:
+      add(s->v.FunctionDef.args->defaults, exprs);
+      add(s->v.FunctionDef.decorators, exprs);
+      break;
+    case ClassDef_kind:
+      add(s->v.ClassDef.bases, exprs);
+      break;
+  }
+}
+
 static void get_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   switch (s->kind) {
     default: assert(!"case");
     case FunctionDef_kind:
       add(s->v.FunctionDef.args->args, exprs);
-      add(s->v.FunctionDef.args->defaults, exprs);
       add(s->v.FunctionDef.body, stmts);
-      add(s->v.FunctionDef.decorators, exprs);
       break;
     case ClassDef_kind:
-      add(s->v.ClassDef.bases, exprs);
       add(s->v.ClassDef.body, stmts);
       break;
     case Return_kind: add(s->v.Return.value, exprs); break;
@@ -955,6 +966,16 @@ static void get_next(slice_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   }
 }
 
+static void get_pre_scope_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+  switch (e->kind) {
+    default: 
+      break;
+    case Lambda_kind:
+      add(e->v.Lambda.args->defaults, exprs);
+      break;
+  }
+}
+
 static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   switch (e->kind) {
     default: assert(!"case");
@@ -968,7 +989,6 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
       add(e->v.UnaryOp.operand, exprs); break;
     case Lambda_kind: // arguments args, expr body
       add(e->v.Lambda.args->args, exprs);
-      add(e->v.Lambda.args->defaults, exprs);
       add(e->v.Lambda.body, exprs); 
       break;
     case IfExp_kind: // expr test, expr body, expr orelse
@@ -1023,7 +1043,7 @@ struct PycScope : public gc {
 static PycScope *scope = 0;
 static Vec<PycScope *> scope_stack;
 
-static void enter_scope(void *key) {
+static int enter_scope(void *key) {
   if (scope) scope_stack.add(scope);
   scope = new PycScope;
   scope->ste = PySymtable_Lookup(symtab, key);
@@ -1032,22 +1052,25 @@ static void enter_scope(void *key) {
   else
     scope->u_private = 0;
   assert(scope->ste);
+  return 1;
 }
 
-static void enter_scope(stmt_ty x) {
+static int enter_scope(stmt_ty x) {
   if (x->kind == FunctionDef_kind ||
       x->kind == ClassDef_kind)
-    enter_scope((void*)x);
+    return enter_scope((void*)x);
+  return 0;
 }
 
-static void enter_scope(expr_ty x) {
+static int enter_scope(expr_ty x) {
   if (x->kind == Lambda_kind ||
       x->kind == GeneratorExp_kind)
-    enter_scope((void*)x);
+    return enter_scope((void*)x);
+  return 0;
 }
 
-static void enter_scope(mod_ty x) {
-  enter_scope((void*)x);
+static int enter_scope(mod_ty x) {
+  return enter_scope((void*)x);
 }
 
 static void exit_scope() {
@@ -1056,6 +1079,12 @@ static void exit_scope() {
 
 #define BUILD_RECURSE(_ast, _fn) \
   PycAST *ast = getAST(_ast); \
+  {                                                                       \
+    Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
+    for_Vec(stmt_ty, x, stmts) { _fn(x); ast->children.add(getAST(x)); }  \
+    for_Vec(expr_ty, x, exprs) { _fn(x); ast->children.add(getAST(x)); }  \
+  } \
+  enter_scope(_ast); \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_next(_ast, stmts, exprs); \
     for_Vec(stmt_ty, x, stmts) { _fn(x); ast->children.add(getAST(x)); }  \
@@ -1067,7 +1096,6 @@ static int build_syms(expr_ty e);
 
 static int
 build_syms(stmt_ty s) {
-  enter_scope(s);
   BUILD_RECURSE(s, build_syms);
   switch (s->kind) {
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
@@ -1124,7 +1152,6 @@ build_syms(stmt_ty s) {
 
 static int
 build_syms(expr_ty e) {
-  enter_scope(e);
   BUILD_RECURSE(e, build_syms);
   switch (e->kind) {
     case BoolOp_kind: // boolop op, expr* values
