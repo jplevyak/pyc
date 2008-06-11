@@ -4,9 +4,11 @@
 #ifndef _defs_H_
 #define _defs_H_
 
+extern "C" {
 #include <Python.h>
 #include <Python-ast.h>
 #include <symtable.h>
+}
 // namespace contamination from python headers
 #if FREE != 4
 #error fixme

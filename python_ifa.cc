@@ -7,37 +7,15 @@
    move static variables into an object
  */
 
-#define USE_FLOAT_128
-
 #define OPERATOR_CHAR(_c) \
 (((_c > ' ' && _c < '0') || (_c > '9' && _c < 'A') || \
   (_c > 'Z' && _c < 'a') || (_c > 'z')) &&            \
    _c != '_'&& _c != '?' && _c != '$')                \
 
-#define _EXTERN
-#define _INIT = NULL
-#include "python_ops.h"
-
-
-class LabelMap : public Map<char *, stmt_ty *> {};
-
-class AnalysisOp : public gc { public:
-  char *name;
-  char *internal_name;
-  PrimitiveTransferFunctionPtr ptfn;
-  Prim *prim;
-
-  AnalysisOp(char *aname, char *aninternal_name, PrimitiveTransferFunctionPtr pfn)
-    : name(aname), internal_name(aninternal_name), ptfn(pfn), prim(0) {}
-  AnalysisOp(char *aname, char *aninternal_name, Prim *ap) 
-    : name(aname), internal_name(aninternal_name), ptfn(0), prim(ap) {}
-};
-
-class ScopeLookupCache : public Map<char *, Vec<Fun *> *> {};
-static ScopeLookupCache universal_lookup_cache;
 static Map<Symbol *, PycSymbol *> symmap;
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
+
 static struct symtable *symtab = 0;
 static int finalized_symbols = 0;
 
@@ -176,12 +154,7 @@ PycAST::visible_functions(Sym *arg0) {
   forv_Vec(Symbol, x, fss)
     v->set_add(x->asymbol->sym->fun);
 #endif
-  Vec<Fun *> *universal = universal_lookup_cache.get(name);
-  if (universal) {
-    v->set_union(*universal);
-    return v;
-  }
-  else return NULL;
+  return NULL;
 }
 
 static PycSymbol *
@@ -287,10 +260,11 @@ new_global_variable(Sym *&sym, char *name) {
 }
 
 static void
-new_primitive_object(Sym *&sym, Sym *sym_type, Symbol *symbol, char *name) {
+new_primitive_object(Sym *&sym, char *name, Sym *sym_type, Symbol *symbol = 0) {
   if (symbol)
     sym = symmap.get(symbol)->sym;
   new_global_variable(sym, name);
+  sym->type_kind = Type_NONE;
   sym->type = sym_type;
   sym->is_external = 1;
   sym_type->is_unique_type = 1;
@@ -335,161 +309,32 @@ builtin_Symbol(Symbol *dt, Sym *&sym, char *name) {
 
 static void
 build_builtin_symbols() {
-}
 
-#if 0
-static void
-build_builtin_symbols() {
-  sym_bool = dtBool->asymbol->sym;
-
-  sym_int8  = dtInt[IF1_INT_TYPE_8]->asymbol->sym;
-  sym_int16 = dtInt[IF1_INT_TYPE_16]->asymbol->sym;
-  sym_int32 = dtInt[IF1_INT_TYPE_32]->asymbol->sym;
-  sym_int64 = dtInt[IF1_INT_TYPE_64]->asymbol->sym;
-
-  sym_uint8  = dtUInt[IF1_INT_TYPE_8]->asymbol->sym;
-  sym_uint16 = dtUInt[IF1_INT_TYPE_16]->asymbol->sym;
-  sym_uint32 = dtUInt[IF1_INT_TYPE_32]->asymbol->sym;
-  sym_uint64 = dtUInt[IF1_INT_TYPE_64]->asymbol->sym;
-
-  sym_float32  = dtFloat[IF1_FLOAT_TYPE_32]->asymbol->sym;
-  sym_float64  = dtFloat[IF1_FLOAT_TYPE_64]->asymbol->sym;
-  sym_float128 = dtFloat[IF1_FLOAT_TYPE_128]->asymbol->sym;
-
-  sym_complex32  = dtComplex[IF1_FLOAT_TYPE_32]->asymbol->sym;
-  sym_complex64  = dtComplex[IF1_FLOAT_TYPE_64]->asymbol->sym;
-  sym_complex128 = dtComplex[IF1_FLOAT_TYPE_128]->asymbol->sym;
-
-  sym_string = dtString->asymbol->sym;
-  sym_anynum = dtNumeric->asymbol->sym;
-  sym_any = dtAny->asymbol->sym; 
-  sym_object = dtObject->asymbol->sym; 
-  sym_nil_type = dtNil->asymbol->sym;
-  sym_unknown_type = dtUnknown->asymbol->sym;
-  sym_value = dtValue->asymbol->sym;
-  sym_void_type = dtVoid->asymbol->sym;
-  sym_closure = dtClosure->asymbol->sym;
-  sym_symbol = dtSymbol->asymbol->sym;
+#define S(_n) new_primitive_type(sym_##_n, #_n);
+#include "builtin_symbols.h"
+#undef S
 
   new_lub_type(sym_any, "any", 0);
-  new_primitive_type(sym_nil_type, "nil_type");
-  new_primitive_type(sym_unknown_type, "unknown_type");
-  new_primitive_type(sym_void_type, "void_type");
-  new_primitive_type(sym_module, "module");
-  new_primitive_type(sym_symbol, "symbol");
-  if1_set_symbols_type(if1);
-  new_primitive_type(sym_closure, "closure");
-  new_primitive_type(sym_continuation, "continuation");
-  new_primitive_type(sym_vector, "vector");
-  new_primitive_type(sym_void_type, "void");
-  if (!sym_object)
-    sym_object = new_sym("object", 1);
+  new_alias_type(sym_int, "int", sym_int32);
+  new_alias_type(sym_uint, "uint", sym_uint32);
+  new_alias_type(sym_float, "float", sym_float32);
   sym_object->type_kind = Type_RECORD;
-  if1_set_builtin(if1, sym_object, "object");
-  new_primitive_type(sym_list, "list");
-  new_primitive_type(sym_ref, "ref");
-  new_primitive_type(sym_value, "value");
-  new_primitive_type(sym_set, "set");
-
-  new_primitive_type(sym_int8,   "int8");
-  new_primitive_type(sym_int16,  "int16");
-  new_primitive_type(sym_int32,  "int32");
-  new_primitive_type(sym_int64,  "int64");
-  // new_primitive_type(sym_int128, "int128");
-
-  new_alias_type(sym_int, "int", sym_int64);
-  new_primitive_type(sym_true, "true");
-  new_primitive_type(sym_false, "false");
-  new_primitive_type(sym_bool, "bool");
   sym_true->inherits_add(sym_bool);
   sym_false->inherits_add(sym_bool);
-
-  new_primitive_type(sym_uint8, "uint8");
-  new_primitive_type(sym_uint16, "uint16");
-  new_primitive_type(sym_uint32, "uint32");
-  new_primitive_type(sym_uint64, "uint64");
-  new_alias_type(sym_uint, "uint", sym_uint64);
-
-  new_lub_type(sym_anyint, "anyint", 
+  new_lub_type(sym_anyint, "anyint",
                sym_int8, sym_int16, sym_int32, sym_int64,
                sym_bool,
-               sym_uint8, sym_uint16, sym_uint32, sym_uint64, 
-               VARARG_END);
-
+               sym_uint8, sym_uint16, sym_uint32, sym_uint64,
+               0);
   new_alias_type(sym_size, "size", sym_int64);
   new_alias_type(sym_enum_element, "enum_element", sym_int64);
-  new_primitive_type(sym_float32, "float32");
-  new_primitive_type(sym_float64, "float64");
-  new_primitive_type(sym_float128, "float128");
-  new_alias_type(sym_float, "float", sym_float64);
-  new_lub_type(sym_anyfloat, "anyfloat", 
-               sym_float32, sym_float64, sym_float128, 
-               VARARG_END);
-  new_primitive_type(sym_complex32, "complex32");
-  new_primitive_type(sym_complex64, "complex64");
-#ifdef USE_FLOAT_128
-  new_primitive_type(sym_complex128, "complex128");
-#endif
-  new_alias_type(sym_complex, "complex", sym_complex64);
+  new_lub_type(sym_anycomplex, "anycomplex",
+               sym_complex32, sym_complex64);
+  new_lub_type(sym_anynum, "anynum", sym_anyint, sym_anyfloat, sym_anycomplex, 0);
+  new_primitive_object(sym_nil, "nil", sym_nil_type);
+  new_primitive_object(sym_unknown, "unknown", sym_unknown_type);
+  new_primitive_object(sym_void, "void", sym_void_type);
 
-  new_lub_type(sym_anycomplex, "anycomplex", 
-               sym_complex32, sym_complex64, 
-#ifdef USE_FLOAT_128
-               sym_complex128, 
-#endif
-      VARARG_END);
-  new_lub_type(sym_anynum, "anynum", sym_anyint, sym_anyfloat, sym_anycomplex, VARARG_END);
-  new_primitive_type(sym_char, "char");
-  new_primitive_type(sym_string, "string");
-  if (!sym_new_object) {
-    sym_new_object = new_sym("new_object", 1);
-    if1_set_builtin(if1, sym_new_object, "new_object");
-  }
-
-  new_primitive_object(sym_nil, sym_nil_type, gNil, "nil");
-  new_primitive_object(sym_unknown, sym_unknown_type, gUnknown, "_unknown");
-  new_primitive_object(sym_void, sym_void_type, gVoid, "_void");
-
-  sym_init = new_sym(); // placeholder
-
-  builtin_Symbol(dtUnused, sym_tuple, "tuple");
-
-  // automatic promotions
-
-  sym_bool->specializes.add(sym_uint8);
-
-  sym_uint8->specializes.add(sym_uint16);
-  sym_uint16->specializes.add(sym_uint32);
-  sym_uint32->specializes.add(sym_uint64);
-
-  sym_uint32->specializes.add(sym_int32);
-  sym_uint64->specializes.add(sym_int64);
-
-  sym_int8->specializes.add(sym_int16);
-  sym_int16->specializes.add(sym_int32);
-  sym_int32->specializes.add(sym_int64);
-
-  sym_int32->specializes.add(sym_float32);
-  sym_int64->specializes.add(sym_float64);
-
-  sym_float32->specializes.add(sym_float64);
-  sym_float64->specializes.add(sym_float128);
-
-  sym_float32->specializes.add(sym_complex32);
-  sym_float64->specializes.add(sym_complex64);
-#ifdef USE_FLOAT_128
-  sym_float128->specializes.add(sym_complex128);
-#endif
-
-  sym_complex32->specializes.add(sym_complex64);
-#ifdef USE_FLOAT_128
-  sym_complex64->specializes.add(sym_complex128);
-#endif
-
-  sym_anynum->specializes.add(sym_string);
-
-  // defined type hierarchy
-  
   sym_any->implements.add(sym_unknown_type);
   sym_any->specializes.add(sym_unknown_type);
   sym_object->implements.add(sym_any);
@@ -499,234 +344,29 @@ build_builtin_symbols() {
   sym_value->implements.add(sym_any);
   sym_value->specializes.add(sym_any);
 
-  make_chapel_meta_type(dtAny);
+  make_meta_type(sym_any);
   sym_anytype = sym_any->meta_type;
   sym_anytype->implements.add(sym_any);
   sym_anytype->specializes.add(sym_any);
 
-  make_chapel_meta_type(dtNil);
+  make_meta_type(sym_nil_type);
   sym_nil_type->implements.add(sym_nil_type->meta_type);
   sym_nil_type->specializes.add(sym_nil_type->meta_type);
 
   sym_any->is_system_type = 1;
+  sym_anytype->is_system_type = 1;
   sym_value->is_system_type = 1;
   sym_object->is_system_type = 1;
   sym_nil_type->is_system_type = 1;
   sym_unknown_type->is_system_type = 1;
   sym_void_type->is_system_type = 1;
-  sym_anytype->is_system_type = 1;
-
-#define S(_n) assert(sym_##_n);
-#include "builtin_symbols.h"
-#undef S
+  
+  if1_set_symbols_type(if1);
 }
-
-static int
-is_this_fun(Symbol *f) {
-  return !strcmp(f->asymbol->sym->name, "this");
-}
-
-static int
-is_assign_this_fun(Symbol *f) {
-  return !strcmp(f->asymbol->sym->name, "=this");
-}
-
-static int
-gen_fun(Symbol *f) {
-  Sym *fn = f->asymbol->sym;
-  PycAST* ast = f->defPoint->ainfo;
-  Vec<ArgSymbol *> args;
-  Vec<Sym *> out_args;
-  for_alist(DefExpr, formal, f->formals) {
-    args.add(dynamic_cast<ArgSymbol*>(formal->sym));
-  }
-  Sym *as[args.n + 4];
-  int iarg = 0;
-  assert(f->asymbol->sym->name);
-  if (is_this_fun(f)) {
-    if (is_Sym_OUT(args.v[0]->asymbol->sym))
-      out_args.add(args.v[0]->asymbol->sym);
-    as[iarg++] = args.v[0]->asymbol->sym;
-  } else if (is_assign_this_fun(f)) {
-    if (is_Sym_OUT(args.v[0]->asymbol->sym))
-      out_args.add(args.v[0]->asymbol->sym);
-    as[iarg++] = args.v[0]->asymbol->sym;
-  } else {
-    int setter = f->asymbol->sym->name[0] == '=' && 
-      f->asymbol->sym->name[1] &&
-      !OPERATOR_CHAR(f->asymbol->sym->name[1]);
-    Sym *s = new_sym(f->asymbol->sym->name + (setter ? 1 : 0));
-    s->ast = ast;
-    s->must_specialize = make_symbol(s->name);
-    as[iarg++] = s;
-    if (f->isMethod) {
-      // this
-      if (args.n) {
-        if (is_Sym_OUT(args.v[0]->asymbol->sym))
-          out_args.add(args.v[0]->asymbol->sym);
-        as[iarg++] = args.v[0]->asymbol->sym;
-      }
-    }
-    if (!f->isMethod) {
-      if (args.n) {
-        if (is_Sym_OUT(args.v[0]->asymbol->sym))
-          out_args.add(args.v[0]->asymbol->sym);
-        as[iarg++] = args.v[0]->asymbol->sym;
-      }
-    }
-  }
-  for (int i = 1; i < args.n; i++) {
-    if (is_Sym_OUT(args.v[i]->asymbol->sym))
-      out_args.add(args.v[i]->asymbol->sym);
-    as[iarg++] = args.v[i]->asymbol->sym;
-  }
-  Code *body = 0;
-  if1_gen(if1, &body, f->body->ainfo->code);
-  if1_move(if1, &body, sym_void, fn->ret, ast);
-  if1_label(if1, &body, ast, ast->label[0]);
-  Code *c = if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret);
-  forv_Sym(r, out_args)
-    if1_add_send_arg(if1, c, r);
-  c->ast = ast;
-  c->partial = Partial_NEVER;
-  if1_closure(if1, fn, body, iarg, as);
-  fn->ast = ast;
-  if (f->_this && f->fnClass != FN_CONSTRUCTOR)
-    fn->self = f->_this->asymbol->sym;
-  //  fun_where_clause(f, f->whereExpr);
-  return 0;
-}
-
-static int
-init_function(Symbol *f) {
-  Sym *s = f->asymbol->sym;
-  if (ifa_verbose > 2 && f->name)
-    printf("build_functions: %s\n", f->name);
-  if (f == chpl_main) {
-    if1_set_builtin(if1, s, "init");
-    sym_init = s;
-  }
-  s->cont = new_sym();
-  PycAST* ast = f->defPoint->ainfo;
-  s->cont->ast = ast;
-  s->ret = new_sym();
-  s->ret->ast = ast;
-  s->labelmap = new LabelMap;
-  s->nesting_depth = f->nestingDepth();
-  return 0;
-}
-
-static int
-build_function(Symbol *f) {
-  if (define_labels(f->body, f->asymbol->sym->labelmap) < 0) return -1;
-  PycAST* ast = f->defPoint->ainfo;
-  Label *return_label = ast->label[0] = if1_alloc_label(if1);
-  if (resolve_labels(f->body, f->asymbol->sym->labelmap, return_label) < 0) return -1;
-  if (gen_if1(f->body) < 0) return -1;
-  if (gen_fun(f) < 0) return -1;
-  return 0;
-}
-
-static void
-build_classes(Vec<Stmt *> &syms) {
-  Vec<ClassType *> classes;
-  forv_Stmt(s, syms)
-    if (s->astType == TYPE_CLASS)
-      classes.add(dynamic_cast<ClassType*>(s)); 
-  if (ifa_verbose > 2)
-    printf("build_classes: %d classes\n", classes.n);
-  forv_Vec(ClassType, c, classes) {
-    Sym *csym = c->asymbol->sym;
-    forv_Vec(Symbol, tmp, c->fields)
-      csym->has.add(tmp->asymbol->sym);
-    forv_Vec(TypeSymbol, tmp, c->types) if (tmp)
-      if (tmp->definition->astType == TYPE_USER ||
-          tmp->definition->astType == TYPE_VARIABLE)
-        csym->has.add(tmp->definition->asymbol->sym);
-  }
-  build_patterns(syms);
-}
-
-static int
-build_functions(Vec<Stmt *> &syms) {
-  forv_Stmt(s, syms)
-    if (s->astType == SYMBOL_FN)
-      if (init_function(dynamic_cast<Symbol*>(s)) < 0)
-        return -1;
-  forv_Stmt(s, syms)
-    if (s->astType == SYMBOL_FN)
-      if (build_function(dynamic_cast<Symbol*>(s)) < 0)
-        return -1;
-  return 0;
-}
-
-static void
-add_to_universal_lookup_cache(char *name, Fun *fun) {
-  Vec<Fun *> *v = universal_lookup_cache.get(name);
-  if (!v)
-    v = new Vec<Fun *>;
-  v->add(fun);
-  universal_lookup_cache.put(name, v);
-}
-
-static int
-handle_argument(Sym *s, char *name, Fun *fun, int added, MPosition &p) {
-  if (s->is_pattern) {
-    p.push(1);
-    forv_Sym(ss, s->has) {
-      added = handle_argument(ss, name, fun, added, p);
-      p.inc();
-    }
-    p.pop();
-  }
-  // non-scoped lookup if any parameteter is specialized on a reference type
-  // (is dispatched)
-  if (!added && s->must_specialize && 
-      is_reference_type(SYMBOL(s->must_specialize)))
-  {
-    add_to_universal_lookup_cache(name, fun);
-    added = 1;
-  }
-  // record default argument positions
-  if (SYMBOL(s)) {
-    ArgSymbol *symbol = dynamic_cast<ArgSymbol*>(SYMBOL(s));
-    if (symbol && symbol->defaultExpr) {
-      assert(symbol->defaultExpr->ainfo);
-      fun->default_args.put(cannonicalize_mposition(p), symbol->defaultExpr->ainfo);
-    }
-  }
-  return added;
-}
-
-
-#endif
 
 static void 
 finalize_function(Fun *fun) {
-#if 0
-  int added = 0;
-  char *name = fun->sym->has.v[0]->name;
-  assert(name);
-  Symbol *fs = dynamic_cast<Symbol*>(SYMBOL(fun->sym));
-  if (fs->hasVarArgs)
-    fun->is_varargs = 1;
-  if (fs->noParens)
-    fun->is_eager = 1;
-  else
-    if (fs->isMethod && !is_this_fun(fs) && !is_assign_this_fun(fs))
-      fun->is_lazy = 1;
-  if (fs->isMethod)
-    fs->_this->asymbol->sym->is_this = 1;
-  // add to dispatch cache
-  if (fs->_this) {
-    if (is_reference_type(SYMBOL(fs->_this->type))) {
-      if (fs->isMethod) {
-        add_to_universal_lookup_cache(name, fun);
-        added = 1;
-      }
-    }
-  }
-#endif
+  fun->is_eager = 1;
 }
 
 void
@@ -736,106 +376,6 @@ PycCallbacks::finalize_functions() {
   forv_Fun(fun, pdb->funs)
     finalize_function(fun);
 }
-
-
-static void
-type_equal_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  //AVar *type = make_AVar(pn->rvals.v[2], es);
-  //AVar *val = make_AVar(pn->rvals.v[3], es);
-  update_gen(result, make_abstract_type(sym_bool));
-}
-
-static void
-array_init_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  AVar *array = make_AVar(pn->rvals.v[2], es);
-  AVar *val = make_AVar(pn->rvals.v[4], es);
-  forv_CreationSet(a, array->out->sorted) {
-    if (a->sym->element)
-      flow_vars(val, get_element_avar(a));
-  }
-  flow_vars(array, result);
-}
-
-static void
-array_index_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  AVar *array = make_AVar(pn->rvals.v[2], es);
-  set_container(result, array);
-  forv_CreationSet(a, array->out->sorted) {
-    if (a->sym->element)
-      flow_vars(get_element_avar(a), result);
-  }
-}
-
-static void
-array_set_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  AVar *array = make_AVar(pn->rvals.v[2], es);
-  AVar *val = make_AVar(pn->rvals.v[pn->rvals.n-1], es);
-  set_container(result, array);
-  forv_CreationSet(a, array->out->sorted) {
-    if (a->sym->element)
-      flow_vars(val, get_element_avar(a));
-  }
-  flow_vars(array, result);
-}
-
-static void
-return_bool_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  update_gen(result, make_abstract_type(sym_bool));
-}
-
-static void
-return_int_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  update_gen(result, make_abstract_type(sym_int));
-}
-
-static void
-return_float_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  update_gen(result, make_abstract_type(sym_float));
-}
-
-static void
-return_void_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  update_gen(result, make_abstract_type(sym_void));
-}
-
-static void
-return_string_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  update_gen(result, make_abstract_type(sym_string));
-}
-
-static void
-array_pointwise_op(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  AVar *array = make_AVar(pn->rvals.v[2], es);
-  flow_vars(array, result);
-}
-
-static void
-unimplemented_transfer_function(PNode *pn, EntrySet *es) {
-  fail("unimplemented primitive");
-}
-
-static void
-alloc_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *tav = make_AVar(pn->rvals.v[2], es);
-  AVar *result = make_AVar(pn->lvals.v[0], es);
-  forv_CreationSet(cs, tav->out->sorted) {
-    Sym *ts = cs->sym;
-    if (ts->is_meta_type) ts = ts->meta_type;
-    creation_point(result, ts);
-  }
-}
-
-static int build_stmts(asdl_seq *stmts);
 
 static void add(asdl_seq *seq, Vec<expr_ty> &exprs) {
   for (int i = 0; i < asdl_seq_LEN(seq); i++)
@@ -851,9 +391,7 @@ static void add(expr_ty e, Vec<expr_ty> &exprs) {
   if (e) exprs.add(e);
 }
 
-static void add(stmt_ty s, Vec<stmt_ty> &stmts) {
-  if (s) stmts.add(s);
-}
+//static void add(stmt_ty s, Vec<stmt_ty> &stmts) { if (s) stmts.add(s); } unused
 
 static void add_comprehension(asdl_seq *comp, Vec<expr_ty> &exprs) {
   for (int i = 0; i < asdl_seq_LEN(comp); i++) {
@@ -1093,6 +631,33 @@ static void exit_scope() {
 
 static int build_syms(stmt_ty s);
 static int build_syms(expr_ty e);
+
+// Python name resolution is... odd to say the least.
+// It is flow sensitive, and will require special mechanisms.
+// Simplified here.
+Sym *resolve_Sym(PyObject *name) {
+  Sym *sym = 0;
+  PyObject *mangled = _Py_Mangle(scope->u_private, name);
+  (void)mangled;
+  switch(PyST_GetScope(scope->ste, mangled)) {
+    case PYTHON_FREE: // LOAD_DEREF from u_freevars
+    case CELL: // LOAD_DEREF from u_cellvars
+    case LOCAL: // if c->u->u_ste->ste_type == FunctionBlock FAST else NAME
+      if (scope->ste->ste_type != FunctionBlock)
+        goto Lname;
+    case GLOBAL_IMPLICIT: // if function && optimized GLOBAL else NAME
+      if (scope->ste->ste_type != FunctionBlock || scope->ste->ste_unoptimized)
+        goto Lname;
+      // fall through
+    case GLOBAL_EXPLICIT: // GLOBAL
+      break;
+    default: // LOAD_NAME
+      // try local first, then global
+    Lname:;
+  }
+  Py_DECREF(mangled);
+  return sym;
+}
 
 static int
 build_syms(stmt_ty s) {
@@ -1364,65 +929,3 @@ ast_to_if1(mod_ty module, struct symtable *asymtab) {
   finalize_types(if1, false);  // again to catch any new ones
   return 0;
 }
-
-static AnalysisOp *
-S(char *name, PrimitiveTransferFunctionPtr pfn) {
-  char internal_name[512];
-  strcpy(internal_name, "python_");
-  strcat(internal_name, name);
-  char *new_name = if1_cannonicalize_string(if1, internal_name);
-  pdb->fa->primitive_transfer_functions.put(new_name, new RegisteredPrim(pfn));
-  return new AnalysisOp(name, new_name, pfn);
-}
-
-static AnalysisOp *
-P(char *name, Prim *p) {
-  char internal_name[512];
-  strcpy(internal_name, "python_");
-  strcat(internal_name, name);
-  char *new_name = if1_cannonicalize_string(if1, internal_name);
-  return new AnalysisOp(name, new_name, p);
-}
-
-void
-init_python_ifa() {
-  ifa_init(new PycCallbacks);
-  unimplemented_analysis_op = S("unimplemented", unimplemented_transfer_function);
-  return_bool_analysis_op = S("return_bool", return_bool_transfer_function);
-  return_int_analysis_op = S("return_int", return_int_transfer_function); 
-  return_float_analysis_op = S("return_float", return_float_transfer_function);
-  return_void_analysis_op = S("return_void", return_void_transfer_function); 
-  return_string_analysis_op = S("return_string", return_string_transfer_function); 
-  array_init_analysis_op = S("array_init", array_init_transfer_function);
-  array_index_analysis_op = S("array_index", array_index_transfer_function);
-  array_set_analysis_op = S("array_set", array_set_transfer_function);
-  array_pointwise_op_analysis_op = S("array_pointwise_op", array_pointwise_op);
-  unary_minus_analysis_op = P("u-", prim_minus);
-  unary_plus_analysis_op = P("u+", prim_plus);
-  unary_not_analysis_op = P("u~", prim_not);
-  unary_lnot_analysis_op = P("!", prim_lnot);
-  add_analysis_op = P("+", prim_add);
-  subtract_analysis_op = P("-", prim_subtract);
-  mult_analysis_op = P("*", prim_mult);
-  div_analysis_op = P("/", prim_div);
-  mod_analysis_op = P("%", prim_mod);
-  lsh_analysis_op = P("<<", prim_lsh);
-  rsh_analysis_op = P(">>", prim_rsh);
-  equal_analysis_op = P("==", prim_equal);
-  notequal_analysis_op = P("!=", prim_notequal);
-  lessorequal_analysis_op = P("<=", prim_lessorequal);
-  greaterorequal_analysis_op = P(">=", prim_greaterorequal);
-  less_analysis_op = P("<", prim_less);
-  greater_analysis_op = P(">", prim_greater);
-  and_analysis_op = P("&", prim_and);
-  or_analysis_op = P("|", prim_or);
-  xor_analysis_op = P("^", prim_xor);
-  land_analysis_op = P("&&", prim_land);
-  lor_analysis_op = P("||", prim_lor);
-  pow_analysis_op = P("**", prim_pow);
-  get_member_analysis_op = P(".", prim_period);
-  set_member_analysis_op = P(".=", prim_setter);
-  type_equal_analysis_op = S("type_equal", type_equal_transfer_function);
-  alloc_analysis_op = S("alloc", alloc_transfer_function);
-}
-

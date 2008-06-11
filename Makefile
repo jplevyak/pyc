@@ -24,7 +24,7 @@ AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODU
 LIB_SRCS = 
 LIB_OBJS = $(LIB_SRCS:%.cc=%.o)
 
-PYC_SRCS = pyc.cc python_ifa.cc python_ifa.h python_ops.h version.cc
+PYC_SRCS = pyc.cc python_ifa.cc version.cc
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
 
 EXECUTABLE_FILES = pyc
@@ -165,7 +165,7 @@ python_ifa.o: python_ifa.cc defs.h /usr/include/python2.5/Python.h \
   ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
   ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h ../ifalib/fun.h \
   ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h python_ops.h
+  ../ifalib/prim.h python_ifa.h ../ifalib/builtin_symbols.h
 python_ifa.o: python_ifa.h defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
@@ -212,7 +212,6 @@ python_ifa.o: python_ifa.h defs.h /usr/include/python2.5/Python.h \
   ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h ../ifalib/fun.h \
   ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
   ../ifalib/prim.h python_ifa.h
-python_ops.o: python_ops.h
 version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
