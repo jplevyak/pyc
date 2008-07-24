@@ -104,7 +104,7 @@ PycAST::line() {
 }
 
 int
-PycAST::source_line() { // TODO: relturn 0 for builtin code
+PycAST::source_line() { // TODO: return 0 for builtin code
   return line();
 }
 
@@ -371,8 +371,6 @@ finalize_function(Fun *fun) {
 
 void
 PycCallbacks::finalize_functions() {
-  pdb->fa->array_index_base = 1;
-  pdb->fa->tuple_index_base = 1;
   forv_Fun(fun, pdb->funs)
     finalize_function(fun);
 }
@@ -387,10 +385,7 @@ static void add(asdl_seq *seq, Vec<stmt_ty> &stmts) {
     stmts.add((stmt_ty)asdl_seq_GET(seq, i));
 }
 
-static void add(expr_ty e, Vec<expr_ty> &exprs) {
-  if (e) exprs.add(e);
-}
-
+static void add(expr_ty e, Vec<expr_ty> &exprs) { if (e) exprs.add(e); }
 //static void add(stmt_ty s, Vec<stmt_ty> &stmts) { if (s) stmts.add(s); } unused
 
 static void add_comprehension(asdl_seq *comp, Vec<expr_ty> &exprs) {
@@ -576,6 +571,7 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
 struct PycScope : public gc {
   Symbol *ste;
   PyObject *u_private;
+  Map<char *, PycSymbol*> map;
 };
 
 static PycScope *scope = 0;
@@ -594,28 +590,32 @@ static int enter_scope(void *key) {
 }
 
 static int enter_scope(stmt_ty x) {
-  if (x->kind == FunctionDef_kind ||
-      x->kind == ClassDef_kind)
+  if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
     return enter_scope((void*)x);
   return 0;
 }
 
 static int enter_scope(expr_ty x) {
-  if (x->kind == Lambda_kind ||
-      x->kind == GeneratorExp_kind)
+  if (x->kind == Lambda_kind || x->kind == GeneratorExp_kind)
     return enter_scope((void*)x);
   return 0;
 }
 
-static int enter_scope(mod_ty x) {
-  return enter_scope((void*)x);
+static int enter_scope(mod_ty x) { return enter_scope((void*)x); }
+static void exit_scope() { scope = scope_stack.pop(); }
+static void exit_scope(mod_ty x) { exit_scope(); }
+
+static void exit_scope(stmt_ty x) {
+  if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
+    exit_scope();
 }
 
-static void exit_scope() {
-  scope = scope_stack.pop();
+static void exit_scope(expr_ty x) {
+  if (x->kind == Lambda_kind || x->kind == GeneratorExp_kind)
+    exit_scope();
 }
 
-#define BUILD_RECURSE(_ast, _fn) \
+#define AST_RECURSE(_ast, _fn) \
   PycAST *ast = getAST(_ast); \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
@@ -632,28 +632,36 @@ static void exit_scope() {
 static int build_syms(stmt_ty s);
 static int build_syms(expr_ty e);
 
-// Python name resolution is... odd to say the least.
-// It is flow sensitive, and will require special mechanisms.
-// Simplified here.
+// Python name resolution is odd. It is flow sensitive.
+// Rather than implement it as flow sensitive, I will convert it
+// to static and produce a warning.
 Sym *resolve_Sym(PyObject *name) {
   Sym *sym = 0;
   PyObject *mangled = _Py_Mangle(scope->u_private, name);
   (void)mangled;
-  switch(PyST_GetScope(scope->ste, mangled)) {
+  int ty = PyST_GetScope(scope->ste, mangled);
+  switch(ty) {
     case PYTHON_FREE: // LOAD_DEREF from u_freevars
+      printf("PYTHON_FREE\n");
     case CELL: // LOAD_DEREF from u_cellvars
+      printf("CELL\n");
     case LOCAL: // if c->u->u_ste->ste_type == FunctionBlock FAST else NAME
+      printf("LOCAL ");
       if (scope->ste->ste_type != FunctionBlock)
         goto Lname;
+      printf("\n");
     case GLOBAL_IMPLICIT: // if function && optimized GLOBAL else NAME
+      printf("GLOBAL_IMPLICIT ");
       if (scope->ste->ste_type != FunctionBlock || scope->ste->ste_unoptimized)
         goto Lname;
       // fall through
     case GLOBAL_EXPLICIT: // GLOBAL
+      printf("GLOBAL\n");
       break;
     default: // LOAD_NAME
       // try local first, then global
     Lname:;
+      printf("LOAD_NAME\n");
   }
   Py_DECREF(mangled);
   return sym;
@@ -661,9 +669,11 @@ Sym *resolve_Sym(PyObject *name) {
 
 static int
 build_syms(stmt_ty s) {
-  BUILD_RECURSE(s, build_syms);
+  AST_RECURSE(s, build_syms);
   switch (s->kind) {
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
+      printf("FunctionDef %s\n", PyString_AsString(s->v.FunctionDef.name));
+      resolve_Sym(s->v.FunctionDef.name);
       break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
       printf("ClassDef\n"); break;
@@ -711,13 +721,13 @@ build_syms(stmt_ty s) {
       printf("Continue\n"); break;
       break;
   }
-  exit_scope();
+  exit_scope(s);
   return 0;
 }
 
 static int
 build_syms(expr_ty e) {
-  BUILD_RECURSE(e, build_syms);
+  AST_RECURSE(e, build_syms);
   switch (e->kind) {
     case BoolOp_kind: // boolop op, expr* values
       printf("BoolOp\n"); break;
@@ -752,13 +762,15 @@ build_syms(expr_ty e) {
     case Subscript_kind: // expr value, slice slice, expr_context ctx
       printf("Subscript\n"); break;
     case Name_kind: // identifier id, expr_context ctx
-      printf("Name\n"); break;
+      printf("Name %s\n", PyString_AsString(e->v.Name.id));
+      resolve_Sym(e->v.Name.id);
+      break;
     case List_kind: // expr* elts, expr_context ctx
       printf("List\n"); break;
     case Tuple_kind: // expr *elts, expr_context ctx
       printf("Tuple\n"); break;
   }
-  exit_scope();
+  exit_scope(e);
   return 0;
 }
 
@@ -770,15 +782,16 @@ static int build_syms_stmts(asdl_seq *stmts) {
 
 static int
 build_syms(mod_ty mod) {
+  int r = 0;
   enter_scope(mod);
   switch (mod->kind) {
-    case Module_kind: return build_syms_stmts(mod->v.Module.body);
-    case Expression_kind: return build_syms(mod->v.Expression.body);
-    case Interactive_kind: return build_syms_stmts(mod->v.Interactive.body);
+    case Module_kind: r = build_syms_stmts(mod->v.Module.body); break;
+    case Expression_kind: r = build_syms(mod->v.Expression.body); break;
+    case Interactive_kind: r = build_syms_stmts(mod->v.Interactive.body); break;
     case Suite_kind: assert(!"handled");
   }
-  exit_scope();
-  return 0;
+  exit_scope(mod);
+  return r;
 }
 
 #define RECURSE(_ast, _fn) \
@@ -797,53 +810,53 @@ build_if1(stmt_ty s) {
   RECURSE(s, build_if1);
   switch (s->kind) {
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      printf("FunctionDef\n"); break;
+      break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      printf("ClassDef\n"); break;
+      break;
     case Return_kind: // expr? value
-      printf("Return\n"); break;
+      break;
     case Delete_kind: // expr * targets
-      printf("Delete\n"); break;
+      break;
     case Assign_kind: // expr* targets, expr value
-      printf("Assign\n"); break;
+      break;
     case AugAssign_kind: // expr target, operator op, expr value
-      printf("AugAssign\n"); break;
+      break;
     case Print_kind: // epxr? dest, expr *values, bool nl
-      printf("Print\n"); break;
+      break;
     case For_kind: // expr target, expr, iter, stmt* body, stmt* orelse
-      printf("For\n"); break;
+      break;
     case While_kind: // expr test, stmt*body, stmt*orelse
-      printf("While\n"); break;
+      break;
     case If_kind: // expr tet, stmt* body, stmt* orelse
-      printf("If\n"); break;
+      break;
     case With_kind: // expr content_expr, expr? optional_vars, stmt *body
-      printf("With\n"); break;
+      break;
     case Raise_kind: // expr? type, expr? int, expr? tback
-      printf("Raise\n"); break;
+      break;
     case TryExcept_kind: // stmt* body, excepthandler *handlers, stmt *orelse
-      printf("TryExcept\n"); break;
+      break;
     case TryFinally_kind: // stmt *body, stmt *finalbody
-      printf("TryFinally\n"); break;
+      break;
     case Assert_kind: // expr test, expr? msg
-      printf("Assert\n"); break;
+      break;
     case Import_kind: // alias* name
-      printf("Import\n"); break;
+      break;
     case ImportFrom_kind: // identifier module, alias *names, int? level
-      printf("ImportFrom\n"); break;
+      break;
     case Exec_kind: // expr body, expr? globals, expr? locals
-      printf("Exec\n"); break;
+      break;
     case Global_kind: // identifier* names
-      printf("Global\n"); break;
+      break;
     case Expr_kind: // expr value
-      printf("Expr\n"); break;
+      break;
     case Pass_kind:
-      printf("Pass\n"); break;
+      break;
     case Break_kind:
-      printf("Break\n"); break;
+      break;
     case Continue_kind:
-      printf("Continue\n"); break;
       break;
   }
+  exit_scope(s);
   return 0;
 }
 
@@ -852,44 +865,45 @@ build_if1(expr_ty e) {
   RECURSE(e, build_if1);
   switch (e->kind) {
     case BoolOp_kind: // boolop op, expr* values
-      printf("BoolOp\n"); break;
+      break;
     case BinOp_kind: // expr left, operator op, expr right
-      printf("BinOp\n"); break;
+      break;
     case UnaryOp_kind: // unaryop op, expr operand
-      printf("UnaryOp\n"); break;
+      break;
     case Lambda_kind: // arguments args, expr body
-      printf("Lambda\n"); break;
+      break;
     case IfExp_kind: // expr test, expr body, expr orelse
-      printf("IfExp\n"); break;
+      break;
     case Dict_kind: // expr* keys, expr* values
-      printf("Dict\n"); break;
+      break;
     case ListComp_kind: // expr elt, comprehension* generators
-      printf("ListComp\n"); break;
+      break;
     case GeneratorExp_kind: // expr elt, comprehension* generators
-      printf("GeneratorExp\n"); break;
+      break;
     case Yield_kind: // expr? value
-      printf("Yield\n"); break;
+      break;
     case Compare_kind: // expr left, cmpop* ops, expr* comparators
-      printf("Compare\n"); break;
+      break;
     case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
-      printf("Call\n"); break;
+      break;
     case Repr_kind: // expr value
-      printf("Repr\n"); break;
+      break;
     case Num_kind: // object n) -- a number as a PyObject
-      printf("Num\n"); break;
+      break;
     case Str_kind: // string s) -- need to specify raw, unicode, etc
-      printf("Str\n"); break;
+      break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
-      printf("Attribute\n"); break;
+      break;
     case Subscript_kind: // expr value, slice slice, expr_context ctx
-      printf("Subscript\n"); break;
+      break;
     case Name_kind: // identifier id, expr_context ctx
-      printf("Name\n"); break;
+      break;
     case List_kind: // expr* elts, expr_context ctx
-      printf("List\n"); break;
+      break;
     case Tuple_kind: // expr *elts, expr_context ctx
-      printf("Tuple\n"); break;
+      break;
   }
+  exit_scope(e);
   return 0;
 }
 
@@ -901,13 +915,16 @@ static int build_if1_stmts(asdl_seq *stmts) {
 
 static int
 build_if1(mod_ty mod) {
+  int r = 0;
+  enter_scope(mod);
   switch (mod->kind) {
-    case Module_kind: return build_if1_stmts(mod->v.Module.body);
-    case Expression_kind: return build_if1(mod->v.Expression.body);
-    case Interactive_kind: return build_if1_stmts(mod->v.Interactive.body);
+    case Module_kind: r = build_if1_stmts(mod->v.Module.body); break;
+    case Expression_kind: r = build_if1(mod->v.Expression.body); break;
+    case Interactive_kind: r = build_if1_stmts(mod->v.Interactive.body); break;
     case Suite_kind: assert(!"handled");
   }
-  return 0;
+  exit_scope(mod);
+  return r;
 }
 
 int 
