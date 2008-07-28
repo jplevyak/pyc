@@ -54,4 +54,6 @@ class PycAST : public IFAAST {
   PycAST();
 };
 
+int ast_to_if1(mod_ty mod);
+
 #endif

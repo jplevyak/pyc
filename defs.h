@@ -27,7 +27,6 @@ extern "C" {
 #include "python_ifa.h"
 
 void get_version(char *);
-int ast_to_if1(mod_ty mod, struct symtable *pyc_symtable);
 
 EXTERN int fgraph EXTERN_INIT(0);
 EXTERN int fdump_html EXTERN_INIT(0);

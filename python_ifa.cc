@@ -5,18 +5,19 @@
 
 /* TODO
    move static variables into an object
+   "__bases__" "__class__" "super"
  */
+
+#define V1 if (verbose_level > 0)
 
 #define OPERATOR_CHAR(_c) \
 (((_c > ' ' && _c < '0') || (_c > '9' && _c < 'A') || \
   (_c > 'Z' && _c < 'a') || (_c > 'z')) &&            \
    _c != '_'&& _c != '?' && _c != '$')                \
 
-static Map<Symbol *, PycSymbol *> symmap;
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
 
-static struct symtable *symtab = 0;
 static int finalized_symbols = 0;
 
 static inline PycAST *getAST(stmt_ty s) {
@@ -37,15 +38,6 @@ static inline PycAST *getAST(expr_ty e) {
   return ast;
 }
 
-static inline PycSymbol *getSym(Symbol *s) {
-  PycSymbol *symbol = symmap.get(s);
-  if (symbol) return symbol;
-  symbol = new PycSymbol;
-  symbol->symbol = s;
-  symmap.put(s, symbol);
-  return symbol;
-}
-
 PycSymbol::PycSymbol() : symbol(0) {
 }
 
@@ -61,31 +53,22 @@ PycSymbol::clone() {
 
 char* 
 PycSymbol::pathname() {
-  if (symbol && symbol->ste_table->st_filename)
-    return (char*)symbol->ste_table->st_filename;
-  else
-    return 0;
+  return 0;
 }
 
 int 
 PycSymbol::line() {
-  if (symbol && symbol->ste_lineno)
-    return symbol->ste_lineno;
-  else
-    return 0;
+  return 0;
 }
 
 int 
-PycSymbol::source_line() { // TODO: return 0 for builtin code
+PycSymbol::source_line() {
   return line();
 }
 
 int 
 PycSymbol::ast_id() {
-  if (symbol)
-    return PyInt_AS_LONG(symbol->ste_id);
-  else
-    return 0;
+  return 0;
 }
 
 PycAST::PycAST() : xstmt(0), xexpr(0), code(0), sym(0), rval(0) {
@@ -167,35 +150,9 @@ new_PycSymbol(char *name) {
 }
 
 static PycSymbol *
-new_PycSymbol(Symbol *symbol) {
-  assert(symbol);
-  char *name = 0;
-  PycSymbol *s = symmap.get(symbol);
-  if (s)
-    return s;
-  name = PyString_AS_STRING(symbol->ste_name);
-  s = new_PycSymbol(name);
-  s->symbol = symbol;
-  symmap.put(symbol, s);
-  return s;
-}
-
-static PycSymbol *
-new_PycSymbol(Symbol *symbol, Sym *sym) {
-  assert(symbol);
-  char *name = 0;
-  name = PyString_AS_STRING(symbol->ste_name);
-  PycSymbol *s = (PycSymbol*)sym->asymbol;
-  if (!s) {
-    s = new PycSymbol;
-    sym->asymbol = s;
-  }
-  assert(!s->symbol || s->symbol == symbol);
-  assert(!s->sym || s->sym == sym);
-  s->sym = sym;
-  s->sym->asymbol = s;  
-  s->symbol = symbol;
-  return s;
+new_PycSymbol(PyObject *o) {
+  char *name = if1_cannonicalize_string(if1, PyString_AS_STRING(o));
+  return new_PycSymbol(name);
 }
 
 PycSymbol * 
@@ -234,12 +191,6 @@ new_sym(char *name = 0, int global = 0) {
   return s;
 }
 
-static Sym *
-make_symbol(char *name) {
-  Sym *s = if1_make_symbol(if1, name);
-  return s;
-}
-
 static void
 new_primitive_type(Sym *&sym, char *name) {
   name = if1_cannonicalize_string(if1, name);
@@ -260,9 +211,7 @@ new_global_variable(Sym *&sym, char *name) {
 }
 
 static void
-new_primitive_object(Sym *&sym, char *name, Sym *sym_type, Symbol *symbol = 0) {
-  if (symbol)
-    sym = symmap.get(symbol)->sym;
+new_primitive_object(Sym *&sym, char *name, Sym *sym_type) {
   new_global_variable(sym, name);
   sym->type_kind = Type_NONE;
   sym->type = sym_type;
@@ -294,17 +243,6 @@ new_lub_type(Sym *&sym, char *name, ...)  {
   } while (s);
   forv_Sym(ss, sym->has)
     ss->inherits_add(sym);
-}
-
-static void
-builtin_Symbol(Symbol *dt, Sym *&sym, char *name) {
-  if (!symmap.get(dt))
-    new_PycSymbol(dt);
-  sym = symmap.get(dt)->sym;
-  if1_set_builtin(if1, sym, name);
-  if (!sym->type_kind)
-    sym->type_kind = Type_PRIMITIVE;
-  assert(symmap.get(dt)->symbol == dt);
 }
 
 static void
@@ -389,10 +327,12 @@ static void add(expr_ty e, Vec<expr_ty> &exprs) { if (e) exprs.add(e); }
 //static void add(stmt_ty s, Vec<stmt_ty> &stmts) { if (s) stmts.add(s); } unused
 
 static void add_comprehension(asdl_seq *comp, Vec<expr_ty> &exprs) {
-  for (int i = 0; i < asdl_seq_LEN(comp); i++) {
+  int l = asdl_seq_LEN(comp);
+  for (int i = 0; i < l; i++) {
     comprehension_ty c = (comprehension_ty)asdl_seq_GET(comp, i);
     add(c->target, exprs);
-    add(c->iter, exprs);
+    if (i != 0)
+      add(c->iter, exprs);
     add(c->ifs, exprs);
   }
 }
@@ -473,6 +413,9 @@ static void get_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
       add(s->v.Exec.locals, exprs); 
       break;
     case Global_kind: break;
+#if PY_MAJOR_VERSION == 3
+    case Nonlocal_kind: break;
+#endif
     case Expr_kind: add(s->v.Expr.value, exprs); break;
     case Pass_kind:
     case Break_kind:
@@ -506,6 +449,22 @@ static void get_pre_scope_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exp
     case Lambda_kind:
       add(e->v.Lambda.args->defaults, exprs);
       break;
+    case Dict_kind: // expr* keys, expr* values
+#if PY_MAJOR_VERSION == 3
+      add(((comprehension_ty)asdl_seq_GET(e->v.Dict.generators, 0))->iter, exprs);
+#endif
+      break;
+    case ListComp_kind: // expr elt, comprehension* generators
+      add(((comprehension_ty)asdl_seq_GET(e->v.ListComp.generators, 0))->iter, exprs);
+      break;
+#if PY_MAJOR_VERSION == 3
+    case SetComp_kind:
+      add(((comprehension_ty)asdl_seq_GET(e->v.SetComp.generators, 0))->iter, exprs);
+      break;
+#endif
+    case GeneratorExp_kind: // expr elt, comprehension* generators
+      add(((comprehension_ty)asdl_seq_GET(e->v.GeneratorExp.generators, 0))->iter, exprs);
+      break;
   }
 }
 
@@ -530,16 +489,28 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
       add(e->v.IfExp.orelse, exprs); 
       break;
     case Dict_kind: // expr* keys, expr* values
+#if PY_MAJOR_VERSION == 3
+      add_comprehension(e->v.Dict.generators, exprs);
+      add(e->v.Dict.value, exprs); 
+      add(e->v.Dict.key, exprs); 
+#else
       add(e->v.Dict.keys, exprs); 
       add(e->v.Dict.values, exprs); 
+#endif
       break;
     case ListComp_kind: // expr elt, comprehension* generators
-      add(e->v.ListComp.elt, exprs); 
       add_comprehension(e->v.ListComp.generators, exprs);
+      add(e->v.ListComp.elt, exprs); 
       break;
+#if PY_MAJOR_VERSION == 3
+    case SetComp_kind:
+      add_comprehension(e->v.SetComp.generators, exprs);
+      add(e->v.ListComp.elt, exprs); 
+      break;
+#endif
     case GeneratorExp_kind: // expr elt, comprehension* generators
-      add(e->v.GeneratorExp.elt, exprs); 
       add_comprehension(e->v.GeneratorExp.generators, exprs);
+      add(e->v.GeneratorExp.elt, exprs); 
       break;
     case Yield_kind: // expr? value
       add(e->v.Yield.value, exprs); break;
@@ -569,228 +540,158 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
 }
 
 struct PycScope : public gc {
-  Symbol *ste;
-  PyObject *u_private;
   Map<char *, PycSymbol*> map;
 };
 
-static PycScope *scope = 0;
-static Vec<PycScope *> scope_stack;
+struct PycContext : public gc {
+  int lineno;
+  Vec<PycScope *> scope_stack;
+  PycContext() : lineno(-1) {}
+};
 
-static int enter_scope(void *key) {
-  if (scope) scope_stack.add(scope);
-  scope = new PycScope;
-  scope->ste = PySymtable_Lookup(symtab, key);
-  if (scope_stack.n) 
-    scope->u_private = scope_stack.last()->u_private;
-  else
-    scope->u_private = 0;
-  assert(scope->ste);
-  return 1;
+static void enter_scope(PycContext &ctx) {
+  ctx.scope_stack.add(new PycScope);
 }
 
-static int enter_scope(stmt_ty x) {
+static void enter_scope(stmt_ty x, PycContext &ctx) {
   if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
-    return enter_scope((void*)x);
-  return 0;
+    enter_scope(ctx);
 }
 
-static int enter_scope(expr_ty x) {
-  if (x->kind == Lambda_kind || x->kind == GeneratorExp_kind)
-    return enter_scope((void*)x);
-  return 0;
+static int needs_scope(expr_ty x) {
+  return (x->kind == Lambda_kind || x->kind == GeneratorExp_kind ||
+          x->kind == Dict_kind || x->kind == ListComp_kind 
+#if PY_MAJOR_VERSION == 3
+          x->kind == SetComp_kind
+#endif
+    );
 }
 
-static int enter_scope(mod_ty x) { return enter_scope((void*)x); }
-static void exit_scope() { scope = scope_stack.pop(); }
-static void exit_scope(mod_ty x) { exit_scope(); }
+static void enter_scope(expr_ty x, PycContext &ctx) {
+  if (needs_scope(x)) enter_scope(ctx);
+}
 
-static void exit_scope(stmt_ty x) {
+static void exit_scope(PycContext &ctx) { ctx.scope_stack.pop(); }
+
+static void exit_scope(stmt_ty x, PycContext &ctx) {
   if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
-    exit_scope();
+    exit_scope(ctx);
 }
 
-static void exit_scope(expr_ty x) {
-  if (x->kind == Lambda_kind || x->kind == GeneratorExp_kind)
-    exit_scope();
+static void exit_scope(expr_ty x, PycContext &ctx) {
+  if (needs_scope(x)) exit_scope(ctx);
 }
 
-#define AST_RECURSE(_ast, _fn) \
+static void add_PycSymbol(PycContext &ctx, PyObject *o) {
+  char *name = if1_cannonicalize_string(if1, PyString_AS_STRING(o));
+  ctx.scope_stack.last()->map.put(name, new_PycSymbol(o));
+}
+
+static void add_PycSymbol(PycContext &ctx, char *n) {
+  char *name = if1_cannonicalize_string(if1, n);
+  ctx.scope_stack.last()->map.put(name, new_PycSymbol(name));
+}
+
+static int build_syms(stmt_ty s, PycContext &ctx);
+static int build_syms(expr_ty e, PycContext &ctx);
+
+#define AST_RECURSE(_ast, _fn, _ctx)                 \
   PycAST *ast = getAST(_ast); \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
-    for_Vec(stmt_ty, x, stmts) { _fn(x); ast->pre_scope_children.add(getAST(x)); }  \
-    for_Vec(expr_ty, x, exprs) { _fn(x); ast->pre_scope_children.add(getAST(x)); }  \
+    for_Vec(stmt_ty, x, stmts) { _fn(x, _ctx); ast->pre_scope_children.add(getAST(x)); } \
+    for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->pre_scope_children.add(getAST(x)); } \
   } \
-  enter_scope(_ast); \
+  enter_scope(_ast, _ctx);                                                   \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_next(_ast, stmts, exprs); \
-    for_Vec(stmt_ty, x, stmts) { _fn(x); ast->children.add(getAST(x)); }  \
-    for_Vec(expr_ty, x, exprs) { _fn(x); ast->children.add(getAST(x)); }  \
+    for_Vec(stmt_ty, x, stmts) { _fn(x, _ctx); ast->children.add(getAST(x)); } \
+    for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->children.add(getAST(x)); } \
   } \
 
-static int build_syms(stmt_ty s);
-static int build_syms(expr_ty e);
-
-// Python name resolution is odd. It is flow sensitive.
-// Rather than implement it as flow sensitive, I will convert it
-// to static and produce a warning.
-Sym *resolve_Sym(PyObject *name) {
-  Sym *sym = 0;
-  PyObject *mangled = _Py_Mangle(scope->u_private, name);
-  (void)mangled;
-  int ty = PyST_GetScope(scope->ste, mangled);
-  switch(ty) {
-    case PYTHON_FREE: // LOAD_DEREF from u_freevars
-      printf("PYTHON_FREE\n");
-    case CELL: // LOAD_DEREF from u_cellvars
-      printf("CELL\n");
-    case LOCAL: // if c->u->u_ste->ste_type == FunctionBlock FAST else NAME
-      printf("LOCAL ");
-      if (scope->ste->ste_type != FunctionBlock)
-        goto Lname;
-      printf("\n");
-    case GLOBAL_IMPLICIT: // if function && optimized GLOBAL else NAME
-      printf("GLOBAL_IMPLICIT ");
-      if (scope->ste->ste_type != FunctionBlock || scope->ste->ste_unoptimized)
-        goto Lname;
-      // fall through
-    case GLOBAL_EXPLICIT: // GLOBAL
-      printf("GLOBAL\n");
-      break;
-    default: // LOAD_NAME
-      // try local first, then global
-    Lname:;
-      printf("LOAD_NAME\n");
-  }
-  Py_DECREF(mangled);
-  return sym;
-}
-
 static int
-build_syms(stmt_ty s) {
-  AST_RECURSE(s, build_syms);
+build_syms(stmt_ty s, PycContext &ctx) {
+  AST_RECURSE(s, build_syms, ctx);
+  ctx.lineno = s->lineno;
   switch (s->kind) {
+    case Delete_kind: // expr * targets TODO
+    default: break;
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      printf("FunctionDef %s\n", PyString_AsString(s->v.FunctionDef.name));
-      resolve_Sym(s->v.FunctionDef.name);
+      add_PycSymbol(ctx, s->v.FunctionDef.name);
       break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      printf("ClassDef\n"); break;
-    case Return_kind: // expr? value
-      printf("Return\n"); break;
-    case Delete_kind: // expr * targets
-      printf("Delete\n"); break;
-    case Assign_kind: // expr* targets, expr value
-      printf("Assign\n"); break;
-    case AugAssign_kind: // expr target, operator op, expr value
-      printf("AugAssign\n"); break;
-    case Print_kind: // epxr? dest, expr *values, bool nl
-      printf("Print\n"); break;
-    case For_kind: // expr target, expr, iter, stmt* body, stmt* orelse
-      printf("For\n"); break;
-    case While_kind: // expr test, stmt*body, stmt*orelse
-      printf("While\n"); break;
-    case If_kind: // expr tet, stmt* body, stmt* orelse
-      printf("If\n"); break;
-    case With_kind: // expr content_expr, expr? optional_vars, stmt *body
-      printf("With\n"); break;
-    case Raise_kind: // expr? type, expr? int, expr? tback
-      printf("Raise\n"); break;
-    case TryExcept_kind: // stmt* body, excepthandler *handlers, stmt *orelse
-      printf("TryExcept\n"); break;
-    case TryFinally_kind: // stmt *body, stmt *finalbody
-      printf("TryFinally\n"); break;
-    case Assert_kind: // expr test, expr? msg
-      printf("Assert\n"); break;
-    case Import_kind: // alias* name
-      printf("Import\n"); break;
-    case ImportFrom_kind: // identifier module, alias *names, int? level
-      printf("ImportFrom\n"); break;
-    case Exec_kind: // expr body, expr? globals, expr? locals
-      printf("Exec\n"); break;
-    case Global_kind: // identifier* names
-      printf("Global\n"); break;
-    case Expr_kind: // expr value
-      printf("Expr\n"); break;
-    case Pass_kind:
-      printf("Pass\n"); break;
-    case Break_kind:
-      printf("Break\n"); break;
-    case Continue_kind:
-      printf("Continue\n"); break;
+      add_PycSymbol(ctx, s->v.ClassDef.name);
       break;
+    case Global_kind: // identifier* names
+      for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
+        add_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i));
+      break;
+#if PY_MAJOR_VERSION == 3
+    case Nonlocal_kind: 
+      for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
+        add_PycSymbol(ctx, asdl_seq_GET(s->v.Global.names, i));
+      break;
+#endif
   }
-  exit_scope(s);
+  exit_scope(s, ctx);
   return 0;
+}
+
+static void build_syms_comprehension(PycContext &ctx,
+                                     asdl_seq *generators, expr_ty elt, expr_ty value) {
 }
 
 static int
-build_syms(expr_ty e) {
-  AST_RECURSE(e, build_syms);
+build_syms(expr_ty e, PycContext &ctx) {
+  AST_RECURSE(e, build_syms, ctx);
+  ctx.lineno = e->lineno;
   switch (e->kind) {
-    case BoolOp_kind: // boolop op, expr* values
-      printf("BoolOp\n"); break;
-    case BinOp_kind: // expr left, operator op, expr right
-      printf("BinOp\n"); break;
-    case UnaryOp_kind: // unaryop op, expr operand
-      printf("UnaryOp\n"); break;
+    default: break;
     case Lambda_kind: // arguments args, expr body
-      printf("Lambda\n"); break;
-    case IfExp_kind: // expr test, expr body, expr orelse
-      printf("IfExp\n"); break;
-    case Dict_kind: // expr* keys, expr* values
-      printf("Dict\n"); break;
-    case ListComp_kind: // expr elt, comprehension* generators
-      printf("ListComp\n"); break;
-    case GeneratorExp_kind: // expr elt, comprehension* generators
-      printf("GeneratorExp\n"); break;
-    case Yield_kind: // expr? value
-      printf("Yield\n"); break;
-    case Compare_kind: // expr left, cmpop* ops, expr* comparators
-      printf("Compare\n"); break;
-    case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
-      printf("Call\n"); break;
-    case Repr_kind: // expr value
-      printf("Repr\n"); break;
-    case Num_kind: // object n) -- a number as a PyObject
-      printf("Num\n"); break;
-    case Str_kind: // string s) -- need to specify raw, unicode, etc
-      printf("Str\n"); break;
-    case Attribute_kind: // expr value, identifier attr, expr_context ctx
-      printf("Attribute\n"); break;
-    case Subscript_kind: // expr value, slice slice, expr_context ctx
-      printf("Subscript\n"); break;
-    case Name_kind: // identifier id, expr_context ctx
-      printf("Name %s\n", PyString_AsString(e->v.Name.id));
-      resolve_Sym(e->v.Name.id);
+      add_PycSymbol(ctx, "lambda");
       break;
-    case List_kind: // expr* elts, expr_context ctx
-      printf("List\n"); break;
-    case Tuple_kind: // expr *elts, expr_context ctx
-      printf("Tuple\n"); break;
+    case Name_kind: // identifier id, expr_context ctx
+      add_PycSymbol(ctx, e->v.Name.id);
+      break;
+    case Dict_kind: // expr* keys, expr* values or comprehension* generators, key, value
+#if PY_MAJOR_VERSION == 3
+      build_syms_comprehension(ctx, e->v.Dict.generators, e->v.Dict.key, e->v.Dict.value);
+#endif
+      break;
+    case ListComp_kind: // expr elt, comprehension* generators
+      build_syms_comprehension(ctx, e->v.ListComp.generators, e->v.ListComp.elt, 0);
+      break;
+#if PY_MAJOR_VERSION == 3
+    case SetComp_kind: // expr elt, comprehension* generators
+      build_syms_comprehension(ctx, e->v.SetComp.generators, e->v.SetComp.elt, 0);
+      break;
+#endif
+    case GeneratorExp_kind: // expr elt, comprehension* generators
+      build_syms_comprehension(ctx, e->v.GeneratorExp.generators, e->v.GeneratorExp.elt, 0);
+      break;
   }
-  exit_scope(e);
+  exit_scope(e, ctx);
   return 0;
 }
 
-static int build_syms_stmts(asdl_seq *stmts) {
+static int build_syms_stmts(asdl_seq *stmts, PycContext &ctx) {
   for (int i = 0; i < asdl_seq_LEN(stmts); i++)
-    if (build_syms((stmt_ty)asdl_seq_GET(stmts, i))) return -1;
+    if (build_syms((stmt_ty)asdl_seq_GET(stmts, i), ctx)) return -1;
   return 0;
 }
 
 static int
 build_syms(mod_ty mod) {
+  PycContext ctx;
   int r = 0;
-  enter_scope(mod);
+  enter_scope(ctx);
   switch (mod->kind) {
-    case Module_kind: r = build_syms_stmts(mod->v.Module.body); break;
-    case Expression_kind: r = build_syms(mod->v.Expression.body); break;
-    case Interactive_kind: r = build_syms_stmts(mod->v.Interactive.body); break;
+    case Module_kind: r = build_syms_stmts(mod->v.Module.body, ctx); break;
+    case Expression_kind: r = build_syms(mod->v.Expression.body, ctx); break;
+    case Interactive_kind: r = build_syms_stmts(mod->v.Interactive.body, ctx); break;
     case Suite_kind: assert(!"handled");
   }
-  exit_scope(mod);
+  exit_scope(ctx);
   return r;
 }
 
@@ -798,7 +699,6 @@ build_syms(mod_ty mod) {
   PycAST *ast = getAST(_ast); \
   forv_Vec(PycAST, x, ast->pre_scope_children) \
     if (x->xstmt) _fn(x->xstmt); else if (x->xexpr) _fn(x->xexpr); \
-  enter_scope(_ast); \
   forv_Vec(PycAST, x, ast->children) \
     if (x->xstmt) _fn(x->xstmt); else if (x->xexpr) _fn(x->xexpr);
 
@@ -856,7 +756,6 @@ build_if1(stmt_ty s) {
     case Continue_kind:
       break;
   }
-  exit_scope(s);
   return 0;
 }
 
@@ -903,7 +802,6 @@ build_if1(expr_ty e) {
     case Tuple_kind: // expr *elts, expr_context ctx
       break;
   }
-  exit_scope(e);
   return 0;
 }
 
@@ -916,21 +814,18 @@ static int build_if1_stmts(asdl_seq *stmts) {
 static int
 build_if1(mod_ty mod) {
   int r = 0;
-  enter_scope(mod);
   switch (mod->kind) {
     case Module_kind: r = build_if1_stmts(mod->v.Module.body); break;
     case Expression_kind: r = build_if1(mod->v.Expression.body); break;
     case Interactive_kind: r = build_if1_stmts(mod->v.Interactive.body); break;
     case Suite_kind: assert(!"handled");
   }
-  exit_scope(mod);
   return r;
 }
 
 int 
-ast_to_if1(mod_ty module, struct symtable *asymtab) {
+ast_to_if1(mod_ty module) {
   ifa_init(new PycCallbacks);
-  symtab = asymtab;
   if (build_syms(module) < 0) return -1;
   build_builtin_symbols();
   //Vec<Symbol *> types;

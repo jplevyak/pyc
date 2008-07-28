@@ -105,14 +105,8 @@ int main(int argc, char *argv[]) {
     if (!pyc_future)
       error("unable to parse futures for file '%s'", filename);
     else {
-      struct symtable *pyc_symtab = PySymtable_Build(mod, filename, pyc_future);
-      if (!pyc_symtab)
-        error("unable to generate symtab for file '%s'", filename);
-      else {
-        ast_to_if1(mod, pyc_symtab);
-        analyze(filename);
-        PySymtable_Free(pyc_symtab);
-      }
+      ast_to_if1(mod);
+      analyze(filename);
     }
   }
   PyArena_Free(arena);
