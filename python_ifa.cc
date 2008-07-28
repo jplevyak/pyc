@@ -5,7 +5,7 @@
 
 /* TODO
    move static variables into an object
-   "__bases__" "__class__" "super"
+   "__bases__" "__class__" "super", "lambda"
  */
 
 #define V1 if (verbose_level > 0)
@@ -149,11 +149,13 @@ new_PycSymbol(char *name) {
   return s;
 }
 
+#if 0
 static PycSymbol *
 new_PycSymbol(PyObject *o) {
   char *name = if1_cannonicalize_string(if1, PyString_AS_STRING(o));
   return new_PycSymbol(name);
 }
+#endif
 
 PycSymbol * 
 PycSymbol::copy() {
@@ -545,12 +547,15 @@ struct PycScope : public gc {
 
 struct PycContext : public gc {
   int lineno;
+  int depth;
   Vec<PycScope *> scope_stack;
-  PycContext() : lineno(-1) {}
+  PycContext() : lineno(-1), depth(-1) {}
 };
 
 static void enter_scope(PycContext &ctx) {
+  ctx.depth++;
   ctx.scope_stack.add(new PycScope);
+  if (verbose_level) printf("enter scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
 }
 
 static void enter_scope(stmt_ty x, PycContext &ctx) {
@@ -571,7 +576,11 @@ static void enter_scope(expr_ty x, PycContext &ctx) {
   if (needs_scope(x)) enter_scope(ctx);
 }
 
-static void exit_scope(PycContext &ctx) { ctx.scope_stack.pop(); }
+static void exit_scope(PycContext &ctx) { 
+  if (verbose_level) printf("exit scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
+  ctx.scope_stack.pop(); 
+  ctx.depth--;
+}
 
 static void exit_scope(stmt_ty x, PycContext &ctx) {
   if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
@@ -582,20 +591,24 @@ static void exit_scope(expr_ty x, PycContext &ctx) {
   if (needs_scope(x)) exit_scope(ctx);
 }
 
-static void add_PycSymbol(PycContext &ctx, PyObject *o) {
-  char *name = if1_cannonicalize_string(if1, PyString_AS_STRING(o));
-  ctx.scope_stack.last()->map.put(name, new_PycSymbol(o));
+enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
+static char *pyc_scoping_names[] = { "use", "local", "global", "nonlocal" };
+
+static void make_PycSymbol(PycContext &ctx, char *n, int type) {
+  char *name = if1_cannonicalize_string(if1, n);
+  if (verbose_level) printf("%s '%s'\n", pyc_scoping_names[type], name);
+  ctx.scope_stack.last()->map.put(name, new_PycSymbol(name));
 }
 
-static void add_PycSymbol(PycContext &ctx, char *n) {
-  char *name = if1_cannonicalize_string(if1, n);
-  ctx.scope_stack.last()->map.put(name, new_PycSymbol(name));
+static void make_PycSymbol(PycContext &ctx, PyObject *o, int type) {
+  make_PycSymbol(ctx, PyString_AS_STRING(o), type);
 }
 
 static int build_syms(stmt_ty s, PycContext &ctx);
 static int build_syms(expr_ty e, PycContext &ctx);
 
 #define AST_RECURSE(_ast, _fn, _ctx)                 \
+  ctx.lineno = _ast->lineno; \
   PycAST *ast = getAST(_ast); \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
@@ -607,32 +620,30 @@ static int build_syms(expr_ty e, PycContext &ctx);
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_next(_ast, stmts, exprs); \
     for_Vec(stmt_ty, x, stmts) { _fn(x, _ctx); ast->children.add(getAST(x)); } \
     for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->children.add(getAST(x)); } \
-  } \
+  }
 
 static int
 build_syms(stmt_ty s, PycContext &ctx) {
-  AST_RECURSE(s, build_syms, ctx);
-  ctx.lineno = s->lineno;
   switch (s->kind) {
-    case Delete_kind: // expr * targets TODO
     default: break;
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      add_PycSymbol(ctx, s->v.FunctionDef.name);
+      make_PycSymbol(ctx, s->v.FunctionDef.name, PYC_LOCAL);
       break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      add_PycSymbol(ctx, s->v.ClassDef.name);
+      make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL);
       break;
     case Global_kind: // identifier* names
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
-        add_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i));
+        make_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i), PYC_GLOBAL);
       break;
 #if PY_MAJOR_VERSION == 3
     case Nonlocal_kind: 
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
-        add_PycSymbol(ctx, asdl_seq_GET(s->v.Global.names, i));
+        make_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i), PYC_NONLOCAL);
       break;
 #endif
   }
+  AST_RECURSE(s, build_syms, ctx);
   exit_scope(s, ctx);
   return 0;
 }
@@ -643,16 +654,18 @@ static void build_syms_comprehension(PycContext &ctx,
 
 static int
 build_syms(expr_ty e, PycContext &ctx) {
-  AST_RECURSE(e, build_syms, ctx);
-  ctx.lineno = e->lineno;
   switch (e->kind) {
     default: break;
     case Lambda_kind: // arguments args, expr body
-      add_PycSymbol(ctx, "lambda");
+      // make_PycSymbol(ctx, "lambda");
       break;
     case Name_kind: // identifier id, expr_context ctx
-      add_PycSymbol(ctx, e->v.Name.id);
+      make_PycSymbol(ctx, e->v.Name.id, e->v.Name.ctx == Load ? PYC_USE : PYC_LOCAL);
       break;
+  }
+  AST_RECURSE(e, build_syms, ctx);
+  switch (e->kind) {
+    default: break;
     case Dict_kind: // expr* keys, expr* values or comprehension* generators, key, value
 #if PY_MAJOR_VERSION == 3
       build_syms_comprehension(ctx, e->v.Dict.generators, e->v.Dict.key, e->v.Dict.value);
@@ -747,6 +760,9 @@ build_if1(stmt_ty s) {
       break;
     case Global_kind: // identifier* names
       break;
+#if PY_MAJOR_VERSION == 3
+    case Nonlocal_kind: break;
+#endif
     case Expr_kind: // expr value
       break;
     case Pass_kind:
