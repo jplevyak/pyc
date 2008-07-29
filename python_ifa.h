@@ -28,8 +28,6 @@ class PycSymbol : public IFASymbol {
 
   Symbol *symbol;
 
-  uint implicit_global : 1;
-
   PycSymbol();
 };
 

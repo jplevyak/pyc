@@ -36,7 +36,7 @@ static inline PycAST *getAST(expr_ty e) {
   return ast;
 }
 
-PycSymbol::PycSymbol() : symbol(0), implicit_global(0) {
+PycSymbol::PycSymbol() : symbol(0) {
 }
 
 char *
