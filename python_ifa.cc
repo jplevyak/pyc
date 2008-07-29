@@ -13,6 +13,8 @@
   (_c > 'Z' && _c < 'a') || (_c > 'z')) &&            \
    _c != '_'&& _c != '?' && _c != '$')                \
 
+#define DBG if (debug_level)
+
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
 
@@ -560,7 +562,7 @@ static void enter_scope(PycContext &ctx) {
     ctx.saved_scopes.put(ctx.node, saved);
   }
   ctx.scope_stack.add(saved);
-  if (debug_level) printf("enter scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
+  DBG printf("enter scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
 }
 
 static void enter_scope(stmt_ty x, PycContext &ctx) {
@@ -584,7 +586,7 @@ static void enter_scope(expr_ty x, PycContext &ctx) {
 }
 
 static void exit_scope(PycContext &ctx) { 
-  if (debug_level) printf("exit scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
+  DBG printf("exit scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
   ctx.scope_stack.pop(); 
   ctx.depth--;
 }
@@ -608,21 +610,21 @@ static char *pyc_scoping_names[] = { "use", "local", "global", "nonlocal" };
 #define GLOBAL_DEF ((PycSymbol*)(intptr_t)-3)
 #define NONLOCAL_DEF ((PycSymbol*)(intptr_t)-4)
 
-static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, int *explicitly = 0) {
+static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, int *type = 0) {
   PycSymbol *l = 0;
-  int i = ctx.scope_stack.n - 1, xexplicitly = 0;
+  int i = ctx.scope_stack.n - 1, xtype = 0;
   for (;i >= 0; i--) {
     bool top = i == ctx.scope_stack.n - 1;
     if ((l = ctx.scope_stack.v[i]->map.get(name))) {
       if (l == NONLOCAL_USE || l == NONLOCAL_DEF) {
-        if (l == NONLOCAL_DEF && top)
-          xexplicitly = 1;
+        if (top)
+          xtype = (l == NONLOCAL_DEF) ? 2 : 1;
         continue;
       }
       if (l == GLOBAL_USE || l == GLOBAL_DEF) {
         assert(i); 
-        if (l == GLOBAL_DEF && top)
-          xexplicitly = 1;
+        if (top)
+          xtype = (l == GLOBAL_DEF) ? 2 : 1;
         i = 1; 
         continue; 
       }
@@ -630,7 +632,7 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
     }
   }
   if (level) *level = i;
-  if (explicitly) *explicitly = xexplicitly;
+  if (type) *type = xtype;
   return l;
 }
 
@@ -638,18 +640,20 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0) {
   return find_PycSymbol(ctx, if1_cannonicalize_string(if1, PyString_AS_STRING(o)), level);
 }
 
-static void make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS type) {
+static void make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
   char *name = if1_cannonicalize_string(if1, n);
-  if (debug_level) printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)type], name);
-  int level = 0, explicitly = 0;
-  PycSymbol *l = find_PycSymbol(ctx, name, &level, &explicitly);
+  DBG printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
+  int level = 0, type = 0;
+  PycSymbol *l = find_PycSymbol(ctx, name, &level, &type);
   bool local = l && (ctx.scope_stack.n - 1 == level);
   bool global = l && !level;
   bool nonlocal = l && level && !local;
-  switch (type) {
+  bool explicitly = type == 2;
+  bool implicitly = type == 1;
+  switch (scoping) {
     case PYC_USE: {
       if (!l) goto Llocal;
-      if (!local) {
+      if (!local && !explicitly) {
         if (global)
           ctx.scope_stack.last()->map.put(name, GLOBAL_USE);
         else
@@ -660,17 +664,18 @@ static void make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS type) {
     case PYC_LOCAL:
     Llocal:
       if (local || explicitly) break;
-      if (l)
+      if (implicitly)
         fail("error line %d, '%s' redefined as local", ctx.lineno, name);
       ctx.scope_stack.last()->map.put(name, new_PycSymbol(name));
       break;
     case PYC_GLOBAL:
-      if (l && !global && (local || explicitly))
+      if (l && !global && (local || explicitly || implicitly))
         fail("error line %d, '%s' redefined as global", ctx.lineno, name);
-      ctx.scope_stack.last()->map.put(name, GLOBAL_DEF);
+      if (!(global && explicitly))
+        ctx.scope_stack.last()->map.put(name, GLOBAL_DEF);
       break;
     case PYC_NONLOCAL:
-      if (!nonlocal)
+      if (!l && !nonlocal && (local || explicitly || implicitly))
         fail("error line %d, '%s' nonlocal redefined or not found", ctx.lineno, name);
       ctx.scope_stack.last()->map.put(name, NONLOCAL_DEF);
       break;
@@ -897,8 +902,8 @@ build_if1(expr_ty e, PycContext &ctx) {
     {
       int level = 0;
       PycSymbol *s = find_PycSymbol(ctx, e->v.Name.id, &level);
-      printf("%sfound '%s' at level %d\n", s ? "" : "not ",
-             if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
+      DBG printf("%sfound '%s' at level %d\n", s ? "" : "not ",
+                 if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
       break;
     }
     case List_kind: // expr* elts, expr_context ctx
