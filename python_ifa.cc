@@ -8,8 +8,6 @@
    "__bases__" "__class__" "super", "lambda"
  */
 
-#define V1 if (verbose_level > 0)
-
 #define OPERATOR_CHAR(_c) \
 (((_c > ' ' && _c < '0') || (_c > '9' && _c < 'A') || \
   (_c > 'Z' && _c < 'a') || (_c > 'z')) &&            \
@@ -38,7 +36,7 @@ static inline PycAST *getAST(expr_ty e) {
   return ast;
 }
 
-PycSymbol::PycSymbol() : symbol(0) {
+PycSymbol::PycSymbol() : symbol(0), implicit_global(0) {
 }
 
 char *
@@ -548,17 +546,25 @@ struct PycScope : public gc {
 struct PycContext : public gc {
   int lineno;
   int depth;
+  void *node;
   Vec<PycScope *> scope_stack;
+  Map<void *, PycScope*> saved_scopes;
   PycContext() : lineno(-1), depth(-1) {}
 };
 
 static void enter_scope(PycContext &ctx) {
   ctx.depth++;
-  ctx.scope_stack.add(new PycScope);
-  if (verbose_level) printf("enter scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
+  PycScope *saved = ctx.saved_scopes.get(ctx.node);
+  if (!saved) {
+    saved = new PycScope;
+    ctx.saved_scopes.put(ctx.node, saved);
+  }
+  ctx.scope_stack.add(saved);
+  if (debug_level) printf("enter scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
 }
 
 static void enter_scope(stmt_ty x, PycContext &ctx) {
+  ctx.node = x;
   if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
     enter_scope(ctx);
 }
@@ -573,34 +579,105 @@ static int needs_scope(expr_ty x) {
 }
 
 static void enter_scope(expr_ty x, PycContext &ctx) {
+  ctx.node = x;
   if (needs_scope(x)) enter_scope(ctx);
 }
 
 static void exit_scope(PycContext &ctx) { 
-  if (verbose_level) printf("exit scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
+  if (debug_level) printf("exit scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
   ctx.scope_stack.pop(); 
   ctx.depth--;
 }
 
 static void exit_scope(stmt_ty x, PycContext &ctx) {
+  ctx.node = x;
   if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
     exit_scope(ctx);
 }
 
 static void exit_scope(expr_ty x, PycContext &ctx) {
+  ctx.node = x;
   if (needs_scope(x)) exit_scope(ctx);
 }
 
 enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 static char *pyc_scoping_names[] = { "use", "local", "global", "nonlocal" };
 
-static void make_PycSymbol(PycContext &ctx, char *n, int type) {
-  char *name = if1_cannonicalize_string(if1, n);
-  if (verbose_level) printf("%s '%s'\n", pyc_scoping_names[type], name);
-  ctx.scope_stack.last()->map.put(name, new_PycSymbol(name));
+#define GLOBAL_USE ((PycSymbol*)(intptr_t)-1)
+#define NONLOCAL_USE ((PycSymbol*)(intptr_t)-2)
+#define GLOBAL_DEF ((PycSymbol*)(intptr_t)-3)
+#define NONLOCAL_DEF ((PycSymbol*)(intptr_t)-4)
+
+static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, int *explicitly = 0) {
+  PycSymbol *l = 0;
+  int i = ctx.scope_stack.n - 1, xexplicitly = 0;
+  for (;i >= 0; i--) {
+    bool top = i == ctx.scope_stack.n - 1;
+    if ((l = ctx.scope_stack.v[i]->map.get(name))) {
+      if (l == NONLOCAL_USE || l == NONLOCAL_DEF) {
+        if (l == NONLOCAL_DEF && top)
+          xexplicitly = 1;
+        continue;
+      }
+      if (l == GLOBAL_USE || l == GLOBAL_DEF) {
+        assert(i); 
+        if (l == GLOBAL_DEF && top)
+          xexplicitly = 1;
+        i = 1; 
+        continue; 
+      }
+      break;
+    }
+  }
+  if (level) *level = i;
+  if (explicitly) *explicitly = xexplicitly;
+  return l;
 }
 
-static void make_PycSymbol(PycContext &ctx, PyObject *o, int type) {
+static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0) {
+  return find_PycSymbol(ctx, if1_cannonicalize_string(if1, PyString_AS_STRING(o)), level);
+}
+
+static void make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS type) {
+  char *name = if1_cannonicalize_string(if1, n);
+  if (debug_level) printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)type], name);
+  int level = 0, explicitly = 0;
+  PycSymbol *l = find_PycSymbol(ctx, name, &level, &explicitly);
+  bool local = l && (ctx.scope_stack.n - 1 == level);
+  bool global = l && !level;
+  bool nonlocal = l && level && !local;
+  switch (type) {
+    case PYC_USE: {
+      if (!l) goto Llocal;
+      if (!local) {
+        if (global)
+          ctx.scope_stack.last()->map.put(name, GLOBAL_USE);
+        else
+          ctx.scope_stack.last()->map.put(name, NONLOCAL_USE);
+      }
+      break;
+    }
+    case PYC_LOCAL:
+    Llocal:
+      if (local || explicitly) break;
+      if (l)
+        fail("error line %d, '%s' redefined as local", ctx.lineno, name);
+      ctx.scope_stack.last()->map.put(name, new_PycSymbol(name));
+      break;
+    case PYC_GLOBAL:
+      if (l && !global && (local || explicitly))
+        fail("error line %d, '%s' redefined as global", ctx.lineno, name);
+      ctx.scope_stack.last()->map.put(name, GLOBAL_DEF);
+      break;
+    case PYC_NONLOCAL:
+      if (!nonlocal)
+        fail("error line %d, '%s' nonlocal redefined or not found", ctx.lineno, name);
+      ctx.scope_stack.last()->map.put(name, NONLOCAL_DEF);
+      break;
+  }
+}
+
+static void make_PycSymbol(PycContext &ctx, PyObject *o, PYC_SCOPINGS type) {
   make_PycSymbol(ctx, PyString_AS_STRING(o), type);
 }
 
@@ -608,7 +685,6 @@ static int build_syms(stmt_ty s, PycContext &ctx);
 static int build_syms(expr_ty e, PycContext &ctx);
 
 #define AST_RECURSE(_ast, _fn, _ctx)                 \
-  ctx.lineno = _ast->lineno; \
   PycAST *ast = getAST(_ast); \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
@@ -624,6 +700,8 @@ static int build_syms(expr_ty e, PycContext &ctx);
 
 static int
 build_syms(stmt_ty s, PycContext &ctx) {
+  ctx.node = s;
+  ctx.lineno = s->lineno;
   switch (s->kind) {
     default: break;
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
@@ -654,6 +732,8 @@ static void build_syms_comprehension(PycContext &ctx,
 
 static int
 build_syms(expr_ty e, PycContext &ctx) {
+  ctx.node = e;
+  ctx.lineno = e->lineno;
   switch (e->kind) {
     default: break;
     case Lambda_kind: // arguments args, expr body
@@ -694,9 +774,9 @@ static int build_syms_stmts(asdl_seq *stmts, PycContext &ctx) {
 }
 
 static int
-build_syms(mod_ty mod) {
-  PycContext ctx;
+build_syms(mod_ty mod, PycContext &ctx) {
   int r = 0;
+  ctx.node = mod;
   enter_scope(ctx);
   switch (mod->kind) {
     case Module_kind: r = build_syms_stmts(mod->v.Module.body, ctx); break;
@@ -711,15 +791,16 @@ build_syms(mod_ty mod) {
 #define RECURSE(_ast, _fn) \
   PycAST *ast = getAST(_ast); \
   forv_Vec(PycAST, x, ast->pre_scope_children) \
-    if (x->xstmt) _fn(x->xstmt); else if (x->xexpr) _fn(x->xexpr); \
+    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx); \
+  enter_scope(_ast, ctx); \
   forv_Vec(PycAST, x, ast->children) \
-    if (x->xstmt) _fn(x->xstmt); else if (x->xexpr) _fn(x->xexpr);
+    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx);
 
-static int build_if1(stmt_ty s);
-static int build_if1(expr_ty e);
+static int build_if1(stmt_ty s, PycContext &ctx);
+static int build_if1(expr_ty e, PycContext &ctx);
 
 static int
-build_if1(stmt_ty s) {
+build_if1(stmt_ty s, PycContext &ctx) {
   RECURSE(s, build_if1);
   switch (s->kind) {
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
@@ -772,11 +853,12 @@ build_if1(stmt_ty s) {
     case Continue_kind:
       break;
   }
+  exit_scope(s, ctx);
   return 0;
 }
 
 static int
-build_if1(expr_ty e) {
+build_if1(expr_ty e, PycContext &ctx) {
   RECURSE(e, build_if1);
   switch (e->kind) {
     case BoolOp_kind: // boolop op, expr* values
@@ -812,37 +894,48 @@ build_if1(expr_ty e) {
     case Subscript_kind: // expr value, slice slice, expr_context ctx
       break;
     case Name_kind: // identifier id, expr_context ctx
+    {
+      int level = 0;
+      PycSymbol *s = find_PycSymbol(ctx, e->v.Name.id, &level);
+      printf("%sfound '%s' at level %d\n", s ? "" : "not ",
+             if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
       break;
+    }
     case List_kind: // expr* elts, expr_context ctx
       break;
     case Tuple_kind: // expr *elts, expr_context ctx
       break;
   }
+  exit_scope(e, ctx);
   return 0;
 }
 
-static int build_if1_stmts(asdl_seq *stmts) {
+static int build_if1_stmts(asdl_seq *stmts, PycContext &ctx) {
   for (int i = 0; i < asdl_seq_LEN(stmts); i++)
-    if (build_if1((stmt_ty)asdl_seq_GET(stmts, i))) return -1;
+    if (build_if1((stmt_ty)asdl_seq_GET(stmts, i), ctx)) return -1;
   return 0;
 }
 
 static int
-build_if1(mod_ty mod) {
+build_if1(mod_ty mod, PycContext &ctx) {
   int r = 0;
+  ctx.node = mod;
+  enter_scope(ctx);
   switch (mod->kind) {
-    case Module_kind: r = build_if1_stmts(mod->v.Module.body); break;
-    case Expression_kind: r = build_if1(mod->v.Expression.body); break;
-    case Interactive_kind: r = build_if1_stmts(mod->v.Interactive.body); break;
+    case Module_kind: r = build_if1_stmts(mod->v.Module.body, ctx); break;
+    case Expression_kind: r = build_if1(mod->v.Expression.body, ctx); break;
+    case Interactive_kind: r = build_if1_stmts(mod->v.Interactive.body, ctx); break;
     case Suite_kind: assert(!"handled");
   }
+  exit_scope(ctx);
   return r;
 }
 
 int 
 ast_to_if1(mod_ty module) {
   ifa_init(new PycCallbacks);
-  if (build_syms(module) < 0) return -1;
+  PycContext ctx;
+  if (build_syms(module, ctx) < 0) return -1;
   build_builtin_symbols();
   //Vec<Symbol *> types;
   //build_types(syms, &types);
@@ -850,7 +943,7 @@ ast_to_if1(mod_ty module) {
   if1_set_primitive_types(if1);
   //build_classes(syms);
   finalize_types(if1, false);
-  if (build_if1(module) < 0) return -1;
+  if (build_if1(module, ctx) < 0) return -1;
   //if (build_functions(syms) < 0) return -1;
   finalize_symbols(if1);
   //build_type_hierarchy();
