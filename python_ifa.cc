@@ -645,14 +645,14 @@ static void make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
   DBG printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
   int level = 0, type = 0;
   PycSymbol *l = find_PycSymbol(ctx, name, &level, &type);
-  bool local = l && (ctx.scope_stack.n - 1 == level);
+  bool local = l && (ctx.scope_stack.n - 1 == level); // implies !explicitly && !implicitly
   bool global = l && !level;
   bool nonlocal = l && level && !local;
-  bool explicitly = type == 2;
-  bool implicitly = type == 1;
+  bool explicitly = type == 2; // explicitly GLOBAL or NONLOCAL
+  bool implicitly = type == 1; // implicitly GLOBAL or NONLOCAL
   switch (scoping) {
     case PYC_USE: {
-      if (!l) goto Llocal;
+      if (!l) goto Llocal; // not found
       if (!local && !explicitly) {
         if (global)
           ctx.scope_stack.last()->map.put(name, GLOBAL_USE);
