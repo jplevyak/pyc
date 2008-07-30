@@ -636,11 +636,11 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
   return l;
 }
 
-static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0) {
-  return find_PycSymbol(ctx, if1_cannonicalize_string(if1, PyString_AS_STRING(o)), level);
+static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0, int *type = 0) {
+  return find_PycSymbol(ctx, if1_cannonicalize_string(if1, PyString_AS_STRING(o)), level, type);
 }
 
-static void make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
+static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
   char *name = if1_cannonicalize_string(if1, n);
   DBG printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
   int level = 0, type = 0;
@@ -666,20 +666,26 @@ static void make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
       if (local || explicitly) break;
       if (implicitly)
         fail("error line %d, '%s' redefined as local", ctx.lineno, name);
-      ctx.scope_stack.last()->map.put(name, new_PycSymbol(name));
+      ctx.scope_stack.last()->map.put(name, (l = new_PycSymbol(name)));
       break;
     case PYC_GLOBAL:
       if (l && !global && (local || explicitly || implicitly))
         fail("error line %d, '%s' redefined as global", ctx.lineno, name);
-      if (!(global && explicitly))
+      if (!global) {
+        PycSymbol *g = ctx.scope_stack.v[0]->map.get(name);
+        if (!g)
+          ctx.scope_stack.v[0]->map.put(name, (l = new_PycSymbol(name)));
+      }
+      if (!explicitly)
         ctx.scope_stack.last()->map.put(name, GLOBAL_DEF);
       break;
     case PYC_NONLOCAL:
-      if (!l && !nonlocal && (local || explicitly || implicitly))
+      if (!l || (!nonlocal && (local || explicitly || implicitly)))
         fail("error line %d, '%s' nonlocal redefined or not found", ctx.lineno, name);
       ctx.scope_stack.last()->map.put(name, NONLOCAL_DEF);
       break;
   }
+  return l;
 }
 
 static void make_PycSymbol(PycContext &ctx, PyObject *o, PYC_SCOPINGS type) {
@@ -953,5 +959,6 @@ ast_to_if1(mod_ty module) {
   finalize_symbols(if1);
   //build_type_hierarchy();
   finalize_types(if1, false);  // again to catch any new ones
+  exit(0);
   return 0;
 }

@@ -1,0 +1,43 @@
+enter scope 0x77af60 level 0
+make_PycSymbol local 'y'
+make_PycSymbol local 'z'
+make_PycSymbol local 'set_z'
+enter scope 0x77af00 level 1
+make_PycSymbol global 'z'
+make_PycSymbol local 'z'
+exit scope 0x77af00 level 1
+make_PycSymbol local 'a'
+enter scope 0x77aea0 level 1
+make_PycSymbol local 'g'
+enter scope 0x77ae40 level 2
+make_PycSymbol global 'z'
+make_PycSymbol local 'z'
+exit scope 0x77ae40 level 2
+make_PycSymbol use 'z'
+make_PycSymbol use 'set_z'
+make_PycSymbol use 'y'
+make_PycSymbol use 'z'
+make_PycSymbol use 'g'
+make_PycSymbol use 'z'
+exit scope 0x77aea0 level 1
+make_PycSymbol use 'z'
+exit scope 0x77af60 level 0
+enter scope 0x77af60 level 0
+found 'y' at level 0
+found 'z' at level 0
+enter scope 0x77af00 level 1
+found 'z' at level 0
+exit scope 0x77af00 level 1
+enter scope 0x77aea0 level 1
+enter scope 0x77ae40 level 2
+found 'z' at level 0
+exit scope 0x77ae40 level 2
+found 'z' at level 0
+found 'set_z' at level 0
+found 'y' at level 0
+found 'z' at level 0
+found 'g' at level 1
+found 'z' at level 0
+exit scope 0x77aea0 level 1
+found 'z' at level 0
+exit scope 0x77af60 level 0

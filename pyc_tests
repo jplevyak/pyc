@@ -1,0 +1,29 @@
+#!/bin/tcsh 
+
+#setenv VALGRIND 'valgrind -q '
+setenv VALGRIND ' '
+
+cd tests
+set failed = 0
+foreach g (*.py)
+  if (-e $g.flags) then
+    set flags = `cat $g.flags`
+  else
+    set flags = 
+  endif
+  $VALGRIND ../pyc -d -v $flags $g >&! $g.out
+  diff $g.out $g.check
+  if ($?) then
+    echo $g "******** FAILED ********"
+    set failed = `expr $failed + 1`
+  else
+    echo $g "PASSED"
+  endif
+end
+echo "---------------------------------------"
+if (! $failed) then
+  echo "ALL tests PASSED"
+else
+  echo "********" $failed "test(s) FAILED *********"
+endif
+cd ..

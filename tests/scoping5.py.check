@@ -1,0 +1,28 @@
+enter scope 0x77af60 level 0
+make_PycSymbol local 'f'
+enter scope 0x77af00 level 1
+make_PycSymbol local 'z'
+make_PycSymbol use 'z'
+make_PycSymbol local 'g'
+enter scope 0x77aea0 level 2
+make_PycSymbol local 'x'
+make_PycSymbol use 'x'
+exit scope 0x77aea0 level 2
+make_PycSymbol use 'g'
+make_PycSymbol use 'z'
+exit scope 0x77af00 level 1
+make_PycSymbol use 'f'
+exit scope 0x77af60 level 0
+enter scope 0x77af60 level 0
+enter scope 0x77af00 level 1
+found 'z' at level 1
+found 'z' at level 1
+enter scope 0x77aea0 level 2
+found 'x' at level 2
+found 'x' at level 2
+exit scope 0x77aea0 level 2
+found 'g' at level 1
+found 'z' at level 1
+exit scope 0x77af00 level 1
+found 'f' at level 0
+exit scope 0x77af60 level 0
