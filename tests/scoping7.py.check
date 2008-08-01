@@ -1,7 +1,7 @@
-enter scope 0x77af60 level 0
+enter scope 0 level 0
 make_PycSymbol local 'z'
 make_PycSymbol local 'y'
-enter scope 0x77af00 level 1
+enter scope 1 level 1
 make_PycSymbol local 'i'
 make_PycSymbol global 'z'
 make_PycSymbol local 'z'
@@ -10,21 +10,21 @@ make_PycSymbol local 'i'
 make_PycSymbol use 'i'
 make_PycSymbol use 'i'
 make_PycSymbol use 'z'
-exit scope 0x77af00 level 1
+exit scope 0x790f00 level 1
 make_PycSymbol use 'y'
 make_PycSymbol use 'z'
-exit scope 0x77af60 level 0
-enter scope 0x77af60 level 0
+exit scope 0x790f60 level 0
+enter scope 0 level 0
 found 'z' at level 0
-enter scope 0x77af00 level 1
-found 'i' at level 1
-found 'z' at level 0
-found 'i' at level 1
-found 'i' at level 1
-found 'i' at level 1
+enter scope 1 level 1
 found 'i' at level 1
 found 'z' at level 0
-exit scope 0x77af00 level 1
+found 'i' at level 1
+found 'i' at level 1
+found 'i' at level 1
+found 'i' at level 1
+found 'z' at level 0
+exit scope 0x790f00 level 1
 found 'y' at level 0
 found 'z' at level 0
-exit scope 0x77af60 level 0
+exit scope 0x790f60 level 0

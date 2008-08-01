@@ -19,6 +19,7 @@ static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_ellipsis = 0;
 
+static int scope_id = 0;
 static int finalized_symbols = 0;
 
 static inline PycAST *getAST(stmt_ty s) {
@@ -539,7 +540,9 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
 }
 
 struct PycScope : public gc {
+  int id;
   Map<char *, PycSymbol*> map;
+  PycScope() { id = scope_id++; } 
 };
 
 struct PycContext : public gc {
@@ -559,7 +562,7 @@ static void enter_scope(PycContext &ctx) {
     ctx.saved_scopes.put(ctx.node, saved);
   }
   ctx.scope_stack.add(saved);
-  DBG printf("enter scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
+  DBG printf("enter scope %d level %d\n", ctx.scope_stack.last()->id, ctx.depth);
 }
 
 static void enter_scope(stmt_ty x, PycContext &ctx) {
