@@ -1,11 +1,13 @@
 enter scope 0 level 0
+exit scope 0 level 0
+enter scope 0 level 0
 make_PycSymbol local 'y'
 make_PycSymbol local 'z'
 make_PycSymbol local 'set_z'
 enter scope 1 level 1
 make_PycSymbol global 'z'
 make_PycSymbol local 'z'
-exit scope 0x790f00 level 1
+exit scope 1 level 1
 make_PycSymbol local 'a'
 enter scope 2 level 1
 make_PycSymbol use 'z'

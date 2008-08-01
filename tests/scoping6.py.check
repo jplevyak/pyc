@@ -1,4 +1,6 @@
 enter scope 0 level 0
+exit scope 0 level 0
+enter scope 0 level 0
 make_PycSymbol local 'z'
 make_PycSymbol local 'y'
 enter scope 1 level 1
@@ -8,6 +10,6 @@ make_PycSymbol local 'g'
 enter scope 2 level 2
 make_PycSymbol local 'x'
 make_PycSymbol use 'x'
-exit scope 0x790ea0 level 2
+exit scope 2 level 2
 make_PycSymbol global 'z'
 fail: error line 10, 'z' redefined as global

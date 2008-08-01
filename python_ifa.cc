@@ -17,7 +17,7 @@
 
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
-static Sym *sym_ellipsis = 0;
+static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 
 static int scope_id = 0;
 static int finalized_symbols = 0;
@@ -151,6 +151,14 @@ new_PycSymbol(char *name) {
   return s;
 }
 
+static PycSymbol *
+new_PycSymbol(Sym *sym) {
+  if (!sym->asymbol)
+    sym->asymbol = new PycSymbol;
+  sym->asymbol->sym = sym;
+  return (PycSymbol*)sym->asymbol;
+}
+
 #if 0
 static PycSymbol *
 new_PycSymbol(PyObject *o) {
@@ -258,7 +266,7 @@ build_builtin_symbols() {
 
   new_lub_type(sym_any, "any", 0);
   new_alias_type(sym_int, "int", sym_int32);
-  new_alias_type(sym_int, "long", sym_int64); // standin for GNU gmp
+  new_alias_type(sym_long, "long", sym_int64); // standin for GNU gmp
   new_lub_type(sym_anyint, "anyint", sym_int32, sym_int64, 0);
   new_alias_type(sym_float, "float", sym_float64);
   new_lub_type(sym_anyfloat, "anyfloat", sym_float, 0);
@@ -270,6 +278,12 @@ build_builtin_symbols() {
   new_primitive_type(sym_false, "False");
   sym_false->inherits_add(sym_bool);
   new_lub_type(sym_anynum, "anynum", sym_anyint, sym_anyfloat, sym_anycomplex, 0);
+
+  new_primitive_type(sym_string, "str");
+  new_primitive_type(sym_unicode, "unicode");
+  // list && tuple already defined
+  new_primitive_type(sym_buffer, "buffer");
+  new_primitive_type(sym_xrange, "xrange");
 
   new_primitive_object(sym_void, "None", sym_void_type);
   new_primitive_object(sym_unknown, "Unimplemented", sym_unknown_type);
@@ -586,7 +600,7 @@ static void enter_scope(expr_ty x, PycContext &ctx) {
 }
 
 static void exit_scope(PycContext &ctx) { 
-  DBG printf("exit scope %p level %d\n", ctx.scope_stack.last(), ctx.depth);
+  DBG printf("exit scope %d level %d\n", ctx.scope_stack.last()->id, ctx.depth);
   ctx.scope_stack.pop(); 
   ctx.depth--;
 }
@@ -969,11 +983,32 @@ build_if1(mod_ty mod, PycContext &ctx) {
   return r;
 }
 
+static void scope_sym(PycContext &ctx, Sym *sym) {
+  PycSymbol *s = new_PycSymbol(sym);
+  ctx.scope_stack.last()->map.put(sym->name, s);
+}
+
+static void build_environment(mod_ty mod, PycContext &ctx) {
+  ctx.node = mod;
+  enter_scope(ctx);
+  scope_sym(ctx, sym_int);
+  scope_sym(ctx, sym_long);
+  scope_sym(ctx, sym_float);
+  scope_sym(ctx, sym_complex);
+  scope_sym(ctx, sym_true);
+  scope_sym(ctx, sym_false);
+  scope_sym(ctx, sym_void);
+  scope_sym(ctx, sym_unknown);
+  scope_sym(ctx, sym_ellipsis);
+  exit_scope(ctx);
+}
+
 int 
 ast_to_if1(mod_ty module) {
   ifa_init(new PycCallbacks);
   build_builtin_symbols();
   PycContext ctx;
+  build_environment(module, ctx);
   if (build_syms(module, ctx) < 0) return -1;
   //Vec<Symbol *> types;
   //build_types(syms, &types);
