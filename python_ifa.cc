@@ -17,6 +17,7 @@
 
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
+static Sym *sym_ellipsis = 0;
 
 static int finalized_symbols = 0;
 
@@ -256,24 +257,22 @@ build_builtin_symbols() {
 
   new_lub_type(sym_any, "any", 0);
   new_alias_type(sym_int, "int", sym_int32);
-  new_alias_type(sym_uint, "uint", sym_uint32);
-  new_alias_type(sym_float, "float", sym_float32);
+  new_alias_type(sym_int, "long", sym_int64); // standin for GNU gmp
+  new_lub_type(sym_anyint, "anyint", sym_int32, sym_int64, 0);
+  new_alias_type(sym_float, "float", sym_float64);
+  new_lub_type(sym_anyfloat, "anyfloat", sym_float, 0);
+  new_alias_type(sym_complex, "complex", sym_complex64);
+  new_lub_type(sym_anycomplex, "anycomplex", sym_complex, 0);
   sym_object->type_kind = Type_RECORD;
+  new_primitive_type(sym_true, "True");
   sym_true->inherits_add(sym_bool);
+  new_primitive_type(sym_false, "False");
   sym_false->inherits_add(sym_bool);
-  new_lub_type(sym_anyint, "anyint",
-               sym_int8, sym_int16, sym_int32, sym_int64,
-               sym_bool,
-               sym_uint8, sym_uint16, sym_uint32, sym_uint64,
-               0);
-  new_alias_type(sym_size, "size", sym_int64);
-  new_alias_type(sym_enum_element, "enum_element", sym_int64);
-  new_lub_type(sym_anycomplex, "anycomplex",
-               sym_complex32, sym_complex64);
   new_lub_type(sym_anynum, "anynum", sym_anyint, sym_anyfloat, sym_anycomplex, 0);
-  new_primitive_object(sym_nil, "nil", sym_nil_type);
-  new_primitive_object(sym_unknown, "unknown", sym_unknown_type);
-  new_primitive_object(sym_void, "void", sym_void_type);
+
+  new_primitive_object(sym_void, "None", sym_void_type);
+  new_primitive_object(sym_unknown, "Unimplemented", sym_unknown_type);
+  new_primitive_object(sym_ellipsis, "Ellipsis", sym_void_type);
 
   sym_any->implements.add(sym_unknown_type);
   sym_any->specializes.add(sym_unknown_type);
@@ -281,8 +280,6 @@ build_builtin_symbols() {
   sym_object->specializes.add(sym_any);
   sym_nil_type->implements.add(sym_object);
   sym_nil_type->specializes.add(sym_object);
-  sym_value->implements.add(sym_any);
-  sym_value->specializes.add(sym_any);
 
   make_meta_type(sym_any);
   sym_anytype = sym_any->meta_type;
@@ -688,8 +685,8 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
   return l;
 }
 
-static void make_PycSymbol(PycContext &ctx, PyObject *o, PYC_SCOPINGS type) {
-  make_PycSymbol(ctx, PyString_AS_STRING(o), type);
+static PycSymbol *make_PycSymbol(PycContext &ctx, PyObject *o, PYC_SCOPINGS type) {
+  return make_PycSymbol(ctx, PyString_AS_STRING(o), type);
 }
 
 static int build_syms(stmt_ty s, PycContext &ctx);
@@ -709,17 +706,31 @@ static int build_syms(expr_ty e, PycContext &ctx);
     for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->children.add(getAST(x)); } \
   }
 
+static void build_syms_args(PycAST *a, arguments_ty args) {
+  for (int i = 0; i < asdl_seq_LEN(args->args); i++) {
+#if PY_MAJOR_VERSION == 3
+    assert(!"incomplete");
+#else
+    Sym *sym = getAST((expr_ty)asdl_seq_GET(args->args, i))->sym;
+#endif
+    a->sym->has.add(sym);
+  }
+}
+
 static int
 build_syms(stmt_ty s, PycContext &ctx) {
   ctx.node = s;
   ctx.lineno = s->lineno;
+  PycAST *past = getAST(s);
   switch (s->kind) {
     default: break;
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      make_PycSymbol(ctx, s->v.FunctionDef.name, PYC_LOCAL);
+      past->sym = make_PycSymbol(ctx, s->v.FunctionDef.name, PYC_LOCAL)->sym;
+      past->sym->type_kind = Type_FUN;
       break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL);
+      past->sym = make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL)->sym;
+      past->sym->type_kind = Type_RECORD;
       break;
     case Global_kind: // identifier* names
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
@@ -733,6 +744,12 @@ build_syms(stmt_ty s, PycContext &ctx) {
 #endif
   }
   AST_RECURSE(s, build_syms, ctx);
+  switch (s->kind) {
+    default: break;
+    case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
+      build_syms_args(past, s->v.FunctionDef.args);
+      break;
+  }
   exit_scope(s, ctx);
   return 0;
 }
@@ -743,15 +760,17 @@ static void build_syms_comprehension(PycContext &ctx,
 
 static int
 build_syms(expr_ty e, PycContext &ctx) {
+  PycAST *past = getAST(e);
   ctx.node = e;
   ctx.lineno = e->lineno;
   switch (e->kind) {
     default: break;
     case Lambda_kind: // arguments args, expr body
-      // make_PycSymbol(ctx, "lambda");
+      past->sym = new_sym();
       break;
     case Name_kind: // identifier id, expr_context ctx
-      make_PycSymbol(ctx, e->v.Name.id, e->v.Name.ctx == Load ? PYC_USE : PYC_LOCAL);
+      past->sym = past->rval = 
+        make_PycSymbol(ctx, e->v.Name.id, e->v.Name.ctx == Load ? PYC_USE : PYC_LOCAL)->sym;
       break;
   }
   AST_RECURSE(e, build_syms, ctx);
@@ -772,6 +791,11 @@ build_syms(expr_ty e, PycContext &ctx) {
 #endif
     case GeneratorExp_kind: // expr elt, comprehension* generators
       build_syms_comprehension(ctx, e->v.GeneratorExp.generators, e->v.GeneratorExp.elt, 0);
+      break;
+    case Tuple_kind: // expr *elts, expr_context ctx
+      ast->sym = ast->rval = new_sym();
+      for (int i = 0; i < asdl_seq_LEN(e->v.Tuple.elts); i++)
+        ast->sym->has.add(getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i))->sym);
       break;
   }
   exit_scope(e, ctx);
@@ -945,9 +969,9 @@ build_if1(mod_ty mod, PycContext &ctx) {
 int 
 ast_to_if1(mod_ty module) {
   ifa_init(new PycCallbacks);
+  build_builtin_symbols();
   PycContext ctx;
   if (build_syms(module, ctx) < 0) return -1;
-  build_builtin_symbols();
   //Vec<Symbol *> types;
   //build_types(syms, &types);
   //build_symbols(syms);
