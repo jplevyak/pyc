@@ -6,7 +6,8 @@
 /* TODO
    move static variables into an object
    "__bases__" "__class__" "super", "lambda"
- */
+   decorators (functions applied to functions)
+*/
 
 #define OPERATOR_CHAR(_c) \
 (((_c > ' ' && _c < '0') || (_c > '9' && _c < 'A') || \
@@ -616,6 +617,8 @@ static void exit_scope(expr_ty x, PycContext &ctx) {
   if (needs_scope(x)) exit_scope(ctx);
 }
 
+#define EXPLICITLY_MARKED 1
+#define IMPLICITLY_MARKED 2
 enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 static char *pyc_scoping_names[] = { "use", "local", "global", "nonlocal" };
 
@@ -632,13 +635,13 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
     if ((l = ctx.scope_stack.v[i]->map.get(name))) {
       if (l == NONLOCAL_USE || l == NONLOCAL_DEF) {
         if (top)
-          xtype = (l == NONLOCAL_DEF) ? 2 : 1;
+          xtype = (l == NONLOCAL_DEF) ? EXPLICITLY_MARKED : IMPLICITLY_MARKED;
         continue;
       }
       if (l == GLOBAL_USE || l == GLOBAL_DEF) {
         assert(i); 
         if (top)
-          xtype = (l == GLOBAL_DEF) ? 2 : 1;
+          xtype = (l == GLOBAL_DEF) ? EXPLICITLY_MARKED : IMPLICITLY_MARKED;
         i = 1; 
         continue; 
       }
@@ -662,8 +665,8 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
   bool local = l && (ctx.scope_stack.n - 1 == level); // implies !explicitly && !implicitly
   bool global = l && !level;
   bool nonlocal = l && level && !local;
-  bool explicitly = type == 2; // explicitly GLOBAL or NONLOCAL
-  bool implicitly = type == 1; // implicitly GLOBAL or NONLOCAL
+  bool explicitly = type == EXPLICITLY_MARKED;
+  bool implicitly = type == IMPLICITLY_MARKED;
   switch (scoping) {
     case PYC_USE: {
       if (!l) goto Llocal; // not found
@@ -765,6 +768,14 @@ build_syms(stmt_ty s, PycContext &ctx) {
     default: break;
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
       build_syms_args(past, s->v.FunctionDef.args);
+      break;
+    case ClassDef_kind: // identifier name, expr* bases, stmt* body
+      for (int i = 0; i < asdl_seq_LEN(s->v.ClassDef.bases); i++) {
+        Sym *base = getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i))->sym;
+        if (!base)
+          fail("error line %d, base not for for class '%s'", ctx.lineno, past->sym->name);
+        past->sym->specializes.add(getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i))->sym);
+      }
       break;
   }
   exit_scope(s, ctx);
