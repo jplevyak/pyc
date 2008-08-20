@@ -150,8 +150,7 @@ new_PycSymbol(char *name) {
   PycSymbol *s = new PycSymbol;
   s->sym = new Sym;
   s->sym->asymbol = s;
-  if (name)
-    if1_register_sym(if1, s->sym, name);
+  if1_register_sym(if1, s->sym, name);
   return s;
 }
 
@@ -204,6 +203,13 @@ new_sym(char *name = 0, int global = 0) {
   Sym *s = new_PycSymbol(name)->sym;
   if (!global)
     s->nesting_depth = LOCALLY_NESTED;
+  return s;
+}
+
+static Sym *
+new_sym(PycAST *ast) {
+  Sym *s = new_sym();
+  s->ast = ast;
   return s;
 }
 
@@ -280,12 +286,8 @@ build_builtin_symbols() {
   new_alias_type(sym_complex, "complex", sym_complex64);
   new_lub_type(sym_anycomplex, "anycomplex", sym_complex, 0);
   sym_object->type_kind = Type_RECORD;
-  new_primitive_type(sym_true, "True");
-  sym_true->inherits_add(sym_bool);
-  new_primitive_type(sym_false, "False");
-  sym_false->inherits_add(sym_bool);
+  new_primitive_type(sym_bool, "bool");
   new_lub_type(sym_anynum, "anynum", sym_anyint, sym_anyfloat, sym_anycomplex, 0);
-
   new_primitive_type(sym_string, "str");
   new_primitive_type(sym_unicode, "unicode");
   // list && tuple already defined
@@ -321,6 +323,19 @@ build_builtin_symbols() {
   sym_void_type->is_system_type = 1;
   
   if1_set_symbols_type(if1);
+  if1_set_primitive_types(if1);
+
+  Immediate imm;
+  imm.v_bool = 1;
+  sym_true = if1_const(if1, sym_bool, "True", &imm);
+  sym_true->name = sym_true->constant;
+  sym_true->implements.add(sym_bool);
+  sym_true->specializes.add(sym_bool);
+  imm.v_bool = 0;
+  sym_false = if1_const(if1, sym_bool, "False", &imm);
+  sym_false->name = sym_false->constant;
+  sym_false->implements.add(sym_bool);
+  sym_false->specializes.add(sym_bool);
 }
 
 static void 
@@ -540,6 +555,11 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
       add(e->v.Compare.comparators, exprs);
       break;
     case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
+      add(e->v.Call.func, exprs);
+      add(e->v.Call.args, exprs);
+      add(e->v.Call.starargs, exprs);
+      add(e->v.Call.kwargs, exprs);
+      break;
     case Repr_kind: // expr value
      add(e->v.Repr.value, exprs); break;
     case Num_kind: // object n) -- a number as a PyObject
@@ -757,9 +777,8 @@ def_fun(stmt_ty s, PycContext &ctx) {
     fn->self->must_implement_and_specialize(ctx.class_sym);
   }
   ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
-  fn->cont = new_sym();
-  fn->ret = new_sym();
-  fn->ret->ast = ast;
+  fn->cont = new_sym(ast);
+  fn->ret = new_sym(ast);
 }
 
 static int
@@ -824,7 +843,7 @@ build_syms(expr_ty e, PycContext &ctx) {
   switch (e->kind) {
     default: break;
     case Lambda_kind: // arguments args, expr body
-      past->sym = new_sym();
+      past->sym = new_sym(past);
       break;
     case Name_kind: // identifier id, expr_context ctx
       past->sym = past->rval = 
@@ -859,7 +878,7 @@ build_syms(expr_ty e, PycContext &ctx) {
       build_syms_comprehension(ctx, e->v.GeneratorExp.generators, e->v.GeneratorExp.elt, 0);
       break;
     case Tuple_kind: // expr *elts, expr_context ctx
-      ast->sym = ast->rval = new_sym();
+      ast->sym = ast->rval = new_sym(ast);
       for (int i = 0; i < asdl_seq_LEN(e->v.Tuple.elts); i++)
         ast->sym->has.add(getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i))->sym);
       break;
@@ -922,6 +941,31 @@ gen_fun(stmt_ty s, PycContext &ctx) {
   if1_closure(if1, fn, body, as.n, as.v);
 }
 
+static int 
+get_stmts_code(asdl_seq *stmts, Code **code) {
+  for (int i = 0; i < asdl_seq_LEN(stmts); i++)
+    if1_gen(if1, code, getAST((stmt_ty)asdl_seq_GET(stmts, i))->code);
+  return 0;
+}
+
+static void
+gen_if(PycAST *ifcond, asdl_seq *ifif, asdl_seq *ifelse, PycAST *ast) {
+  Code *ifif_code = 0, *ifelse_code = 0;
+  get_stmts_code(ifif, &ifif_code);
+  get_stmts_code(ifelse, &ifelse_code);
+  ast->rval = new_sym(ast);
+  if1_if(if1, &ast->code, ifcond->code, ifcond->rval, ifif_code, 0, ifelse_code, 0, 0, ast);
+  if1_move(if1, &ast->code, sym_void, ast->rval, ast);
+}
+
+static void
+gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast) {
+  ast->rval = new_sym(ast);
+  if1_if(if1, &ast->code, ifcond->code, ifcond->rval, ifif->code, ifif->rval,
+         ifelse ? ifelse->code : 0, ifelse ? ifelse->rval : 0, 
+         ast->rval, ast);
+}
+
 #define RECURSE(_ast, _fn) \
   PycAST *ast = getAST(_ast); \
   forv_Vec(PycAST, x, ast->pre_scope_children) \
@@ -954,15 +998,16 @@ build_if1(stmt_ty s, PycContext &ctx) {
       assert(!s->v.Print.dest);
       for (int i = 0; i < asdl_seq_LEN(s->v.Print.values); i++)
         if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, 
-                 getAST((expr_ty)asdl_seq_GET(s->v.Print.values, i))->rval, new_sym())->ast = ast;
+                 getAST((expr_ty)asdl_seq_GET(s->v.Print.values, i))->rval, new_sym(ast))->ast = ast;
       if (s->v.Print.nl)
-        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_writeln, make_string(""), new_sym())->ast = ast; 
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_writeln, make_string(""), new_sym(ast))->ast = ast; 
       break;
     case For_kind: // expr target, expr, iter, stmt* body, stmt* orelse
       break;
     case While_kind: // expr test, stmt*body, stmt*orelse
       break;
-    case If_kind: // expr tet, stmt* body, stmt* orelse
+    case If_kind: // expr test, stmt* body, stmt* orelse
+      gen_if(getAST(s->v.If.test), s->v.If.body, s->v.If.orelse, ast);
       break;
     case With_kind: // expr content_expr, expr? optional_vars, stmt *body
       break;
@@ -973,13 +1018,13 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case TryFinally_kind: // stmt *body, stmt *finalbody
       break;
     case Assert_kind: // expr test, expr? msg
-      break;
+      fail("error line %d, 'assert' not yet supported", ctx.lineno); break;
     case Import_kind: // alias* name
       break;
     case ImportFrom_kind: // identifier module, alias *names, int? level
       break;
     case Exec_kind: // expr body, expr? globals, expr? locals
-      break;
+      fail("error line %d, 'exec' not yet supported", ctx.lineno); break;
     case Global_kind: // identifier* names
       break;
 #if PY_MAJOR_VERSION == 3
@@ -1029,6 +1074,7 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Lambda_kind: // arguments args, expr body
       break;
     case IfExp_kind: // expr test, expr body, expr orelse
+      gen_ifexpr(getAST(e->v.IfExp.test), getAST(e->v.IfExp.body), getAST(e->v.IfExp.orelse), ast);
       break;
     case Dict_kind: // expr* keys, expr* values
       break;
@@ -1045,12 +1091,13 @@ build_if1(expr_ty e, PycContext &ctx) {
       for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
         if1_gen(if1, &ast->code, getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i))->code);
       {
-        Code *send = if1_send1(if1, &ast->code);
-        send->ast = ast;
+        Code *send = if1_send1(if1, &ast->code, ast);
         if1_add_send_arg(if1, send, getAST((expr_ty)e->v.Call.func)->rval);
-        for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
-          if1_add_send_arg(if1, send, getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i))->rval);
-        ast->rval = new_sym();
+        for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
+          expr_ty arg = (expr_ty)asdl_seq_GET(e->v.Call.args, i);
+          if1_add_send_arg(if1, send, getAST(arg)->rval);
+        }
+        ast->rval = new_sym(ast);
         if1_add_send_result(if1, send, ast->rval);
       }
       break;
@@ -1068,6 +1115,7 @@ build_if1(expr_ty e, PycContext &ctx) {
       PycSymbol *s = find_PycSymbol(ctx, e->v.Name.id, &level);
       DBG printf("%sfound '%s' at level %d\n", s ? "" : "not ",
                  if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
+      ast->rval = ast->sym = s->sym;
       break;
     }
     case List_kind: // expr* elts, expr_context ctx
@@ -1157,7 +1205,6 @@ ast_to_if1(mod_ty module) {
   PycContext ctx;
   build_environment(module, ctx);
   if (build_syms(module, ctx) < 0) return -1;
-  if1_set_primitive_types(if1);
   finalize_types(if1, false);
   Code *code = 0;
   if (build_if1(module, ctx, &code) < 0) return -1;
