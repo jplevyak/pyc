@@ -19,6 +19,8 @@
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
+static Sym *sym_write = 0, *sym_writeln = 0;
+static char *cannonical_self = 0;
 
 static int scope_id = 0;
 static int finalized_symbols = 0;
@@ -148,7 +150,8 @@ new_PycSymbol(char *name) {
   PycSymbol *s = new PycSymbol;
   s->sym = new Sym;
   s->sym->asymbol = s;
-  if1_register_sym(if1, s->sym, name);
+  if (name)
+    if1_register_sym(if1, s->sym, name);
   return s;
 }
 
@@ -260,6 +263,9 @@ new_lub_type(Sym *&sym, char *name, ...)  {
 
 static void
 build_builtin_symbols() {
+  sym_write = if1_make_symbol(if1, "write");
+  sym_writeln = if1_make_symbol(if1, "writeln");
+  cannonical_self = if1_cannonicalize_string(if1, "self");
 
 #define S(_n) new_primitive_type(sym_##_n, #_n);
 #include "builtin_symbols.h"
@@ -564,9 +570,11 @@ struct PycContext : public gc {
   int lineno;
   int depth;
   void *node;
+  Sym *class_sym;
   Vec<PycScope *> scope_stack;
+  Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
-  PycContext() : lineno(-1), depth(-1) {}
+  PycContext() : lineno(-1), depth(-1), class_sym(0), lbreak(0), lcontinue(0), lreturn(0) {}
 };
 
 static void enter_scope(PycContext &ctx) {
@@ -726,15 +734,32 @@ static int build_syms(expr_ty e, PycContext &ctx);
     for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->children.add(getAST(x)); } \
   }
 
-static void build_syms_args(PycAST *a, arguments_ty args) {
+static void build_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has) {
   for (int i = 0; i < asdl_seq_LEN(args->args); i++) {
 #if PY_MAJOR_VERSION == 3
     assert(!"incomplete");
 #else
     Sym *sym = getAST((expr_ty)asdl_seq_GET(args->args, i))->sym;
 #endif
-    a->sym->has.add(sym);
+    has.add(sym);
   }
+}
+
+static void
+def_fun(stmt_ty s, PycContext &ctx) {
+  PycAST *ast = getAST(s);
+  Sym *fn = ast->sym = make_PycSymbol(ctx, s->v.FunctionDef.name, PYC_LOCAL)->sym;
+  fn->ast = ast;
+  if (ctx.class_sym) {
+    fn->self = make_PycSymbol(ctx, cannonical_self, PYC_LOCAL)->sym;
+    fn->self->is_read_only = 1;
+    fn->self->ast = ast;
+    fn->self->must_implement_and_specialize(ctx.class_sym);
+  }
+  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
+  fn->cont = new_sym();
+  fn->ret = new_sym();
+  fn->ret->ast = ast;
 }
 
 static int
@@ -745,12 +770,12 @@ build_syms(stmt_ty s, PycContext &ctx) {
   switch (s->kind) {
     default: break;
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      past->sym = make_PycSymbol(ctx, s->v.FunctionDef.name, PYC_LOCAL)->sym;
-      past->sym->type_kind = Type_FUN;
+      def_fun(s, ctx);
       break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
       past->sym = make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL)->sym;
       past->sym->type_kind = Type_RECORD;
+      ctx.class_sym = past->sym;
       break;
     case Global_kind: // identifier* names
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
@@ -762,13 +787,15 @@ build_syms(stmt_ty s, PycContext &ctx) {
         make_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i), PYC_NONLOCAL);
       break;
 #endif
+    case For_kind:
+    case While_kind:
+      ctx.lcontinue = past->label[0] = if1_alloc_label(if1);
+      ctx.lbreak = past->label[1] = if1_alloc_label(if1);
+      break;
   }
   AST_RECURSE(s, build_syms, ctx);
   switch (s->kind) {
     default: break;
-    case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      build_syms_args(past, s->v.FunctionDef.args);
-      break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
       for (int i = 0; i < asdl_seq_LEN(s->v.ClassDef.bases); i++) {
         Sym *base = getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i))->sym;
@@ -777,6 +804,9 @@ build_syms(stmt_ty s, PycContext &ctx) {
         past->sym->specializes.add(getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i))->sym);
       }
       break;
+    case Continue_kind: ast->label[0] = ctx.lcontinue; break;
+    case Break_kind: ast->label[0] = ctx.lbreak; break;
+    case Return_kind: ast->label[0] = ctx.lreturn; break;
   }
   exit_scope(s, ctx);
   return 0;
@@ -799,6 +829,14 @@ build_syms(expr_ty e, PycContext &ctx) {
     case Name_kind: // identifier id, expr_context ctx
       past->sym = past->rval = 
         make_PycSymbol(ctx, e->v.Name.id, e->v.Name.ctx == Load ? PYC_USE : PYC_LOCAL)->sym;
+      break;
+    case Dict_kind: // expr* keys, expr* values
+    case ListComp_kind: // expr elt, comprehension* generators
+#if PY_MAJOR_VERSION == 3
+    case SetComp_kind: // expr elt, comprehension* generators
+#endif
+    case GeneratorExp_kind: // expr elt, comprehension* generators
+      ctx.lyield = past->label[0] = if1_alloc_label(if1);
       break;
   }
   AST_RECURSE(e, build_syms, ctx);
@@ -851,6 +889,39 @@ build_syms(mod_ty mod, PycContext &ctx) {
   return r;
 }
 
+static Sym *make_string(char *s) {
+  Immediate imm;
+  imm.v_string = s;
+  Sym *sym = if1_const(if1, sym_string, s, &imm);
+  if (!sym->implements.n) {
+    sym->implements.add(sym_string);
+    sym->specializes.add(sym_string);
+  }
+  return sym;
+}
+
+static Sym *make_string(PyObject *o) {
+  return make_string(PyString_AsString(o));
+}
+
+static void
+gen_fun(stmt_ty s, PycContext &ctx) {
+  PycAST *ast = getAST(s);
+  Sym *fn = ast->sym;
+  Code *body = 0;
+  for (int i = 0; i < asdl_seq_LEN(s->v.FunctionDef.body); i++)
+    if1_gen(if1, &body, getAST((stmt_ty)asdl_seq_GET(s->v.FunctionDef.body, i))->code);
+  if1_move(if1, &body, sym_void, fn->ret, ast);
+  if1_label(if1, &body, ast, ast->label[0]);
+  if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  Vec<Sym *> as;
+  as.add(fn);
+  if (fn->self)
+    as.add(fn->self);
+  build_syms_args(ast, s->v.FunctionDef.args, as);
+  if1_closure(if1, fn, body, as.n, as.v);
+}
+
 #define RECURSE(_ast, _fn) \
   PycAST *ast = getAST(_ast); \
   forv_Vec(PycAST, x, ast->pre_scope_children) \
@@ -867,6 +938,7 @@ build_if1(stmt_ty s, PycContext &ctx) {
   RECURSE(s, build_if1);
   switch (s->kind) {
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
+      gen_fun(s, ctx);
       break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
       break;
@@ -879,6 +951,12 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case AugAssign_kind: // expr target, operator op, expr value
       break;
     case Print_kind: // epxr? dest, expr *values, bool nl
+      assert(!s->v.Print.dest);
+      for (int i = 0; i < asdl_seq_LEN(s->v.Print.values); i++)
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, 
+                 getAST((expr_ty)asdl_seq_GET(s->v.Print.values, i))->rval, new_sym())->ast = ast;
+      if (s->v.Print.nl)
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_writeln, make_string(""), new_sym())->ast = ast; 
       break;
     case For_kind: // expr target, expr, iter, stmt* body, stmt* orelse
       break;
@@ -908,16 +986,34 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case Nonlocal_kind: break;
 #endif
     case Expr_kind: // expr value
+    {
+      PycAST *a = getAST(s->v.Expr.value);
+      ast->rval = a->rval;
+      ast->code = a->code;
       break;
-    case Pass_kind:
-      break;
+    }
+    case Pass_kind: break;
     case Break_kind:
-      break;
     case Continue_kind:
+      if1_goto(if1, &ast->code, ast->label[0])->ast = ast;
       break;
   }
   exit_scope(s, ctx);
   return 0;
+}
+
+static Sym *make_num(PyObject *o) {
+  assert(PyInt_Check(o));
+  int i = (int)PyInt_AsLong(o);
+  Immediate imm;
+  imm.v_int32 = i;
+  char s[80]; sprintf(s, "%d", i);
+  Sym *sym = if1_const(if1, sym_int32, s, &imm);
+  if (!sym->implements.n) {
+    sym->implements.add(sym_int32);
+    sym->specializes.add(sym_int32);
+  }
+  return sym;
 }
 
 static int
@@ -945,13 +1041,23 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Compare_kind: // expr left, cmpop* ops, expr* comparators
       break;
     case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
+      if1_gen(if1, &ast->code, getAST((expr_ty)e->v.Call.func)->code);
+      for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
+        if1_gen(if1, &ast->code, getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i))->code);
+      {
+        Code *send = if1_send1(if1, &ast->code);
+        send->ast = ast;
+        if1_add_send_arg(if1, send, getAST((expr_ty)e->v.Call.func)->rval);
+        for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
+          if1_add_send_arg(if1, send, getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i))->rval);
+        ast->rval = new_sym();
+        if1_add_send_result(if1, send, ast->rval);
+      }
       break;
     case Repr_kind: // expr value
       break;
-    case Num_kind: // object n) -- a number as a PyObject
-      break;
-    case Str_kind: // string s) -- need to specify raw, unicode, etc
-      break;
+    case Num_kind: ast->rval = make_num(e->v.Num.n); break;
+    case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
       break;
     case Subscript_kind: // expr value, slice slice, expr_context ctx
@@ -973,21 +1079,27 @@ build_if1(expr_ty e, PycContext &ctx) {
   return 0;
 }
 
-static int build_if1_stmts(asdl_seq *stmts, PycContext &ctx) {
-  for (int i = 0; i < asdl_seq_LEN(stmts); i++)
+static int build_if1_stmts(asdl_seq *stmts, PycContext &ctx, Code **code) {
+  for (int i = 0; i < asdl_seq_LEN(stmts); i++) {
     if (build_if1((stmt_ty)asdl_seq_GET(stmts, i), ctx)) return -1;
+    if1_gen(if1, code, getAST((stmt_ty)asdl_seq_GET(stmts, i))->code);
+  }
   return 0;
 }
 
 static int
-build_if1(mod_ty mod, PycContext &ctx) {
+build_if1(mod_ty mod, PycContext &ctx, Code **code) {
   int r = 0;
   ctx.node = mod;
   enter_scope(ctx);
   switch (mod->kind) {
-    case Module_kind: r = build_if1_stmts(mod->v.Module.body, ctx); break;
-    case Expression_kind: r = build_if1(mod->v.Expression.body, ctx); break;
-    case Interactive_kind: r = build_if1_stmts(mod->v.Interactive.body, ctx); break;
+    case Module_kind: r = build_if1_stmts(mod->v.Module.body, ctx, code); break;
+    case Expression_kind: {
+      r = build_if1(mod->v.Expression.body, ctx); 
+      if1_gen(if1, code, getAST(mod->v.Expression.body)->code);
+      break;
+    }
+    case Interactive_kind: r = build_if1_stmts(mod->v.Interactive.body, ctx, code); break;
     case Suite_kind: assert(!"handled");
   }
   exit_scope(ctx);
@@ -999,7 +1111,8 @@ static void scope_sym(PycContext &ctx, Sym *sym) {
   ctx.scope_stack.last()->map.put(sym->name, s);
 }
 
-static void build_environment(mod_ty mod, PycContext &ctx) {
+static void 
+build_environment(mod_ty mod, PycContext &ctx) {
   ctx.node = mod;
   enter_scope(ctx);
   scope_sym(ctx, sym_int);
@@ -1014,24 +1127,43 @@ static void build_environment(mod_ty mod, PycContext &ctx) {
   exit_scope(ctx);
 }
 
+static void build_init(Code *code) {
+  Sym *fn = sym_init;
+  fn->cont = new_sym();
+  fn->ret = sym_void;
+  if1_send(if1, &code, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret);
+  if1_closure(if1, fn, code, 1, &fn);
+}
+
+static void
+return_void_transfer_function(PNode *pn, EntrySet *es) {
+  AVar *result = make_AVar(pn->lvals.v[0], es);
+  update_gen(result, make_abstract_type(sym_void));
+}
+
+static void
+add_primitive_transfer_functions() {
+  pdb->fa->primitive_transfer_functions.put(
+    sym_write->name, new RegisteredPrim(return_void_transfer_function));
+  pdb->fa->primitive_transfer_functions.put(
+    sym_writeln->name, new RegisteredPrim(return_void_transfer_function));
+}
+
 int 
 ast_to_if1(mod_ty module) {
   ifa_init(new PycCallbacks);
   build_builtin_symbols();
+  add_primitive_transfer_functions();
   PycContext ctx;
   build_environment(module, ctx);
   if (build_syms(module, ctx) < 0) return -1;
-  //Vec<Symbol *> types;
-  //build_types(syms, &types);
-  //build_symbols(syms);
   if1_set_primitive_types(if1);
-  //build_classes(syms);
   finalize_types(if1, false);
-  if (build_if1(module, ctx) < 0) return -1;
-  //if (build_functions(syms) < 0) return -1;
+  Code *code = 0;
+  if (build_if1(module, ctx, &code) < 0) return -1;
+  build_init(code);
   finalize_symbols(if1);
-  //build_type_hierarchy();
+  build_type_hierarchy();
   finalize_types(if1, false);  // again to catch any new ones
-  exit(0);
   return 0;
 }
