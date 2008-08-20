@@ -78,6 +78,7 @@ analyze(char *fn) {
 }
 
 int main(int argc, char *argv[]) {
+  MEM_INIT();
   init_config();
   INIT_RAND(0x1234567);
   process_args(&arg_state, argc, argv);

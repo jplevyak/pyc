@@ -17,7 +17,11 @@ MINOR=0
 include ../plib/Makefile
 
 CFLAGS += -I../plib -I../ifalib -I/usr/include/python2.5
-LIBS += -L../plib -lplib_gc -L../ifalib -lifa -lpython2.5 
+ifdef USE_GC
+LIBS += -L../plib -lplib_gc -L../ifalib -lifa_gc -lpython2.5 
+else
+LIBS += -L../plib -lplib -L../ifalib -lifa -lpython2.5 
+endif
 
 AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODULE)/pyc.1 $(MODULE)/pyc.cat
 

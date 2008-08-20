@@ -1066,7 +1066,42 @@ build_if1(expr_ty e, PycContext &ctx) {
   RECURSE(e, build_if1);
   switch (e->kind) {
     case BoolOp_kind: // boolop op, expr* values
+    {
+      bool a = e->v.BoolOp.op == And; (void)a;
+      int n = asdl_seq_LEN(e->v.BoolOp.values);
+      if (n == 1) {
+        PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.BoolOp.values, 0));
+        ast->code = v->code;
+        ast->rval = v->rval;
+      } else {
+        ast->label[0] = if1_alloc_label(if1); // short circuit
+        ast->label[1] = if1_alloc_label(if1); // end
+        ast->rval = new_sym(ast);
+        for (int i = 0; i < n - 1; i++) {
+          PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.BoolOp.values, i));
+          if1_gen(if1, &ast->code, v->code);
+          Code *ifcode = if1_if_goto(if1, &ast->code, v->rval, ast);
+          if (a) {
+            if1_if_label_false(if1, ifcode, ast->label[0]);
+            if1_if_label_true(if1, ifcode, if1_label(if1, &ast->code, ast));
+          } else {
+            if1_if_label_true(if1, ifcode, ast->label[0]);
+            if1_if_label_false(if1, ifcode, if1_label(if1, &ast->code, ast));
+          }
+        }
+        PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.BoolOp.values, n-1));
+        if1_gen(if1, &ast->code, v->code);
+        if1_move(if1, &ast->code, v->rval, ast->rval, ast);
+        if1_goto(if1, &ast->code, ast->label[1]);
+        if1_label(if1, &ast->code, ast, ast->label[0]);
+        if (a)
+          if1_move(if1, &ast->code, sym_false, ast->rval, ast); 
+        else
+          if1_move(if1, &ast->code, sym_true, ast->rval, ast); 
+        if1_label(if1, &ast->code, ast, ast->label[1]);
+      }
       break;
+    }
     case BinOp_kind: // expr left, operator op, expr right
       break;
     case UnaryOp_kind: // unaryop op, expr operand
@@ -1102,6 +1137,7 @@ build_if1(expr_ty e, PycContext &ctx) {
       }
       break;
     case Repr_kind: // expr value
+      fail("error line %d, 'repr' not yet supported", ctx.lineno); break;
       break;
     case Num_kind: ast->rval = make_num(e->v.Num.n); break;
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
@@ -1119,8 +1155,20 @@ build_if1(expr_ty e, PycContext &ctx) {
       break;
     }
     case List_kind: // expr* elts, expr_context ctx
-      break;
+      // FALL THROUGH
     case Tuple_kind: // expr *elts, expr_context ctx
+      for (int i = 0; i < asdl_seq_LEN(e->v.List.elts); i++)
+        if1_gen(if1, &ast->code, getAST((expr_ty)asdl_seq_GET(e->v.List.elts, i))->code);
+      {
+        Code *send = if1_send1(if1, &ast->code, ast);
+        if1_add_send_arg(if1, send, e->kind == List_kind ? sym_make_list : sym_make_tuple);
+        for (int i = 0; i < asdl_seq_LEN(e->v.List.elts); i++) {
+          expr_ty arg = (expr_ty)asdl_seq_GET(e->v.List.elts, i);
+          if1_add_send_arg(if1, send, getAST(arg)->rval);
+        }
+        ast->rval = new_sym(ast);
+        if1_add_send_result(if1, send, ast->rval);
+      }
       break;
   }
   exit_scope(e, ctx);
