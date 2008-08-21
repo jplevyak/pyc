@@ -7,6 +7,8 @@
    move static variables into an object
    "__bases__" "__class__" "super", "lambda"
    decorators (functions applied to functions)
+   division and floor division correctly
+   Eq and Is correctly
 */
 
 #define OPERATOR_CHAR(_c) \
@@ -1061,6 +1063,60 @@ static Sym *make_num(PyObject *o) {
   return sym;
 }
 
+static Sym *
+make_symbol(char *name) {
+  Sym *s = if1_make_symbol(if1, name);
+  return s;
+}
+
+static Sym *map_operator(operator_ty op) {
+  switch(op) {
+    default: assert(!"case");    
+    case Add: return make_symbol("+");
+    case Sub: return make_symbol("-");
+    case Mult: return make_symbol("*");
+    case Div: return make_symbol("/");
+    case Mod: return make_symbol("%");
+    case Pow: return make_symbol("**");
+    case LShift: return make_symbol("<<");
+    case RShift: return make_symbol(">>");
+    case BitOr: return make_symbol("|");
+    case BitXor: return make_symbol("^");
+    case BitAnd: return make_symbol("&");
+    case FloorDiv: return make_symbol("/");
+  }
+  return 0;
+}
+
+static Sym *map_unary_operator(unaryop_ty op) {
+  switch(op) {
+    default: assert(!"case");    
+    case Invert: return make_symbol("~");
+    case Not: return make_symbol("!");
+    case UAdd: return make_symbol("+");
+    case USub: return make_symbol("-");
+  }
+  return 0;
+}
+
+static Sym *map_cmp_operator(cmpop_ty op) {
+  switch(op) {
+    default: assert(!"case");    
+    case Eq: return make_symbol("==");
+    case NotEq: return make_symbol("!=");
+    case Lt: return make_symbol("<");
+    case LtE: return make_symbol("<=");
+    case Gt: return make_symbol(">");
+    case GtE: return make_symbol(">=");
+    case Is: return make_symbol("==");
+    case IsNot: return make_symbol("!=");
+    case In:
+    case NotIn:
+      fail("error: in operator not yet supported"); break;
+  }
+  return 0;
+}
+
 static int
 build_if1(expr_ty e, PycContext &ctx) {
   RECURSE(e, build_if1);
@@ -1103,8 +1159,17 @@ build_if1(expr_ty e, PycContext &ctx) {
       break;
     }
     case BinOp_kind: // expr left, operator op, expr right
+      ast->rval = new_sym(ast);
+      if1_gen(if1, &ast->code, getAST(e->v.BinOp.left)->code);
+      if1_gen(if1, &ast->code, getAST(e->v.BinOp.right)->code);
+      if1_send(if1, &ast->code, 4, 1, sym_operator, getAST(e->v.BinOp.left)->rval,
+               map_operator(e->v.BinOp.op), getAST(e->v.BinOp.right)->rval, ast->rval)->ast = ast;
       break;
     case UnaryOp_kind: // unaryop op, expr operand
+      ast->rval = new_sym(ast);
+      if1_gen(if1, &ast->code, getAST(e->v.UnaryOp.operand)->code);
+      if1_send(if1, &ast->code, 3, 1, sym_operator, map_unary_operator(e->v.UnaryOp.op), 
+               getAST(e->v.UnaryOp.operand)->rval, ast->rval)->ast = ast;
       break;
     case Lambda_kind: // arguments args, expr body
       break;
@@ -1120,7 +1185,41 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Yield_kind: // expr? value
       break;
     case Compare_kind: // expr left, cmpop* ops, expr* comparators
+    {
+      int n = asdl_seq_LEN(e->v.Compare.ops);
+      ast->label[0] = if1_alloc_label(if1); // short circuit
+      ast->label[1] = if1_alloc_label(if1); // end
+      ast->rval = new_sym(ast);
+      PycAST *lv = getAST(e->v.Compare.left);
+      if1_gen(if1, &ast->code, lv->code);
+      if (n == 1) {
+        PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.Compare.comparators, 0));
+        if1_gen(if1, &ast->code, v->code);
+        if1_send(if1, &ast->code, 4, 1, sym_operator, lv->rval,
+                 map_cmp_operator((cmpop_ty)asdl_seq_GET(e->v.Compare.ops, 0)), 
+                 v->rval, ast->rval)->ast = ast;
+      } else {
+        Sym *ls = lv->rval, *s = 0;
+        for (int i = 0; i < n; i++) {
+          PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.Compare.comparators, i));
+          if1_gen(if1, &ast->code, v->code);
+          s = new_sym(ast);
+          if1_send(if1, &ast->code, 4, 1, sym_operator, ls,
+                   map_cmp_operator((cmpop_ty)asdl_seq_GET(e->v.Compare.ops, i)), 
+                   v->rval, s)->ast = ast;
+          ls = v->rval;
+          Code *ifcode = if1_if_goto(if1, &ast->code, s, ast);
+          if1_if_label_false(if1, ifcode, ast->label[0]);
+          if1_if_label_true(if1, ifcode, if1_label(if1, &ast->code, ast));
+        }
+        if1_move(if1, &ast->code, s, ast->rval);
+        if1_goto(if1, &ast->code, ast->label[1]);
+        if1_label(if1, &ast->code, ast, ast->label[0]);
+        if1_move(if1, &ast->code, sym_false, ast->rval, ast); 
+        if1_label(if1, &ast->code, ast, ast->label[1]);
+      }
       break;
+    }
     case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
       if1_gen(if1, &ast->code, getAST((expr_ty)e->v.Call.func)->code);
       for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
@@ -1161,6 +1260,7 @@ build_if1(expr_ty e, PycContext &ctx) {
         if1_gen(if1, &ast->code, getAST((expr_ty)asdl_seq_GET(e->v.List.elts, i))->code);
       {
         Code *send = if1_send1(if1, &ast->code, ast);
+        if1_add_send_arg(if1, send, sym_primitive);
         if1_add_send_arg(if1, send, e->kind == List_kind ? sym_make_list : sym_make_tuple);
         for (int i = 0; i < asdl_seq_LEN(e->v.List.elts); i++) {
           expr_ty arg = (expr_ty)asdl_seq_GET(e->v.List.elts, i);
