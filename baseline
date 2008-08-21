@@ -1,5 +1,5 @@
 #!/bin/csh
 
-foreach f (tests/*.out)
-  cp $f $f:r.check
+foreach f (tests/*.check)
+  cp $f:r.out $f:r.check
 end

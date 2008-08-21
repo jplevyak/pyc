@@ -1356,6 +1356,7 @@ ast_to_if1(mod_ty module) {
   finalize_types(if1, false);
   Code *code = 0;
   if (build_if1(module, ctx, &code) < 0) return -1;
+  if (test_scoping) exit(0);
   build_init(code);
   finalize_symbols(if1);
   build_type_hierarchy();

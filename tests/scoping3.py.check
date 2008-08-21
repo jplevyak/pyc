@@ -11,6 +11,7 @@ exit scope 1 level 1
 make_PycSymbol local 'a'
 enter scope 2 level 1
 make_PycSymbol local 'g'
+make_PycSymbol local 'self'
 enter scope 3 level 2
 make_PycSymbol global 'z'
 make_PycSymbol local 'z'

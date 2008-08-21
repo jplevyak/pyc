@@ -39,7 +39,11 @@ license(ArgumentState *arg_state, char *arg_unused) {
 }
 
 static ArgumentDescription arg_desc[] = {
-  {"test", 't', "Unit Test", "F", &do_unit_tests, "AMI_TEST", NULL},
+  {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
+#ifdef DEBUG
+  {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
+  {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
+#endif
   {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
   {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
   {"license", ' ', "Show License", NULL, NULL, NULL, license},

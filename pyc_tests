@@ -9,15 +9,29 @@ foreach g (*.py)
   if (-e $g.flags) then
     set flags = `cat $g.flags`
   else
-    set flags = 
+    set flags =
   endif
-  $VALGRIND ../pyc -d -v $flags $g >&! $g.out
-  diff $g.out $g.check
+  $VALGRIND ../pyc -D.. $flags $g >&! $g.out
+  if (-e $g.check) then
+    diff $g.out $g.check
+  else
+    diff $g.out empty
+  endif
   if ($?) then
-    echo $g "******** FAILED ********"
+    echo $g "******** COMPILE FAILED ********"
     set failed = `expr $failed + 1`
   else
-    echo $g "PASSED"
+    echo $g "COMPILE PASSED"
+  endif
+  if (-e $g.exec.check) then
+    $VALGRIND  $g:r >&! $g.exec.out
+    diff $g.exec.out $g.exec.check
+    if ($?) then
+      echo $g "******** EXECUTE FAILED ********"
+      set failed = `expr $failed + 1`
+    else
+      echo $g "EXECUTE PASSED"
+    endif
   endif
 end
 echo "---------------------------------------"
