@@ -9,6 +9,7 @@
    decorators (functions applied to functions)
    division and floor division correctly
    Eq and Is correctly
+   exceptions
 */
 
 #define OPERATOR_CHAR(_c) \
@@ -1300,8 +1301,10 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Num_kind: ast->rval = make_num(e->v.Num.n); break;
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
+      fail("error line %d, attributes not yet supported", ctx.lineno); break;
       break;
     case Subscript_kind: // expr value, slice slice, expr_context ctx
+      fail("error line %d, subscripting not yet supported", ctx.lineno); break;
       break;
     case Name_kind: // identifier id, expr_context ctx
     {
