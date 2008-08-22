@@ -21,7 +21,7 @@
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
-static Sym *sym_write = 0, *sym_writeln = 0;
+static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_lnot = 0;
 static char *cannonical_self = 0;
 
 static int scope_id = 0;
@@ -273,6 +273,9 @@ static void
 build_builtin_symbols() {
   sym_write = if1_make_symbol(if1, "write");
   sym_writeln = if1_make_symbol(if1, "writeln");
+  sym___iter__ = if1_make_symbol(if1, "__iter__");
+  sym_next = if1_make_symbol(if1, "next");
+  sym_lnot = if1_make_symbol(if1, "!");
   cannonical_self = if1_cannonicalize_string(if1, "self");
 
 #define S(_n) new_primitive_type(sym_##_n, #_n);
@@ -592,11 +595,11 @@ struct PycContext : public gc {
   int lineno;
   int depth;
   void *node;
-  Sym *class_sym;
+  Sym *class_sym, *fun_sym;
   Vec<PycScope *> scope_stack;
   Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
-  PycContext() : lineno(-1), depth(-1), class_sym(0), lbreak(0), lcontinue(0), lreturn(0) {}
+  PycContext() : lineno(-1), depth(-1), class_sym(0), fun_sym(0), lbreak(0), lcontinue(0), lreturn(0) {}
 };
 
 static void enter_scope(PycContext &ctx) {
@@ -781,6 +784,7 @@ def_fun(stmt_ty s, PycContext &ctx) {
   ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
   fn->cont = new_sym(ast);
   fn->ret = new_sym(ast);
+  ast->sym = fn;
 }
 
 static int
@@ -968,87 +972,6 @@ gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast) {
          ast->rval, ast);
 }
 
-#define RECURSE(_ast, _fn) \
-  PycAST *ast = getAST(_ast); \
-  forv_Vec(PycAST, x, ast->pre_scope_children) \
-    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx); \
-  enter_scope(_ast, ctx); \
-  forv_Vec(PycAST, x, ast->children) \
-    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx);
-
-static int build_if1(stmt_ty s, PycContext &ctx);
-static int build_if1(expr_ty e, PycContext &ctx);
-
-static int
-build_if1(stmt_ty s, PycContext &ctx) {
-  RECURSE(s, build_if1);
-  switch (s->kind) {
-    case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      gen_fun(s, ctx);
-      break;
-    case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      break;
-    case Return_kind: // expr? value
-      break;
-    case Delete_kind: // expr * targets
-      break;
-    case Assign_kind: // expr* targets, expr value
-      break;
-    case AugAssign_kind: // expr target, operator op, expr value
-      break;
-    case Print_kind: // epxr? dest, expr *values, bool nl
-      assert(!s->v.Print.dest);
-      for (int i = 0; i < asdl_seq_LEN(s->v.Print.values); i++)
-        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, 
-                 getAST((expr_ty)asdl_seq_GET(s->v.Print.values, i))->rval, new_sym(ast))->ast = ast;
-      if (s->v.Print.nl)
-        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_writeln, make_string(""), new_sym(ast))->ast = ast; 
-      break;
-    case For_kind: // expr target, expr, iter, stmt* body, stmt* orelse
-      break;
-    case While_kind: // expr test, stmt*body, stmt*orelse
-      break;
-    case If_kind: // expr test, stmt* body, stmt* orelse
-      gen_if(getAST(s->v.If.test), s->v.If.body, s->v.If.orelse, ast);
-      break;
-    case With_kind: // expr content_expr, expr? optional_vars, stmt *body
-      break;
-    case Raise_kind: // expr? type, expr? int, expr? tback
-      break;
-    case TryExcept_kind: // stmt* body, excepthandler *handlers, stmt *orelse
-      break;
-    case TryFinally_kind: // stmt *body, stmt *finalbody
-      break;
-    case Assert_kind: // expr test, expr? msg
-      fail("error line %d, 'assert' not yet supported", ctx.lineno); break;
-    case Import_kind: // alias* name
-      break;
-    case ImportFrom_kind: // identifier module, alias *names, int? level
-      break;
-    case Exec_kind: // expr body, expr? globals, expr? locals
-      fail("error line %d, 'exec' not yet supported", ctx.lineno); break;
-    case Global_kind: // identifier* names
-      break;
-#if PY_MAJOR_VERSION == 3
-    case Nonlocal_kind: break;
-#endif
-    case Expr_kind: // expr value
-    {
-      PycAST *a = getAST(s->v.Expr.value);
-      ast->rval = a->rval;
-      ast->code = a->code;
-      break;
-    }
-    case Pass_kind: break;
-    case Break_kind:
-    case Continue_kind:
-      if1_goto(if1, &ast->code, ast->label[0])->ast = ast;
-      break;
-  }
-  exit_scope(s, ctx);
-  return 0;
-}
-
 static Sym *make_num(PyObject *o) {
   assert(PyInt_Check(o));
   int i = (int)PyInt_AsLong(o);
@@ -1114,6 +1037,142 @@ static Sym *map_cmp_operator(cmpop_ty op) {
     case NotIn:
       fail("error: in operator not yet supported"); break;
   }
+  return 0;
+}
+
+#define RECURSE(_ast, _fn) \
+  PycAST *ast = getAST(_ast); \
+  forv_Vec(PycAST, x, ast->pre_scope_children) \
+    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx); \
+  enter_scope(_ast, ctx); \
+  forv_Vec(PycAST, x, ast->children) \
+    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx);
+
+static int build_if1(stmt_ty s, PycContext &ctx);
+static int build_if1(expr_ty e, PycContext &ctx);
+
+static int
+build_if1(stmt_ty s, PycContext &ctx) {
+  if (s->kind == FunctionDef_kind)
+    ctx.fun_sym = getAST(s)->sym;
+  RECURSE(s, build_if1);
+  switch (s->kind) {
+    case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
+      gen_fun(s, ctx);
+      break;
+    case ClassDef_kind: // identifier name, expr* bases, stmt* body
+      break;
+    case Return_kind: // expr? value
+      if (s->v.Return.value) {
+        PycAST *a = getAST(s->v.Return.value);
+        ctx.fun_sym->fun_returns_value = 1;
+        if1_gen(if1, &ast->code, a->code);
+        if1_move(if1, &ast->code, a->rval, ctx.fun_sym->ret, ast);
+      } else
+        if1_move(if1, &ast->code, sym_void, ctx.fun_sym->ret, ast);
+      if1_goto(if1, &ast->code, ast->label[0])->ast = ast;
+      break;
+    case Delete_kind: // expr * targets
+      break;
+    case Assign_kind: // expr* targets, expr value
+    { 
+      PycAST *v = getAST(s->v.Assign.value);
+      if1_gen(if1, &ast->code, v->code);
+      for (int i = 0; i < asdl_seq_LEN(s->v.Assign.targets); i++) {
+        PycAST *a = getAST((expr_ty)asdl_seq_GET(s->v.Assign.targets, i));
+        if1_gen(if1, &ast->code, a->code);
+        if1_move(if1, &ast->code, v->rval, a->sym);
+      }
+      break;
+    }
+    case AugAssign_kind: // expr target, operator op, expr value
+    {
+      PycAST *v = getAST(s->v.AugAssign.value);
+      if1_gen(if1, &ast->code, v->code);
+      PycAST *t = getAST(s->v.AugAssign.target);
+      if1_gen(if1, &ast->code, t->code);
+      Sym *tmp = new_sym(ast);
+      if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval,
+               map_operator(s->v.AugAssign.op), v->rval, tmp)->ast = ast;
+      if1_move(if1, &ast->code, tmp, t->sym);
+      break;
+    }
+    case Print_kind: // epxr? dest, expr *values, bool nl
+      assert(!s->v.Print.dest);
+      for (int i = 0; i < asdl_seq_LEN(s->v.Print.values); i++) {
+        PycAST *a = getAST((expr_ty)asdl_seq_GET(s->v.Print.values, i));
+        if1_gen(if1, &ast->code, a->code);
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, 
+                 a->rval, new_sym(ast))->ast = ast;
+      }
+      if (s->v.Print.nl)
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_writeln, make_string(""), new_sym(ast))->ast = ast; 
+      break;
+    case For_kind: // expr target, expr iter, stmt* body, stmt* orelse
+    {
+      PycAST *t = getAST(s->v.For.target), *i = getAST(s->v.For.iter);
+      Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
+      get_stmts_code(s->v.For.body, &body);
+      get_stmts_code(s->v.For.orelse, &orelse);
+      Sym *iter = new_sym(ast), *tmp = new_sym(ast), *tmp2 = new_sym(ast);
+      if1_gen(if1, &ast->code, i->code);
+      if1_send(if1, &ast->code, 2, 1, sym___iter__, i->rval, iter)->ast = ast; 
+      if1_gen(if1, &ast->code, t->code);
+      if1_send(if1, &next, 2, 1, sym_next, iter, tmp)->ast = ast;
+      if1_send(if1, &cond, 3, 1, sym_operator, sym_lnot, tmp, tmp2)->ast = ast;
+      if1_move(if1, &next, tmp, t->sym);
+      if1_loop(if1, &ast->code, ast->label[0], ast->label[1], 
+               tmp2, 0, cond, next, body, ast);
+      if1_gen(if1, &ast->code, orelse);
+      break;
+    }
+    case While_kind: // expr test, stmt*body, stmt*orelse
+    {
+      PycAST *t = getAST(s->v.While.test);
+      Code *body = 0, *orelse = 0;
+      get_stmts_code(s->v.While.body, &body);
+      get_stmts_code(s->v.While.orelse, &orelse);
+      if1_loop(if1, &ast->code, ast->label[0], ast->label[1], 
+               t->rval, 0, t->code, 0, body, ast);
+      if1_gen(if1, &ast->code, orelse);
+      break;
+    }
+    case If_kind: // expr test, stmt* body, stmt* orelse
+      gen_if(getAST(s->v.If.test), s->v.If.body, s->v.If.orelse, ast);
+      break;
+    case With_kind: // expr content_expr, expr? optional_vars, stmt *body
+    case Raise_kind: // expr? type, expr? int, expr? tback
+    case TryExcept_kind: // stmt* body, excepthandler *handlers, stmt *orelse
+    case TryFinally_kind: // stmt *body, stmt *finalbody
+      fail("error line %d, exceptions not yet supported", ctx.lineno); break;
+      break;
+    case Assert_kind: // expr test, expr? msg
+      fail("error line %d, 'assert' not yet supported", ctx.lineno); break;
+    case Import_kind: // alias* name
+      break;
+    case ImportFrom_kind: // identifier module, alias *names, int? level
+      break;
+    case Exec_kind: // expr body, expr? globals, expr? locals
+      fail("error line %d, 'exec' not yet supported", ctx.lineno); break;
+    case Global_kind: // identifier* names
+      break;
+#if PY_MAJOR_VERSION == 3
+    case Nonlocal_kind: break;
+#endif
+    case Expr_kind: // expr value
+    {
+      PycAST *a = getAST(s->v.Expr.value);
+      ast->rval = a->rval;
+      ast->code = a->code;
+      break;
+    }
+    case Pass_kind: break;
+    case Break_kind:
+    case Continue_kind:
+      if1_goto(if1, &ast->code, ast->label[0])->ast = ast;
+      break;
+  }
+  exit_scope(s, ctx);
   return 0;
 }
 

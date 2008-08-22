@@ -32,6 +32,12 @@ foreach g (*.py)
     else
       echo $g "EXECUTE PASSED"
     endif
+    python $g >&! $g.python.out
+    diff $g.exec.out $g.python.out
+    if ($?) then
+      echo $g "******** CPYTHON VERIFY FAILED ********"
+      set failed = `expr $failed + 1`
+    endif
   endif
 end
 echo "---------------------------------------"
