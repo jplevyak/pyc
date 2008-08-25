@@ -12,31 +12,40 @@ foreach g (*.py)
     set flags =
   endif
   $VALGRIND ../pyc -D.. $flags $g >&! $g.out
-  if (-e $g.check) then
-    diff $g.out $g.check
-  else
-    diff $g.out empty
-  endif
   if ($?) then
-    echo $g "******** COMPILE FAILED ********"
-    set failed = `expr $failed + 1`
+    if (-e $g.check_fail) then
+      echo $g "COMPILE PASSED"
+    else 
+      echo $g "******** COMPILE FAILED ********"
+      set failed = `expr $failed + 1`
+    endif
   else
-    echo $g "COMPILE PASSED"
-  endif
-  if (-e $g.exec.check) then
-    $VALGRIND  $g:r >&! $g.exec.out
-    diff $g.exec.out $g.exec.check
+    if (-e $g.check) then
+      diff $g.out $g.check
+    else
+      diff $g.out empty
+    endif
     if ($?) then
-      echo $g "******** EXECUTE FAILED ********"
+      echo $g "******** COMPILE FAILED ********"
       set failed = `expr $failed + 1`
     else
-      echo $g "EXECUTE PASSED"
-    endif
-    python $g >&! $g.python.out
-    diff $g.exec.out $g.python.out
-    if ($?) then
-      echo $g "******** CPYTHON VERIFY FAILED ********"
-      set failed = `expr $failed + 1`
+      echo $g "COMPILE PASSED"
+      if (-e $g.exec.check) then
+        $VALGRIND  $g:r >&! $g.exec.out
+        diff $g.exec.out $g.exec.check
+        if ($?) then
+          echo $g "******** EXECUTE FAILED ********"
+          set failed = `expr $failed + 1`
+        else
+          echo $g "EXECUTE PASSED"
+        endif
+        python $g >&! $g.python.out
+        diff $g.exec.out $g.python.out
+        if ($?) then
+          echo $g "******** CPYTHON VERIFY FAILED ********"
+          set failed = `expr $failed + 1`
+        endif
+      endif
     endif
   endif
 end

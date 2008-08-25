@@ -117,6 +117,6 @@ int main(int argc, char *argv[]) {
   PyArena_Free(arena);
   Py_Finalize();
   Service::stop_all();
-  _exit(0);
+  exit(0);
   return 0;
 }

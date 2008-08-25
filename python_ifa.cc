@@ -21,8 +21,9 @@
 
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
-static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
-static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_lnot = 0;
+static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
+  *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
+static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0;
 static char *cannonical_self = 0;
 
 static int scope_id = 0;
@@ -276,14 +277,15 @@ build_builtin_symbols() {
   sym_writeln = if1_make_symbol(if1, "writeln");
   sym___iter__ = if1_make_symbol(if1, "__iter__");
   sym_next = if1_make_symbol(if1, "next");
-  sym_lnot = if1_make_symbol(if1, "!");
   cannonical_self = if1_cannonicalize_string(if1, "self");
 
-#define S(_n) new_primitive_type(sym_##_n, #_n);
-#include "builtin_symbols.h"
-#undef S
+  new_global_variable(sym_init, "init");
 
   new_lub_type(sym_any, "any", 0);
+  new_primitive_type(sym_int32, "int32");
+  new_primitive_type(sym_int64, "int64");
+  new_primitive_type(sym_float64, "float64");
+  new_primitive_type(sym_complex64, "complex64");
   new_alias_type(sym_int, "int", sym_int32);
   new_alias_type(sym_long, "long", sym_int64); // standin for GNU gmp
   new_lub_type(sym_anyint, "anyint", sym_int32, sym_int64, 0);
@@ -291,55 +293,33 @@ build_builtin_symbols() {
   new_lub_type(sym_anyfloat, "anyfloat", sym_float, 0);
   new_alias_type(sym_complex, "complex", sym_complex64);
   new_lub_type(sym_anycomplex, "anycomplex", sym_complex, 0);
-  sym_object->type_kind = Type_RECORD;
-  new_primitive_type(sym_bool, "bool");
   new_lub_type(sym_anynum, "anynum", sym_anyint, sym_anyfloat, sym_anycomplex, 0);
+
   new_primitive_type(sym_string, "str");
   new_primitive_type(sym_unicode, "unicode");
-  // list && tuple already defined
   new_primitive_type(sym_buffer, "buffer");
   new_primitive_type(sym_xrange, "xrange");
+  new_primitive_type(sym_ellipsis_type, "Ellipsis_type");
+
+  init_default_builtin_types();
+  if1_set_symbols_type(if1);
+  if1_set_primitive_types(if1);
 
   new_primitive_object(sym_void, "None", sym_void_type);
   new_primitive_object(sym_unknown, "Unimplemented", sym_unknown_type);
-  new_primitive_object(sym_ellipsis, "Ellipsis", sym_void_type);
-
-  sym_any->implements.add(sym_unknown_type);
-  sym_any->specializes.add(sym_unknown_type);
-  sym_object->implements.add(sym_any);
-  sym_object->specializes.add(sym_any);
-  sym_nil_type->implements.add(sym_object);
-  sym_nil_type->specializes.add(sym_object);
-
-  make_meta_type(sym_any);
-  sym_anytype = sym_any->meta_type;
-  sym_anytype->implements.add(sym_any);
-  sym_anytype->specializes.add(sym_any);
-
-  make_meta_type(sym_nil_type);
-  sym_nil_type->implements.add(sym_nil_type->meta_type);
-  sym_nil_type->specializes.add(sym_nil_type->meta_type);
-
-  sym_any->is_system_type = 1;
-  sym_anytype->is_system_type = 1;
-  sym_value->is_system_type = 1;
-  sym_object->is_system_type = 1;
-  sym_nil_type->is_system_type = 1;
-  sym_unknown_type->is_system_type = 1;
-  sym_void_type->is_system_type = 1;
-  
-  if1_set_symbols_type(if1);
-  if1_set_primitive_types(if1);
+  new_primitive_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
 
   Immediate imm;
   imm.v_bool = 1;
   sym_true = if1_const(if1, sym_bool, "True", &imm);
   sym_true->name = sym_true->constant;
+  if1_set_builtin(if1, sym_true, "true");
   sym_true->implements.add(sym_bool);
   sym_true->specializes.add(sym_bool);
   imm.v_bool = 0;
   sym_false = if1_const(if1, sym_bool, "False", &imm);
   sym_false->name = sym_false->constant;
+  if1_set_builtin(if1, sym_false, "false");
   sym_false->implements.add(sym_bool);
   sym_false->specializes.add(sym_bool);
 }
@@ -1120,7 +1100,7 @@ build_if1(stmt_ty s, PycContext &ctx) {
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i->rval, iter)->ast = ast; 
       if1_gen(if1, &ast->code, t->code);
       if1_send(if1, &next, 2, 1, sym_next, iter, tmp)->ast = ast;
-      if1_send(if1, &cond, 3, 1, sym_operator, sym_lnot, tmp, tmp2)->ast = ast;
+      if1_send(if1, &cond, 3, 1, sym_operator, sym_exclamation, tmp, tmp2)->ast = ast;
       if1_move(if1, &next, tmp, t->sym);
       if1_loop(if1, &ast->code, ast->label[0], ast->label[1], 
                tmp2, 0, cond, next, body, ast);
@@ -1301,7 +1281,10 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Num_kind: ast->rval = make_num(e->v.Num.n); break;
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
-      fail("error line %d, attributes not yet supported", ctx.lineno); break;
+      ast->rval = new_sym(ast);
+      if1_gen(if1, &ast->code, getAST(e->v.Attribute.value)->code);
+      if1_send(if1, &ast->code, 4, 1, sym_operator, getAST(e->v.Attribute.value)->rval,
+               sym_period, make_symbol(PyString_AsString(e->v.Attribute.attr)), ast->rval)->ast = ast;
       break;
     case Subscript_kind: // expr value, slice slice, expr_context ctx
       fail("error line %d, subscripting not yet supported", ctx.lineno); break;
