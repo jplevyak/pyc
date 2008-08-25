@@ -132,11 +132,7 @@ PycAST::visible_functions(Sym *arg0) {
     v->add(f);
     return v;
   }
-  char *name = 0;
-  if (arg0->is_symbol)
-    name = arg0->name;
-  else
-    name = if1_cannonicalize_string(if1, "this");
+  char *name = arg0->name; (void)name;
   // TODO: finish
 #if 0
   SymScope* scope = this->xast->parentScope;
@@ -157,22 +153,6 @@ new_PycSymbol(char *name) {
   if1_register_sym(if1, s->sym, name);
   return s;
 }
-
-static PycSymbol *
-new_PycSymbol(Sym *sym) {
-  if (!sym->asymbol)
-    sym->asymbol = new PycSymbol;
-  sym->asymbol->sym = sym;
-  return (PycSymbol*)sym->asymbol;
-}
-
-#if 0
-static PycSymbol *
-new_PycSymbol(PyObject *o) {
-  char *name = if1_cannonicalize_string(if1, PyString_AS_STRING(o));
-  return new_PycSymbol(name);
-}
-#endif
 
 PycSymbol * 
 PycSymbol::copy() {
@@ -218,60 +198,6 @@ new_sym(PycAST *ast) {
 }
 
 static void
-new_primitive_type(Sym *&sym, char *name) {
-  name = if1_cannonicalize_string(if1, name);
-  if (!sym)
-    sym = new_sym(name, 1);
-  else
-    sym->name = name;
-  sym->type_kind = Type_PRIMITIVE;
-  if1_set_builtin(if1, sym, name);
-}
-
-static void
-new_global_variable(Sym *&sym, char *name) {
-  if (!sym)
-    sym = new_sym(name, 1);
-  sym->nesting_depth = 0;
-  if1_set_builtin(if1, sym, name);
-}
-
-static void
-new_primitive_object(Sym *&sym, char *name, Sym *sym_type) {
-  new_global_variable(sym, name);
-  sym->type_kind = Type_NONE;
-  sym->type = sym_type;
-  sym->is_external = 1;
-  sym_type->is_unique_type = 1;
-}
-
-static void
-new_alias_type(Sym *&sym, char *name, Sym *alias) {
-  if (!sym)
-    sym = new_sym(name, 1);
-  sym->type_kind = Type_ALIAS;
-  sym->alias = alias;
-  if1_set_builtin(if1, sym, name);
-}
-
-static void
-new_lub_type(Sym *&sym, char *name, ...)  {
-  if (!sym)
-    sym = new_sym(name, 1);
-  sym->type_kind = Type_LUB;
-  if1_set_builtin(if1, sym, name);
-  va_list ap;
-  va_start(ap, name);
-  Sym *s = 0;
-  do {
-    if ((s = va_arg(ap, Sym*)))
-      sym->has.add(s);
-  } while (s);
-  forv_Sym(ss, sym->has)
-    ss->inherits_add(sym);
-}
-
-static void
 build_builtin_symbols() {
   sym_write = if1_make_symbol(if1, "write");
   sym_writeln = if1_make_symbol(if1, "writeln");
@@ -279,35 +205,24 @@ build_builtin_symbols() {
   sym_next = if1_make_symbol(if1, "next");
   cannonical_self = if1_cannonicalize_string(if1, "self");
 
-  new_global_variable(sym_init, "init");
-
-  new_lub_type(sym_any, "any", 0);
-  new_primitive_type(sym_int32, "int32");
-  new_primitive_type(sym_int64, "int64");
-  new_primitive_type(sym_float64, "float64");
-  new_primitive_type(sym_complex64, "complex64");
-  new_alias_type(sym_int, "int", sym_int32);
-  new_alias_type(sym_long, "long", sym_int64); // standin for GNU gmp
-  new_lub_type(sym_anyint, "anyint", sym_int32, sym_int64, 0);
-  new_alias_type(sym_float, "float", sym_float64);
-  new_lub_type(sym_anyfloat, "anyfloat", sym_float, 0);
-  new_alias_type(sym_complex, "complex", sym_complex64);
-  new_lub_type(sym_anycomplex, "anycomplex", sym_complex, 0);
-  new_lub_type(sym_anynum, "anynum", sym_anyint, sym_anyfloat, sym_anycomplex, 0);
-
-  new_primitive_type(sym_string, "str");
-  new_primitive_type(sym_unicode, "unicode");
-  new_primitive_type(sym_buffer, "buffer");
-  new_primitive_type(sym_xrange, "xrange");
-  new_primitive_type(sym_ellipsis_type, "Ellipsis_type");
+  new_builtin_primitive_type(sym_unicode, "unicode");
+  new_builtin_primitive_type(sym_buffer, "buffer");
+  new_builtin_primitive_type(sym_xrange, "xrange");
+  new_builtin_primitive_type(sym_ellipsis_type, "Ellipsis_type");
 
   init_default_builtin_types();
-  if1_set_symbols_type(if1);
   if1_set_primitive_types(if1);
 
-  new_primitive_object(sym_void, "None", sym_void_type);
-  new_primitive_object(sym_unknown, "Unimplemented", sym_unknown_type);
-  new_primitive_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
+  sym_int->alias = sym_int32;
+  sym_float->alias = sym_float64;
+  sym_complex->alias = sym_complex64;
+
+  sym_string->name = if1_cannonicalize_string(if1, "str");
+  sym_void->name = if1_cannonicalize_string(if1, "None");
+  sym_unknown->name = if1_cannonicalize_string(if1, "Unimplemented");
+
+  new_builtin_alias_type(sym_long, "long", sym_int64); // standin for GNU gmp
+  new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
 
   Immediate imm;
   imm.v_bool = 1;
@@ -1348,7 +1263,7 @@ build_if1(mod_ty mod, PycContext &ctx, Code **code) {
 }
 
 static void scope_sym(PycContext &ctx, Sym *sym) {
-  PycSymbol *s = new_PycSymbol(sym);
+  PycSymbol *s = (PycSymbol*)sym->asymbol;
   ctx.scope_stack.last()->map.put(sym->name, s);
 }
 
