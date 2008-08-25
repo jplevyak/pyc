@@ -1302,13 +1302,13 @@ ast_to_if1(mod_ty module) {
   PycContext ctx;
   build_environment(module, ctx);
   if (build_syms(module, ctx) < 0) return -1;
-  finalize_types(if1, false);
+  finalize_types(if1);
   Code *code = 0;
   if (build_if1(module, ctx, &code) < 0) return -1;
   if (test_scoping) exit(0);
   build_init(code);
   finalize_symbols(if1);
   build_type_hierarchy();
-  finalize_types(if1, false);  // again to catch any new ones
+  finalize_types(if1);  // again to catch new ones
   return 0;
 }
