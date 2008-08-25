@@ -205,38 +205,27 @@ build_builtin_symbols() {
   sym_next = if1_make_symbol(if1, "next");
   cannonical_self = if1_cannonicalize_string(if1, "self");
 
-  new_builtin_primitive_type(sym_unicode, "unicode");
-  new_builtin_primitive_type(sym_buffer, "buffer");
-  new_builtin_primitive_type(sym_xrange, "xrange");
-  new_builtin_primitive_type(sym_ellipsis_type, "Ellipsis_type");
-
   init_default_builtin_types();
-  if1_set_primitive_types(if1);
 
+  // override default sizes
   sym_int->alias = sym_int32;
   sym_float->alias = sym_float64;
   sym_complex->alias = sym_complex64;
 
+  // override default names
   sym_string->name = if1_cannonicalize_string(if1, "str");
   sym_void->name = if1_cannonicalize_string(if1, "None");
   sym_unknown->name = if1_cannonicalize_string(if1, "Unimplemented");
+  sym_true->name = if1_cannonicalize_string(if1, "True");
+  sym_false->name = if1_cannonicalize_string(if1, "False");
 
+  // new types and objects
+  new_builtin_primitive_type(sym_unicode, "unicode");
+  new_builtin_primitive_type(sym_buffer, "buffer");
+  new_builtin_primitive_type(sym_xrange, "xrange");
+  new_builtin_primitive_type(sym_ellipsis_type, "Ellipsis_type");
   new_builtin_alias_type(sym_long, "long", sym_int64); // standin for GNU gmp
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
-
-  Immediate imm;
-  imm.v_bool = 1;
-  sym_true = if1_const(if1, sym_bool, "True", &imm);
-  sym_true->name = sym_true->constant;
-  if1_set_builtin(if1, sym_true, "true");
-  sym_true->implements.add(sym_bool);
-  sym_true->specializes.add(sym_bool);
-  imm.v_bool = 0;
-  sym_false = if1_const(if1, sym_bool, "False", &imm);
-  sym_false->name = sym_false->constant;
-  if1_set_builtin(if1, sym_false, "false");
-  sym_false->implements.add(sym_bool);
-  sym_false->specializes.add(sym_bool);
 }
 
 static void 
