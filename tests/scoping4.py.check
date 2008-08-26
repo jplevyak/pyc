@@ -2,6 +2,8 @@ enter scope 0 level 0
 exit scope 0 level 0
 enter scope 0 level 0
 make_PycSymbol local 'a'
+make_PycSymbol local '__init'
+make_PycSymbol local 'self'
 enter scope 1 level 1
 make_PycSymbol global 'z'
 make_PycSymbol use 'z'

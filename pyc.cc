@@ -110,7 +110,7 @@ int main(int argc, char *argv[]) {
     if (!pyc_future)
       error("unable to parse futures for file '%s'", filename);
     else {
-      ast_to_if1(mod);
+      ast_to_if1(mod, filename);
       analyze(filename);
     }
   }

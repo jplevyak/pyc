@@ -9,6 +9,8 @@ make_PycSymbol global 'z'
 make_PycSymbol local 'z'
 exit scope 1 level 1
 make_PycSymbol local 'a'
+make_PycSymbol local '__init'
+make_PycSymbol local 'self'
 enter scope 2 level 1
 make_PycSymbol use 'z'
 make_PycSymbol use 'set_z'

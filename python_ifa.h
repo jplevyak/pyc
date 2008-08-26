@@ -27,6 +27,7 @@ class PycSymbol : public IFASymbol {
   PycSymbol *copy();
 
   Symbol *symbol;
+  char *filename;
 
   PycSymbol();
 };
@@ -43,6 +44,7 @@ class PycAST : public IFAAST {
 
   stmt_ty xstmt;
   expr_ty xexpr;
+  char *filename;
   Vec<PycAST *> pre_scope_children;
   Vec<PycAST *> children;
 
@@ -54,6 +56,6 @@ class PycAST : public IFAAST {
   PycAST();
 };
 
-int ast_to_if1(mod_ty mod);
+int ast_to_if1(mod_ty mod, char *filename);
 
 #endif
