@@ -25,8 +25,9 @@ static int scope_id = 0;
 
 struct PycScope : public gc {
   int id;
+  Sym *in;
   Map<char *, PycSymbol*> map;
-  PycScope() { id = scope_id++; } 
+  PycScope() : in(0) { id = scope_id++; } 
 };
 
 struct PycContext : public gc {
@@ -87,7 +88,8 @@ PycSymbol::ast_id() {
   return 0;
 }
 
-PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), code(0), sym(0), rval(0) {
+PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), code(0), sym(0), rval(0),
+                   is_instance_load(0) {
   label[0] = label[1] = 0;
 }
 
@@ -207,6 +209,7 @@ static Sym *
 new_sym(PycAST *ast) {
   Sym *s = new_sym();
   s->ast = ast;
+  // s->is_local = 1; TODO
   return s;
 }
 
@@ -485,21 +488,24 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   }
 }
 
-static void enter_scope(PycContext &ctx) {
+static void enter_scope(PycContext &ctx, Sym *in = 0) {
   ctx.depth++;
   PycScope *saved = ctx.saved_scopes.get(ctx.node);
   if (!saved) {
     saved = new PycScope;
+    saved->in = in;
     ctx.saved_scopes.put(ctx.node, saved);
   }
   ctx.scope_stack.add(saved);
   DBG printf("enter scope %d level %d\n", ctx.scope_stack.last()->id, ctx.depth);
 }
 
-static void enter_scope(stmt_ty x, PycContext &ctx) {
+static void enter_scope(stmt_ty x, PycAST *ast, PycContext &ctx) {
   ctx.node = x;
-  if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind)
-    enter_scope(ctx);
+  if (x->kind == FunctionDef_kind)
+    enter_scope(ctx, ast->rval);
+  else if (x->kind == ClassDef_kind)
+    enter_scope(ctx, ast->sym);
 }
 
 static int needs_scope(expr_ty x) {
@@ -511,7 +517,7 @@ static int needs_scope(expr_ty x) {
     );
 }
 
-static void enter_scope(expr_ty x, PycContext &ctx) {
+static void enter_scope(expr_ty x, PycAST *ast, PycContext &ctx) {
   ctx.node = x;
   if (needs_scope(x)) enter_scope(ctx);
 }
@@ -655,7 +661,7 @@ static int build_syms(expr_ty e, PycContext &ctx);
     for_Vec(stmt_ty, x, stmts) { _fn(x, _ctx); ast->pre_scope_children.add(getAST(x, _ctx)); } \
     for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->pre_scope_children.add(getAST(x, _ctx)); } \
   } \
-  enter_scope(_ast, _ctx);                                                   \
+  enter_scope(_ast, ast, _ctx);                                          \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_next(_ast, stmts, exprs); \
     for_Vec(stmt_ty, x, stmts) { _fn(x, _ctx); ast->children.add(getAST(x, _ctx)); } \
@@ -967,7 +973,7 @@ static Sym *map_cmp_operator(cmpop_ty op) {
   PycAST *ast = getAST(_ast, _ctx); \
   forv_Vec(PycAST, x, ast->pre_scope_children) \
     if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx); \
-  enter_scope(_ast, ctx); \
+  enter_scope(_ast, ast, ctx);                                           \
   forv_Vec(PycAST, x, ast->children) \
     if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx);
 
@@ -1007,7 +1013,12 @@ build_if1(stmt_ty s, PycContext &ctx) {
       for (int i = 0; i < asdl_seq_LEN(s->v.Assign.targets); i++) {
         PycAST *a = getAST((expr_ty)asdl_seq_GET(s->v.Assign.targets, i), ctx);
         if1_gen(if1, &ast->code, a->code);
-        if1_move(if1, &ast->code, v->rval, a->sym);
+        if (a->is_instance_load)
+          if1_send(if1, &ast->code, 5, 1, sym_operator, 
+                   ctx.fun_sym->self, sym_setter, make_symbol(a->sym->name), 
+                   v->rval, (ast->rval = new_sym(ast)))->ast = ast;
+        else
+          if1_move(if1, &ast->code, v->rval, a->sym);
       }
       break;
     }
@@ -1242,7 +1253,18 @@ build_if1(expr_ty e, PycContext &ctx) {
       PycSymbol *s = find_PycSymbol(ctx, e->v.Name.id, &level);
       DBG printf("%sfound '%s' at level %d\n", s ? "" : "not ",
                  if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
-      ast->rval = ast->sym = s->sym;
+      bool load = e->v.Name.ctx == Load;
+      Sym *in = ctx.scope_stack[ctx.scope_stack.n-1]->in;
+      if (in && in->type_kind == Type_RECORD && in->has.in(s->sym)) {
+        if (load)
+          if1_send(if1, &ast->code, 4, 1, sym_operator, ctx.fun_sym->self, sym_period, make_symbol(s->sym->name), 
+                   (ast->rval = new_sym(ast)))->ast = ast;
+        else {
+          ast->is_instance_load = 1;
+          ast->sym = s->sym;
+        }
+      } else
+        ast->rval = ast->sym = s->sym;
       break;
     }
     case List_kind: // expr* elts, expr_context ctx
