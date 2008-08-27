@@ -86,6 +86,8 @@ int main(int argc, char *argv[]) {
   init_config();
   INIT_RAND(0x1234567);
   process_args(&arg_state, argc, argv);
+  ifa_verbose = verbose_level;
+  ifa_debug = debug_level;
   if (arg_state.nfile_arguments != 1)
     usage(&arg_state, 0);
   char *filename = arg_state.file_argument[0];

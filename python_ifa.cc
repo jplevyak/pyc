@@ -209,7 +209,7 @@ static Sym *
 new_sym(PycAST *ast) {
   Sym *s = new_sym();
   s->ast = ast;
-  // s->is_local = 1; TODO
+  s->is_local = 1;
   return s;
 }
 
