@@ -25,3 +25,13 @@ Any object can be tested for truth value, for use in an if or while condition or
 All other values are considered true -- so objects of many types are always true.
 
 Operations and built-in functions that have a Boolean result always return 0 or False for false and 1 or True for true, unless otherwise stated. (Important exception: the Boolean operations "or" and "and" always return one of their operands.) 
+
+3. Dynamism
+
+Classes can be defined under conditionals and are not visible until
+the definitions have been encountered.  This is likely something which
+will not survive compilation.
+
+Variables and bindings an be deleted.  Again, it is unlikely that this
+behavior will survive compilation.
+

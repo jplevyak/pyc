@@ -654,19 +654,25 @@ static inline PycAST *getAST(expr_ty e, PycContext &ctx) {
 static int build_syms(stmt_ty s, PycContext &ctx);
 static int build_syms(expr_ty e, PycContext &ctx);
 
-#define AST_RECURSE(_ast, _fn, _ctx)                 \
+#define AST_RECURSE_PRE(_ast, _fn, _ctx)                 \
   PycAST *ast = getAST(_ast, _ctx);                                          \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
     for_Vec(stmt_ty, x, stmts) { _fn(x, _ctx); ast->pre_scope_children.add(getAST(x, _ctx)); } \
     for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->pre_scope_children.add(getAST(x, _ctx)); } \
-  } \
-  enter_scope(_ast, ast, _ctx);                                          \
+  }
+
+#define AST_RECURSE_POST(_ast, _fn, _ctx)                 \
   {                                                                       \
     Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_next(_ast, stmts, exprs); \
     for_Vec(stmt_ty, x, stmts) { _fn(x, _ctx); ast->children.add(getAST(x, _ctx)); } \
     for_Vec(expr_ty, x, exprs) { _fn(x, _ctx); ast->children.add(getAST(x, _ctx)); } \
   }
+
+#define AST_RECURSE(_ast, _fn, _ctx) \
+  AST_RECURSE_PRE(_ast, _fn, _ctx) \
+  enter_scope(_ast, ast, _ctx); \
+  AST_RECURSE_POST(_ast, _fn, _ctx)
 
 static void build_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycContext &ctx) {
   for (int i = 0; i < asdl_seq_LEN(args->args); i++) {
@@ -680,18 +686,22 @@ static void build_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycCo
 }
 
 static Sym *
-def_fun(PycAST *ast, char *name, PycContext &ctx) {
+def_fun(stmt_ty s, PycAST *ast, char *name, PycContext &ctx) {
+  if (ctx.class_sym)
+    enter_scope(s, ast, ctx);
   Sym *fn = make_PycSymbol(ctx, name, PYC_LOCAL)->sym;
+  if (!ctx.class_sym)
+    enter_scope(s, ast, ctx);
   fn->ast = ast;
+  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
+  fn->cont = new_sym(ast);
+  fn->ret = new_sym(ast);
   if (ctx.class_sym) {
     fn->self = make_PycSymbol(ctx, cannonical_self, PYC_LOCAL)->sym;
     fn->self->is_read_only = 1;
     fn->self->ast = ast;
     fn->self->must_implement_and_specialize(ctx.class_sym);
   }
-  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
-  fn->cont = new_sym(ast);
-  fn->ret = new_sym(ast);
   return fn;
 }
 
@@ -699,17 +709,17 @@ static int
 build_syms(stmt_ty s, PycContext &ctx) {
   ctx.node = s;
   ctx.lineno = s->lineno;
-  PycAST *past = getAST(s, ctx);
+  AST_RECURSE_PRE(s, build_syms, ctx);
   switch (s->kind) {
     default: break;
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
-      past->sym = def_fun(past, PyString_AS_STRING(s->v.FunctionDef.name), ctx);
+      ast->sym = def_fun(s, ast, PyString_AS_STRING(s->v.FunctionDef.name), ctx);
       break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      past->sym = make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL)->sym;
-      past->sym->type_kind = Type_RECORD;
-      ctx.class_sym = past->sym;
-      past->rval = def_fun(past, "__init", ctx);
+      ast->sym = make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL)->sym;
+      ast->sym->type_kind = Type_RECORD;
+      ctx.class_sym = ast->sym;
+      ctx.fun_sym = ast->rval = def_fun(s, ast, "__main__", ctx);
       break;
     case Global_kind: // identifier* names
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
@@ -723,11 +733,11 @@ build_syms(stmt_ty s, PycContext &ctx) {
 #endif
     case For_kind:
     case While_kind:
-      ctx.lcontinue = past->label[0] = if1_alloc_label(if1);
-      ctx.lbreak = past->label[1] = if1_alloc_label(if1);
+      ctx.lcontinue = ast->label[0] = if1_alloc_label(if1);
+      ctx.lbreak = ast->label[1] = if1_alloc_label(if1);
       break;
   }
-  AST_RECURSE(s, build_syms, ctx);
+  AST_RECURSE_POST(s, build_syms, ctx);
   switch (s->kind) {
     default: break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
@@ -735,10 +745,10 @@ build_syms(stmt_ty s, PycContext &ctx) {
         Sym *base = getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i), ctx)->sym;
         if (!base)
           fail("error line %d, base not for for class '%s'", ctx.lineno, ast->sym->name);
-        ast->sym->specializes.add(getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i), ctx)->sym);
+        ast->sym->inherits_add(getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i), ctx)->sym);
       }
       form_Map(MapCharPycSymbolElem, x, ctx.scope_stack[ctx.depth]->map)
-        if (!MARKED(x->value))
+        if (!MARKED(x->value) && x->value->sym != ast->rval->self && x->value->sym != ast->rval)
           ast->sym->has.add(x->value->sym);
       break;
     case Continue_kind: ast->label[0] = ctx.lcontinue; break;
@@ -862,14 +872,20 @@ gen_fun(stmt_ty s, PycContext &ctx) {
 static void
 gen_class_init(stmt_ty s, PycContext &ctx) {
   PycAST *ast = getAST(s, ctx);
+  // build base ___init___ (class specific initialization)
+  // build base __main__ (class constructor using any __init__ args if any)
   Sym *fn = ctx.fun_sym;
   Code *body = 0;
   if1_send(if1, &body, 3, 1, sym_primitive, sym_new, ast->sym, fn->self)->ast = ast;
+  for (int i = 0; i < ctx.class_sym->includes.n; i++) {
+    if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  }
   for (int i = 0; i < asdl_seq_LEN(s->v.ClassDef.body); i++)
     if1_gen(if1, &body, getAST((stmt_ty)asdl_seq_GET(s->v.ClassDef.body, i), ctx)->code);
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  // build default __init__ (user class constructor initialization)
   Vec<Sym *> as;
   as.add(new_sym(ast));
   as[0]->must_implement_and_specialize(ast->sym->meta_type);
