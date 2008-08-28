@@ -52,7 +52,7 @@ class PycAST : public IFAAST {
   Label *label[2];      // before and after for loops (continue,break)
   Sym *sym, *rval;      // IF1 Syms
 
-  uint32 is_instance_load:1;
+  uint32 is_instance_store:1;
 
   PycAST();
 };
