@@ -10,6 +10,7 @@
    division and floor division correctly
    Eq and Is correctly
    exceptions
+   A.n where A is a class gives the value of n in the prototype
 */
 
 #define OPERATOR_CHAR(_c) \
@@ -748,16 +749,6 @@ def_fun(stmt_ty s, PycAST *ast, char *name, PycContext &ctx, int constructor = 0
   ctx.scope_stack.last()->fun = new_fun(ast, fn);
   fn->nesting_depth = ctx.scope_stack.n - 1;
   ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
-  Sym *in = ctx.scope_stack[ctx.scope_stack.n-2]->in;
-  if (constructor || (in && in->type_kind == Type_RECORD)) {
-    if (!constructor)
-      fn->self = make_PycSymbol(ctx, cannonical_self, PYC_LOCAL)->sym;
-    else
-      fn->self = new_sym(ast);
-    fn->self->is_read_only = 1;
-    fn->self->ast = ast;
-    fn->self->must_implement_and_specialize(ctx.cls());
-  }
   return fn;
 }
 
@@ -775,7 +766,9 @@ build_syms(stmt_ty s, PycContext &ctx) {
       ast->sym = make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL)->sym;
       ast->sym->type_kind = Type_RECORD;
       ast->rval = def_fun(s, ast, "___init___", ctx, 1);
-      break;
+      ast->rval->self = new_sym(ast);
+      ast->rval->self->must_implement_and_specialize(ast->sym);
+     break;
     case Global_kind: // identifier* names
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
         make_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i), PYC_GLOBAL);
@@ -910,6 +903,7 @@ static void
 gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   Sym *fn = ast->sym;
   Code *body = 0;
+  Sym *in = ctx.scope_stack[ctx.scope_stack.n-2]->in;
   for (int i = 0; i < asdl_seq_LEN(s->v.FunctionDef.body); i++)
     if1_gen(if1, &body, getAST((stmt_ty)asdl_seq_GET(s->v.FunctionDef.body, i), ctx)->code);
   if1_move(if1, &body, sym_void, fn->ret, ast);
@@ -917,9 +911,14 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
   as.add(fn);
-  if (fn->self)
-    as.add(fn->self);
   build_syms_args(ast, s->v.FunctionDef.args, as, ctx);
+  if (in && in->type_kind == Type_RECORD) {
+    if (as.n > 1) {
+      as.v[0] = if1_make_symbol(if1, as.v[0]->name);
+      fn->self = as.v[1];
+      fn->self->must_implement_and_specialize(in);
+    }
+  }
   if1_closure(if1, fn, body, as.n, as.v);
 }
 
@@ -957,7 +956,6 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     init_sym = fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;
     fn->self = new_sym(ast);
-    fn->self->is_read_only = 1;
     fn->self->must_implement_and_specialize(cls);
     body = 0;
     if1_move(if1, &body, fn->self, fn->ret);
