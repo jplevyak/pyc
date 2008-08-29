@@ -7,6 +7,7 @@
 #include "defs.h"
 
 int do_unit_tests = 0;
+static char pyc_ifa_log[256];
 
 static void
 help(ArgumentState *arg_state, char *arg_unused) {
@@ -44,6 +45,7 @@ static ArgumentDescription arg_desc[] = {
   {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
   {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
 #endif
+  {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
   {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
   {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
   {"license", ' ', "Show License", NULL, NULL, NULL, license},

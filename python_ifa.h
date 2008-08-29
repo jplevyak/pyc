@@ -45,6 +45,7 @@ class PycAST : public IFAAST {
   stmt_ty xstmt;
   expr_ty xexpr;
   char *filename;
+  PycAST *parent;
   Vec<PycAST *> pre_scope_children;
   Vec<PycAST *> children;
 
@@ -52,7 +53,10 @@ class PycAST : public IFAAST {
   Label *label[2];      // before and after for loops (continue,break)
   Sym *sym, *rval;      // IF1 Syms
 
-  uint32 is_instance_store:1;
+  uint32 is_member:1;
+  
+  bool is_call() { return xexpr && xexpr->kind == Call_kind; }
+  bool is_assign() { return xstmt && xstmt->kind == Assign_kind; }
 
   PycAST();
 };
