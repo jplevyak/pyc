@@ -49,12 +49,13 @@ static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0;
-static Sym *sym___init__ = 0;
+static Sym *sym___init__ = 0, *sym_super = 0;
 static char *cannonical_self = 0;
-
 static int finalized_symbols = 0;
+static int finalized_mro = 0;
+static Vec<Sym *> builtin_functions;
 
-PycSymbol::PycSymbol() : symbol(0), filename(0) {
+PycSymbol::PycSymbol() : symbol(0), filename(0), mro_built(0) {
 }
 
 char *
@@ -231,6 +232,7 @@ build_builtin_symbols() {
   sym___iter__ = if1_make_symbol(if1, "__iter__");
   sym_next = if1_make_symbol(if1, "next");
   sym___init__ = if1_make_symbol(if1, "__init__");
+  sym_super = if1_make_symbol(if1, "super");
   cannonical_self = if1_cannonicalize_string(if1, "self");
 
   init_default_builtin_types();
@@ -256,6 +258,8 @@ build_builtin_symbols() {
   new_builtin_primitive_type(sym_ellipsis_type, "Ellipsis_type");
   new_builtin_alias_type(sym_long, "long", sym_int64); // standin for GNU gmp
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
+  
+  builtin_functions.set_add(sym_super);
 }
 
 static void 
@@ -716,7 +720,7 @@ static int build_syms(expr_ty e, PycContext &ctx);
   enter_scope(_ast, ast, _ctx); \
   AST_RECURSE_POST(_ast, _fn, _ctx)
 
-static void build_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycContext &ctx) {
+static void get_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycContext &ctx) {
   for (int i = 0; i < asdl_seq_LEN(args->args); i++) {
 #if PY_MAJOR_VERSION == 3
     assert(!"incomplete");
@@ -743,9 +747,10 @@ def_fun(stmt_ty s, PycAST *ast, char *name, PycContext &ctx, int constructor = 0
   if (constructor)
     enter_scope(s, ast, ctx);
   Sym *fn = make_PycSymbol(ctx, name, PYC_LOCAL)->sym;
-  fn->is_fun = 1;
-  if (!constructor)
+  if (!constructor) {
+    fn->in = ctx.cls();
     enter_scope(s, ast, ctx);
+  }
   ctx.scope_stack.last()->fun = new_fun(ast, fn);
   fn->nesting_depth = ctx.scope_stack.n - 1;
   ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
@@ -912,7 +917,7 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
   as.add(fn);
-  build_syms_args(ast, s->v.FunctionDef.args, as, ctx);
+  get_syms_args(ast, s->v.FunctionDef.args, as, ctx);
   if (in && in->type_kind == Type_RECORD) {
     if (as.n > 1) {
       as.v[0] = if1_make_symbol(if1, as.v[0]->name);
@@ -1225,6 +1230,52 @@ build_if1(stmt_ty s, PycContext &ctx) {
 }
 
 static int
+build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
+  if (fun->sym && builtin_functions.set_in(fun->sym)) {
+    if (fun->sym == sym_super) {
+      if (!ctx.fun())
+        fail("super outside of member function");
+      Vec<Sym *> as;
+      get_syms_args(ast, ((PycAST*)ctx.fun()->ast)->xstmt->v.FunctionDef.args, as, ctx);
+      if (as.n < 1 || !ctx.fun()->in || ctx.fun()->in->type_kind != Type_RECORD)
+        fail("super outside of member function");
+      int n = asdl_seq_LEN(e->v.Call.args);
+      if (!n) {
+        ast->rval = new_sym(ast);
+        ast->rval->aspect = ctx.cls();
+        if1_move(if1, &ast->code, ctx.fun()->self, ast->rval);
+      } else if (n == 1) {
+        PycAST *cls_ast = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
+        if (!cls_ast->sym || cls_ast->sym->type_kind != Type_RECORD)
+          fail("non-constant super() class");
+        ast->rval = new_sym(ast);
+        ast->rval->aspect = cls_ast->sym;
+        if1_move(if1, &ast->code, as[0], ast->rval);
+      } else {
+        if (n > 2)
+          fail("bad number of arguments to builtin function 'super'");
+        PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
+        PycAST *a1 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 1), ctx);
+        if (!a0->sym || a0->sym->type_kind != Type_RECORD)
+          fail("non-constant super() class");
+        if (a1->sym && a0->sym->type_kind == Type_RECORD) {
+          ast->rval = new_sym(ast);
+          ast->rval->aspect = a0->sym;
+          if1_move(if1, &ast->code, as[0], ast->rval);
+        } else {
+          ast->rval = new_sym(ast);
+          ast->rval->aspect = a0->sym;
+          if1_move(if1, &ast->code, a1->rval, ast->rval);
+        }
+      }
+    } else
+      fail("unimplemented builtin '%s'", fun->sym->name);
+    return 1;
+  }
+  return 0;
+}
+
+static int
 build_if1(expr_ty e, PycContext &ctx) {
   RECURSE(e, build_if1, ctx);
   switch (e->kind) {
@@ -1334,6 +1385,8 @@ build_if1(expr_ty e, PycContext &ctx) {
       if1_gen(if1, &ast->code, fun->code);
       for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
         if1_gen(if1, &ast->code, getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i), ctx)->code);
+      if (build_builtin_call(fun, e, ast, ctx))
+        break;
       {
         Code *send = if1_send1(if1, &ast->code, ast);
         if (!fun->is_member)
@@ -1358,6 +1411,7 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Num_kind: ast->rval = make_num(e->v.Num.n); break;
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
+      if1_gen(if1, &ast->code, getAST(e->v.Attribute.value, ctx)->code);
       if (ast->parent->is_assign() || 
           (ast->parent->is_call() && ast->parent->xexpr->v.Call.func == e)) {
         ast->sym = make_symbol(PyString_AsString(e->v.Attribute.attr));
@@ -1365,7 +1419,6 @@ build_if1(expr_ty e, PycContext &ctx) {
         ast->is_member = 1;
       } else {
         ast->rval = new_sym(ast);
-        if1_gen(if1, &ast->code, getAST(e->v.Attribute.value, ctx)->code);
         Sym *v = getAST(e->v.Attribute.value, ctx)->rval;
         if (v->type_kind == Type_RECORD)
           v = v->self;
@@ -1465,6 +1518,7 @@ build_environment(mod_ty mod, PycContext &ctx) {
   scope_sym(ctx, sym_unknown);
   scope_sym(ctx, sym_ellipsis);
   scope_sym(ctx, sym_object);
+  scope_sym(ctx, sym_super);
   exit_scope(ctx);
 }
 
@@ -1490,6 +1544,84 @@ add_primitive_transfer_functions() {
     sym_writeln->name, new RegisteredPrim(return_void_transfer_function));
 }
 
+/*
+  Python uses C3 linearization to determine method resolution order from:
+  "A Monotonic Superclass Linearization for Dylan",
+    by Kim Barrett, Bob Cassel, Paul Haahr,
+    David A. Moon, Keith Playford, and P. Tucker Withington.
+    (OOPSLA 1996)
+*/
+typedef Vec<Sym *> VSym;
+
+static Sym *candidate(Sym *c, Vec<VSym *> &todo) {
+  forv_Vec(VSym, y, todo)
+    if (y->index(c) > 0)
+      return 0;
+  return c;
+}
+
+static void merge(Vec<Sym *> &rdone, Vec<VSym*> &todo) {
+  forv_Vec(VSym, x, todo)
+    if (x->n) goto Lnotdone;
+  rdone.reverse();
+  return;
+Lnotdone:;
+  Sym *c = 0;
+  forv_Vec(VSym, y, todo)
+    if (y->n && (c = candidate(y->v[0], todo)))
+      break;
+  if (c) {
+    forv_Vec(VSym, y, todo)
+      if (y->n && y->v[0] == c) 
+        y->remove(0);
+    rdone.insert(0, c);
+    merge(rdone, todo);
+  } else
+    fail("inconsistent precedence graph in C3 linearization");
+}
+
+static void
+c3_linearization_mro(Sym *c) {
+  PycSymbol *csym = (PycSymbol*)c->asymbol;
+  if (csym->mro_built)
+    return;
+  csym->mro_built = 1;
+  if (c->type_kind != Type_RECORD)
+    return;
+  c->dispatch_types.clear();
+  Vec<Sym*> rdone;
+  Vec<Vec<Sym*>*> todo;
+  rdone.add(c);
+  forv_Sym(x, c->includes) {
+    c3_linearization_mro(x);
+    todo.add(new Vec<Sym *>(x->dispatch_types));
+  }
+  todo.add(new Vec<Sym *>(c->includes));
+  merge(rdone, todo);
+  c->dispatch_types.move(rdone);
+}
+
+/*
+  Sym::aspect is set by the code handling builtin 'super' to
+  the class whose superclass we wish to dispatch to.  Replace
+  with the dispatched-to class.
+*/
+
+static void
+build_linearized_mro_and_fixup_aspect() {
+  for (int x = finalized_mro; x < if1->allsyms.n; x++)
+    c3_linearization_mro(if1->allsyms.v[x]);
+  for (int x = finalized_mro; x < if1->allsyms.n; x++) {
+    Sym *s = if1->allsyms.v[x];
+    if (s->aspect) {
+      if (s->aspect->dispatch_types.n < 2)
+        fail("unable to dispatch to super of '%s'", s->aspect->name);
+      s->aspect = s->aspect->dispatch_types.v[1];
+    }
+  }
+  finalized_mro = if1->allsyms.n;
+}
+
 int 
 ast_to_if1(mod_ty module, char *filename) {
   ifa_init(new PycCallbacks);
@@ -1506,6 +1638,7 @@ ast_to_if1(mod_ty module, char *filename) {
   build_init(code);
   finalize_symbols(if1);
   build_type_hierarchy();
+  build_linearized_mro_and_fixup_aspect();
   finalize_types(if1);  // again to catch new ones
   return 0;
 }
