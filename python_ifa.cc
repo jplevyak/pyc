@@ -5,7 +5,7 @@
 
 /* TODO
    move static variables into an object
-   "__bases__" "__class__" "super", "lambda"
+   "__bases__" "__class__" "lambda"
    decorators (functions applied to functions)
    division and floor division correctly
    Eq and Is correctly
@@ -747,10 +747,20 @@ def_fun(stmt_ty s, PycAST *ast, char *name, PycContext &ctx, int constructor = 0
   if (constructor)
     enter_scope(s, ast, ctx);
   Sym *fn = make_PycSymbol(ctx, name, PYC_LOCAL)->sym;
-  if (!constructor) {
-    fn->in = ctx.cls();
+  fn->in = ctx.cls();
+  if (!constructor)
     enter_scope(s, ast, ctx);
-  }
+  ctx.scope_stack.last()->fun = new_fun(ast, fn);
+  fn->nesting_depth = ctx.scope_stack.n - 1;
+  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
+  return fn;
+}
+
+static Sym *
+def_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
+  Sym *fn = new_sym(ast);
+  fn->in = ctx.cls();
+  enter_scope(e, ast, ctx);
   ctx.scope_stack.last()->fun = new_fun(ast, fn);
   fn->nesting_depth = ctx.scope_stack.n - 1;
   ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
@@ -825,7 +835,7 @@ build_syms(expr_ty e, PycContext &ctx) {
   switch (e->kind) {
     default: break;
     case Lambda_kind: // arguments args, expr body
-      past->sym = new_sym(past);
+      past->rval = def_fun(e, past, ctx);
       break;
     case Name_kind: // identifier id, expr_context ctx
       past->sym = past->rval = 
@@ -925,6 +935,21 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
       fn->self->must_implement_and_specialize(in);
     }
   }
+  if1_closure(if1, fn, body, as.n, as.v);
+}
+
+static void
+gen_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
+  Sym *fn = ast->rval;
+  Code *body = 0;
+  PycAST *b = getAST(e->v.Lambda.body, ctx);
+  if1_gen(if1, &body, b->code);
+  if1_move(if1, &body, b->rval, fn->ret, ast);
+  if1_label(if1, &body, ast, ast->label[0]);
+  if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  Vec<Sym *> as;
+  as.add(fn);
+  get_syms_args(ast, e->v.Lambda.args, as, ctx);
   if1_closure(if1, fn, body, as.n, as.v);
 }
 
@@ -1331,6 +1356,7 @@ build_if1(expr_ty e, PycContext &ctx) {
                getAST(e->v.UnaryOp.operand, ctx)->rval, ast->rval)->ast = ast;
       break;
     case Lambda_kind: // arguments args, expr body
+      gen_fun(e, ast, ctx);
       break;
     case IfExp_kind: // expr test, expr body, expr orelse
       gen_ifexpr(getAST(e->v.IfExp.test, ctx), getAST(e->v.IfExp.body, ctx), getAST(e->v.IfExp.orelse, ctx), ast);
