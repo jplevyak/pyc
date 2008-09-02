@@ -10,7 +10,6 @@
    division and floor division correctly
    Eq and Is correctly
    exceptions
-   A.n where A is a class gives the value of n in the prototype
 */
 
 #define OPERATOR_CHAR(_c) \
@@ -744,6 +743,7 @@ def_fun(stmt_ty s, PycAST *ast, char *name, PycContext &ctx, int constructor = 0
   if (constructor)
     enter_scope(s, ast, ctx);
   Sym *fn = make_PycSymbol(ctx, name, PYC_LOCAL)->sym;
+  fn->is_fun = 1;
   if (!constructor)
     enter_scope(s, ast, ctx);
   ctx.scope_stack.last()->fun = new_fun(ast, fn);
@@ -765,10 +765,11 @@ build_syms(stmt_ty s, PycContext &ctx) {
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
       ast->sym = make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL)->sym;
       ast->sym->type_kind = Type_RECORD;
+      ast->sym->self = new_global(ast); // prototype
       ast->rval = def_fun(s, ast, "___init___", ctx, 1);
       ast->rval->self = new_sym(ast);
       ast->rval->self->must_implement_and_specialize(ast->sym);
-     break;
+      break;
     case Global_kind: // identifier* names
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
         make_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i), PYC_GLOBAL);
@@ -796,7 +797,7 @@ build_syms(stmt_ty s, PycContext &ctx) {
         ast->sym->inherits_add(getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i), ctx)->sym);
       }
       form_Map(MapCharPycSymbolElem, x, ctx.scope_stack[ctx.depth]->map)
-        if (!MARKED(x->value) && x->value->sym != ast->rval->self && x->value->sym != ast->rval)
+        if (!MARKED(x->value) && !x->value->sym->is_fun)
           ast->sym->has.add(x->value->sym);
       break;
     case Continue_kind: ast->label[0] = ctx.lcontinue; break;
@@ -929,10 +930,14 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
   Sym *selector = if1_make_symbol(if1, fn->name);
   Code *body = 0;
   for (int i = 0; i < cls->includes.n; i++) {
-    Sym *t = new_sym(ast);
-    if1_move(if1, &body, fn->self, t);
-    t->aspect = cls->includes[i];
-    if1_send(if1, &body, 2, 1, selector, t, new_sym(ast))->ast = ast;
+    Sym *inc = cls->includes.v[i];
+    for (int j = 0; j < inc->has.n; j++) {
+      Sym *t = new_sym(ast);
+      Sym *iv = if1_make_symbol(if1, inc->has.v[j]->name);
+      if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
+      if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, t, 
+               (ast->rval = new_sym(ast)))->ast = ast;
+    }
   }
   for (int i = 0; i < asdl_seq_LEN(s->v.ClassDef.body); i++)
     if1_gen(if1, &body, getAST((stmt_ty)asdl_seq_GET(s->v.ClassDef.body, i), ctx)->code);
@@ -946,7 +951,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     if1_closure(if1, fn, body, as.n, as.v);
   }
   // build prototype
-  Sym *proto = fn->self = new_global(ast);
+  Sym *proto = cls->self;
   if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_new, cls, proto)->ast = ast;
   if1_send(if1, &ast->code, 2, 1, selector, proto, new_sym(ast))->ast = ast;
   // build default __init__ (user class constructor initialization)
@@ -1353,15 +1358,19 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Num_kind: ast->rval = make_num(e->v.Num.n); break;
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
-      if (ast->parent->is_assign() || ast->parent->is_call()) {
+      if (ast->parent->is_assign() || 
+          (ast->parent->is_call() && ast->parent->xexpr->v.Call.func == e)) {
         ast->sym = make_symbol(PyString_AsString(e->v.Attribute.attr));
         ast->rval = getAST(e->v.Attribute.value, ctx)->rval;
         ast->is_member = 1;
       } else {
         ast->rval = new_sym(ast);
         if1_gen(if1, &ast->code, getAST(e->v.Attribute.value, ctx)->code);
-        if1_send(if1, &ast->code, 4, 1, sym_operator, getAST(e->v.Attribute.value, ctx)->rval,
-                 sym_period, make_symbol(PyString_AsString(e->v.Attribute.attr)), ast->rval)->ast = ast;
+        Sym *v = getAST(e->v.Attribute.value, ctx)->rval;
+        if (v->type_kind == Type_RECORD)
+          v = v->self;
+        if1_send(if1, &ast->code, 4, 1, sym_operator, v, sym_period, 
+                 make_symbol(PyString_AsString(e->v.Attribute.attr)), ast->rval)->ast = ast;
       }
       break;
     case Subscript_kind: // expr value, slice slice, expr_context ctx
@@ -1377,8 +1386,8 @@ build_if1(expr_ty e, PycContext &ctx) {
       Sym *in = ctx.scope_stack[ctx.scope_stack.n-1]->in;
       if (in && in->type_kind == Type_RECORD && in->has.in(s->sym)) { // in __main__
         if (load)
-          if1_send(if1, &ast->code, 4, 1, sym_operator, ctx.fun()->self, sym_period, make_symbol(s->sym->name), 
-                   (ast->rval = new_sym(ast)))->ast = ast;
+          if1_send(if1, &ast->code, 4, 1, sym_operator, ctx.fun()->self, sym_period, 
+                   make_symbol(s->sym->name), (ast->rval = new_sym(ast)))->ast = ast;
         else {
           ast->is_member = 1;
           ast->sym = make_symbol(s->sym->name);
@@ -1455,6 +1464,7 @@ build_environment(mod_ty mod, PycContext &ctx) {
   scope_sym(ctx, sym_void);
   scope_sym(ctx, sym_unknown);
   scope_sym(ctx, sym_ellipsis);
+  scope_sym(ctx, sym_object);
   exit_scope(ctx);
 }
 
