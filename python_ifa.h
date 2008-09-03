@@ -56,7 +56,7 @@ class PycAST : public IFAAST {
   uint32 is_member:1;
   
   bool is_call() { return xexpr && xexpr->kind == Call_kind; }
-  bool is_assign() { return xstmt && xstmt->kind == Assign_kind; }
+  bool is_assign() { return xstmt && (xstmt->kind == Assign_kind || xstmt->kind == AugAssign_kind); }
 
   PycAST();
 };

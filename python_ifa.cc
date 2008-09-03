@@ -1170,9 +1170,18 @@ build_if1(stmt_ty s, PycContext &ctx) {
       PycAST *t = getAST(s->v.AugAssign.target, ctx);
       if1_gen(if1, &ast->code, t->code);
       Sym *tmp = new_sym(ast);
-      if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval,
-               map_operator(s->v.AugAssign.op), v->rval, tmp)->ast = ast;
-      if1_move(if1, &ast->code, tmp, t->sym);
+      if (t->is_member) {
+        Sym *tmp2 = new_sym(ast);
+        if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, tmp2)->ast = ast;
+        if1_send(if1, &ast->code, 4, 1, sym_operator, tmp2,
+                 map_operator(s->v.AugAssign.op), v->rval, tmp)->ast = ast;
+        if1_send(if1, &ast->code, 5, 1, sym_operator, 
+                 t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))->ast = ast;
+      } else {
+        if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval,
+                 map_operator(s->v.AugAssign.op), v->rval, tmp)->ast = ast;
+        if1_move(if1, &ast->code, tmp, t->sym);
+      }
       break;
     }
     case Print_kind: // epxr? dest, expr *values, bool nl
