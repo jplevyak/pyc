@@ -53,6 +53,7 @@ class PycAST : public IFAAST {
   Label *label[2];      // before and after for loops (continue,break)
   Sym *sym, *rval;      // IF1 Syms
 
+  uint32 is_builtin:1;
   uint32 is_member:1;
   
   bool is_call() { return xexpr && xexpr->kind == Call_kind; }
@@ -61,6 +62,14 @@ class PycAST : public IFAAST {
   PycAST();
 };
 
-int ast_to_if1(mod_ty mod, char *filename);
+class PycModule : public gc { public:
+  mod_ty mod;
+  char *filename;
+  int is_builtin;
+  PycModule(mod_ty amod, char *afilename, int an_is_builtin)
+    : mod(amod), filename(afilename), is_builtin(an_is_builtin) {}
+};
+
+int ast_to_if1(Vec<PycModule *> &mods);
 
 #endif

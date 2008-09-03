@@ -1,46 +1,50 @@
-enter scope 0 level 0
-exit scope 0 level 0
-enter scope 0 level 0
+enter scope 0 level 1
+exit scope 0 level 1
+enter scope 0 level 1
+exit scope 0 level 1
+enter scope 1 level 1
 make_PycSymbol local 'y'
 make_PycSymbol local 'z'
 make_PycSymbol local 'set_z'
-enter scope 1 level 1
+enter scope 2 level 2
 make_PycSymbol global 'z'
 make_PycSymbol local 'z'
-exit scope 1 level 1
+exit scope 2 level 2
 make_PycSymbol local 'a'
-enter scope 2 level 1
+enter scope 3 level 2
 make_PycSymbol local '___init___'
 make_PycSymbol local 'g'
-enter scope 3 level 2
+enter scope 4 level 3
 make_PycSymbol global 'z'
 make_PycSymbol local 'z'
-exit scope 3 level 2
+exit scope 4 level 3
 make_PycSymbol use 'z'
 make_PycSymbol use 'set_z'
 make_PycSymbol use 'y'
 make_PycSymbol use 'z'
 make_PycSymbol use 'g'
 make_PycSymbol use 'z'
-exit scope 2 level 1
+exit scope 3 level 2
 make_PycSymbol use 'z'
-exit scope 0 level 0
-enter scope 0 level 0
+exit scope 1 level 1
+enter scope 0 level 1
+exit scope 0 level 1
+enter scope 1 level 1
 found 'y' at level 0
 found 'z' at level 0
-enter scope 1 level 1
+enter scope 2 level 2
 found 'z' at level 0
-exit scope 1 level 1
-enter scope 2 level 1
+exit scope 2 level 2
 enter scope 3 level 2
+enter scope 4 level 3
 found 'z' at level 0
-exit scope 3 level 2
+exit scope 4 level 3
 found 'z' at level 0
 found 'set_z' at level 0
 found 'y' at level 0
 found 'z' at level 0
 found 'g' at level 1
 found 'z' at level 0
-exit scope 2 level 1
+exit scope 3 level 2
 found 'z' at level 0
-exit scope 0 level 0
+exit scope 1 level 1

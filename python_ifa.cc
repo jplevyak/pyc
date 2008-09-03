@@ -12,11 +12,6 @@
    exceptions
 */
 
-#define OPERATOR_CHAR(_c) \
-(((_c > ' ' && _c < '0') || (_c > '9' && _c < 'A') || \
-  (_c > 'Z' && _c < 'a') || (_c > 'z')) &&            \
-   _c != '_'&& _c != '?' && _c != '$')                \
-
 #define DBG if (debug_level)
 
 typedef MapElem<char *, PycSymbol*> MapCharPycSymbolElem;
@@ -34,14 +29,16 @@ struct PycScope : public gc {
 struct PycContext : public gc {
   char *filename;
   int lineno;
-  int depth;
   void *node;
   Vec<PycScope *> scope_stack;
   Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
+  Vec<PycScope *> imports;
+  uint32 is_builtin:1;
   Sym *fun() { return scope_stack.last()->fun; }
   Sym *cls() { return scope_stack.last()->cls; }
-  PycContext() : lineno(-1), depth(-1), lbreak(0), lcontinue(0), lreturn(0) {}
+  PycContext() : lineno(-1), lbreak(0), lcontinue(0), lreturn(0),
+                 is_builtin(0) {}
 };
 
 static Map<stmt_ty, PycAST *> stmtmap;
@@ -84,7 +81,10 @@ PycSymbol::line() {
 
 int 
 PycSymbol::source_line() {
-  return line();
+  if (sym->ast && !((PycAST*)sym->ast)->is_builtin)
+    return line();
+  else
+    return 0;
 }
 
 int 
@@ -93,7 +93,7 @@ PycSymbol::ast_id() {
 }
 
 PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), parent(0),code(0), sym(0), rval(0),
-                   is_member(0) {
+                   is_builtin(0), is_member(0) {
   label[0] = label[1] = 0;
 }
 
@@ -108,8 +108,11 @@ PycAST::line() {
 }
 
 int
-PycAST::source_line() { // TODO: return 0 for builtin code
-  return line();
+PycAST::source_line() {
+  if (is_builtin)
+    return 0;
+  else
+    return line();
 }
 
 Sym *
@@ -144,16 +147,6 @@ PycAST::visible_functions(Sym *arg0) {
     v->add(f);
     return v;
   }
-  char *name = arg0->name; (void)name;
-  // TODO: finish
-#if 0
-  SymScope* scope = this->xast->parentScope;
-  Vec<Symbol *> fss;
-  scope->getVisibleFunctions(&fss, name);
-  v = new Vec<Fun *>;
-  forv_Vec(Symbol, x, fss)
-    v->set_add(x->asymbol->sym->fun);
-#endif
   return NULL;
 }
 
@@ -258,7 +251,7 @@ build_builtin_symbols() {
   new_builtin_primitive_type(sym_ellipsis_type, "Ellipsis_type");
   new_builtin_alias_type(sym_long, "long", sym_int64); // standin for GNU gmp
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
-  
+
   builtin_functions.set_add(sym_super);
 }
 
@@ -505,7 +498,6 @@ static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
 }
 
 static void enter_scope(PycContext &ctx, Sym *in = 0) {
-  ctx.depth++;
   PycScope *c = ctx.saved_scopes.get(ctx.node);
   if (!c) {
     c = new PycScope;
@@ -523,7 +515,12 @@ static void enter_scope(PycContext &ctx, Sym *in = 0) {
     ctx.saved_scopes.put(ctx.node, c);
   }
   ctx.scope_stack.add(c);
-  DBG printf("enter scope %d level %d\n", ctx.scope_stack.last()->id, ctx.depth);
+  DBG printf("enter scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
+}
+
+static void enter_scope(PycContext &ctx, mod_ty mod) {
+  ctx.node = mod;
+  enter_scope(ctx);
 }
 
 static void enter_scope(stmt_ty x, PycAST *ast, PycContext &ctx) {
@@ -549,9 +546,8 @@ static void enter_scope(expr_ty x, PycAST *ast, PycContext &ctx) {
 }
 
 static void exit_scope(PycContext &ctx) { 
-  DBG printf("exit scope %d level %d\n", ctx.scope_stack.last()->id, ctx.depth);
+  DBG printf("exit scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
   ctx.scope_stack.pop(); 
-  ctx.depth--;
 }
 
 static void exit_scope(stmt_ty x, PycContext &ctx) {
@@ -578,9 +574,11 @@ static char *pyc_scoping_names[] = { "use", "local", "global", "nonlocal" };
 static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, int *type = 0) {
   PycSymbol *l = 0;
   int i = ctx.scope_stack.n - 1, xtype = 0;
-  for (;i >= 0; i--) {
+  int end = -ctx.imports.n;
+  for (;i >= end; i--) {
     bool top = i == ctx.scope_stack.n - 1;
-    if ((l = ctx.scope_stack.v[i]->map.get(name))) {
+    PycScope *s = i >= 0 ? ctx.scope_stack.v[i] : ctx.imports.v[-i - 1];
+    if ((l = s->map.get(name))) {
       if (l == NONLOCAL_USE || l == NONLOCAL_DEF) {
         if (top)
           xtype = (l == NONLOCAL_DEF) ? EXPLICITLY_MARKED : IMPLICITLY_MARKED;
@@ -612,7 +610,7 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
   PycSymbol *l = find_PycSymbol(ctx, name, &level, &type);
   bool local = l && (ctx.scope_stack.n - 1 == level); // implies !explicitly && !implicitly
   bool global = l && !level;
-  bool nonlocal = l && level && !local;
+  bool nonlocal = l && !global && !local;
   bool explicitly = type == EXPLICITLY_MARKED;
   bool implicitly = type == IMPLICITLY_MARKED;
   switch (scoping) {
@@ -662,6 +660,7 @@ static inline PycAST *getAST(stmt_ty s, PycContext &ctx) {
   if (ast) return ast;
   ast = new PycAST;
   ast->filename = ctx.filename;
+  ast->is_builtin = ctx.is_builtin;
   ast->xstmt = s;
   stmtmap.put(s, ast);
   return ast;
@@ -672,6 +671,7 @@ static inline PycAST *getAST(expr_ty e, PycContext &ctx) {
   if (ast) return ast;
   ast = new PycAST;
   ast->filename = ctx.filename;
+  ast->is_builtin = ctx.is_builtin;
   ast->xexpr = e;
   exprmap.put(e, ast);
   return ast;
@@ -811,7 +811,7 @@ build_syms(stmt_ty s, PycContext &ctx) {
           fail("error line %d, base not for for class '%s'", ctx.lineno, ast->sym->name);
         ast->sym->inherits_add(getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i), ctx)->sym);
       }
-      form_Map(MapCharPycSymbolElem, x, ctx.scope_stack[ctx.depth]->map)
+      form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
         if (!MARKED(x->value) && !x->value->sym->is_fun)
           ast->sym->has.add(x->value->sym);
       break;
@@ -1599,20 +1599,39 @@ fixup_aspect() {
   finalized_aspect = if1->allsyms.n;
 }
 
+static void
+import_scope(PycContext &ctx, mod_ty mod) {
+  ctx.imports.add(ctx.saved_scopes.get(mod));
+}
+
 int 
-ast_to_if1(mod_ty module, char *filename) {
+ast_to_if1(Vec<PycModule *> &mods) {
   ifa_init(new PycCallbacks);
   build_builtin_symbols();
   add_primitive_transfer_functions();
   PycContext ctx;
-  ctx.filename = if1_cannonicalize_string(if1, filename);
-  build_environment(module, ctx);
-  if (build_syms(module, ctx) < 0) return -1;
-  finalize_types(if1);
   Code *code = 0;
-  if (build_if1(module, ctx, &code) < 0) return -1;
+  forv_Vec(PycModule, x, mods)
+    x->filename = if1_cannonicalize_string(if1, x->filename);
+  ctx.filename = mods.v[0]->filename;
+  ctx.is_builtin = mods.v[0]->is_builtin;
+  build_environment(mods.v[0]->mod, ctx);
+  forv_Vec(PycModule, x, mods) {
+    ctx.filename = x->filename;
+    ctx.is_builtin = x->is_builtin;
+    if (!ctx.is_builtin) import_scope(ctx, mods.v[0]->mod);
+    if (build_syms(x->mod, ctx) < 0) return -1;
+  }
+  finalize_types(if1);
+  forv_Vec(PycModule, x, mods) {
+    ctx.filename = x->filename;
+    ctx.is_builtin = x->is_builtin;
+    if (build_if1(x->mod, ctx, &code) < 0) return -1;
+  }
   if (test_scoping) exit(0);
+  enter_scope(ctx, mods.v[0]->mod);  
   build_init(code);
+  exit_scope(ctx);
   finalize_symbols(if1);
   build_type_hierarchy();
   fixup_aspect();

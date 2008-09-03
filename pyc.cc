@@ -90,9 +90,8 @@ int main(int argc, char *argv[]) {
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
-  if (arg_state.nfile_arguments != 1)
+  if (arg_state.nfile_arguments < 1)
     usage(&arg_state, 0);
-  char *filename = arg_state.file_argument[0];
   init_system();
   Service::start_all();
   if (do_unit_tests) {
@@ -103,21 +102,35 @@ int main(int argc, char *argv[]) {
   Py_Initialize();
   PyEval_InitThreads();
   PyArena *arena = PyArena_New();
-  FILE *fp = fopen(filename, "r");
-  if (!fp)
-    fail("unable to read file '%s'", filename);
-  mod_ty mod = PyParser_ASTFromFile(fp, filename, Py_file_input, 0, 0, 0, 0, arena);
-  if (!mod)
-    error("unable to parse file '%s'", filename);
-  else {
-    PyFutureFeatures *pyc_future = PyFuture_FromAST(mod, filename);
-    if (!pyc_future)
-      error("unable to parse futures for file '%s'", filename);
+  char *first_filename = 0;
+  Vec<PycModule *> mods;
+  for (int i = -1; i < arg_state.nfile_arguments; i++) {
+    char *filename = 0;
+    if (i < 0) {
+      char fn[256];
+      strcpy(fn, system_dir);
+      strcat(fn, "/__pyc__.py");
+      filename = dupstr(fn);
+    } else
+      filename = arg_state.file_argument[i];
+    if (!i)
+      first_filename = filename;
+    FILE *fp = fopen(filename, "r");
+    if (!fp)
+      fail("unable to read file '%s'", filename);
+    mod_ty mod = PyParser_ASTFromFile(fp, filename, Py_file_input, 0, 0, 0, 0, arena);
+    if (!mod)
+      error("unable to parse file '%s'", filename);
     else {
-      ast_to_if1(mod, filename);
-      analyze(filename);
+      PyFutureFeatures *pyc_future = PyFuture_FromAST(mod, filename);
+      if (!pyc_future)
+        error("unable to parse futures for file '%s'", filename);
+      else
+        mods.add(new PycModule(mod, filename, i < 0));
     }
   }
+  ast_to_if1(mods);
+  analyze(first_filename);
   PyArena_Free(arena);
   Py_Finalize();
   Service::stop_all();

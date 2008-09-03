@@ -1,30 +1,34 @@
-enter scope 0 level 0
-exit scope 0 level 0
-enter scope 0 level 0
-make_PycSymbol local 'f'
+enter scope 0 level 1
+exit scope 0 level 1
+enter scope 0 level 1
+exit scope 0 level 1
 enter scope 1 level 1
+make_PycSymbol local 'f'
+enter scope 2 level 2
 make_PycSymbol local 'z'
 make_PycSymbol use 'z'
 make_PycSymbol local 'g'
-enter scope 2 level 2
+enter scope 3 level 3
 make_PycSymbol local 'x'
 make_PycSymbol use 'x'
-exit scope 2 level 2
+exit scope 3 level 3
 make_PycSymbol use 'g'
 make_PycSymbol use 'z'
-exit scope 1 level 1
-make_PycSymbol use 'f'
-exit scope 0 level 0
-enter scope 0 level 0
-enter scope 1 level 1
-found 'z' at level 1
-found 'z' at level 1
-enter scope 2 level 2
-found 'x' at level 2
-found 'x' at level 2
 exit scope 2 level 2
+make_PycSymbol use 'f'
+exit scope 1 level 1
+enter scope 0 level 1
+exit scope 0 level 1
+enter scope 1 level 1
+enter scope 2 level 2
+found 'z' at level 1
+found 'z' at level 1
+enter scope 3 level 3
+found 'x' at level 2
+found 'x' at level 2
+exit scope 3 level 3
 found 'g' at level 1
 found 'z' at level 1
-exit scope 1 level 1
+exit scope 2 level 2
 found 'f' at level 0
-exit scope 0 level 0
+exit scope 1 level 1
