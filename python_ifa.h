@@ -29,8 +29,6 @@ class PycSymbol : public IFASymbol {
   Symbol *symbol;
   char *filename;
   
-  uint32 mro_built:1;
-
   PycSymbol();
 };
 

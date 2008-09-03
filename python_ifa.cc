@@ -52,10 +52,10 @@ static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0;
 static Sym *sym___init__ = 0, *sym_super = 0;
 static char *cannonical_self = 0;
 static int finalized_symbols = 0;
-static int finalized_mro = 0;
+static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
 
-PycSymbol::PycSymbol() : symbol(0), filename(0), mro_built(0) {
+PycSymbol::PycSymbol() : symbol(0), filename(0) {
 }
 
 char *
@@ -1442,6 +1442,8 @@ build_if1(expr_ty e, PycContext &ctx) {
           (ast->parent->is_call() && ast->parent->xexpr->v.Call.func == e)) {
         ast->sym = make_symbol(PyString_AsString(e->v.Attribute.attr));
         ast->rval = getAST(e->v.Attribute.value, ctx)->rval;
+        if (ast->rval->type_kind == Type_RECORD)
+          ast->rval = ast->rval->self;
         ast->is_member = 1;
       } else {
         ast->rval = new_sym(ast);
@@ -1571,73 +1573,13 @@ add_primitive_transfer_functions() {
 }
 
 /*
-  Python uses C3 linearization to determine method resolution order from:
-  "A Monotonic Superclass Linearization for Dylan",
-    by Kim Barrett, Bob Cassel, Paul Haahr,
-    David A. Moon, Keith Playford, and P. Tucker Withington.
-    (OOPSLA 1996)
-*/
-typedef Vec<Sym *> VSym;
-
-static Sym *candidate(Sym *c, Vec<VSym *> &todo) {
-  forv_Vec(VSym, y, todo)
-    if (y->index(c) > 0)
-      return 0;
-  return c;
-}
-
-static void merge(Vec<Sym *> &rdone, Vec<VSym*> &todo) {
-  forv_Vec(VSym, x, todo)
-    if (x->n) goto Lnotdone;
-  rdone.reverse();
-  return;
-Lnotdone:;
-  Sym *c = 0;
-  forv_Vec(VSym, y, todo)
-    if (y->n && (c = candidate(y->v[0], todo)))
-      break;
-  if (c) {
-    forv_Vec(VSym, y, todo)
-      if (y->n && y->v[0] == c) 
-        y->remove(0);
-    rdone.insert(0, c);
-    merge(rdone, todo);
-  } else
-    fail("inconsistent precedence graph in C3 linearization");
-}
-
-static void
-c3_linearization_mro(Sym *c) {
-  PycSymbol *csym = (PycSymbol*)c->asymbol;
-  if (csym->mro_built)
-    return;
-  csym->mro_built = 1;
-  if (c->type_kind != Type_RECORD)
-    return;
-  c->dispatch_types.clear();
-  Vec<Sym*> rdone;
-  Vec<Vec<Sym*>*> todo;
-  rdone.add(c);
-  forv_Sym(x, c->includes) {
-    c3_linearization_mro(x);
-    todo.add(new Vec<Sym *>(x->dispatch_types));
-  }
-  todo.add(new Vec<Sym *>(c->includes));
-  merge(rdone, todo);
-  c->dispatch_types.move(rdone);
-}
-
-/*
   Sym::aspect is set by the code handling builtin 'super' to
   the class whose superclass we wish to dispatch to.  Replace
   with the dispatched-to class.
 */
-
 static void
-build_linearized_mro_and_fixup_aspect() {
-  for (int x = finalized_mro; x < if1->allsyms.n; x++)
-    c3_linearization_mro(if1->allsyms.v[x]);
-  for (int x = finalized_mro; x < if1->allsyms.n; x++) {
+fixup_aspect() {
+  for (int x = finalized_aspect; x < if1->allsyms.n; x++) {
     Sym *s = if1->allsyms.v[x];
     if (s->aspect) {
       if (s->aspect->dispatch_types.n < 2)
@@ -1645,7 +1587,7 @@ build_linearized_mro_and_fixup_aspect() {
       s->aspect = s->aspect->dispatch_types.v[1];
     }
   }
-  finalized_mro = if1->allsyms.n;
+  finalized_aspect = if1->allsyms.n;
 }
 
 int 
@@ -1664,7 +1606,7 @@ ast_to_if1(mod_ty module, char *filename) {
   build_init(code);
   finalize_symbols(if1);
   build_type_hierarchy();
-  build_linearized_mro_and_fixup_aspect();
+  fixup_aspect();
   finalize_types(if1);  // again to catch new ones
   return 0;
 }
