@@ -204,6 +204,18 @@ new_global(PycAST *ast, char *name = 0) {
   return sym;
 }
 
+static Sym *
+new_base_instance(Sym *c, PycAST *ast) {
+  if (c->type_kind == Type_PRIMITIVE) {
+    if (c->num_kind)
+      return if1_const(if1, c, "0");
+    if (c == sym_string)
+      return if1_const(if1, c, "");
+  }
+  fail("no instance for type '%s' found", c->name);
+  return 0;
+}
+
 static void
 build_builtin_symbols() {
   sym_write = if1_make_symbol(if1, "write");
@@ -616,7 +628,7 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
     case PYC_LOCAL:
     Llocal:
       if (local || explicitly) break;
-      if (implicitly)
+      if (implicitly && !l->sym->is_fun)
         fail("error line %d, '%s' redefined as local", ctx.lineno, name);
       ctx.scope_stack.last()->map.put(name, (l = new_PycSymbol(name, ctx)));
       break;
@@ -775,10 +787,13 @@ build_syms(stmt_ty s, PycContext &ctx) {
       break;
     case ClassDef_kind: { // identifier name, expr* bases, stmt* body
       PYC_SCOPINGS scope = (ctx.is_builtin && ctx.scope_stack.n == 1) ? PYC_GLOBAL : PYC_LOCAL;
-      ast->sym = make_PycSymbol(ctx, s->v.ClassDef.name, scope)->sym;
+      ast->sym = unalias_type(make_PycSymbol(ctx, s->v.ClassDef.name, scope)->sym);
       if (!ast->sym->type_kind)
         ast->sym->type_kind = Type_RECORD; // do not override
-      ast->sym->self = new_global(ast); // prototype
+      if (ast->sym->type_kind == Type_RECORD)
+        ast->sym->self = new_global(ast); // prototype
+      else
+        ast->sym->self = new_base_instance(ast->sym, ast);
       ast->rval = def_fun(s, ast, "___init___", ctx, 1);
       ast->rval->self = new_sym(ast);
       ast->rval->self->must_implement_and_specialize(ast->sym);
@@ -958,6 +973,7 @@ static void
 gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
   // build base ___init___ (class specific prototype initialization)
   Sym *fn = ast->rval, *cls = ast->sym;
+  bool is_record = cls->type_kind == Type_RECORD;
   Sym *selector = if1_make_symbol(if1, fn->name);
   Code *body = 0;
   for (int i = 0; i < cls->includes.n; i++) {
@@ -965,9 +981,11 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     for (int j = 0; j < inc->has.n; j++) {
       Sym *t = new_sym(ast);
       Sym *iv = if1_make_symbol(if1, inc->has.v[j]->name);
-      if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
-      if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, t, 
-               (ast->rval = new_sym(ast)))->ast = ast;
+      if (inc->self) {
+        if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
+        if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, t, 
+                 (ast->rval = new_sym(ast)))->ast = ast;
+      }
     }
   }
   for (int i = 0; i < asdl_seq_LEN(s->v.ClassDef.body); i++)
@@ -983,8 +1001,10 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
   }
   // build prototype
   Sym *proto = cls->self;
-  if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_new, cls, proto)->ast = ast;
-  if1_send(if1, &ast->code, 2, 1, selector, proto, new_sym(ast))->ast = ast;
+  if (is_record) {
+    if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_new, cls, proto)->ast = ast;
+    if1_send(if1, &ast->code, 2, 1, selector, proto, new_sym(ast))->ast = ast;
+  }
   // build default __init__ (user class constructor initialization)
   PycSymbol *init_fun = ctx.scope_stack.last()->map.get(sym___init__->name);
   Sym *init_sym = init_fun ? init_fun->sym : 0;
@@ -1002,7 +1022,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     if1_closure(if1, fn, body, as.n, as.v);
   }
   // build constructor
-  {
+  if (is_record) {
     fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;
     Vec<Sym *> as;
