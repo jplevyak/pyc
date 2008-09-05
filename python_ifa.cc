@@ -48,7 +48,6 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0;
 static Sym *sym___init__ = 0, *sym_super = 0;
 static char *cannonical_self = 0;
-static int finalized_symbols = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
 
@@ -181,19 +180,6 @@ PycCallbacks::new_Sym(char *name) {
   return new_PycSymbol(name)->sym;
 }
 
-static void
-finalize_symbols(IF1 *i) {
-  for (int x = finalized_symbols; x < i->allsyms.n; x++) {
-    Sym *s = i->allsyms.v[x];
-    if (s->is_constant || s->is_symbol)
-      s->nesting_depth = 0;
-    else if (s->type_kind)
-      s->nesting_depth = 0;
-    compute_type_size(s);
-  }
-  finalized_symbols = i->allsyms.n;
-}
-
 static Sym *
 new_sym(char *name = 0, int global = 0) {
   Sym *s = new_PycSymbol(name)->sym;
@@ -233,8 +219,11 @@ build_builtin_symbols() {
   new_builtin_global_variable(sym_init, "init");
 
   // override default sizes
+  sym_int->type_kind = Type_ALIAS;
   sym_int->alias = sym_int32;
+  sym_float->type_kind = Type_ALIAS;
   sym_float->alias = sym_float64;
+  sym_complex->type_kind = Type_ALIAS;
   sym_complex->alias = sym_complex64;
 
   // override default names
@@ -720,7 +709,8 @@ static int build_syms(expr_ty e, PycContext &ctx);
   enter_scope(_ast, ast, _ctx); \
   AST_RECURSE_POST(_ast, _fn, _ctx)
 
-static void get_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycContext &ctx) {
+static void get_syms_args(
+  PycAST *a, arguments_ty args, Vec<Sym *> &has, PycContext &ctx, asdl_seq *decorators = 0) {
   for (int i = 0; i < asdl_seq_LEN(args->args); i++) {
 #if PY_MAJOR_VERSION == 3
     assert(!"incomplete");
@@ -728,6 +718,12 @@ static void get_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycCont
     Sym *sym = getAST((expr_ty)asdl_seq_GET(args->args, i), ctx)->sym;
 #endif
     has.add(sym);
+  }
+  if (ctx.is_builtin && decorators) {
+    for (int j = 0; j < asdl_seq_LEN(decorators); j++) {
+      expr_ty e = (expr_ty)asdl_seq_GET(decorators, j);
+      (void)e;
+    }
   }
 }
 
@@ -777,14 +773,17 @@ build_syms(stmt_ty s, PycContext &ctx) {
     case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
       ast->sym = def_fun(s, ast, PyString_AS_STRING(s->v.FunctionDef.name), ctx);
       break;
-    case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      ast->sym = make_PycSymbol(ctx, s->v.ClassDef.name, PYC_LOCAL)->sym;
-      ast->sym->type_kind = Type_RECORD;
+    case ClassDef_kind: { // identifier name, expr* bases, stmt* body
+      PYC_SCOPINGS scope = (ctx.is_builtin && ctx.scope_stack.n == 1) ? PYC_GLOBAL : PYC_LOCAL;
+      ast->sym = make_PycSymbol(ctx, s->v.ClassDef.name, scope)->sym;
+      if (!ast->sym->type_kind)
+        ast->sym->type_kind = Type_RECORD; // do not override
       ast->sym->self = new_global(ast); // prototype
       ast->rval = def_fun(s, ast, "___init___", ctx, 1);
       ast->rval->self = new_sym(ast);
       ast->rval->self->must_implement_and_specialize(ast->sym);
       break;
+    }
     case Global_kind: // identifier* names
       for (int i = 0; i < asdl_seq_LEN(s->v.Global.names); i++)
         make_PycSymbol(ctx, (PyObject*)asdl_seq_GET(s->v.Global.names, i), PYC_GLOBAL);
@@ -927,13 +926,15 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
   as.add(fn);
-  get_syms_args(ast, s->v.FunctionDef.args, as, ctx);
-  if (in && in->type_kind == Type_RECORD) {
-    if (as.n > 1) {
-      as.v[0] = if1_make_symbol(if1, as.v[0]->name);
+  get_syms_args(ast, s->v.FunctionDef.args, as, ctx, s->v.FunctionDef.decorators);
+  if (in && !in->is_fun) {
+    as.v[0] = if1_make_symbol(if1, as.v[0]->name);
+    if (as.n < 2) {
+      fn->self = new_sym(ast); // dummy
+      as.add(fn->self);
+    } else
       fn->self = as.v[1];
-      fn->self->must_implement_and_specialize(in);
-    }
+    fn->self->must_implement_and_specialize(in);
   }
   if1_closure(if1, fn, body, as.n, as.v);
 }
@@ -1268,11 +1269,11 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
   if (fun->sym && builtin_functions.set_in(fun->sym)) {
     if (fun->sym == sym_super) {
       if (!ctx.fun())
-        fail("super outside of member function");
+        fail("super outside of function");
       Vec<Sym *> as;
       get_syms_args(ast, ((PycAST*)ctx.fun()->ast)->xstmt->v.FunctionDef.args, as, ctx);
       if (as.n < 1 || !ctx.fun()->in || ctx.fun()->in->type_kind != Type_RECORD)
-        fail("super outside of member function");
+        fail("super outside of method");
       int n = asdl_seq_LEN(e->v.Call.args);
       if (!n) {
         ast->rval = new_sym(ast);
@@ -1628,13 +1629,12 @@ ast_to_if1(Vec<PycModule *> &mods) {
     ctx.is_builtin = x->is_builtin;
     if (build_if1(x->mod, ctx, &code) < 0) return -1;
   }
+  finalize_types(if1);
   if (test_scoping) exit(0);
   enter_scope(ctx, mods.v[0]->mod);  
   build_init(code);
   exit_scope(ctx);
-  finalize_symbols(if1);
   build_type_hierarchy();
   fixup_aspect();
-  finalize_types(if1);  // again to catch new ones
   return 0;
 }
