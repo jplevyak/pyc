@@ -46,7 +46,7 @@ static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0;
-static Sym *sym___init__ = 0, *sym_super = 0, *sym___add__ = 0;
+static Sym *sym___init__ = 0, *sym_super = 0;
 static char *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -225,7 +225,6 @@ build_builtin_symbols() {
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym_super = if1_make_symbol(if1, "super");
   cannonical_self = if1_cannonicalize_string(if1, "self");
-  sym___add__ = if1_make_symbol(if1, "__add__");
 
   init_default_builtin_types();
 
@@ -943,12 +942,10 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   get_syms_args(ast, s->v.FunctionDef.args, as, ctx, s->v.FunctionDef.decorators);
   if (in && !in->is_fun) {
     as.v[0] = if1_make_symbol(if1, as.v[0]->name);
-    if (as.n < 2) {
-      fn->self = new_sym(ast); // dummy
-      as.add(fn->self);
-    } else
+    if (as.n > 1) {
       fn->self = as.v[1];
-    fn->self->must_implement_and_specialize(in);
+      fn->self->must_implement_and_specialize(in);
+    }
   }
   if1_closure(if1, fn, body, as.n, as.v);
 }
@@ -1090,18 +1087,18 @@ make_symbol(char *name) {
 static Sym *map_operator(operator_ty op) {
   switch(op) {
     default: assert(!"case");    
-    case Add: return make_symbol("+");
-    case Sub: return make_symbol("-");
-    case Mult: return make_symbol("*");
-    case Div: return make_symbol("/");
-    case Mod: return make_symbol("%");
-    case Pow: return make_symbol("**");
-    case LShift: return make_symbol("<<");
-    case RShift: return make_symbol(">>");
-    case BitOr: return make_symbol("|");
-    case BitXor: return make_symbol("^");
-    case BitAnd: return make_symbol("&");
-    case FloorDiv: return make_symbol("/");
+    case Add: return make_symbol("__add__");
+    case Sub: return make_symbol("__sub__");
+    case Mult: return make_symbol("__mul__");
+    case Div: return make_symbol("__div__");
+    case Mod: return make_symbol("__mod__");
+    case Pow: return make_symbol("__pow__");
+    case LShift: return make_symbol("__lshift__");
+    case RShift: return make_symbol("__rshift__");
+    case BitOr: return make_symbol("__or__");
+    case BitXor: return make_symbol("__xor__");
+    case BitAnd: return make_symbol("__and__");
+    case FloorDiv: return make_symbol("__floordiv__");
   }
   return 0;
 }
@@ -1109,10 +1106,11 @@ static Sym *map_operator(operator_ty op) {
 static Sym *map_unary_operator(unaryop_ty op) {
   switch(op) {
     default: assert(!"case");    
-    case Invert: return make_symbol("~");
-    case Not: return make_symbol("!");
-    case UAdd: return make_symbol("+");
-    case USub: return make_symbol("-");
+    case Invert: return make_symbol("__invert__");
+    case Not: return make_symbol("__not__"); // not official
+      // what about abs?
+    case UAdd: return make_symbol("__pos__");
+    case USub: return make_symbol("__neg__");
   }
   return 0;
 }
@@ -1120,17 +1118,16 @@ static Sym *map_unary_operator(unaryop_ty op) {
 static Sym *map_cmp_operator(cmpop_ty op) {
   switch(op) {
     default: assert(!"case");    
-    case Eq: return make_symbol("==");
-    case NotEq: return make_symbol("!=");
-    case Lt: return make_symbol("<");
-    case LtE: return make_symbol("<=");
-    case Gt: return make_symbol(">");
-    case GtE: return make_symbol(">=");
-    case Is: return make_symbol("==");
-    case IsNot: return make_symbol("!=");
-    case In:
-    case NotIn:
-      fail("error: in operator not yet supported"); break;
+    case Eq: return make_symbol("__eq__");
+    case NotEq: return make_symbol("__ne__");
+    case Lt: return make_symbol("__lt__");
+    case LtE: return make_symbol("__le__");
+    case Gt: return make_symbol("__gt__");
+    case GtE: return make_symbol("__ge__");
+    case Is: return make_symbol("__is__");
+    case IsNot: return make_symbol("__nis__");
+    case In: return make_symbol("__contains__");
+    case NotIn: return make_symbol("__ncontains__");
   }
   return 0;
 }
@@ -1189,18 +1186,19 @@ build_if1(stmt_ty s, PycContext &ctx) {
       if1_gen(if1, &ast->code, v->code);
       PycAST *t = getAST(s->v.AugAssign.target, ctx);
       if1_gen(if1, &ast->code, t->code);
-      Sym *tmp = new_sym(ast);
       if (t->is_member) {
+        Sym *tmp = new_sym(ast);
         Sym *tmp2 = new_sym(ast);
-        if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, tmp2)->ast = ast;
-        if1_send(if1, &ast->code, 4, 1, sym_operator, tmp2,
-                 map_operator(s->v.AugAssign.op), v->rval, tmp)->ast = ast;
+        if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, 
+                 tmp2)->ast = ast;
+        if1_send(if1, &ast->code, 3, 1, map_operator(s->v.AugAssign.op),
+                 tmp2, v->rval, tmp)->ast = ast; 
         if1_send(if1, &ast->code, 5, 1, sym_operator, 
                  t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))->ast = ast;
       } else {
-        if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval,
-                 map_operator(s->v.AugAssign.op), v->rval, tmp)->ast = ast;
-        if1_move(if1, &ast->code, tmp, t->sym);
+        if1_send(if1, &ast->code, 3, 1, map_operator(s->v.AugAssign.op),
+                 t->rval, v->rval, (ast->rval = new_sym(ast)))->ast = ast; 
+        if1_move(if1, &ast->code, ast->rval, t->sym, ast);
       }
       break;
     }
@@ -1390,19 +1388,14 @@ build_if1(expr_ty e, PycContext &ctx) {
       ast->rval = new_sym(ast);
       if1_gen(if1, &ast->code, getAST(e->v.BinOp.left, ctx)->code);
       if1_gen(if1, &ast->code, getAST(e->v.BinOp.right, ctx)->code);
-      if (e->v.BinOp.op == Add) {
-        if1_send(if1, &ast->code, 3, 1, sym___add__, getAST(e->v.BinOp.left, ctx)->rval,
-                 getAST(e->v.BinOp.right, ctx)->rval, ast->rval)->ast = ast; 
-      } else {
-        if1_send(if1, &ast->code, 4, 1, sym_operator, getAST(e->v.BinOp.left, ctx)->rval,
-                 map_operator(e->v.BinOp.op), getAST(e->v.BinOp.right, ctx)->rval, 
-                 ast->rval)->ast = ast;
-      }
+      if1_send(if1, &ast->code, 3, 1, map_operator(e->v.BinOp.op),
+               getAST(e->v.BinOp.left, ctx)->rval,
+               getAST(e->v.BinOp.right, ctx)->rval, ast->rval)->ast = ast; 
       break;
     case UnaryOp_kind: // unaryop op, expr operand
       ast->rval = new_sym(ast);
       if1_gen(if1, &ast->code, getAST(e->v.UnaryOp.operand, ctx)->code);
-      if1_send(if1, &ast->code, 3, 1, sym_operator, map_unary_operator(e->v.UnaryOp.op), 
+      if1_send(if1, &ast->code, 2, 1, map_unary_operator(e->v.UnaryOp.op), 
                getAST(e->v.UnaryOp.operand, ctx)->rval, ast->rval)->ast = ast;
       break;
     case Lambda_kind: // arguments args, expr body
@@ -1430,18 +1423,18 @@ build_if1(expr_ty e, PycContext &ctx) {
       if (n == 1) {
         PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.Compare.comparators, 0), ctx);
         if1_gen(if1, &ast->code, v->code);
-        if1_send(if1, &ast->code, 4, 1, sym_operator, lv->rval,
+        if1_send(if1, &ast->code, 3, 1, 
                  map_cmp_operator((cmpop_ty)asdl_seq_GET(e->v.Compare.ops, 0)), 
-                 v->rval, ast->rval)->ast = ast;
+                 lv->rval, v->rval, ast->rval)->ast = ast; 
       } else {
         Sym *ls = lv->rval, *s = 0;
         for (int i = 0; i < n; i++) {
           PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.Compare.comparators, i), ctx);
           if1_gen(if1, &ast->code, v->code);
           s = new_sym(ast);
-          if1_send(if1, &ast->code, 4, 1, sym_operator, ls,
+          if1_send(if1, &ast->code, 3, 1, 
                    map_cmp_operator((cmpop_ty)asdl_seq_GET(e->v.Compare.ops, i)), 
-                   v->rval, s)->ast = ast;
+                   ls, v->rval, s)->ast = ast; 
           ls = v->rval;
           Code *ifcode = if1_if_goto(if1, &ast->code, s, ast);
           if1_if_label_false(if1, ifcode, ast->label[0]);
