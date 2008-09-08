@@ -46,7 +46,7 @@ static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0;
-static Sym *sym___init__ = 0, *sym_super = 0;
+static Sym *sym___init__ = 0, *sym_super = 0, *sym___add__ = 0;
 static char *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -225,6 +225,7 @@ build_builtin_symbols() {
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym_super = if1_make_symbol(if1, "super");
   cannonical_self = if1_cannonicalize_string(if1, "self");
+  sym___add__ = if1_make_symbol(if1, "__add__");
 
   init_default_builtin_types();
 
@@ -267,110 +268,141 @@ PycCallbacks::finalize_functions() {
     finalize_function(fun);
 }
 
-static void add(asdl_seq *seq, Vec<expr_ty> &exprs) {
-  for (int i = 0; i < asdl_seq_LEN(seq); i++)
-    exprs.add((expr_ty)asdl_seq_GET(seq, i));
+static inline PycAST *getAST(stmt_ty s, PycContext &ctx) {
+  PycAST *ast = stmtmap.get(s);
+  if (ast) return ast;
+  ast = new PycAST;
+  ast->filename = ctx.filename;
+  ast->is_builtin = ctx.is_builtin;
+  ast->xstmt = s;
+  stmtmap.put(s, ast);
+  return ast;
 }
 
-static void add(asdl_seq *seq, Vec<stmt_ty> &stmts) {
-  for (int i = 0; i < asdl_seq_LEN(seq); i++)
-    stmts.add((stmt_ty)asdl_seq_GET(seq, i));
+static inline PycAST *getAST(expr_ty e, PycContext &ctx) {
+  PycAST *ast = exprmap.get(e);
+  if (ast) return ast;
+  ast = new PycAST;
+  ast->filename = ctx.filename;
+  ast->is_builtin = ctx.is_builtin;
+  ast->xexpr = e;
+  exprmap.put(e, ast);
+  return ast;
 }
 
-static void add(expr_ty e, Vec<expr_ty> &exprs) { if (e) exprs.add(e); }
-//static void add(stmt_ty s, Vec<stmt_ty> &stmts) { if (s) stmts.add(s); } unused
+template<class C>
+static void add(asdl_seq *seq, Vec<PycAST*> &asts, PycContext &ctx) {
+  for (int i = 0; i < asdl_seq_LEN(seq); i++)
+    asts.add(getAST((C)asdl_seq_GET(seq, i), ctx));
+}
 
-static void add_comprehension(asdl_seq *comp, Vec<expr_ty> &exprs) {
+static void add(expr_ty e, Vec<PycAST*> &asts, PycContext &ctx) { 
+  if (e) asts.add(getAST(e, ctx)); 
+}
+//static void add(stmt_ty s, Vec<PycAST*> &asts, PycContext &ctx) { if (s) stmts.add(getAST(s)); } unused
+
+static void add_comprehension(asdl_seq *comp, Vec<PycAST*> &asts, PycContext &ctx) {
   int l = asdl_seq_LEN(comp);
   for (int i = 0; i < l; i++) {
     comprehension_ty c = (comprehension_ty)asdl_seq_GET(comp, i);
-    add(c->target, exprs);
+    add(c->target, asts, ctx);
     if (i != 0)
-      add(c->iter, exprs);
-    add(c->ifs, exprs);
+      add(c->iter, asts, ctx);
+    add<expr_ty>(c->ifs, asts, ctx);
   }
 }
 
-static void get_pre_scope_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+static void get_pre_scope_next(stmt_ty s, Vec<PycAST*> &asts, PycContext &ctx) {
   switch (s->kind) {
-    default: 
-      break;
+    default: break;
     case FunctionDef_kind:
-      add(s->v.FunctionDef.args->defaults, exprs);
-      add(s->v.FunctionDef.decorators, exprs);
+      add<expr_ty>(s->v.FunctionDef.args->defaults, asts, ctx);
+      add<expr_ty>(s->v.FunctionDef.decorators, asts, ctx);
       break;
     case ClassDef_kind:
-      add(s->v.ClassDef.bases, exprs);
+      add<expr_ty>(s->v.ClassDef.bases, asts, ctx);
       break;
   }
 }
 
-static void get_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+static void get_next(stmt_ty s, Vec<PycAST*> &asts, PycContext &ctx) {
   switch (s->kind) {
     default: assert(!"case");
     case FunctionDef_kind:
-      add(s->v.FunctionDef.args->args, exprs);
-      add(s->v.FunctionDef.body, stmts);
+      add<expr_ty>(s->v.FunctionDef.args->args, asts, ctx);
+      add<stmt_ty>(s->v.FunctionDef.body, asts, ctx);
       break;
     case ClassDef_kind:
-      add(s->v.ClassDef.body, stmts);
+      add<stmt_ty>(s->v.ClassDef.body, asts, ctx);
       break;
-    case Return_kind: add(s->v.Return.value, exprs); break;
-    case Delete_kind: add(s->v.Delete.targets, exprs); break;
-    case Assign_kind: add(s->v.Assign.targets, exprs); add(s->v.Assign.value, exprs); break;
-    case AugAssign_kind: add(s->v.AugAssign.target, exprs); add(s->v.AugAssign.value, exprs); break;
-    case Print_kind: add(s->v.Print.dest, exprs); add(s->v.Print.values, exprs); break;
+    case Return_kind: add(s->v.Return.value, asts, ctx); break;
+    case Delete_kind: add<expr_ty>(s->v.Delete.targets, asts, ctx); break;
+    case Assign_kind: 
+      add<expr_ty>(s->v.Assign.targets, asts, ctx); 
+      add(s->v.Assign.value, asts, ctx); 
+      break;
+    case AugAssign_kind:
+      add(s->v.AugAssign.target, asts, ctx); 
+      add(s->v.AugAssign.value, asts, ctx); 
+      break;
+    case Print_kind: 
+      add(s->v.Print.dest, asts, ctx); 
+      add<expr_ty>(s->v.Print.values, asts, ctx); 
+      break;
     case For_kind:
-      add(s->v.For.target, exprs); 
-      add(s->v.For.iter, exprs); 
-      add(s->v.For.body, stmts); 
-      add(s->v.For.orelse, stmts); 
+      add(s->v.For.target, asts, ctx); 
+      add(s->v.For.iter, asts, ctx); 
+      add<stmt_ty>(s->v.For.body, asts, ctx); 
+      add<stmt_ty>(s->v.For.orelse, asts, ctx); 
       break;
     case While_kind:
-      add(s->v.While.test, exprs); 
-      add(s->v.While.body, stmts); 
-      add(s->v.While.orelse, stmts); 
+      add(s->v.While.test, asts, ctx); 
+      add<stmt_ty>(s->v.While.body, asts, ctx); 
+      add<stmt_ty>(s->v.While.orelse, asts, ctx); 
       break;
     case If_kind:
-      add(s->v.If.test, exprs); 
-      add(s->v.If.body, stmts); 
-      add(s->v.If.orelse, stmts); 
+      add(s->v.If.test, asts, ctx); 
+      add<stmt_ty>(s->v.If.body, asts, ctx); 
+      add<stmt_ty>(s->v.If.orelse, asts, ctx); 
       break;
     case With_kind:
-      add(s->v.With.context_expr, exprs); 
-      add(s->v.With.optional_vars, exprs); 
-      add(s->v.With.body, stmts); 
+      add(s->v.With.context_expr, asts, ctx); 
+      add(s->v.With.optional_vars, asts, ctx); 
+      add<stmt_ty>(s->v.With.body, asts, ctx); 
       break;
     case Raise_kind:
-      add(s->v.Raise.type, exprs); 
-      add(s->v.Raise.inst, exprs); 
-      add(s->v.Raise.tback, exprs); 
+      add(s->v.Raise.type, asts, ctx); 
+      add(s->v.Raise.inst, asts, ctx); 
+      add(s->v.Raise.tback, asts, ctx); 
       break;
     case TryExcept_kind: {
-      add(s->v.TryExcept.body, stmts); 
+      add<stmt_ty>(s->v.TryExcept.body, asts, ctx); 
       for (int i = 0; i < asdl_seq_LEN(s->v.TryExcept.handlers); i++) {
         excepthandler_ty h = (excepthandler_ty)asdl_seq_GET(s->v.TryExcept.handlers, i);
-        add(h->type, exprs);
-        add(h->name, exprs);
-        add(h->body, stmts);
+        add(h->type, asts, ctx);
+        add(h->name, asts, ctx);
+        add<stmt_ty>(h->body, asts, ctx);
       }
-      add(s->v.TryExcept.orelse, stmts); 
+      add<stmt_ty>(s->v.TryExcept.orelse, asts, ctx); 
       break;
     }
-    case TryFinally_kind: add(s->v.TryFinally.body, stmts); add(s->v.TryFinally.finalbody, stmts); break;
-    case Assert_kind: add(s->v.Assert.test, exprs); add(s->v.Assert.msg, exprs); break;
+    case TryFinally_kind: 
+      add<stmt_ty>(s->v.TryFinally.body, asts, ctx); 
+      add<stmt_ty>(s->v.TryFinally.finalbody, asts, ctx); 
+      break;
+    case Assert_kind: add(s->v.Assert.test, asts, ctx); add(s->v.Assert.msg, asts, ctx); break;
     case Import_kind: break;
     case ImportFrom_kind: break;
     case Exec_kind: 
-      add(s->v.Exec.body, exprs); 
-      add(s->v.Exec.globals, exprs); 
-      add(s->v.Exec.locals, exprs); 
+      add(s->v.Exec.body, asts, ctx); 
+      add(s->v.Exec.globals, asts, ctx); 
+      add(s->v.Exec.locals, asts, ctx); 
       break;
     case Global_kind: break;
 #if PY_MAJOR_VERSION == 3
     case Nonlocal_kind: break;
 #endif
-    case Expr_kind: add(s->v.Expr.value, exprs); break;
+    case Expr_kind: add(s->v.Expr.value, asts, ctx); break;
     case Pass_kind:
     case Break_kind:
     case Continue_kind:
@@ -378,123 +410,123 @@ static void get_next(stmt_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
   }
 }
 
-static void get_next(slice_ty s, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+static void get_next(slice_ty s, Vec<PycAST*> &asts, PycContext &ctx) {
   switch (s->kind) {
     default: assert(!"case");
     case Ellipsis_kind: break;
     case Slice_kind: // (expr? lower, expr? upper, expr? step)
-      add(s->v.Slice.lower, exprs); 
-      add(s->v.Slice.upper, exprs); 
-      add(s->v.Slice.step, exprs); 
+      add(s->v.Slice.lower, asts, ctx); 
+      add(s->v.Slice.upper, asts, ctx); 
+      add(s->v.Slice.step, asts, ctx); 
       break;
     case ExtSlice_kind: // (slice* dims)
       for (int i = 0; i < asdl_seq_LEN(s->v.ExtSlice.dims); i++)
-        get_next((slice_ty)asdl_seq_GET(s->v.ExtSlice.dims, i), stmts, exprs);
+        get_next((slice_ty)asdl_seq_GET(s->v.ExtSlice.dims, i), asts, ctx);
       break;
     case Index_kind: // (expr value)
-      add(s->v.Index.value, exprs); break;
+      add(s->v.Index.value, asts, ctx); break;
   }
 }
 
-static void get_pre_scope_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+static void get_pre_scope_next(expr_ty e, Vec<PycAST*> &asts, PycContext &ctx) {
   switch (e->kind) {
     default: 
       break;
     case Lambda_kind:
-      add(e->v.Lambda.args->defaults, exprs);
+      add<expr_ty>(e->v.Lambda.args->defaults, asts, ctx);
       break;
     case Dict_kind: // expr* keys, expr* values
 #if PY_MAJOR_VERSION == 3
-      add(((comprehension_ty)asdl_seq_GET(e->v.Dict.generators, 0))->iter, exprs);
+      add(((comprehension_ty)asdl_seq_GET(e->v.Dict.generators, 0))->iter, asts, ctx);
 #endif
       break;
     case ListComp_kind: // expr elt, comprehension* generators
-      add(((comprehension_ty)asdl_seq_GET(e->v.ListComp.generators, 0))->iter, exprs);
+      add(((comprehension_ty)asdl_seq_GET(e->v.ListComp.generators, 0))->iter, asts, ctx);
       break;
 #if PY_MAJOR_VERSION == 3
     case SetComp_kind:
-      add(((comprehension_ty)asdl_seq_GET(e->v.SetComp.generators, 0))->iter, exprs);
+      add(((comprehension_ty)asdl_seq_GET(e->v.SetComp.generators, 0))->iter, asts, ctx);
       break;
 #endif
     case GeneratorExp_kind: // expr elt, comprehension* generators
-      add(((comprehension_ty)asdl_seq_GET(e->v.GeneratorExp.generators, 0))->iter, exprs);
+      add(((comprehension_ty)asdl_seq_GET(e->v.GeneratorExp.generators, 0))->iter, asts, ctx);
       break;
   }
 }
 
-static void get_next(expr_ty e, Vec<stmt_ty> &stmts, Vec<expr_ty> &exprs) {
+static void get_next(expr_ty e, Vec<PycAST*> &asts, PycContext &ctx) {
   switch (e->kind) {
     default: assert(!"case");
     case BoolOp_kind: // boolop op, expr* values
-      add(e->v.BoolOp.values, exprs); break;
+      add<expr_ty>(e->v.BoolOp.values, asts, ctx); break;
     case BinOp_kind: // expr left, operator op, expr right
-      add(e->v.BinOp.left, exprs);
-      add(e->v.BinOp.right, exprs);
+      add(e->v.BinOp.left, asts, ctx);
+      add(e->v.BinOp.right, asts, ctx);
       break;
     case UnaryOp_kind: // unaryop op, expr operand
-      add(e->v.UnaryOp.operand, exprs); break;
+      add(e->v.UnaryOp.operand, asts, ctx); break;
     case Lambda_kind: // arguments args, expr body
-      add(e->v.Lambda.args->args, exprs);
-      add(e->v.Lambda.body, exprs); 
+      add<expr_ty>(e->v.Lambda.args->args, asts, ctx);
+      add(e->v.Lambda.body, asts, ctx); 
       break;
     case IfExp_kind: // expr test, expr body, expr orelse
-      add(e->v.IfExp.test, exprs); 
-      add(e->v.IfExp.body, exprs); 
-      add(e->v.IfExp.orelse, exprs); 
+      add(e->v.IfExp.test, asts, ctx); 
+      add(e->v.IfExp.body, asts, ctx); 
+      add(e->v.IfExp.orelse, asts, ctx); 
       break;
     case Dict_kind: // expr* keys, expr* values
 #if PY_MAJOR_VERSION == 3
-      add_comprehension(e->v.Dict.generators, exprs);
-      add(e->v.Dict.value, exprs); 
-      add(e->v.Dict.key, exprs); 
+      add_comprehension(e->v.Dict.generators, asts, ctx);
+      add(e->v.Dict.value, asts, ctx); 
+      add(e->v.Dict.key, asts, ctx); 
 #else
-      add(e->v.Dict.keys, exprs); 
-      add(e->v.Dict.values, exprs); 
+      add<expr_ty>(e->v.Dict.keys, asts, ctx); 
+      add<expr_ty>(e->v.Dict.values, asts, ctx); 
 #endif
       break;
     case ListComp_kind: // expr elt, comprehension* generators
-      add_comprehension(e->v.ListComp.generators, exprs);
-      add(e->v.ListComp.elt, exprs); 
+      add_comprehension(e->v.ListComp.generators, asts, ctx);
+      add(e->v.ListComp.elt, asts, ctx); 
       break;
 #if PY_MAJOR_VERSION == 3
     case SetComp_kind:
-      add_comprehension(e->v.SetComp.generators, exprs);
-      add(e->v.ListComp.elt, exprs); 
+      add_comprehension(e->v.SetComp.generators, asts, ctx);
+      add(e->v.ListComp.elt, asts, ctx); 
       break;
 #endif
     case GeneratorExp_kind: // expr elt, comprehension* generators
-      add_comprehension(e->v.GeneratorExp.generators, exprs);
-      add(e->v.GeneratorExp.elt, exprs); 
+      add_comprehension(e->v.GeneratorExp.generators, asts, ctx);
+      add(e->v.GeneratorExp.elt, asts, ctx); 
       break;
     case Yield_kind: // expr? value
-      add(e->v.Yield.value, exprs); break;
+      add(e->v.Yield.value, asts, ctx); break;
     case Compare_kind: // expr left, cmpop* ops, expr* comparators
-      add(e->v.Compare.left, exprs);
-      add(e->v.Compare.comparators, exprs);
+      add(e->v.Compare.left, asts, ctx);
+      add<expr_ty>(e->v.Compare.comparators, asts, ctx);
       break;
     case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
-      add(e->v.Call.func, exprs);
-      add(e->v.Call.args, exprs);
-      add(e->v.Call.starargs, exprs);
-      add(e->v.Call.kwargs, exprs);
+      add(e->v.Call.func, asts, ctx);
+      add<expr_ty>(e->v.Call.args, asts, ctx);
+      add(e->v.Call.starargs, asts, ctx);
+      add(e->v.Call.kwargs, asts, ctx);
       break;
     case Repr_kind: // expr value
-     add(e->v.Repr.value, exprs); break;
+     add(e->v.Repr.value, asts, ctx); break;
     case Num_kind: // object n) -- a number as a PyObject
     case Str_kind: // string s) -- need to specify raw, unicode, etc
       break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
-      add(e->v.Attribute.value, exprs); break;
+      add(e->v.Attribute.value, asts, ctx); break;
     case Subscript_kind: // expr value, slice slice, expr_context ctx
-     add(e->v.Subscript.value, exprs); 
-     get_next(e->v.Subscript.slice, stmts, exprs);
+     add(e->v.Subscript.value, asts, ctx); 
+     get_next(e->v.Subscript.slice, asts, ctx);
      break;
     case Name_kind: // identifier id, expr_context ctx
       break;
     case List_kind: // expr* elts, expr_context ctx
-     add(e->v.List.elts, exprs); break;
+      add<expr_ty>(e->v.List.elts, asts, ctx); break;
     case Tuple_kind: // expr *elts, expr_context ctx
-     add(e->v.Tuple.elts, exprs); break;
+      add<expr_ty>(e->v.Tuple.elts, asts, ctx); break;
   }
 }
 
@@ -614,9 +646,10 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
   bool nonlocal = l && !global && !local;
   bool explicitly = type == EXPLICITLY_MARKED;
   bool implicitly = type == IMPLICITLY_MARKED;
+  bool isfun = l && l->sym->is_fun;
   switch (scoping) {
     case PYC_USE: {
-      if (!l) goto Llocal; // not found
+      if (!l) goto Lglobal; // not found
       if (!local && !explicitly) {
         if (global)
           ctx.scope_stack.last()->map.put(name, GLOBAL_USE);
@@ -626,13 +659,13 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
       break;
     }
     case PYC_LOCAL:
-    Llocal:
-      if (local || explicitly) break;
-      if (implicitly && !l->sym->is_fun)
+      if ((local || explicitly) && !isfun) break;
+      if (implicitly && !isfun)
         fail("error line %d, '%s' redefined as local", ctx.lineno, name);
       ctx.scope_stack.last()->map.put(name, (l = new_PycSymbol(name, ctx)));
       break;
     case PYC_GLOBAL:
+    Lglobal:;
       if (l && !global && (local || explicitly || implicitly))
         fail("error line %d, '%s' redefined as global", ctx.lineno, name);
       if (!global) {
@@ -656,63 +689,27 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, PyObject *o, PYC_SCOPINGS type
   return make_PycSymbol(ctx, PyString_AS_STRING(o), type);
 }
 
-static inline PycAST *getAST(stmt_ty s, PycContext &ctx) {
-  PycAST *ast = stmtmap.get(s);
-  if (ast) return ast;
-  ast = new PycAST;
-  ast->filename = ctx.filename;
-  ast->is_builtin = ctx.is_builtin;
-  ast->xstmt = s;
-  stmtmap.put(s, ast);
-  return ast;
-}
-
-static inline PycAST *getAST(expr_ty e, PycContext &ctx) {
-  PycAST *ast = exprmap.get(e);
-  if (ast) return ast;
-  ast = new PycAST;
-  ast->filename = ctx.filename;
-  ast->is_builtin = ctx.is_builtin;
-  ast->xexpr = e;
-  exprmap.put(e, ast);
-  return ast;
-}
-
 static int build_syms(stmt_ty s, PycContext &ctx);
 static int build_syms(expr_ty e, PycContext &ctx);
 
-#define AST_RECURSE_PRE(_ast, _fn, _ctx)                 \
-  PycAST *ast = getAST(_ast, _ctx);                                          \
-  {                                                                       \
-    Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_pre_scope_next(_ast, stmts, exprs); \
-    for_Vec(stmt_ty, x, stmts) { \
-      PycAST *child = getAST(x, _ctx); \
-      child->parent = ast; \
-      ast->pre_scope_children.add(child);     \
-      _fn(x, _ctx); \
-    } \
-    for_Vec(expr_ty, x, exprs) { \
-      PycAST *child = getAST(x, _ctx); \
-      child->parent = ast; \
-      _fn(x, _ctx); \
-      ast->pre_scope_children.add(child); \
+#define AST_RECURSE_PRE(_ast, _fn, _ctx) \
+  PycAST *ast = getAST(_ast, _ctx); \
+  { \
+    Vec<PycAST*> asts; get_pre_scope_next(_ast, asts, _ctx); \
+    forv_Vec(PycAST, x, asts) { \
+      x->parent = ast; \
+      ast->pre_scope_children.add(x);     \
+      if (x->xstmt) _fn(x->xstmt, _ctx); else _fn(x->xexpr, ctx);   \
     } \
   }
 
-#define AST_RECURSE_POST(_ast, _fn, _ctx)                 \
-  {                                                                       \
-    Vec<stmt_ty> stmts; Vec<expr_ty> exprs; get_next(_ast, stmts, exprs); \
-    for_Vec(stmt_ty, x, stmts) { \
-      PycAST *child = getAST(x, _ctx); \
-      child->parent = ast; \
-      ast->children.add(child);     \
-      _fn(x, _ctx); \
-    } \
-    for_Vec(expr_ty, x, exprs) { \
-      PycAST *child = getAST(x, _ctx); \
-      child->parent = ast; \
-      _fn(x, _ctx); \
-      ast->children.add(child); \
+#define AST_RECURSE_POST(_ast, _fn, _ctx) \
+  { \
+    Vec<PycAST*> asts; get_next(_ast, asts, _ctx);   \
+    forv_Vec(PycAST, x, asts) { \
+      x->parent = ast; \
+      ast->children.add(x); \
+      if (x->xstmt) _fn(x->xstmt, _ctx); else _fn(x->xexpr, ctx);   \
     } \
   }
 
@@ -734,7 +731,9 @@ static void get_syms_args(
   if (ctx.is_builtin && decorators) {
     for (int j = 0; j < asdl_seq_LEN(decorators); j++) {
       expr_ty e = (expr_ty)asdl_seq_GET(decorators, j);
-      (void)e;
+      if (e->kind == Call_kind) {
+        printf("%d\n", e->v.Call.func->kind);
+      }
     }
   }
 }
@@ -1286,8 +1285,9 @@ build_if1(stmt_ty s, PycContext &ctx) {
 
 static int
 build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
-  if (fun->sym && builtin_functions.set_in(fun->sym)) {
-    if (fun->sym == sym_super) {
+  Sym *f = fun->sym;
+  if (f && builtin_functions.set_in(f)) {
+    if (f == sym_super) {
       if (!ctx.fun())
         fail("super outside of function");
       Vec<Sym *> as;
@@ -1326,6 +1326,21 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
     } else
       fail("unimplemented builtin '%s'", fun->sym->name);
     return 1;
+  } if (ast->is_builtin && fun->rval && fun->rval->is_constant && fun->rval->type == sym_string) {
+    char *s = fun->rval->constant;
+    if (*s == '#' && !strncmp(&s[1], "operator", 8)) {
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, sym_operator);
+      for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
+        Sym *v = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i), ctx)->rval;
+        if (v->is_constant && v->type == sym_string)
+          if1_add_send_arg(if1, send, if1_make_symbol(if1, v->constant));
+        else
+          if1_add_send_arg(if1, send, v);
+      }
+      if1_add_send_result(if1, send, (ast->rval = new_sym(ast)));
+      return 1;
+    }
   }
   return 0;
 }
@@ -1375,9 +1390,14 @@ build_if1(expr_ty e, PycContext &ctx) {
       ast->rval = new_sym(ast);
       if1_gen(if1, &ast->code, getAST(e->v.BinOp.left, ctx)->code);
       if1_gen(if1, &ast->code, getAST(e->v.BinOp.right, ctx)->code);
-      if1_send(if1, &ast->code, 4, 1, sym_operator, getAST(e->v.BinOp.left, ctx)->rval,
-               map_operator(e->v.BinOp.op), getAST(e->v.BinOp.right, ctx)->rval, 
-               ast->rval)->ast = ast;
+      if (e->v.BinOp.op == Add) {
+        if1_send(if1, &ast->code, 3, 1, sym___add__, getAST(e->v.BinOp.left, ctx)->rval,
+                 getAST(e->v.BinOp.right, ctx)->rval, ast->rval)->ast = ast; 
+      } else {
+        if1_send(if1, &ast->code, 4, 1, sym_operator, getAST(e->v.BinOp.left, ctx)->rval,
+                 map_operator(e->v.BinOp.op), getAST(e->v.BinOp.right, ctx)->rval, 
+                 ast->rval)->ast = ast;
+      }
       break;
     case UnaryOp_kind: // unaryop op, expr operand
       ast->rval = new_sym(ast);
