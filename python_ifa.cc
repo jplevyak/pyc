@@ -258,7 +258,7 @@ build_builtin_symbols() {
 
 static void 
 finalize_function(Fun *fun) {
-  fun->is_eager = 1;
+  //fun->is_eager = 1;
 }
 
 void
@@ -1425,7 +1425,7 @@ build_if1(expr_ty e, PycContext &ctx) {
         if1_gen(if1, &ast->code, v->code);
         if1_send(if1, &ast->code, 3, 1, 
                  map_cmp_operator((cmpop_ty)asdl_seq_GET(e->v.Compare.ops, 0)), 
-                 lv->rval, v->rval, ast->rval)->ast = ast; 
+                 lv->rval, v->rval, ast->rval)->ast = ast;
       } else {
         Sym *ls = lv->rval, *s = 0;
         for (int i = 0; i < n; i++) {
@@ -1434,7 +1434,7 @@ build_if1(expr_ty e, PycContext &ctx) {
           s = new_sym(ast);
           if1_send(if1, &ast->code, 3, 1, 
                    map_cmp_operator((cmpop_ty)asdl_seq_GET(e->v.Compare.ops, i)), 
-                   ls, v->rval, s)->ast = ast; 
+                   ls, v->rval, s)->ast = ast;
           ls = v->rval;
           Code *ifcode = if1_if_goto(if1, &ast->code, s, ast);
           if1_if_label_false(if1, ifcode, ast->label[0]);
@@ -1470,7 +1470,6 @@ build_if1(expr_ty e, PycContext &ctx) {
         }
         ast->rval = new_sym(ast);
         if1_add_send_result(if1, send, ast->rval);
-        send->partial = Partial_NEVER;
       }
       break;
     }
@@ -1493,8 +1492,10 @@ build_if1(expr_ty e, PycContext &ctx) {
         Sym *v = getAST(e->v.Attribute.value, ctx)->rval;
         if (v->type_kind == Type_RECORD)
           v = v->self;
-        if1_send(if1, &ast->code, 4, 1, sym_operator, v, sym_period, 
-                 make_symbol(PyString_AsString(e->v.Attribute.attr)), ast->rval)->ast = ast;
+        Code *send = if1_send(if1, &ast->code, 4, 1, sym_operator, v, sym_period, 
+                              make_symbol(PyString_AsString(e->v.Attribute.attr)), ast->rval);
+        send->ast = ast;
+        send->partial = Partial_OK;
       }
       break;
     case Subscript_kind: // expr value, slice slice, expr_context ctx
@@ -1639,6 +1640,7 @@ import_scope(PycContext &ctx, mod_ty mod) {
 int 
 ast_to_if1(Vec<PycModule *> &mods) {
   ifa_init(new PycCallbacks);
+  if1->partial_default = Partial_NEVER;
   build_builtin_symbols();
   add_primitive_transfer_functions();
   PycContext ctx;
