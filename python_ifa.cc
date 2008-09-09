@@ -12,7 +12,7 @@
    exceptions
 */
 
-#define DBG if (debug_level)
+#define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin))
 
 typedef MapElem<char *, PycSymbol*> MapCharPycSymbolElem;
 
@@ -256,15 +256,9 @@ build_builtin_symbols() {
   builtin_functions.set_add(sym_super);
 }
 
-static void 
-finalize_function(Fun *fun) {
-  //fun->is_eager = 1;
-}
-
 void
 PycCallbacks::finalize_functions() {
-  forv_Fun(fun, pdb->funs)
-    finalize_function(fun);
+  // forv_Fun(fun, pdb->funs) finalize_function(fun); nothing to do
 }
 
 static inline PycAST *getAST(stmt_ty s, PycContext &ctx) {
@@ -547,7 +541,7 @@ static void enter_scope(PycContext &ctx, Sym *in = 0) {
     ctx.saved_scopes.put(ctx.node, c);
   }
   ctx.scope_stack.add(c);
-  DBG printf("enter scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
+  TEST_SCOPE printf("enter scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
 }
 
 static void enter_scope(PycContext &ctx, mod_ty mod) {
@@ -578,7 +572,7 @@ static void enter_scope(expr_ty x, PycAST *ast, PycContext &ctx) {
 }
 
 static void exit_scope(PycContext &ctx) { 
-  DBG printf("exit scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
+  TEST_SCOPE printf("exit scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
   ctx.scope_stack.pop(); 
 }
 
@@ -637,7 +631,7 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
 
 static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
   char *name = if1_cannonicalize_string(if1, n);
-  DBG printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
+  TEST_SCOPE printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
   int level = 0, type = 0;
   PycSymbol *l = find_PycSymbol(ctx, name, &level, &type);
   bool local = l && (ctx.scope_stack.n - 1 == level); // implies !explicitly && !implicitly
@@ -1504,7 +1498,7 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Name_kind: // identifier id, expr_context ctx
     {
       int level = 0;
-      DBG printf("%sfound '%s' at level %d\n", ast->sym ? "" : "not ",
+      TEST_SCOPE printf("%sfound '%s' at level %d\n", ast->sym ? "" : "not ",
                  if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
       bool load = e->v.Name.ctx == Load;
       Sym *in = ctx.scope_stack[ctx.scope_stack.n-1]->in;
