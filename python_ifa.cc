@@ -631,9 +631,9 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
   return l;
 }
 
-static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0, int *type = 0) {
-  return find_PycSymbol(ctx, if1_cannonicalize_string(if1, PyString_AS_STRING(o)), level, type);
-}
+//static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0, int *type = 0) {
+//  return find_PycSymbol(ctx, if1_cannonicalize_string(if1, PyString_AS_STRING(o)), level, type);
+//}
 
 static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
   char *name = if1_cannonicalize_string(if1, n);
@@ -1481,7 +1481,7 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
       if1_gen(if1, &ast->code, getAST(e->v.Attribute.value, ctx)->code);
-      if (ast->parent->is_assign() || 
+      if ((ast->parent->is_assign() && ast->parent->children.last() != ast) || 
           (ast->parent->is_call() && ast->parent->xexpr->v.Call.func == e)) {
         ast->sym = make_symbol(PyString_AsString(e->v.Attribute.attr));
         ast->rval = getAST(e->v.Attribute.value, ctx)->rval;
@@ -1503,22 +1503,20 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Name_kind: // identifier id, expr_context ctx
     {
       int level = 0;
-      PycSymbol *s = find_PycSymbol(ctx, e->v.Name.id, &level);
-      DBG printf("%sfound '%s' at level %d\n", s ? "" : "not ",
+      DBG printf("%sfound '%s' at level %d\n", ast->sym ? "" : "not ",
                  if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
       bool load = e->v.Name.ctx == Load;
       Sym *in = ctx.scope_stack[ctx.scope_stack.n-1]->in;
-      if (in && in->type_kind == Type_RECORD && in->has.in(s->sym)) { // in __main__
+      if (in && in->type_kind == Type_RECORD && in->has.in(ast->sym)) { // in __main__
         if (load)
           if1_send(if1, &ast->code, 4, 1, sym_operator, ctx.fun()->self, sym_period, 
-                   make_symbol(s->sym->name), (ast->rval = new_sym(ast)))->ast = ast;
+                   make_symbol(ast->sym->name), (ast->rval = new_sym(ast)))->ast = ast;
         else {
           ast->is_member = 1;
-          ast->sym = make_symbol(s->sym->name);
+          ast->sym = make_symbol(ast->sym->name);
           ast->rval = ctx.fun()->self;
         }
-      } else
-        ast->rval = ast->sym = s->sym;
+      }
       break;
     }
     case List_kind: // expr* elts, expr_context ctx
