@@ -8,7 +8,6 @@ make_PycSymbol local 'z'
 exit scope 48 level 2
 make_PycSymbol local 'a'
 enter scope 49 level 2
-make_PycSymbol local '___init___'
 make_PycSymbol local 'g'
 enter scope 50 level 3
 make_PycSymbol global 'z'
