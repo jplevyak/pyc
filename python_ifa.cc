@@ -1467,7 +1467,7 @@ build_if1(expr_ty e, PycContext &ctx) {
       if (build_builtin_call(fun, e, ast, ctx))
         break;
       {
-#if 1
+#if 0
         Code *send = if1_send1(if1, &ast->code, ast);
         if (!fun->is_member)
           if1_add_send_arg(if1, send, fun->rval);
@@ -1506,7 +1506,7 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
       if1_gen(if1, &ast->code, getAST(e->v.Attribute.value, ctx)->code);
-      if ((ast->parent->is_assign() && ast->parent->children.last() != ast) || 
+      if ((ast->parent->is_assign() && ast->parent->children.last() != ast) ||
           (ast->parent->is_call() && ast->parent->xexpr->v.Call.func == e)) {
         ast->sym = make_symbol(PyString_AsString(e->v.Attribute.attr));
         ast->rval = getAST(e->v.Attribute.value, ctx)->rval;
