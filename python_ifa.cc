@@ -819,6 +819,13 @@ build_syms(stmt_ty s, PycContext &ctx) {
   AST_RECURSE_POST(s, build_syms, ctx);
   switch (s->kind) {
     default: break;
+    case FunctionDef_kind:
+      form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
+        if (!MARKED(x->value) && !x->value->sym->is_fun) {
+          x->value->sym->is_local = 1;
+          x->value->sym->nesting_depth = LOCALLY_NESTED;
+        }
+      break;
     case ClassDef_kind: // identifier name, expr* bases, stmt* body
       for (int i = 0; i < asdl_seq_LEN(s->v.ClassDef.bases); i++) {
         Sym *base = getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i), ctx)->sym;
@@ -1061,9 +1068,7 @@ gen_if(PycAST *ifcond, asdl_seq *ifif, asdl_seq *ifelse, PycAST *ast, PycContext
   Code *ifif_code = 0, *ifelse_code = 0;
   get_stmts_code(ifif, &ifif_code, ctx);
   get_stmts_code(ifelse, &ifelse_code, ctx);
-  ast->rval = new_sym(ast);
   if1_if(if1, &ast->code, ifcond->code, ifcond->rval, ifif_code, 0, ifelse_code, 0, 0, ast);
-  if1_move(if1, &ast->code, sym_void, ast->rval, ast);
 }
 
 static void
@@ -1467,15 +1472,6 @@ build_if1(expr_ty e, PycContext &ctx) {
       if (build_builtin_call(fun, e, ast, ctx))
         break;
       {
-#if 0
-        Code *send = if1_send1(if1, &ast->code, ast);
-        if (!fun->is_member)
-          if1_add_send_arg(if1, send, fun->rval);
-        else {
-          if1_add_send_arg(if1, send, fun->sym);
-          if1_add_send_arg(if1, send, fun->rval);
-        }
-#else
         Code *send = 0;
         if (!fun->is_member) {
           send = if1_send1(if1, &ast->code, ast);
@@ -1489,7 +1485,6 @@ build_if1(expr_ty e, PycContext &ctx) {
           send = if1_send1(if1, &ast->code, ast);
           if1_add_send_arg(if1, send, t);
         }
-#endif
         for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
           expr_ty arg = (expr_ty)asdl_seq_GET(e->v.Call.args, i);
           if1_add_send_arg(if1, send, getAST(arg, ctx)->rval);
