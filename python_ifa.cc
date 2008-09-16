@@ -126,7 +126,7 @@ PycAST::copy_node(ASTCopyContext *context) {
   PycAST *a = new PycAST(*this);
   if (context)
     for (int i = 0; i < a->pnodes.n; i++)
-      a->pnodes.v[i] = context->nmap->get(a->pnodes.v[i]);
+      a->pnodes[i] = context->nmap->get(a->pnodes.v[i]);
   return a;
 }
 
@@ -134,7 +134,7 @@ IFAAST *
 PycAST::copy_tree(ASTCopyContext *context) {
   PycAST *a = (PycAST*)copy_node(context);
   for (int i = 0; i < a->children.n; i++)
-    a->children.v[i] = (PycAST*)a->children.v[i]->copy_tree(context);
+    a->children[i] = (PycAST*)a->children.v[i]->copy_tree(context);
   return a;
 }
 
@@ -604,7 +604,7 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
   int end = -ctx.imports.n;
   for (;i >= end; i--) {
     bool top = i == ctx.scope_stack.n - 1;
-    PycScope *s = i >= 0 ? ctx.scope_stack.v[i] : ctx.imports.v[-i - 1];
+    PycScope *s = i >= 0 ? ctx.scope_stack[i] : ctx.imports.v[-i - 1];
     if ((l = s->map.get(name))) {
       if (l == NONLOCAL_USE || l == NONLOCAL_DEF) {
         if (top)
@@ -663,9 +663,9 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
       if (l && !global && (local || explicitly || implicitly))
         fail("error line %d, '%s' redefined as global", ctx.lineno, name);
       if (!global) {
-        PycSymbol *g = ctx.scope_stack.v[0]->map.get(name);
+        PycSymbol *g = ctx.scope_stack[0]->map.get(name);
         if (!g)
-          ctx.scope_stack.v[0]->map.put(name, (l = new_PycSymbol(name, ctx)));
+          ctx.scope_stack[0]->map.put(name, (l = new_PycSymbol(name, ctx)));
       }
       if (!explicitly)
         ctx.scope_stack.last()->map.put(name, GLOBAL_DEF);
@@ -953,10 +953,10 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   as.add(fn);
   get_syms_args(ast, s->v.FunctionDef.args, as, ctx, s->v.FunctionDef.decorators);
   if (in && !in->is_fun) {
-    as.v[0] = new_sym(ast);
-    as.v[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
+    as[0] = new_sym(ast);
+    as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
     if (as.n > 1) {
-      fn->self = as.v[1];
+      fn->self = as[1];
       fn->self->must_implement_and_specialize(in);
     }
   }
@@ -985,10 +985,10 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
   bool is_record = cls->type_kind == Type_RECORD;
   Code *body = 0;
   for (int i = 0; i < cls->includes.n; i++) {
-    Sym *inc = cls->includes.v[i];
+    Sym *inc = cls->includes[i];
     for (int j = 0; j < inc->has.n; j++) {
-      Sym *iv = if1_make_symbol(if1, inc->has.v[j]->name);
-      if (!inc->has.v[j]->alias || !inc->has.v[j]->alias->is_fun) {
+      Sym *iv = if1_make_symbol(if1, inc->has[j]->name);
+      if (!inc->has[j]->alias || !inc->has.v[j]->alias->is_fun) {
         Sym *t = new_sym(ast);
         if (inc->self) {
           if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
@@ -996,7 +996,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
                    (ast->rval = new_sym(ast)))->ast = ast;
         }
       } else
-        if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, inc->has.v[j]->alias,
+        if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, inc->has[j]->alias,
                  (ast->rval = new_sym(ast)))->ast = ast;
     }
   }
@@ -1030,7 +1030,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
     Vec<Sym *> as;
     as.add(new_sym(ast));
-    as.v[0]->must_implement_and_specialize(sym___init__);
+    as[0]->must_implement_and_specialize(sym___init__);
     as.add(fn->self);
     if1_closure(if1, fn, body, as.n, as.v);
   }
@@ -1623,7 +1623,7 @@ static void build_init(Code *code) {
 
 static void
 return_void_transfer_function(PNode *pn, EntrySet *es) {
-  AVar *result = make_AVar(pn->lvals.v[0], es);
+  AVar *result = make_AVar(pn->lvals[0], es);
   update_gen(result, make_abstract_type(sym_void));
 }
 
@@ -1643,11 +1643,11 @@ add_primitive_transfer_functions() {
 static void
 fixup_aspect() {
   for (int x = finalized_aspect; x < if1->allsyms.n; x++) {
-    Sym *s = if1->allsyms.v[x];
+    Sym *s = if1->allsyms[x];
     if (s->aspect) {
       if (s->aspect->dispatch_types.n < 2)
         fail("unable to dispatch to super of '%s'", s->aspect->name);
-      s->aspect = s->aspect->dispatch_types.v[1];
+      s->aspect = s->aspect->dispatch_types[1];
     }
   }
   finalized_aspect = if1->allsyms.n;
@@ -1668,13 +1668,13 @@ ast_to_if1(Vec<PycModule *> &mods) {
   Code *code = 0;
   forv_Vec(PycModule, x, mods)
     x->filename = if1_cannonicalize_string(if1, x->filename);
-  ctx.filename = mods.v[0]->filename;
-  ctx.is_builtin = mods.v[0]->is_builtin;
-  build_environment(mods.v[0]->mod, ctx);
+  ctx.filename = mods[0]->filename;
+  ctx.is_builtin = mods[0]->is_builtin;
+  build_environment(mods[0]->mod, ctx);
   forv_Vec(PycModule, x, mods) {
     ctx.filename = x->filename;
     ctx.is_builtin = x->is_builtin;
-    if (!ctx.is_builtin) import_scope(ctx, mods.v[0]->mod);
+    if (!ctx.is_builtin) import_scope(ctx, mods[0]->mod);
     if (build_syms(x->mod, ctx) < 0) return -1;
   }
   finalize_types(if1);
@@ -1685,7 +1685,7 @@ ast_to_if1(Vec<PycModule *> &mods) {
   }
   finalize_types(if1);
   if (test_scoping) exit(0);
-  enter_scope(ctx, mods.v[0]->mod);  
+  enter_scope(ctx, mods[0]->mod);  
   build_init(code);
   exit_scope(ctx);
   build_type_hierarchy();
