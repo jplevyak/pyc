@@ -612,10 +612,10 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
         continue;
       }
       if (l == GLOBAL_USE || l == GLOBAL_DEF) {
-        assert(i); 
+        assert(i > end); 
         if (top)
           xtype = (l == GLOBAL_DEF) ? EXPLICITLY_MARKED : IMPLICITLY_MARKED;
-        i = 1; 
+        i = i > 1 ? 1 : i; 
         continue; 
       }
       break;
@@ -667,7 +667,7 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping)
         if (!g)
           ctx.scope_stack[0]->map.put(name, (l = new_PycSymbol(name, ctx)));
       }
-      if (!explicitly)
+      if (!explicitly && !(ctx.scope_stack.n == 1))
         ctx.scope_stack.last()->map.put(name, GLOBAL_DEF);
       break;
     case PYC_NONLOCAL:
@@ -860,10 +860,13 @@ build_syms(expr_ty e, PycContext &ctx) {
     case Lambda_kind: // arguments args, expr body
       past->sym = past->rval = def_fun(e, past, ctx);
       break;
-    case Name_kind: // identifier id, expr_context ctx
-      past->sym = past->rval = 
-        make_PycSymbol(ctx, e->v.Name.id, e->v.Name.ctx == Load ? PYC_USE : PYC_LOCAL)->sym;
+    case Name_kind: { // identifier id, expr_context ctx
+      PycSymbol *s = make_PycSymbol(ctx, e->v.Name.id, e->v.Name.ctx == Load ? PYC_USE : PYC_LOCAL);
+      if (!s)
+        fail("error line %d, '%s' not found", ctx.lineno, PyString_AS_STRING(e->v.Name.id));
+      past->sym = past->rval = s->sym;
       break;
+    }
     case Dict_kind: // expr* keys, expr* values
     case ListComp_kind: // expr elt, comprehension* generators
 #if PY_MAJOR_VERSION == 3
