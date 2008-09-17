@@ -10,6 +10,7 @@
    division and floor division correctly
    Eq and Is correctly
    exceptions
+   __radd__ etc. see __pyc__.py
 */
 
 #define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin))
@@ -1159,6 +1160,25 @@ static Sym *map_operator(operator_ty op) {
   return 0;
 }
 
+static Sym *map_ioperator(operator_ty op) {
+  switch(op) {
+    default: assert(!"case");    
+    case Add: return make_symbol("__iadd__");
+    case Sub: return make_symbol("__isub__");
+    case Mult: return make_symbol("__imul__");
+    case Div: return make_symbol("__idiv__");
+    case Mod: return make_symbol("__imod__");
+    case Pow: return make_symbol("__ipow__");
+    case LShift: return make_symbol("__ilshift__");
+    case RShift: return make_symbol("__irshift__");
+    case BitOr: return make_symbol("__ior__");
+    case BitXor: return make_symbol("__ixor__");
+    case BitAnd: return make_symbol("__iand__");
+    case FloorDiv: return make_symbol("__ifloordiv__");
+  }
+  return 0;
+}
+
 static Sym *map_unary_operator(unaryop_ty op) {
   switch(op) {
     default: assert(!"case");    
@@ -1247,12 +1267,12 @@ build_if1(stmt_ty s, PycContext &ctx) {
         Sym *tmp2 = new_sym(ast);
         if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, 
                  tmp2)->ast = ast;
-        if1_send(if1, &ast->code, 3, 1, map_operator(s->v.AugAssign.op),
+        if1_send(if1, &ast->code, 3, 1, map_ioperator(s->v.AugAssign.op),
                  tmp2, v->rval, tmp)->ast = ast; 
         if1_send(if1, &ast->code, 5, 1, sym_operator, 
                  t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))->ast = ast;
       } else {
-        if1_send(if1, &ast->code, 3, 1, map_operator(s->v.AugAssign.op),
+        if1_send(if1, &ast->code, 3, 1, map_ioperator(s->v.AugAssign.op),
                  t->rval, v->rval, (ast->rval = new_sym(ast)))->ast = ast; 
         if1_move(if1, &ast->code, ast->rval, t->sym, ast);
       }

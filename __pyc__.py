@@ -1,9 +1,11 @@
 class int:
-#  @must_specialize("x:anynum")
-  def __add__(self, x):
-    return "#operator"(self, "+", x)
+#  @must_specialize("x:anynum") -- for dispatching to __radd__
+#  def __add__(self, x):
+#    return "#operator"(self, "+", x)
 #  def __add__(self, x):
 #    return x.__radd__(self)
+  def __add__(self, x):
+    return "#operator"(self, "+", x)
   def __sub__(self, x):
     return "#operator"(self, "-", x)
   def __mul__(self, x):
@@ -25,6 +27,30 @@ class int:
   def __and__(self, x):
     return "#operator"(self, "&", x)
   def __floordiv__(self, x):
+    return "#operator"(self, "/", x)
+  def __iadd__(self, x):
+    return "#operator"(self, "+", x)
+  def __isub__(self, x):
+    return "#operator"(self, "-", x)
+  def __imul__(self, x):
+    return "#operator"(self, "*", x)
+  def __idiv__(self, x):
+    return "#operator"(self, "/", x)
+  def __imod__(self, x):
+    return "#operator"(self, "%", x)
+  def __ipow__(self, x):
+    return "#operator"(self, "**", x)
+  def __ilshift__(self, x):
+    return "#operator"(self, "<<", x)
+  def __irshift__(self, x):
+    return "#operator"(self, ">>", x)
+  def __ior__(self, x):
+    return "#operator"(self, "|", x)
+  def __ixor__(self, x):
+    return "#operator"(self, "^", x)
+  def __iand__(self, x):
+    return "#operator"(self, "&", x)
+  def __ifloordiv__(self, x):
     return "#operator"(self, "/", x)
   def __invert__(self):
     return "#operator"("~", self)
@@ -116,8 +142,34 @@ class float:
      return self != 0.0
 
 class list:
+  def __len__(self):
+    return 0
+  def __getitem__(self, key):
+    pass
+  def __setitem__(self, key, value):
+    pass
+  def __delitem__(self, key):
+    pass
+  def __iter__(self):
+    pass
+  def __contains__(self, item):
+    pass
+  def __add__(self, l):
+    pass
+  def __radd__(self, l):
+    pass
+  def __iadd__(self, l):
+    pass
+  def __mul__(self, l):
+    pass
+  def __rmul__(self, l):
+    pass
+  def __imul__(self, l):
+    pass
   def append(self, l):
     pass
   def index(self, index, start=0, end=0):
+    pass
+  def count(self, l):
     pass
 
