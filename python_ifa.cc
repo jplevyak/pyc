@@ -255,6 +255,8 @@ build_builtin_symbols() {
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
 
   builtin_functions.set_add(sym_super);
+
+  sym_list->element = new_sym();
 }
 
 void
@@ -1430,8 +1432,7 @@ build_if1(expr_ty e, PycContext &ctx) {
       break;
     case Yield_kind: // expr? value
       break;
-    case Compare_kind: // expr left, cmpop* ops, expr* comparators
-    {
+    case Compare_kind: { // expr left, cmpop* ops, expr* comparators
       int n = asdl_seq_LEN(e->v.Compare.ops);
       ast->label[0] = if1_alloc_label(if1); // short circuit
       ast->label[1] = if1_alloc_label(if1); // end
@@ -1466,8 +1467,7 @@ build_if1(expr_ty e, PycContext &ctx) {
       }
       break;
     }
-    case Call_kind: // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
-    {
+    case Call_kind: { // expr func, expr* args, keyword* keywords, expr? starargs, expr? kwargs
       PycAST *fun = getAST((expr_ty)e->v.Call.func, ctx);
       if1_gen(if1, &ast->code, fun->code);
       for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
@@ -1522,11 +1522,16 @@ build_if1(expr_ty e, PycContext &ctx) {
         send->partial = Partial_OK;
       }
       break;
-    case Subscript_kind: // expr value, slice slice, expr_context ctx
-      fail("error line %d, subscripting not yet supported", ctx.lineno); break;
+    case Subscript_kind: { // expr value, slice slice, expr_context ctx
+      assert(e->v.Subscript.ctx == Load);  // AugLoad, Load, AugStore, Store, Del, !Param
+      assert(e->v.Subscript.slice->kind == Index_kind);
+      if1_send(if1, &ast->code, 4, 1, sym_primitive, sym_index_object,
+               getAST(e->v.Subscript.value, ctx)->rval, 
+               getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval, 
+               (ast->rval = new_sym(ast)))->ast = ast;
       break;
-    case Name_kind: // identifier id, expr_context ctx
-    {
+    }
+    case Name_kind: { // identifier id, expr_context ctx
       int level = 0;
       TEST_SCOPE printf("%sfound '%s' at level %d\n", ast->sym ? "" : "not ",
                  if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);

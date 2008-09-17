@@ -125,4 +125,3 @@ static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
   _r->e0 = _f;                                  \
   _r->e1 = _a;                                  \
 } while (0)
-
