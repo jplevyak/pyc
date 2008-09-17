@@ -1,7 +1,7 @@
-enter scope 47 level 1
+enter scope level 1
 make_PycSymbol local 'z'
 make_PycSymbol local 'y'
-enter scope 48 level 2
+enter scope level 2
 make_PycSymbol local 'i'
 make_PycSymbol use 'i'
 make_PycSymbol use 'i'
@@ -10,21 +10,21 @@ make_PycSymbol local 'z'
 make_PycSymbol local 'i'
 make_PycSymbol use 'i'
 make_PycSymbol use 'z'
-exit scope 48 level 2
+exit scope level 2
 make_PycSymbol use 'y'
 make_PycSymbol use 'z'
-exit scope 47 level 1
-enter scope 47 level 1
+exit scope level 1
+enter scope level 1
 found 'z' at level 0
-enter scope 48 level 2
+enter scope level 2
 found 'i' at level 0
-found 'i' at level 0
-found 'i' at level 0
-found 'z' at level 0
 found 'i' at level 0
 found 'i' at level 0
 found 'z' at level 0
-exit scope 48 level 2
+found 'i' at level 0
+found 'i' at level 0
+found 'z' at level 0
+exit scope level 2
 found 'y' at level 0
 found 'z' at level 0
-exit scope 47 level 1
+exit scope level 1

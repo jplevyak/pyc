@@ -47,7 +47,7 @@ static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0;
-static Sym *sym___init__ = 0, *sym_super = 0;
+static Sym *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
 static char *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -224,6 +224,7 @@ build_builtin_symbols() {
   sym___iter__ = if1_make_symbol(if1, "__iter__");
   sym_next = if1_make_symbol(if1, "next");
   sym___init__ = if1_make_symbol(if1, "__init__");
+  sym___call__ = if1_make_symbol(if1, "__call__");
   sym_super = if1_make_symbol(if1, "super");
   cannonical_self = if1_cannonicalize_string(if1, "self");
 
@@ -544,7 +545,7 @@ static void enter_scope(PycContext &ctx, Sym *in = 0) {
     ctx.saved_scopes.put(ctx.node, c);
   }
   ctx.scope_stack.add(c);
-  TEST_SCOPE printf("enter scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
+  TEST_SCOPE printf("enter scope level %d\n", ctx.scope_stack.n);
 }
 
 static void enter_scope(PycContext &ctx, mod_ty mod) {
@@ -575,7 +576,7 @@ static void enter_scope(expr_ty x, PycAST *ast, PycContext &ctx) {
 }
 
 static void exit_scope(PycContext &ctx) { 
-  TEST_SCOPE printf("exit scope %d level %d\n", ctx.scope_stack.last()->id, ctx.scope_stack.n);
+  TEST_SCOPE printf("exit scope level %d\n", ctx.scope_stack.n);
   ctx.scope_stack.pop(); 
 }
 
@@ -1059,6 +1060,28 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
     if1_closure(if1, fn, body, as.n, as.v);
   }
+  PycSymbol *call_fun = ctx.scope_stack.last()->map.get(sym___call__->name);
+  Sym *call_sym = call_fun ? call_fun->sym->alias : 0;
+  // callable redirect to __call__
+  if (call_fun) {
+    fn = new_fun(ast);
+    fn->nesting_depth = ctx.scope_stack.n;
+    Vec<Sym *> as;
+    as.add(new_sym(ast));
+    as[0]->must_implement_and_specialize(cls);
+    int n = call_sym->has.n - 1;
+    for (int i = 2; i <= n; i++)
+      as.add(new_sym(ast));
+    body = 0;
+    Sym *t = new_sym(ast);
+    Code *send = if1_send(if1, &body, 2, 1, sym___call__, as[0], (t = new_sym(ast)));
+    send->ast = ast;
+    for (int i = 2; i <= n; i++)
+      if1_add_send_arg(if1, send, as[i-1]);
+    if1_move(if1, &body, t, fn->ret);
+    if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+    if1_closure(if1, fn, body, as.n, as.v);
+  }
 }
 
 static int 
@@ -1084,17 +1107,30 @@ gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast) {
          ast->rval, ast);
 }
 
-static Sym *make_num(PyObject *o) {
-  assert(PyInt_Check(o));
-  int i = (int)PyInt_AsLong(o);
-  Immediate imm;
-  imm.v_int32 = i;
-  char s[80]; sprintf(s, "%d", i);
-  Sym *sym = if1_const(if1, sym_int32, s, &imm);
-  if (!sym->implements.n) {
-    sym->implements.add(sym_int32);
-    sym->specializes.add(sym_int32);
-  }
+static Sym *make_num(PyObject *o, PycContext &ctx) {
+  Sym *sym = 0;
+  if (PyInt_Check(o)) {
+    int i = (int)PyInt_AsLong(o);
+    Immediate imm;
+    imm.v_int32 = i;
+    char s[80]; sprintf(s, "%d", i);
+    sym = if1_const(if1, sym_int32, s, &imm);
+    if (!sym->implements.n) {
+      sym->implements.add(sym_int32);
+      sym->specializes.add(sym_int32);
+    }
+  } else if (PyFloat_Check(o)) {
+    double f = PyFloat_AsDouble(o);
+    Immediate imm;
+    imm.v_float64 = f;
+    char s[80]; sprintf(s, "%g", f);
+    sym = if1_const(if1, sym_float64, s, &imm);
+    if (!sym->implements.n) {
+      sym->implements.add(sym_float64);
+      sym->specializes.add(sym_float64);
+    }
+  } else
+    fail("unhandled num type, line %d", ctx.lineno);
   return sym;
 }
 
@@ -1500,7 +1536,7 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Repr_kind: // expr value
       fail("error line %d, 'repr' not yet supported", ctx.lineno); break;
       break;
-    case Num_kind: ast->rval = make_num(e->v.Num.n); break;
+    case Num_kind: ast->rval = make_num(e->v.Num.n, ctx); break;
     case Str_kind: ast->rval = make_string(e->v.Str.s); break;
     case Attribute_kind: // expr value, identifier attr, expr_context ctx
       if1_gen(if1, &ast->code, getAST(e->v.Attribute.value, ctx)->code);

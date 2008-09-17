@@ -46,6 +46,18 @@ class int:
     return "#operator"(self, ">", x)
   def __ge__(self, x):
     return "#operator"(self, ">=", x)
+  def __hash__(self):
+    return self
+  def __cmp__(self, x):
+    if (self < x):
+      return -1
+    else:
+      if (self > x):
+        return 1
+      else:
+        return 0
+  def __nonzero__(self):
+     return self != 0
 
 class float:
   def __add__(self, x):
@@ -92,3 +104,20 @@ class float:
     return "#operator"(self, ">", x)
   def __ge__(self, x):
     return "#operator"(self, ">=", x)
+  def __cmp__(self, x):
+    if (self < x):
+      return -1
+    else: 
+      if (self > x):
+        return 1
+      else:
+        return 0
+  def __nonzero__(self):
+     return self != 0.0
+
+class list:
+  def append(self, l):
+    pass
+  def index(self, index, start=0, end=0):
+    pass
+

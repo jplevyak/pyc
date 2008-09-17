@@ -1,31 +1,31 @@
-enter scope 47 level 1
+enter scope level 1
 make_PycSymbol local 'x'
 make_PycSymbol local 'f'
-enter scope 48 level 2
+enter scope level 2
 make_PycSymbol local 'x'
 make_PycSymbol local 'g'
-enter scope 49 level 3
+enter scope level 3
 make_PycSymbol global 'x'
 make_PycSymbol use 'x'
 make_PycSymbol local 'x'
-exit scope 49 level 3
+exit scope level 3
 make_PycSymbol use 'x'
 make_PycSymbol use 'g'
-exit scope 48 level 2
+exit scope level 2
 make_PycSymbol use 'f'
 make_PycSymbol use 'x'
-exit scope 47 level 1
-enter scope 47 level 1
+exit scope level 1
+enter scope level 1
 found 'x' at level 0
-enter scope 48 level 2
+enter scope level 2
 found 'x' at level 0
-enter scope 49 level 3
+enter scope level 3
 found 'x' at level 0
 found 'x' at level 0
-exit scope 49 level 3
+exit scope level 3
 found 'x' at level 0
 found 'g' at level 0
-exit scope 48 level 2
+exit scope level 2
 found 'f' at level 0
 found 'x' at level 0
-exit scope 47 level 1
+exit scope level 1
