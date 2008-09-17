@@ -145,9 +145,9 @@ class list:
   def __len__(self):
     return 0
   def __getitem__(self, key):
-    pass
+    return "#primitive"("index_object", self, key);
   def __setitem__(self, key, value):
-    pass
+    return "#primitive"("set_index_object", self, key, value);
   def __delitem__(self, key):
     pass
   def __iter__(self):

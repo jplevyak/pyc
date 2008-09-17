@@ -1414,6 +1414,18 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       }
       if1_add_send_result(if1, send, (ast->rval = new_sym(ast)));
       return 1;
+    } else if (*s == '#' && !strncmp(&s[1], "primitive", 9)) {
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, sym_primitive);
+      for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
+        Sym *v = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i), ctx)->rval;
+        if (v->is_constant && v->type == sym_string)
+          if1_add_send_arg(if1, send, if1_make_symbol(if1, v->constant));
+        else
+          if1_add_send_arg(if1, send, v);
+      }
+      if1_add_send_result(if1, send, (ast->rval = new_sym(ast)));
+      return 1;
     }
   }
   return 0;
