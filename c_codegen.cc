@@ -149,6 +149,17 @@ num_string(Sym *s) {
   return 0;
 }
 
+static char *
+c_rhs(Var *v) {
+  if (!v->sym->is_fun)
+    return v->cg_string;
+  else {
+    char s[100];
+    sprintf(s, "((_CG_function*)%s)", v->cg_string);
+    return dupstr(s);
+  }
+}
+
 static int
 write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
   switch (n->prim->index) {
@@ -209,7 +220,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       for (int i = 0; i < obj->has.n; i++) {
         if (symbol == obj->has[i]->name) {
           fprintf(fp, "((%s)%s)->e%d = %s;\n", 
-                  obj->cg_string, n->rvals[1]->cg_string, i, n->rvals.v[4]->cg_string);
+                  obj->cg_string, n->rvals[1]->cg_string, i, c_rhs(n->rvals.v[4]));
           if (n->lvals[0]->live()) {
             assert(n->lvals[0]->cg_string);
             fprintf(fp, "%s = ((%s)%s)->e%d;\n", n->lvals[0]->cg_string, 
@@ -282,6 +293,18 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
     case P_prim_assign: {
       fprintf(fp, "%s = (%s)", n->lvals[0]->cg_string, num_string(n->lvals.v[0]->type));
       fprintf(fp, "%s;\n", n->rvals[3]->cg_string);
+      break;
+    }
+    case P_prim_clone: {
+      assert(n->lvals.n == 1);
+      if (n->lvals[0]->cg_string)
+        fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+      fprintf(fp, "(%s)_CG_prim_clone(", n->lvals[0]->type->cg_string);
+      for (int i = 2; i < n->rvals.n; i++) {
+        if (i > 2) fprintf(fp, ", ");
+        fputs(n->rvals[i]->cg_string, fp);
+      }
+      fputs(");\n", fp);
       break;
     }
     case P_prim_primitive: {
@@ -665,7 +688,7 @@ void
 c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
   Vec<Var *> globals;
   int index = 0;
-  fprintf(fp, "#include \"%s/c_runtime.h\"\n\n", system_dir);
+  fprintf(fp, "#include \"c_runtime.h\"\n\n");
   if (build_type_strings(fp, fa, globals) < 0)
     fail("unable to generate C code: no unique typing");
   if (globals.n)
@@ -729,7 +752,7 @@ c_codegen_compile(char *filename) {
   char target[512], s[1024];
   strcpy(target, filename);
   *strrchr(target, '.') = 0;
-  sprintf(s, "make --no-print-directory -f %s/Makefile.cg CG_TARGET=%s CG_FILES=%s.c",
-          system_dir, target, filename);
+  sprintf(s, "make --no-print-directory -f %s/Makefile.cg CG_ROOT=%s CG_TARGET=%s CG_FILES=%s.c",
+          system_dir, system_dir, target, filename);
   return system(s);
 }

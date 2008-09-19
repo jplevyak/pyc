@@ -97,7 +97,7 @@ static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
 #define _CG_prim_tuple(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_vector(_c, _n) (void*)GC_MALLOC(sizeof(_c*) * _n)
 #define _CG_prim_new(_c) (_c) GC_MALLOC(sizeof(*((_c)0)))
-#define _CG_prim_clone(_s, _c) _CG_prim_primitive_clone(_c, sizeof(*(_c)))
+#define _CG_prim_clone(_c) _CG_prim_primitive_clone(_c, sizeof(*(_c)))
 #define _CG_prim_reply(_s, _c, _r) return _r
 #define _CG_prim_primitive(_p, _x) printf("%d\n", (unsigned int)(uintptr_t)_x);
 #define _CG_prim_add(_a, _op, _b) ((_a) + (_b))
