@@ -4,11 +4,13 @@ OS_TYPE = $(shell uname -s | \
 
 CFLAGS += -I/usr/local/include/gc -g
 
-LIBS = -L/usr/local/lib -lm -lgc
+LIBS = libpyc_gc.a -L/usr/local/lib -lm -lgc
 
 ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt
 endif
+
+CC = g++
 
 all: $(CG_FILES)
 	@$(CC) $(CFLAGS) $(LDFLAGS) -o $(CG_TARGET) $(CG_FILES) $(LIBS)

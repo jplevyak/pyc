@@ -77,8 +77,8 @@ analyze(char *fn) {
     ifa_html(fn, mktree_dir);
   }
   if (fcg) {
-    ifa_cg(fn);
-    ifa_compile(fn);
+    c_codegen_write_c(pdb->fa, if1->top->fun, fn);
+    c_codegen_compile(fn);
   }
   return;
 }

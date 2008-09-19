@@ -35,4 +35,8 @@ EXTERN int test_scoping EXTERN_INIT(0);
 EXTERN int debug_level EXTERN_INIT(0);
 EXTERN int verbose_level EXTERN_INIT(0);
 
+void c_codegen_print_c(FILE *fp, FA *fa, Fun *init);
+void c_codegen_write_c(FA *fa, Fun *main, char *filename);
+int c_codegen_compile(char *filename);
+
 #endif

@@ -16,7 +16,7 @@ MINOR=0
 
 include ../plib/Makefile
 
-CFLAGS += -I../plib -I../ifalib -I/usr/include/python2.5
+CFLAGS += -D__PYC__=1 -I../plib -I../ifalib -I/usr/include/python2.5
 ifdef USE_GC
 LIBS += -L../ifalib -lifa_gc -L../plib -lplib_gc -lpython2.5 
 IFALIB = ../ifalib/libifa_gc.a
@@ -27,15 +27,16 @@ endif
 
 AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODULE)/pyc.1 $(MODULE)/pyc.cat
 
-LIB_SRCS = 
+LIB_SRCS = lib/builtin.cc
 LIB_OBJS = $(LIB_SRCS:%.cc=%.o)
 
-PYC_SRCS = pyc.cc python_ifa.cc version.cc
+PYC_SRCS = pyc.cc python_ifa.cc c_codegen.cc version.cc
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
 
 EXECUTABLE_FILES = pyc
-LIBRARIES = 
-#INSTALL_LIBRARIES = 
+LIBRARY = libpyc_gc.a
+LIBRARIES = libpyc_gc.a
+INSTALL_LIBRARIES =
 #INCLUDES =
 MANPAGES = pyc.1
 
@@ -52,6 +53,9 @@ endif
 ALL_SRCS = $(PYC_SRCS) $(LIB_SRCS)
 
 defaulttarget: $(EXECUTABLES) pyc.cat
+
+$(LIBRARY):  $(LIB_OBJS)
+	ar $(AR_FLAGS) $@ $^
 
 install:
 	cp $(EXECUTABLES) $(PREFIX)/bin
@@ -176,6 +180,21 @@ python_ifa.o: python_ifa.cc defs.h /usr/include/python2.5/Python.h \
   ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h ../ifalib/fun.h \
   ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
   ../ifalib/prim.h python_ifa.h
+c_codegen.o: c_codegen.cc ../ifalib/ifadefs.h ../plib/plib.h \
+  ../plib/arg.h ../plib/barrier.h ../plib/config.h ../plib/freelist.h \
+  ../plib/defalloc.h ../plib/list.h ../plib/log.h ../plib/vec.h \
+  ../plib/map.h ../plib/threadpool.h ../plib/misc.h ../plib/util.h \
+  ../plib/conn.h ../plib/md5.h ../plib/mt64.h ../plib/prime.h \
+  ../plib/service.h ../plib/unit.h ../ifalib/ast.h ../ifalib/ifadefs.h \
+  ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h \
+  ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
+  ../ifalib/builtin.h ../ifalib/builtin_symbols.h ../ifalib/fail.h \
+  ../ifalib/fa.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h \
+  ../ifalib/fun.h ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h \
+  ../ifalib/pattern.h ../ifalib/cg.h ../ifalib/prim.h ../ifalib/if1.h \
+  ../ifalib/builtin.h ../ifalib/pdb.h ../ifalib/fun.h ../ifalib/pnode.h \
+  ../ifalib/fa.h ../ifalib/var.h ../ifalib/fail.h \
+  ../ifalib/builtin_symbols.h
 version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
@@ -222,5 +241,6 @@ version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h ../ifalib/fun.h \
   ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
   ../ifalib/prim.h python_ifa.h
+builtin.o: lib/builtin.cc lib/builtin.h
 
 # IF YOU PUT ANYTHING HERE IT WILL GO AWAY

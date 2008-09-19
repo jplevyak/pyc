@@ -20,9 +20,6 @@
 #define MALLOC GC_MALLOC
 #define REALLOC GC_REALLOC
 #define FREE(_x)
-#define malloc dont_use_malloc_use_MALLOC_instead
-#define relloc dont_use_realloc_use_REALLOC_instead
-#define free dont_use_free_use_FREE_instead
 #define MEM_INIT() GC_INIT()
 #else
 #include <stdlib.h>
@@ -32,6 +29,10 @@
 #define MEM_INIT()
 #endif
 #endif
+
+#define __PYC__
+#include "lib/builtin.h"
+using namespace __pyc__;
 
 typedef char int8;
 typedef unsigned char uint8;
