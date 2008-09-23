@@ -58,6 +58,7 @@ typedef void *_CG_any;
 typedef void *_CG_null;
 typedef void *_CG_void;
 typedef void *_CG_void_type;
+typedef void *_CG_object;
 typedef int _CG_int;
 typedef int _CG_bool;
 typedef uint8 _CG_uint8;
@@ -75,6 +76,7 @@ typedef complex64 _CG_complex64;
 typedef char * _CG_string;
 typedef void *_CG_ref;
 typedef void *_CG_fun;
+typedef void *_CG_nil_type;
 #define _CG_reply _CG_symbol
 #define _CG_primitive _CG_symbol
 #define _CG_make_tuple _CG_symbol

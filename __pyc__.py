@@ -1,3 +1,13 @@
+class object:
+  def __null__(self):
+    return False
+
+class __None_type__:
+  def __nonzero__(self):
+    return False
+  def __null__(self):
+    return True
+
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
 #  def __add__(self, x):
@@ -84,6 +94,8 @@ class int:
         return 0
   def __nonzero__(self):
      return self != 0
+  def __null__(self):
+     return False
 
 class float:
   def __add__(self, x):
@@ -139,9 +151,40 @@ class float:
       else:
         return 0
   def __nonzero__(self):
-     return self != 0.0
+    return self != 0.0
+  def __null__(self):
+    return False
+
+class range:
+  i = 0
+  j = 0
+  def __init__(this, ai, aj):
+    i = ai
+    j = aj
+    return this
+  def __iter__(this):
+    return this
+  def next(self):
+    if (self.i >= self.j):
+      return None  
+    x = self.i
+    self.i += 1
+    return x
+  
+class __list_iter__:
+  thelist = None
+  position = 0
+  def __init__(self, l):
+    self.thelist = l
+  def next(self):
+    if (self.position < self.thelist.len()):
+      self.position += 1
+      return thelist.__getitem__(self.thelist, position-1)
+    else:
+      return None
 
 class list:
+  len = 0
   def __len__(self):
     return 0
   def __getitem__(self, key):
@@ -151,7 +194,7 @@ class list:
   def __delitem__(self, key):
     pass
   def __iter__(self):
-    pass
+    return __list_iter__(self)
   def __contains__(self, item):
     pass
   def __add__(self, l):
@@ -167,7 +210,7 @@ class list:
   def __imul__(self, l):
     pass
   def append(self, l):
-    pass
+    return "#primitive"("set_index_object", self, 0, l);
   def index(self, index, start=0, end=0):
     pass
   def count(self, l):

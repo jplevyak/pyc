@@ -262,6 +262,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       assert(n->lvals.n == 1);
       int o = (n->rvals.v[0]->sym == sym_primitive) ? 1 : 0;
       Sym *t = n->rvals[1+o]->type, *e = t->element->type;
+      e = e ? e : sym_void_type;
       fprintf(fp, "%s = ", n->lvals[0]->cg_string);
       fprintf(fp, "((list<%s>*)(%s))->__getitem__(", e->cg_string, n->rvals[1+o]->cg_string);
       for (int i = 2+o; i < n->rvals.n; i++) {
@@ -335,6 +336,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
     case P_prim_list: {
       assert(n->lvals.n == 1);
       Sym *t = n->lvals.v[0]->type, *e = t->element->type;
+      e = e ? e : sym_void_type;
       if (n->lvals[0]->cg_string)
         fprintf(fp, "%s = ", n->lvals[0]->cg_string);
       fprintf(fp, "(void*)new list<%s>(%d", e->cg_string, n->rvals.n-2);

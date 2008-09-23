@@ -85,7 +85,6 @@ analyze(char *fn) {
 
 int main(int argc, char *argv[]) {
   MEM_INIT();
-  init_config();
   INIT_RAND(0x1234567);
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
@@ -93,6 +92,9 @@ int main(int argc, char *argv[]) {
   if (arg_state.nfile_arguments < 1)
     usage(&arg_state, 0);
   init_system();
+  init_config();
+  if (pyc_ifa_log[0])
+    init_logs();
   Service::start_all();
   if (do_unit_tests) {
     int r = UnitTest::run_all();
