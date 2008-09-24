@@ -35,3 +35,9 @@ will not survive compilation.
 Variables and bindings an be deleted.  Again, it is unlikely that this
 behavior will survive compilation.
 
+4. How should I handle methods of primitive types.  Currently members are handled by
+as member variables for all record types, but primitve types are not records.
+
+  a. does lookup really search the object itself then the "class" object?
+     is Python more of a prototype-like language
+  b. what does python do about primitive types?
