@@ -131,9 +131,9 @@ pyc.o: pyc.cc defs.h /usr/include/python2.5/Python.h \
   ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
   ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
   ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
-  ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h ../ifalib/fun.h \
-  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h COPYRIGHT.i LICENSE.i
+  ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h ../ifalib/pdb.h \
+  ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h ../ifalib/prim.h \
+  python_ifa.h COPYRIGHT.i LICENSE.i
 python_ifa.o: python_ifa.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
@@ -177,9 +177,9 @@ python_ifa.o: python_ifa.cc defs.h /usr/include/python2.5/Python.h \
   ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
   ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
   ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
-  ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h ../ifalib/fun.h \
-  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h
+  ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h ../ifalib/pdb.h \
+  ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h ../ifalib/prim.h \
+  python_ifa.h
 c_codegen.o: c_codegen.cc ../ifalib/ifadefs.h ../plib/plib.h \
   ../plib/arg.h ../plib/barrier.h ../plib/config.h ../plib/freelist.h \
   ../plib/defalloc.h ../plib/list.h ../plib/log.h ../plib/vec.h \
@@ -189,12 +189,11 @@ c_codegen.o: c_codegen.cc ../ifalib/ifadefs.h ../plib/plib.h \
   ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h \
   ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
   ../ifalib/builtin.h ../ifalib/builtin_symbols.h ../ifalib/fail.h \
-  ../ifalib/fa.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h \
-  ../ifalib/fun.h ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h \
-  ../ifalib/pattern.h ../ifalib/cg.h ../ifalib/prim.h ../ifalib/if1.h \
-  ../ifalib/builtin.h ../ifalib/pdb.h ../ifalib/fun.h ../ifalib/pnode.h \
-  ../ifalib/fa.h ../ifalib/var.h ../ifalib/fail.h \
-  ../ifalib/builtin_symbols.h
+  ../ifalib/fa.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h \
+  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/pattern.h \
+  ../ifalib/cg.h ../ifalib/prim.h ../ifalib/if1.h ../ifalib/builtin.h \
+  ../ifalib/pdb.h ../ifalib/fun.h ../ifalib/pnode.h ../ifalib/fa.h \
+  ../ifalib/var.h ../ifalib/fail.h ../ifalib/builtin_symbols.h
 version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
@@ -238,9 +237,9 @@ version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
   ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
   ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
-  ../ifalib/var.h ../ifalib/pnode.h ../ifalib/region.h ../ifalib/fun.h \
-  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h
+  ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h ../ifalib/pdb.h \
+  ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h ../ifalib/prim.h \
+  python_ifa.h
 builtin.o: lib/builtin.cc lib/builtin.h
 
 # IF YOU PUT ANYTHING HERE IT WILL GO AWAY
