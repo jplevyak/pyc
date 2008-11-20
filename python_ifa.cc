@@ -15,7 +15,7 @@
 
 #define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin))
 
-typedef MapElem<char *, PycSymbol*> MapCharPycSymbolElem;
+typedef MapElem<cchar *, PycSymbol*> MapCharPycSymbolElem;
 
 static int scope_id = 0;
 
@@ -23,12 +23,12 @@ struct PycScope : public gc {
   int id;
   Sym *in;
   Sym *cls, *fun;
-  Map<char *, PycSymbol*> map;
+  Map<cchar *, PycSymbol*> map;
   PycScope() : in(0), cls(0), fun(0) { id = scope_id++; } 
 };
 
 struct PycContext : public gc {
-  char *filename;
+  cchar *filename;
   int lineno;
   void *node;
   Vec<PycScope *> scope_stack;
@@ -48,16 +48,17 @@ static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
-static Sym *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0, *sym___null__ = 0;
-static char *cannonical_self = 0;
+static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
+static Sym *sym___null__ = 0;
+static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
 
 PycSymbol::PycSymbol() : symbol(0), filename(0) {
 }
 
-char *
-cannonicalize_string(char *s) {
+cchar *
+cannonicalize_string(cchar *s) {
   return if1_cannonicalize_string(if1, s);
 }
 
@@ -66,7 +67,7 @@ PycSymbol::clone() {
   return copy()->sym;
 }
 
-char* 
+cchar* 
 PycSymbol::pathname() {
   if (filename)
     return filename;
@@ -98,7 +99,7 @@ PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), parent(0),code(0), sym(0), r
   label[0] = label[1] = 0;
 }
 
-char
+cchar
 *PycAST::pathname() {
   return filename;
 }
@@ -152,7 +153,7 @@ PycAST::visible_functions(Sym *arg0) {
 }
 
 static PycSymbol *
-new_PycSymbol(char *name) {
+new_PycSymbol(cchar *name) {
   PycSymbol *s = new PycSymbol;
   s->sym = new Sym;
   s->sym->asymbol = s;
@@ -161,7 +162,7 @@ new_PycSymbol(char *name) {
 }
 
 static PycSymbol *
-new_PycSymbol(char *name, PycContext &ctx) {
+new_PycSymbol(cchar *name, PycContext &ctx) {
   PycSymbol *s = new_PycSymbol(name);
   s->filename = ctx.filename;
   return s;
@@ -178,7 +179,7 @@ PycSymbol::copy() {
 }
 
 Sym *
-PycCallbacks::new_Sym(char *name) {
+PycCallbacks::new_Sym(cchar *name) {
   return new_PycSymbol(name)->sym;
 }
 
@@ -227,11 +228,12 @@ build_builtin_symbols() {
   sym___iter__ = if1_make_symbol(if1, "__iter__");
   sym_next = if1_make_symbol(if1, "next");
   sym_append = if1_make_symbol(if1, "append");
+  sym___new__ = if1_make_symbol(if1, "__new__");
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
   sym_super = if1_make_symbol(if1, "super");
-  cannonical_self = if1_cannonicalize_string(if1, "self");
+  cannonical_self = cannonicalize_string("self");
 
   init_default_builtin_types();
 
@@ -246,12 +248,12 @@ build_builtin_symbols() {
   sym_complex->alias = sym_complex64;
 
   // override default names
-  sym_string->name = if1_cannonicalize_string(if1, "str");
-  sym_nil->name = if1_cannonicalize_string(if1, "None");
-  sym_nil_type->name = if1_cannonicalize_string(if1, "__None_type__");
-  sym_unknown->name = if1_cannonicalize_string(if1, "Unimplemented");
-  sym_true->name = if1_cannonicalize_string(if1, "True");
-  sym_false->name = if1_cannonicalize_string(if1, "False");
+  sym_string->name = cannonicalize_string("str");
+  sym_nil->name = cannonicalize_string("None");
+  sym_nil_type->name = cannonicalize_string("__None_type__");
+  sym_unknown->name = cannonicalize_string("Unimplemented");
+  sym_true->name = cannonicalize_string("True");
+  sym_false->name = cannonicalize_string("False");
 
   // new types and objects
   new_builtin_primitive_type(sym_unicode, "unicode");
@@ -600,14 +602,14 @@ static void exit_scope(expr_ty x, PycContext &ctx) {
 #define EXPLICITLY_MARKED 1
 #define IMPLICITLY_MARKED 2
 enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
-static char *pyc_scoping_names[] = { "use", "local", "global", "nonlocal" };
+static cchar *pyc_scoping_names[] = { "use", "local", "global", "nonlocal" };
 #define GLOBAL_USE ((PycSymbol*)(intptr_t)1)
 #define NONLOCAL_USE ((PycSymbol*)(intptr_t)2)
 #define GLOBAL_DEF ((PycSymbol*)(intptr_t)3)
 #define NONLOCAL_DEF ((PycSymbol*)(intptr_t)4)
 #define MARKED(_x) (((uintptr_t)(_x)) < 5)
 
-static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, int *type = 0) {
+static PycSymbol *find_PycSymbol(PycContext &ctx, cchar *name, int *level = 0, int *type = 0) {
   PycSymbol *l = 0;
   int i = ctx.scope_stack.n - 1, xtype = 0;
   int end = -ctx.imports.n;
@@ -636,11 +638,11 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, char *name, int *level = 0, in
 }
 
 //static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0, int *type = 0) {
-//  return find_PycSymbol(ctx, if1_cannonicalize_string(if1, PyString_AS_STRING(o)), level, type);
+//  return find_PycSymbol(ctx, cannonicalize_string(PyString_AS_STRING(o)), level, type);
 //}
 
 static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
-  char *name = if1_cannonicalize_string(if1, n);
+  cchar *name = cannonicalize_string(n);
   TEST_SCOPE printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
   int level = 0, type = 0;
   PycSymbol *l = find_PycSymbol(ctx, name, &level, &type);
@@ -936,7 +938,7 @@ build_syms(mod_ty mod, PycContext &ctx) {
   return r;
 }
 
-static Sym *make_string(char *s) {
+static Sym *make_string(cchar *s) {
   Immediate imm;
   imm.v_string = s;
   Sym *sym = if1_const(if1, sym_string, s, &imm);
@@ -1141,7 +1143,7 @@ static Sym *make_num(PyObject *o, PycContext &ctx) {
 }
 
 static Sym *
-make_symbol(char *name) {
+make_symbol(cchar *name) {
   Sym *s = if1_make_symbol(if1, name);
   return s;
 }
@@ -1434,7 +1436,7 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       fail("unimplemented builtin '%s'", fun->sym->name);
     return 1;
   } if (ast->is_builtin && fun->rval && fun->rval->is_constant && fun->rval->type == sym_string) {
-    char *s = fun->rval->constant;
+    cchar *s = fun->rval->constant;
     if (*s == '#' && !strncmp(&s[1], "operator", 8)) {
       Code *send = if1_send1(if1, &ast->code, ast);
       if1_add_send_arg(if1, send, sym_operator);
@@ -1667,7 +1669,7 @@ build_if1(expr_ty e, PycContext &ctx) {
     case Name_kind: { // identifier id, expr_context ctx
       int level = 0;
       TEST_SCOPE printf("%sfound '%s' at level %d\n", ast->sym ? "" : "not ",
-                 if1_cannonicalize_string(if1, PyString_AS_STRING(e->v.Name.id)), level);
+                 cannonicalize_string(PyString_AS_STRING(e->v.Name.id)), level);
       bool load = e->v.Name.ctx == Load;
       Sym *in = ctx.scope_stack[ctx.scope_stack.n-1]->in;
       if (in && in->type_kind == Type_RECORD && in->has.in(ast->sym)) { // in __main__
@@ -1809,7 +1811,7 @@ ast_to_if1(Vec<PycModule *> &mods) {
   PycContext ctx;
   Code *code = 0;
   forv_Vec(PycModule, x, mods)
-    x->filename = if1_cannonicalize_string(if1, x->filename);
+    x->filename = cannonicalize_string(x->filename);
   ctx.filename = mods[0]->filename;
   ctx.is_builtin = mods[0]->is_builtin;
   build_environment(mods[0]->mod, ctx);

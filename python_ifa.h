@@ -14,27 +14,27 @@ typedef PySTEntryObject Symbol;
 class PycCallbacks : public IFACallbacks {
 public:
   void finalize_functions();
-  Sym *new_Sym(char *name = 0);
+  Sym *new_Sym(cchar *name = 0);
 };
 
 class PycSymbol : public IFASymbol {
  public:
   Sym *clone();
-  char *pathname();
+  cchar *pathname();
   int line();
   int source_line();
   int ast_id();
   PycSymbol *copy();
 
   Symbol *symbol;
-  char *filename;
+  cchar *filename;
   
   PycSymbol();
 };
 
 class PycAST : public IFAAST {
  public:
-  char *pathname();
+  cchar *pathname();
   int source_line();
   int line();
   Sym *symbol();  
@@ -44,7 +44,7 @@ class PycAST : public IFAAST {
 
   stmt_ty xstmt;
   expr_ty xexpr;
-  char *filename;
+  cchar *filename;
   PycAST *parent;
   Vec<PycAST *> pre_scope_children;
   Vec<PycAST *> children;
@@ -64,9 +64,9 @@ class PycAST : public IFAAST {
 
 class PycModule : public gc { public:
   mod_ty mod;
-  char *filename;
+  cchar *filename;
   int is_builtin;
-  PycModule(mod_ty amod, char *afilename, int an_is_builtin)
+  PycModule(mod_ty amod, cchar *afilename, int an_is_builtin)
     : mod(amod), filename(afilename), is_builtin(an_is_builtin) {}
 };
 

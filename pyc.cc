@@ -65,7 +65,7 @@ static void init_system() {
 }
 
 void
-analyze(char *fn) {
+analyze(cchar *fn) {
   if (ifa_analyze(fn) < 0)
     fail("program does not type");
   if (fgraph)
@@ -85,7 +85,7 @@ analyze(char *fn) {
 
 int main(int argc, char *argv[]) {
   MEM_INIT();
-  INIT_RAND(0x1234567);
+  INIT_RAND64(0x1234567);
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
@@ -104,10 +104,10 @@ int main(int argc, char *argv[]) {
   Py_Initialize();
   PyEval_InitThreads();
   PyArena *arena = PyArena_New();
-  char *first_filename = 0;
+  cchar *first_filename = 0;
   Vec<PycModule *> mods;
   for (int i = -1; i < arg_state.nfile_arguments; i++) {
-    char *filename = 0;
+    cchar *filename = 0;
     if (i < 0) {
       char fn[256];
       strcpy(fn, system_dir);

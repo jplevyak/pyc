@@ -2,9 +2,9 @@
 OS_TYPE = $(shell uname -s | \
   awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
 
-CFLAGS += -I$(CG_ROOT) -I/usr/local/include/gc -g
+CFLAGS += -I$(CG_ROOT) -I/usr/local/include/gc -g -Wno-deprecated
 
-LIBS = $(CG_ROOT)/libpyc_gc.a -L/usr/local/lib -lm -lgc
+LIBS = $(CG_ROOT)/libpyc_gc.a -lm -lgc
 
 ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt

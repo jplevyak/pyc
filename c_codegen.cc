@@ -12,14 +12,14 @@
 #include "var.h"
 #include "fail.h"
 
-static inline char *
+static inline cchar *
 c_type(Var *v) {
   if (!v->type->cg_string)
     return "_CG_void";
   return v->type->cg_string;
 }
 
-static inline char *
+static inline cchar *
 c_type(Sym *s) {
   if (!s->type->cg_string)
     return "_CG_void";
@@ -70,7 +70,7 @@ application_depth(PNode *n) {
 }
 
 static void
-write_c_apply_arg(FILE *fp, char *base, int n, int i) {
+write_c_apply_arg(FILE *fp, cchar *base, int n, int i) {
   fputs(base, fp);
   for (int j = i; j < n - 2; j++)
     fputs("->e0", fp);
@@ -112,7 +112,7 @@ cg_writeln(FILE *fp, Vec<Var *> vars, int ln) {
   return 0;
 }
 
-static char *
+static cchar *
 num_string(Sym *s) {
   switch (s->num_kind) {
     default: assert(!"case");
@@ -149,7 +149,7 @@ num_string(Sym *s) {
   return 0;
 }
 
-static char *
+static cchar *
 c_rhs(Var *v) {
   if (!v->sym->is_fun)
     return v->cg_string;
@@ -165,7 +165,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
   switch (n->prim->index) {
     default: return 0;
     case P_prim_tuple: {
-      char *t = c_type(n->lvals[0]);
+      cchar *t = c_type(n->lvals[0]);
       fprintf(fp, "%s = _CG_prim_tuple(%s);\n", n->lvals[0]->cg_string, t);
       for (int i = 1; i < n->rvals.n; i++)
         fprintf(fp, "%s->e%d = %s;\n", n->lvals[0]->cg_string, i-1, n->rvals.v[i]->cg_string);
@@ -183,11 +183,11 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       break;
     }
     case P_prim_period: {
-      char *t = c_type(n->lvals[0]);
+      cchar *t = c_type(n->lvals[0]);
       Vec<Sym *> symbols;
       symbol_info(n->rvals[3], symbols);
       assert(symbols.n == 1);
-      char *symbol = symbols[0]->name;
+      cchar *symbol = symbols[0]->name;
       Sym *obj = n->rvals[1]->type;
       if (obj->type_kind == Type_LUB)
         obj = obj->has[0];
@@ -213,7 +213,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       Vec<Sym *> symbols;
       symbol_info(n->rvals[3], symbols);
       assert(symbols.n == 1);
-      char *symbol = symbols[0]->name;
+      cchar *symbol = symbols[0]->name;
       Sym *obj = n->rvals[1]->type;
       if (obj->type_kind == Type_LUB)
         obj = obj->has[0];
@@ -314,7 +314,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         if (n->lvals[0]->cg_string)
           fprintf(fp, "%s = ", n->lvals[0]->cg_string);
       }
-      char *name = n->rvals[1]->sym->name;
+      cchar *name = n->rvals[1]->sym->name;
       if (!name) 
         name = n->rvals[1]->sym->constant;
       if (!strcmp("write", name))
@@ -740,7 +740,7 @@ c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
 }
 
 void
-c_codegen_write_c(FA *fa, Fun *main, char *filename) {
+c_codegen_write_c(FA *fa, Fun *main, cchar *filename) {
   char fn[512];
   strcpy(fn, filename);
   strcat(fn, ".c");
@@ -750,7 +750,7 @@ c_codegen_write_c(FA *fa, Fun *main, char *filename) {
 }
 
 int
-c_codegen_compile(char *filename) {
+c_codegen_compile(cchar *filename) {
   char target[512], s[1024];
   strcpy(target, filename);
   *strrchr(target, '.') = 0;
