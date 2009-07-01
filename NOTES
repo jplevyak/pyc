@@ -41,3 +41,19 @@ as member variables for all record types, but primitve types are not records.
   a. does lookup really search the object itself then the "class" object?
      is Python more of a prototype-like language
   b. what does python do about primitive types?
+
+5. test t34.py illustrates how sharing occurs between classes and objects
+  
+  a. is this a good thing?  should there be an option to simply avoid this and
+     copy out as in other languages?
+
+  * implement copy out first as this is more appropriate for multi-threaded
+    programming and programming-in-the-large
+
+6. test t30.py illustrates how the assignment of lambda functions differs
+   depending on context (e.g. when they become "unbound" vs "bound" methods)
+
+  a. is this a good thing?  should there be an option to warn/error so as 
+     to help programmers avoid possible confusions and obfiscations from this?
+
+  * implement in a more rational way with warnings
