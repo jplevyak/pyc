@@ -1,25 +1,30 @@
-/* -*- Mode: C++; Indent: Indent4 -*- */
-#include "builtin.h"
+#include "builtin.hpp"
+#include "re.hpp"
 #include <climits>
+#include <cmath>
 #include <numeric>
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
 #include <limits.h>
 
-namespace NAMESPACE {
+namespace __shedskin__ {
 
-class_ *cl_class_, *cl_none, *cl_str_, *cl_int_, *cl_float_, *cl_list, *cl_tuple, *cl_dict, *cl_set, *cl_object, *cl_rangeiter;
+class_ *cl_class_, *cl_none, *cl_str_, *cl_int_, *cl_float_, *cl_complex, *cl_list, *cl_tuple, *cl_dict, *cl_set, *cl_object, *cl_rangeiter, *cl_xrange;
 
 str *sp;
 __GC_STRING ws, __fmtchars;
 __GC_VECTOR(str *) __char_cache;
 
+#ifdef __SS_BIND
+dict<void *, void *> *__ss_proxy;
+#endif
 
 void __init() {
     GC_INIT();
 #ifdef __SS_BIND
     Py_Initialize();
+    __ss_proxy = new dict<void *, void *>();
 #endif
 
     cl_class_ = new class_ ("class_", 0, 0);
@@ -33,9 +38,11 @@ void __init() {
     cl_set = new class_("set", 8, 8);
     cl_object = new class_("object", 9, 9);
     cl_rangeiter = new class_("rangeiter", 10, 10);
+    cl_complex = new class_("complex", 11, 11);
+    cl_xrange = new class_("xrange", 12, 12);
 
     ws = " \n\r\t\f\v";
-    __fmtchars = "diouxXeEfFgGhcrs%";
+    __fmtchars = "#*-+ .0123456789hlL";
     sp = new str(" ");
 
     for(int i=0;i<256;i++) {
@@ -71,6 +78,149 @@ str *float_::__repr__() {
     return __str(unit);
 } 
 
+/* complex methods */
+
+complex::complex(double real, double imag) {
+    this->__class__ = cl_complex;
+    this->real = real;
+    this->imag = imag;
+}
+
+complex::complex(str *s) {
+    this->__class__ = cl_complex;
+    __re__::match_object *m;
+    __re__::re_object *p;
+
+    p = __re__::compile(new str("(?P<one>[+-]?([\\d\\.]+e[+-]?\\d+|[\\d\\.]*)j?)(?P<two>[+-]?([\\d\\.]+e[+-]?\\d+|[\\d\\.]*)j?)?$"));
+    m = p->match(s->strip());
+    if (___bool(m)) {
+        complex *c = (parsevalue(m->group(new str("one"))))->__add__(parsevalue(m->group(new str("two"))));
+        real = c->real;
+        imag = c->imag;
+    }
+    else {
+        throw ((new ValueError(new str("complex() arg is a malformed string"))));
+    }
+}
+
+#ifdef __SS_BIND
+complex::complex(PyObject *p) {
+    this->__class__ = cl_complex;
+    real = PyComplex_RealAsDouble(p);
+    imag = PyComplex_ImagAsDouble(p);
+}
+PyObject *complex::__to_py__() {
+    return PyComplex_FromDoubles(real, imag);
+}
+#endif
+
+complex *complex::parsevalue(str *s) {
+    complex *mult;
+
+    if ((!___bool(s))) {
+        return __add2(0, new complex(0.0, 0.0));
+    }
+    mult = __add2(1, new complex(0.0, 0.0));
+    if (__eq(s->__getitem__((-1)), new str("j"))) {
+        s = s->__slice__(2, 0, (-1), 0);
+        mult = __add2(0, new complex(0.0, 1.0));
+    }
+    if (((new list<str *>(2, new str("+"), new str("-"))))->__contains__(s)) {
+        s = s->__iadd__(new str("1"));
+    }
+    return __mul2(__float(s), mult);
+}
+
+complex *complex::__add__(complex *b) { return new complex(real+b->real, imag+b->imag); }
+complex *complex::__add__(double b) { return new complex(b+real, imag); }
+complex *complex::__iadd__(complex *b) { return __add__(b); }
+complex *complex::__iadd__(double b) { return __add__(b); }
+
+complex *complex::__sub__(complex *b) { return new complex(real-b->real, imag-b->imag); }
+complex *complex::__sub__(double b) { return new complex(real-b, imag); }
+complex *complex::__rsub__(double b) { return new complex(b-real, -imag); }
+complex *complex::__isub__(complex *b) { return __sub__(b); }
+complex *complex::__isub__(double b) { return __sub__(b); }
+
+complex *complex::__mul__(complex *b) { return new complex(real*b->real-imag*b->imag, real*b->imag+imag*b->real); }
+complex *complex::__mul__(double b) { return new complex(b*real, b*imag); }
+complex *complex::__imul__(complex *b) { return __mul__(b); }
+complex *complex::__imul__(double b) { return __mul__(b); }
+
+void __complexdiv(complex *c, complex *a, complex *b) {
+    double norm = b->real*b->real+b->imag*b->imag;
+    c->real = (a->real*b->real+a->imag*b->imag)/norm;
+    c->imag = (a->imag*b->real-b->imag*a->real)/norm;
+}
+
+complex *complex::__div__(complex *b) { complex *c=new complex(); __complexdiv(c, this, b); return c; }
+complex *complex::__div__(double b) { return new complex(real/b, imag/b); }
+complex *complex::__idiv__(complex *b) { return __div__(b); }
+complex *complex::__idiv__(double b) { return __div__(b); }
+complex *complex::__rdiv__(double b) { complex *c=new complex(); __complexdiv(c, new complex(b), this); return c; }
+
+complex *complex::conjugate() { return new complex(real, -imag); }
+complex *complex::__pos__() { return this; }
+complex *complex::__neg__() { return new complex(-real, -imag); }
+double complex::__abs__() { return std::sqrt(real*real+imag*imag); }
+double __abs(complex *c) { return c->__abs__(); }
+
+complex *complex::__floordiv__(complex *b) {
+    complex *c = __div__(b);
+    c->real = ((int)c->real);
+    c->imag = 0;
+    return c;
+}
+complex *complex::__floordiv__(double b) {
+    complex *c = __div__(b);
+    c->real = ((int)c->real);
+    c->imag = 0;
+    return c;
+}
+
+complex *complex::__mod__(complex *b) {
+    complex *c = __div__(b);
+    return __sub__(b->__mul__(((int)c->real)));
+}
+complex *complex::__mod__(double b) {
+    complex *c = __div__(b);
+    return __sub__(b*((int)c->real));
+}
+
+tuple2<complex *, complex *> *complex::__divmod__(complex *b) {
+    return new tuple2<complex *, complex *>(2, __floordiv__(b), __mod__(b));
+}
+tuple2<complex *, complex *> *complex::__divmod__(double b) {
+    return new tuple2<complex *, complex *>(2, __floordiv__(b), __mod__(b));
+}
+
+int complex::__eq__(pyobj *p) {
+    if(p->__class__ != cl_complex)
+        return 0;
+    return real == ((complex *)p)->real && imag == ((complex *)p)->imag;
+}
+
+int complex::__hash__() {
+    return ((int)imag)*1000003+((int)real);
+}
+
+int complex::__nonzero__() {
+    return real != 0 || imag != 0;
+}
+
+str *complex::__repr__() {
+    str *left, *middle, *right;
+    if(real==0) 
+        return __modct(new str("%gj"), 1, __box(imag));
+    left = __modct(new str("(%g"), 1, __box(real));
+    if(imag<0) 
+        middle = new str("");
+    else
+        middle = new str("+");
+    right = __modct(new str("%gj)"), 1, __box(imag));
+    return __add_strs(3, left, middle, right);
+}
+
 /* str methods */
 
 str::str() : cached_hash(0) {
@@ -85,7 +235,7 @@ str::str(__GC_STRING s) : unit(s), cached_hash(0) {
     __class__ = cl_str_;
 }
 
-str::str(const char *s, int size) : unit(__GC_STRING(s, size)), cached_hash(0)  { /* '\0' delimiter in C */
+str::str(const char *s, int size) : cached_hash(0), unit(__GC_STRING(s, size)) { /* '\0' delimiter in C */
     __class__ = cl_str_;
 }
 
@@ -124,7 +274,7 @@ str *str::__repr__() {
         quote = "\"";
 
     ss << quote;
-    for(int i=0; i<(int)unit.size(); i++)
+    for(int i=0; i<unit.size(); i++)
     {
         char c = unit[i];
         int k;
@@ -147,12 +297,16 @@ str *str::__repr__() {
     return new str(ss.str().c_str());
 }
 
+int str::__int__() {
+    return __int(this);
+}
+
 int str::__contains__(str *s) {
-    return ((int)unit.find(s->unit)) != -1;
+    return unit.find(s->unit) != -1;
 }
 
 int str::isspace() {
-    return unit.size() && (((int)unit.find_first_not_of(ws)) == -1);
+    return unit.size() && (unit.find_first_not_of(ws) == -1);
 }
 
 int str::isdigit() {
@@ -356,12 +510,10 @@ list<str *> *str::splitlines(int keepends)
     }
     while(i >= 0);
     
-    if(j != (int)unit.size()) r->append(new str(unit.substr(j)));
+    if(j != unit.size()) r->append(new str(unit.substr(j)));
     
     return r;
 }
-
-
 
 str *str::rstrip(str *chars) {
     __GC_STRING remove;
@@ -377,12 +529,13 @@ list<str *> *str::split(str *sp, int max_splits) {
     __GC_STRING s = unit;
     int sep_iter, chunk_iter = 0, tmp, num_splits = 0;
     list<str *> *result = new list<str *>();
-
     if (sp == NULL)
     {
 #define next_separator(iter) (s.find_first_of(ws, (iter)))
 #define skip_separator(iter) (s.find_first_not_of(ws, (iter)))
 
+        if(skip_separator(chunk_iter) == -1) /* XXX */ 
+            return result;
         if(next_separator(chunk_iter) == 0) 
             chunk_iter = skip_separator(chunk_iter);
         while((max_splits < 0 or num_splits < max_splits)
@@ -410,7 +563,7 @@ list<str *> *str::split(str *sp, int max_splits) {
         int sep_size = sp->unit.size();
 
 #define next_separator(iter) s.find(sep, (iter))
-#define skip_separator(iter) ((iter + sep_size) > (int)s.size()? -1 : (iter + sep_size))
+#define skip_separator(iter) ((iter + sep_size) > s.size()? -1 : (iter + sep_size))
 
         if (max_splits == 0) {
             result->append(this);
@@ -455,7 +608,7 @@ str *str::translate(str *table, str *delchars) {
     int self_size = unit.size();
     for(int i = 0; i < self_size; i++) {
         char c = unit[i];
-        if(!delchars || ((int)delchars->unit.find(c)) == -1)
+        if(!delchars || delchars->unit.find(c) == -1)
             newstr->unit.push_back(table->unit[(unsigned char)c]);
     }
 
@@ -530,10 +683,10 @@ str *str::__imul__(int n) {
 /* (C) 2004, 2005 Paul Hsieh. Covered under the Paul Hsieh derivative license.
    http://www.azillionmonkeys.com/qed/{hash,weblicense}.html  */
 
-#define get16bits(d) (*((const uint16_t *) (d)))
+#define get16bits(d) (*((const unsigned short int *) (d)))
 
-static inline uint32_t SuperFastHash (const char * data, int len) {
-    uint32_t hash = 0, tmp;
+static inline unsigned int SuperFastHash (const char * data, int len) {
+    unsigned int hash = 0, tmp;
     int rem;
 
     if (len <= 0 || data == NULL) return 0;
@@ -546,7 +699,7 @@ static inline uint32_t SuperFastHash (const char * data, int len) {
         hash  += get16bits (data);
         tmp    = (get16bits (data+2) << 11) ^ hash;
         hash   = (hash << 16) ^ tmp;
-        data  += 2*sizeof (uint16_t);
+        data  += 2*sizeof (unsigned short int);
         hash  += hash >> 11;
     }
 
@@ -554,7 +707,7 @@ static inline uint32_t SuperFastHash (const char * data, int len) {
     switch (rem) {
         case 3: hash += get16bits (data);
                 hash ^= hash << 16;
-                hash ^= data[sizeof (uint16_t)] << 18;
+                hash ^= data[sizeof (unsigned short int)] << 18;
                 hash += hash >> 11;
                 break;
         case 2: hash += get16bits (data);
@@ -631,25 +784,19 @@ str *__add_strs(int n, ...) {
 }
 
 str *str::__join(pyseq<str *> *l, int total_len) {
-    __GC_STRING s;
-    s.resize(total_len);
-
+    str *s = new str();
+    s->unit.resize(total_len);
     int k = 0;
-
     for(int i = 0; i < len(l); i++) {
-        __GC_STRING &t = l->units[i]->unit;
-
-        memcpy((void *)(s.data()+k), t.data(), t.size());
-        k += t.size();
-
-        if(unit.size()) {
-            memcpy((void *)(s.data()+k), unit.data(), unit.size());
+        str *t = l->units[i];
+        memcpy((void *)(s->unit.data()+k), t->unit.data(), t->unit.size());
+        k += t->unit.size();
+        if(unit.size() && i < len(l)-1) {
+            memcpy((void *)(s->unit.data()+k), unit.data(), unit.size());
             k += unit.size();
         } 
     }
-
-    s.resize(s.size()-unit.size());
-    return new str(s);
+    return new str(s->unit);
 }
 
 str *str::join(pyiter<str *> *l) { 
@@ -663,8 +810,8 @@ str *str::join(pyiter<str *> *l) {
         total_len += i->unit.size();
         ++count;
     END_FOR
-    total_len += count*unit.size();
-
+    if(total_len)
+        total_len += (count-1)*unit.size();
     return __join(rl, total_len);
 } 
 
@@ -673,23 +820,30 @@ str *str::join(pyseq<str *> *l) {
     __GC_VECTOR(str *)::const_iterator it;
     for(it = l->units.begin(); it < l->units.end(); it++)
         total_len += (*it)->unit.size();
-    total_len += len(l)*unit.size();
-
+    if(total_len)
+        total_len += (len(l)-1)*unit.size();
     return __join(l, total_len);
 }
 
+str *str::join(str *s) {
+    return join((pyiter<str *> *)s);
+}
+
 str *str::__slice__(int x, int l, int u, int s) {
-    __GC_STRING r;
     slicenr(x, l, u, s, __len__());
 
-    if(s > 0)
-        for(int i=l; i<u; i += s)
-            r += unit[i];
-    else
-        for(int i=l; i>u; i += s)
-            r += unit[i];
-
-    return new str(r);
+    if(s == 1)
+        return new str(unit.substr(l, u-l));
+    else {
+        __GC_STRING r;
+        if(s > 0)
+            for(int i=l; i<u; i += s)
+                r += unit[i];
+        else
+            for(int i=l; i>u; i += s)
+                r += unit[i];
+        return new str(r);
+    }
 }
 
 int str::__fixstart(int a, int b) {
@@ -785,7 +939,7 @@ str *str::lower() {
 str *str::title() {
     str *r = new str(unit);
     int i = 0;
-    while( (i != -1) && (i<(int)unit.size()) )
+    while( (i != -1) && (i<unit.size()) )
     {
         r->unit[i] = ::toupper(r->unit[i]);
         i = unit.find(" ", i);
@@ -854,7 +1008,7 @@ file::file(str *name, str *flags) {
     this->name = name;
     this->mode = flags;
     if(!f) 
-       throw new IOError(__mod(new str("No such file or directory: '%s'"), name));
+       throw new IOError(__modct(new str("No such file or directory: '%s'"), 1, name));
     endoffile=print_space=0;
     print_lastchar='\n';
 }
@@ -864,24 +1018,30 @@ file *open(str *name, str *flags) {
 }
 
 int file::getchar() {
+    int r;
     __check_closed();
-    return fgetc(f);
+    r = fgetc(f);
+    if(ferror(f))
+        throw new IOError();
+    return r;
 }
 
-int file::putchar(int c) {
+void *file::putchar(int c) {
     __check_closed();
     fputc(c, f);
-    return 0;
+    if(ferror(f))
+        throw new IOError();
+    return NULL;
 }
 
-int file::write(str *s) {
+void *file::write(str *s) {
     __check_closed();
   //  fputs(s->unit.c_str(), f);
 
-    for(int i = 0; i < (int)s->unit.size(); i++)
+    for(int i = 0; i < s->unit.size(); i++)
         putchar(s->unit[i]);
 
-    return 0;
+    return NULL;
 }
 
 void file::__check_closed() {
@@ -889,11 +1049,11 @@ void file::__check_closed() {
         throw new ValueError(new str("I/O operation on closed file"));
 }
 
-int file::seek(int i, int w) {
+void *file::seek(int i, int w) {
     __check_closed();
     fseek(f, i, w);
     endoffile = 0; /* XXX add check */
-    return 0;
+    return NULL;
 }
 
 int file::tell() {
@@ -901,11 +1061,11 @@ int file::tell() {
     return ftell(f);
 }
 
-int file::writelines(pyseq<str *> *l) {
+void *file::writelines(pyseq<str *> *l) {
     __check_closed();
     for(int i=0; i<len(l); i++)
         write(l->__getitem__(i));
-    return 0;
+    return NULL;
 }
 
 str *file::readline(int n) { 
@@ -959,16 +1119,16 @@ list<str *> *file::readlines() {
     return lines;
 }
 
-int file::flush() {
+void *file::flush() {
     __check_closed();
     fflush(f);
-    return 0;
+    return NULL;
 }
 
-int file::close() {
+void *file::close() {
     fclose(f);
     closed = 1;
-    return 0;
+    return NULL;
 }
 
 int file::__ss_fileno() {
@@ -983,21 +1143,7 @@ str *file::__repr__() {
 /* builtin functions */
 
 str *pyobj::__repr__() {
-    return __class__->__name__->__add__(new str(" instance"));
-}
-
-int whatsit(__GC_STRING &s) {
-    int i = -1;
-    int count = 0;
-
-    while((i = s.find("%", i+1)) > -1)
-    {
-        int j = s.find_first_of("diouxXeEfFgGhcrs", i);
-        s.replace(i, j-i+1, "%s");
-        count += 1;
-    }
-
-    return count;
+    return __add_strs(3, new str("<"), __class__->__name__, new str(" instance>"));
 }
 
 str *raw_input(str *msg) {
@@ -1005,15 +1151,11 @@ str *raw_input(str *msg) {
     if(msg)
         std::cout << msg->unit;
     std::getline(std::cin, s);
+    if(std::cin.eof())
+        throw new EOFError();
     return new str(s); 
 }
 
-int __int() { return 0; }
-
-template<> int __int(str *s) { return __int(s, 10); }
-template<> int __int(int i) { return i; }
-template<> int __int(bool b) { return b; }
-template<> int __int(double d) { return (int)d; }
 
 int __int(str *s, int base) {
     char *cp;
@@ -1024,10 +1166,6 @@ int __int(str *s, int base) {
     return i;
 }
 
-double __float() { return 0; }
-template<> double __float(int p) { return p; }
-template<> double __float(bool b) { return __float((int)b); }
-template<> double __float(double d) { return d; }
 template<> double __float(str *s) {
     return atof((char *)(s->unit.c_str()));
 }
@@ -1139,23 +1277,54 @@ public:
         throw new StopIteration();
     }
 
-    int __len__() {
-        return range_len(a,b,s);
-    }
 };
 
-__iter<int> *xrange(int a, int b, int s) { return new __rangeiter(a,b,s); }
-__iter<int> *xrange(int n) { return new __rangeiter(0, n, 1); }
+__xrange::__xrange(int a, int b, int s) {
+    this->a = a;
+    this->b = b;
+    this->s = s;
+}
 
-__iter<int> *reversed(__rangeiter *x) {
+__iter<int> *__xrange::__iter__() {
+    return new __rangeiter(a, b, s);
+}
+
+int __xrange::__len__() {
+   return range_len(a, b, s);
+} 
+    
+str *__xrange::__repr__() {
+    if(s==1) {
+        if(a==0)
+            return __modct(new str("xrange(%d)"), 1, __box(b));
+        else
+            return __modct(new str("xrange(%d, %d)"), 2, __box(a), __box(b));
+    } 
+    return __modct(new str("xrange(%d, %d, %d)"), 3, __box(a), __box(b), __box(s)); /* XXX */
+}
+
+__xrange *xrange(int a, int b, int s) { return new __xrange(a,b,s); }
+__xrange *xrange(int n) { return new __xrange(0, n, 1); }
+
+__iter<int> *reversed(__xrange *x) {
    return new __rangeiter(x->a+(range_len(x->a,x->b,x->s)-1)*x->s, x->a-x->s, -x->s);
+}
+__iter<str *> *reversed(str *s) {
+    return reversed((pyiter<str *> *)s);
 }
 
 int ord(str *s) {
+    if(len(s) != 1) 
+        throw new TypeError(__modct(new str("ord() expected a character, but string of length %d found"), 1, __box(len(s))));
     return (unsigned char)(s->unit[0]);
 }
 
+str *chr(bool b) {
+    return chr((int)b);
+}
 str *chr(int i) {
+    if(i < 0 || i > 255) 
+        throw new ValueError(new str("chr() arg not in range(256)"));
     return __char_cache[i];
 }
 
@@ -1174,46 +1343,14 @@ template<> void *__copy(void *d) { return d; }
 template<> str *repr(double d) { return __str(d); }
 template<> str *repr(int i) { return __str(i); }
 template<> str *repr(bool b) { return __str((int)b); }
-template<> str *repr(void *v) { return new str("void"); }
+template<> str *repr(void *v) { return new str("None"); }
 
 str *__str(void *v) { return new str("void"); }
-
-/* equality, comparison, math operators */
-
-template<> int __eq(int a, int b) { return a == b; }
-template<> int __eq(double a, double b) { return a == b; }
-template<> int __eq(void *a, void *b) { return a == b; }
-template<> int __ne(int a, int b) { return a != b; }
-template<> int __ne(double a, double b) { return a != b; }
-template<> int __ne(void *a, void *b) { return a != b; }
-template<> int __gt(int a, int b) { return a > b; }
-template<> int __gt(double a, double b) { return a > b; }
-template<> int __ge(int a, int b) { return a >= b; }
-template<> int __ge(double a, double b) { return a >= b; }
-template<> int __lt(int a, int b) { return a < b; }
-template<> int __lt(double a, double b) { return a < b; }
-template<> int __le(int a, int b) { return a <= b; }
-template<> int __le(double a, double b) { return a <= b; }
-template<> int __add(int a, int b) { return a + b; }
-template<> double __add(double a, double b) { return a + b; }
 
 /* get class pointer */
 
 template<> class_ *__type(int i) { return cl_int_; }
 template<> class_ *__type(double d) { return cl_float_; }
-
-/* hashing */
-
-template<> int hasher(int a) { return a; }
-template<> int hasher(double v) {
-    int hipart, expo; /* modified from CPython */
-    v = frexp(v, &expo);
-    v *= 32768.0; /* 2**15 */
-    hipart = (int)v;   /* take the top 16 bits */
-    v = (v - (double)hipart) * 32768.0; /* get the next 16 bits */
-    return hipart + (int)v + (expo << 15);
-}
-template<> int hasher(void *a) { return (intptr_t)a; }
 
 /* pow */
 
@@ -1253,31 +1390,42 @@ int __power(int a, int b, int c) {
     return res;
 }
 
-int __power2(int a) { return a*a; }
-double __power2(double a) { return a*a; }
-int __power3(int a) { return a*a*a; }
-double __power3(double a) { return a*a*a; }
+complex *__power(complex *a, complex *b) {
+    complex *r = new complex();
+    double vabs, len, at, phase;
+    if(b->real == 0 && b->imag == 0) {
+        r->real = 1;
+        r->imag = 0;
+    }
+    else if(a->real == 0 && a->imag == 0) {
+        r->real = 0;
+        r->imag = 0;
+    }
+    else {
+        vabs = a->__abs__();
+        len = std::pow(vabs,b->real);
+        at = std::atan2(a->imag, a->real);
+        phase = at*b->real;
+        if (b->imag != 0.0) {
+            len /= std::exp(at*b->imag);
+            phase += b->imag*std::log(vabs);
+        }
+        r->real = len*std::cos(phase);
+        r->imag = len*std::sin(phase); 
+    }
+    return r;
+}
+complex *__power(complex *a, int b) {
+    return __power(a, new complex(b, 0));
+}
+complex *__power(complex *a, double b) {
+    return __power(a, new complex(b, 0));
+}
 
 /* division */
 
-template<> double __divs(double a, double b) { return a/b; }
-template<> double __divs(int a, double b) { return (double)a/b; }
-template<> double __divs(double a, int b) { return a/((double)b); }
-template<> int __divs(int a, int b) { return (int)floor(((double)a)/b); }
-
-template<> double __floordiv(double a, double b) { return floor(a/b); }
-template<> double __floordiv(int a, double b) { return floor((double)a/b); }
-template<> double __floordiv(double a, int b) { return floor(a/((double)b)); }
-template<> int __floordiv(int a, int b) { return (int)floor((double)a/b); }
-
-template<> tuple2<double, double> *divmod(double a, double b) {
-    return new tuple2<double, double>(2, __floordiv(a,b), __mods(a,b));
-}
-template<> tuple2<double, double> *divmod(double a, int b) { return divmod(a, (double)b); } 
-template<> tuple2<double, double> *divmod(int a, double b) { return divmod((double)a, b); }
-template<> tuple2<int, int> *divmod(int a, int b) {
-    return new tuple2<int, int>(2, __floordiv(a,b), __mods(a,b));
-}
+tuple2<complex *, complex *> *divmod(complex *a, double b) { return a->__divmod__(b); }
+tuple2<complex *, complex *> *divmod(complex *a, int b) { return a->__divmod__(b); }
 
 /* slicing */
 
@@ -1288,15 +1436,20 @@ void slicenr(int x, int &l, int&u, int&s, int len) {
     if (!(x&4))
         s = 1;
 
-    if (l<0)
+    if (l>=len)
+        l = len;
+    else if (l<0) {
         l = len+l;
-    if (u<0)
-        u = len+u;
-
-    if (l<0)
-        l = 0;
+        if(l<0)
+            l = 0;
+    }
     if (u>=len)
         u = len;
+    else if (u<0) {
+        u = len+u;
+        if(u<0)
+            u = 0;
+    }
 
     if(s<0) {
         if (!(x&1))
@@ -1310,25 +1463,6 @@ void slicenr(int x, int &l, int&u, int&s, int len) {
         if (!(x&2))
             u = len;
     }
-}
-
-/* cmp */
-
-template<> int __cmp(int a, int b) { 
-    if(a < b) return -1;
-    else if(a > b) return 1;
-    return 0;
-} 
-
-template<> int __cmp(double a, double b) {
-    if(a < b) return -1;
-    else if(a > b) return 1;
-    return 0;
-}
-template<> int __cmp(void *a, void *b) {
-    if(a < b) return -1;
-    else if(a > b) return 1;
-    return 0;
 }
 
 str *__str(int i, int base) {
@@ -1358,7 +1492,10 @@ str *__str(bool b) {
 }
 
 template<> str *hex(int i) {
-    return (new str("0x"))->__add__(__str(i, 16));
+    if(i<0)
+        return (new str("-0x"))->__add__(__str(-i, 16));
+    else
+        return (new str("0x"))->__add__(__str(i, 16));
 }
 template<> str *hex(bool b) { return hex((int)b); }
 
@@ -1375,7 +1512,7 @@ template<> str *__str(double t) {
     ss.precision(12);
     ss << std::showpoint << t;
     __GC_STRING s = ss.str().c_str();
-    if( ((int)s.find('e')) == -1)
+    if( s.find('e') == -1)
     {
         int j = s.find_last_not_of("0");
         if( s[j] == '.') j++;
@@ -1392,20 +1529,6 @@ double ___round(double a, int n) {
     return __portableround(pow(10,n)*a)/pow(10,n);
 }
 
-/* bool */
-
-int __bool() { return 0; }
-
-template<> int __bool(int x) {
-    return x;
-}
-template<> int __bool(bool x) {
-    return (int)x;
-}
-template<> int __bool(double x) {
-    return x!=0;
-}
-
 /* sum */
 
 int __sum(pyseq<int> *l, int b) { return accumulate(l->units.begin(), l->units.end(), b); }
@@ -1417,28 +1540,6 @@ int __min(pyseq<int> *l) { return __minimum(l); }
 double __min(pyseq<double> *l) { return __minimum(l); }
 int __max(pyseq<int> *l) { return __maximum(l); }
 double __max(pyseq<double> *l) { return __maximum(l); }
-
-#define __ss_max(a,b) ((a) > (b) ? (a) : (b))
-#define __ss_max3(a,b,c) (__ss_max((a), __ss_max((b), (c))))
-
-template<> int __max(int a, int b) { return __ss_max(a,b); }
-template<> int __max(int a, int b, int c) { return __ss_max3(a,b,c); }
-template<> double __max(double a, double b) { return __ss_max(a,b); }
-template<> double __max(double a, double b, double c) { return __ss_max3(a,b,c); }
-
-#define __ss_min(a,b) ((a) < (b) ? (a) : (b))
-#define __ss_min3(a,b,c) (__ss_min((a), __ss_min((b), (c))))
-
-template<> int __min(int a, int b) { return __ss_min(a,b); }
-template<> int __min(int a, int b, int c) { return __ss_min3(a,b,c); }
-template<> double __min(double a, double b) { return __ss_min(a,b); }
-template<> double __min(double a, double b, double c) { return __ss_min3(a,b,c); }
-
-/* abs */
-
-template<> int __abs(int a) { return a<0?-a:a; }
-template<> double __abs(double a) { return a<0?-a:a; }
-int __abs(bool b) { return __abs((int)b); }
 
 /* list */
 
@@ -1503,63 +1604,232 @@ int __fmtpos(str *fmt) {
     int i = fmt->unit.find('%');
     if(i == -1)
         return -1;
-    return fmt->unit.find_first_of(__fmtchars, i+1);
+    return fmt->unit.find_first_not_of(__fmtchars, i+1);
+} 
+
+int __fmtpos2(str *fmt) {
+    int i = 0;
+    while((i = fmt->unit.find('%', i)) != -1) {
+        if(i != fmt->unit.size()-1) {
+            char nextchar = fmt->unit[i+1];
+            if(nextchar == '%')
+                i++;
+            else if(nextchar == '(')
+                return i;
+        }
+        i++;
+    }
+    return -1;
 }
 
-void __fmtcheck(str *fmt, int l) {
-    int i = 0, j = 0;
-    while((j = fmt->unit.find('%', j)) != -1) {
-        char c = fmt->unit[j+1];
-        if(c != '%')
-            i++;    
-        j += 2;
-    }
+template<class T> str *do_asprintf(const char *fmt, T t, pyobj *a1, pyobj *a2) {
+    char *d;
+    int x;
+    str *r;
+    if(a2)
+        x = asprintf(&d, fmt, ((int_ *)a1)->unit, ((int_ *)a2)->unit, t);
+    else if(a1)
+        x = asprintf(&d, fmt, ((int_ *)a1)->unit, t);
+    else
+        x = asprintf(&d, fmt, t);
+    r = new str(d);
+    free(d); 
+    return r;
+}
 
-    if(i < l)
-        throw new TypeError(new str("not all arguments converted during string formatting"));
-    if(i > l)
+void __modfill(str **fmt, pyobj *t, str **s, pyobj *a1, pyobj *a2) {
+    char c;
+    int i = (*fmt)->unit.find('%');
+    int j = __fmtpos(*fmt);
+    str *d;
+    *s = new str((*s)->unit + (*fmt)->unit.substr(0, i));
+    str *add;
+
+    c = (*fmt)->unit[j];
+    if(c == 's' or c == 'r') {
+        if(c == 's') add = __str(t);
+        else add = repr(t);
+        (*fmt)->unit[j] = 's';
+        add = do_asprintf((*fmt)->unit.substr(i, j+1-i).c_str(), add->unit.c_str(), a1, a2);
+    } else if(c  == 'c')
+        add = __str(t);
+    else if(c == '%')
+        add = new str("%");
+    else if(t->__class__ == cl_int_) {
+        add = do_asprintf((*fmt)->unit.substr(i, j+1-i).c_str(), ((int_ *)t)->unit, a1, a2);
+    } else { /* cl_float_ */
+        if(c == 'H') {
+            (*fmt)->unit.replace(j, 1, ".12g");
+            j += 3;
+        }
+        add = do_asprintf((*fmt)->unit.substr(i, j+1-i).c_str(), ((float_ *)t)->unit, a1, a2);
+        if(c == 'H' && ((float_ *)t)->unit-((int)(((float_ *)t)->unit)) == 0)
+            add->unit += ".0";   
+    }
+    *s = (*s)->__add__(add);
+    *fmt = new str((*fmt)->unit.substr(j+1, (*fmt)->unit.size()-j-1));
+}
+
+pyobj *modgetitem(list<pyobj *> *vals, int i) {
+    if(i==len(vals))
         throw new TypeError(new str("not enough arguments for format string"));
-
+    return vals->__getitem__(i);
 }
 
-str *__mod2(str *fmt, va_list args) {
-    int j;
+str *__mod4(str *fmts, list<pyobj *> *vals) {
+    int i, j;
     str *r = new str();
-
+    str *fmt = new str(fmts->unit);
+    i = 0;
     while((j = __fmtpos(fmt)) != -1) {
+        pyobj *p, *a1, *a2;
+
+        int asterisks = count(fmt->unit.begin(), fmt->unit.begin()+j, '*');
+        a1 = a2 = NULL;
+        if(asterisks==1) {
+            a1 = modgetitem(vals, i++);
+        } else if(asterisks==2) {
+            a1 = modgetitem(vals, i++);
+            a2 = modgetitem(vals, i++);
+        }
+
         char c = fmt->unit[j];
+        if(c != '%') 
+            p = modgetitem(vals, i++);
 
-        if(c == 'c')
-            __modfill(&fmt, va_arg(args, str *), &r);
-        else if(c == 's' || c == 'r')
-            __modfill(&fmt, va_arg(args, pyobj *), &r);
+        if(c == 'c') 
+            __modfill(&fmt, mod_to_c2(p), &r, a1, a2);
+        else if(c == 's' || c == 'r') 
+            __modfill(&fmt, p, &r, a1, a2);
+        else if(__GC_STRING("diouxX").find(c) != -1) 
+            __modfill(&fmt, mod_to_int(p), &r, a1, a2);
+        else if(__GC_STRING("eEfFgGH").find(c) != -1)
+            __modfill(&fmt, mod_to_float(p), &r, a1, a2);
         else if(c == '%')
-            __modfill(&fmt, 0, &r);
-        else if(((int)__GC_STRING("diouxX").find(c)) != -1)
-            __modfill(&fmt, va_arg(args, int), &r);
-        else if(((int)__GC_STRING("eEfFgGh").find(c)) != -1)
-            __modfill(&fmt, va_arg(args, double), &r);
+            __modfill(&fmt, NULL, &r, a1, a2); 
         else
-            break;
-
+            throw new ValueError(new str("unsupported format character"));
     }
+    if(i!=len(vals))
+        throw new TypeError(new str("not all arguments converted during string formatting"));
 
     r->unit += fmt->unit;
     return r;
 }
 
+str *__mod5(list<pyobj *> *vals, int newline) {
+    list<str *> *fmt = new list<str *>(); 
+    for(int i=0;i<len(vals);i++) {
+        pyobj *p = vals->__getitem__(i);
+        if(p == NULL)
+            fmt->append(new str("%s"));
+        else if(p->__class__ == cl_float_)
+            fmt->append(new str("%H"));
+        else if(p->__class__== cl_int_)
+            fmt->append(new str("%d"));
+        else
+            fmt->append(new str("%s"));
+    }
+    str *s = (new str(" "))->join(fmt);
+    if(newline)
+        s = s->__add__(new str("\n"));
+    return __mod4(s, vals);
+}
+
+str *__modcd(str *fmt, list<str *> *names, ...) {
+    int i, j;
+    list<pyobj *> *vals = new list<pyobj *>();
+    va_list args;
+    va_start(args, names);
+    for(i=0; i<len(names); i++)
+        vals->append(va_arg(args, pyobj *));
+    va_end(args);
+
+    str *naam;
+    int pos, pos2;
+    dict<str *, pyobj *> *d;
+
+    d = __dict(__zip2(names, vals));
+
+    str *const_5 = new str("%("), *const_6 = new str(")");
+
+    list<pyobj *> *values = new list<pyobj *>();
+
+    while((pos = __fmtpos2(fmt)) != -1) {
+        pos2 = fmt->find(const_6, pos);
+        naam = fmt->__slice__(3, (pos+2), pos2, 0);
+        values->append(d->__getitem__(naam));
+        fmt = (fmt->__slice__(2, 0, (pos+1), 0))->__add__(fmt->__slice__(1, (pos2+1), 0, 0));
+    }
+
+    return __mod4(fmt, values);
+} 
+
 /* mod */
 
-str *mod_to_c(str *s) { return s; } 
-str *mod_to_c(int i) { return chr(i); }
-str *mod_to_c(double d) { return chr(__int(d)); }
+str *mod_to_c2(pyobj *t) { 
+    if(t == NULL)
+        throw new TypeError(new str("an integer is required"));
+    if(t->__class__ == cl_str_) {
+        if(len((str *)t) == 1)
+            return (str *)t;
+        else
+            throw new TypeError(new str("%c requires int or char"));
+    }
+    int value;
+    if(t->__class__ == cl_int_) 
+        value = ((int_ *)t)->unit;
+    else if(t->__class__ == cl_float_)
+        value = ((int)(((float_ *)t)->unit));
+    else 
+        value = t->__int__();
+    if(value < 0)
+        throw new OverflowError(new str("unsigned byte integer is less than minimum"));
+    else if(value > 255)
+        throw new OverflowError(new str("unsigned byte integer is greater than minimum"));
+    return chr(value);
+}
 
-str *__mod(str *fmt, ...) {
+int_ *mod_to_int(pyobj *t) { 
+    if(t == NULL)
+        throw new TypeError(new str("int argument required"));
+    if(t->__class__ == cl_int_)
+        return (int_ *)t;
+    else if(t->__class__ == cl_float_)
+        return new int_(((int)(((float_ *)t)->unit))); 
+    else 
+        return new int_(t->__int__());
+}
+
+float_ *mod_to_float(pyobj *t) { 
+    if(t == NULL)
+        throw new TypeError(new str("float argument required"));
+    if(t->__class__ == cl_float_)
+        return (float_ *)t;
+    else if(t->__class__ == cl_int_)
+        return new float_(((int_ *)t)->unit); 
+    throw new TypeError(new str("float argument required"));
+}
+
+str *__modct(str *fmt, int n, ...) {
+     list<pyobj *> *vals = new list<pyobj *>();
      va_list args;
-     va_start(args, fmt);
-     str *s = __mod2(new str(fmt->unit), args);
+     va_start(args, n);
+     for(int i=0; i<n; i++)
+         vals->append(va_arg(args, pyobj *));
      va_end(args);
+     str *s = __mod4(fmt, vals);
      return s;
+}
+
+int_ *__box(int i) {
+    return new int_(i);
+}
+int_ *__box(bool b) {
+    return new int_(b);
+}
+float_ *__box(double d) {
+    return new float_(d);
 }
 
 /* print .., */
@@ -1567,68 +1837,75 @@ str *__mod(str *fmt, ...) {
 char print_lastchar = '\n';
 int print_space = 0;
 
-void __exit() {
+void __exit(int code) {
     if(print_lastchar != '\n')
         std::cout << '\n';
+    std::exit(code);
+}
+void __ss_exit(int code) {
+    __shedskin__::__exit(code);
+}
+void quit(int code) {
+    __shedskin__::__exit(code);
 }
 
-void print(const char *fmt, ...) { // XXX merge four functions (put std::cout in a file instance)
+void print(int n, ...) { // XXX merge four functions 
+     list<pyobj *> *vals = new list<pyobj *>();
      va_list args;
-     va_start(args, fmt);
-     str *s = __mod2(new str(fmt), args);
-
-     if(print_space && print_lastchar != '\n' && !(len(s) && s->unit[0] == '\n'))
-         std::cout << " ";
-
-     std::cout << s->unit;
+     va_start(args, n);
+     for(int i=0; i<n; i++)
+         vals->append(va_arg(args, pyobj *));
      va_end(args);
-
+     str *s = __mod5(vals, 1);
+     if(print_space && (!isspace(print_lastchar) || print_lastchar==' ') && !(len(s) && s->unit[0] == '\n'))
+         std::cout << " ";
+     std::cout << s->unit;
      print_lastchar = s->unit[len(s)-1];
      print_space = 0;
 }
 
-void print(file *f, const char *fmt, ...) {
+void print(file *f, int n, ...) {
+     list<pyobj *> *vals = new list<pyobj *>();
      va_list args;
-     va_start(args, fmt);
-     str *s = __mod2(new str(fmt), args);
-
-     if(f->print_space && f->print_lastchar != '\n' && !(len(s) && s->unit[0] == '\n'))
-         f->putchar(' ');
-
-     f->write(s);
+     va_start(args, n);
+     for(int i=0; i<n; i++)
+         vals->append(va_arg(args, pyobj *));
      va_end(args);
-
+     str *s = __mod5(vals, 1);
+     if(f->print_space && (!isspace(f->print_lastchar) || f->print_lastchar==' ') && !(len(s) && s->unit[0] == '\n'))
+         f->putchar(' ');
+     f->write(s);
      f->print_lastchar = s->unit[len(s)-1];
      f->print_space = 0;
 }
 
-void printc(const char *fmt, ...) {
+void printc(int n, ...) {
+     list<pyobj *> *vals = new list<pyobj *>();
      va_list args;
-     va_start(args, fmt);
-     str *s = __mod2(new str(fmt), args);
-
-     if(print_space && print_lastchar != '\n' && !(len(s) && s->unit[0] == '\n'))
-         std::cout << " ";
-
-     std::cout << s->unit;
+     va_start(args, n);
+     for(int i=0; i<n; i++)
+         vals->append(va_arg(args, pyobj *));
      va_end(args);
-
+     str *s = __mod5(vals, 0);
+     if(print_space && (!isspace(print_lastchar) || print_lastchar==' ') && !(len(s) && s->unit[0] == '\n'))
+         std::cout << " ";
+     std::cout << s->unit;
      if(len(s)) print_lastchar = s->unit[len(s)-1];
      else print_lastchar = ' ';
      print_space = 1;
 }
 
-void printc(file *f, const char *fmt, ...) {
+void printc(file *f, int n, ...) {
+     list<pyobj *> *vals = new list<pyobj *>();
      va_list args;
-     va_start(args, fmt);
-     str *s = __mod2(new str(fmt), args);
-
-     if(f->print_space && f->print_lastchar != '\n' && !(len(s) && s->unit[0] == '\n'))
-         f->putchar(' ');
-
-     f->write(s);
+     va_start(args, n);
+     for(int i=0; i<n; i++)
+         vals->append(va_arg(args, pyobj *));
      va_end(args);
-
+     str *s = __mod5(vals, 0);
+     if(f->print_space && (!isspace(f->print_lastchar) || f->print_lastchar==' ') && !(len(s) && s->unit[0] == '\n'))
+         f->putchar(' ');
+     f->write(s);
      if(len(s)) f->print_lastchar = s->unit[len(s)-1];
      else f->print_lastchar = ' ';
      f->print_space = 1;
@@ -1646,13 +1923,22 @@ __striter::__striter(str *p) {
 }
 
 str *__striter::next() {
-    if(counter == (int)p->unit.size())
-        throw new StopIteration();
-    return p->__getitem__(counter++); 
+   if(counter == p->unit.size())
+       throw new StopIteration();
+   return p->__getitem__(counter++); 
 }
 
 __iter<str *> *file::__iter__() {
     return new __fileiter(this);
+}
+
+str *file::next() {
+    if(endoffile)
+        throw new StopIteration();
+    str *line = readline();
+    if(endoffile && !len(line))
+        throw new StopIteration();
+    return line;
 }
 
 __fileiter::__fileiter(file *p) {
@@ -1660,83 +1946,34 @@ __fileiter::__fileiter(file *p) {
 }
 
 str *__fileiter::next() {
-    if(p->endoffile)
-        throw new StopIteration();
-    str *line = p->readline();
-    if(p->endoffile && !len(line))
-        throw new StopIteration();
-    return line;
+    return p->next();
 }
-
-/* mod */
-
-template<> double __mods(double a, double b) {
-    double f = fmod(a,b);
-    if((f<0 && b>0)||(f>0 && b<0)) f+=b;
-    return f;
-}
-template<> double __mods(int a, double b) { return __mods((double)a, b); }
-template<> double __mods(double a, int b) { return __mods(a, (double)b); }
-
-template<> int __mods(int a, int b) {
-    int m = a%b;
-    if((m<0 && b>0)||(m>0 && b<0)) m+=b;
-    return m;
-}
-
-/* binding */
 
 #ifdef __SS_BIND
-PyObject *__import(char *mod, char *method) {
-    PyObject *m = PyImport_ImportModule(mod);
-    PyObject *d = PyObject_GetAttrString(m, (char *)"__dict__");
-    return PyDict_GetItemString(d, method);
-}
-
-PyObject *__call(PyObject *obj, PyObject *args) {
-    return PyObject_CallObject(obj, args);
-}
-
-PyObject *__call(PyObject *obj, char *name, PyObject *args) {
-    PyObject *method = PyObject_GetAttrString(obj, name);
-    PyObject *x = PyObject_CallObject(method, args);
-    return x;
-}
-
-PyObject *__args(int n, ...) {
-    va_list ap;
-    va_start(ap, n);
-
-    PyObject *p = PyTuple_New(n);
-
-    for(int i=0; i<n; i++) {
-        PyObject *t = va_arg(ap, PyObject *);
-        PyTuple_SetItem(p, i, t);
-    }
-    va_end(ap);
-    return p;
-}
-
 template<> PyObject *__to_py(int i) { return PyInt_FromLong(i); }   
 template<> PyObject *__to_py(double d) { return PyFloat_FromDouble(d); }
+template<> PyObject *__to_py(void *v) { Py_INCREF(Py_None); return Py_None; }
 
 template<> int __to_ss(PyObject *p) { 
-    if(p==Py_None) return 0;
     if(!PyInt_Check(p)) 
         throw new TypeError(new str("error in conversion to Shed Skin (integer expected)"));
     return PyInt_AsLong(p);
 }
 
 template<> double __to_ss(PyObject *p) { 
-    if(p==Py_None) return 0.0;
     if(!PyInt_Check(p) and !PyFloat_Check(p)) 
         throw new TypeError(new str("error in conversion to Shed Skin (float or int expected)"));
     return PyFloat_AsDouble(p); 
 }
 
+template<> void * __to_ss(PyObject *p) { 
+    if(p!=Py_None)
+        throw new TypeError(new str("error in conversion to Shed Skin (None expected)"));
+    return NULL;
+}
 #endif
 
-// Exceptions
+/* Exceptions */
 OSError::OSError(str *filename) {
     this->filename = filename;
     __ss_errno = errno;
@@ -1749,6 +1986,11 @@ str *OSError::__str__() {
 str *OSError::__repr__() {
     return __add_strs(5, new str("OSError("), __str(__ss_errno), new str(", '"), strerror, new str("')")); 
 }
+
+template <> void *myallocate<int>(int n) { return GC_MALLOC_ATOMIC(n); }
+
+template<> int __none() { throw new TypeError(new str("mixing None with int")); }
+template<> double __none() { throw new TypeError(new str("mixing None with float")); }
 
 } // namespace __shedskin__
 
