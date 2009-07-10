@@ -16,7 +16,8 @@ MINOR=0
 
 include ../plib/Makefile
 
-CFLAGS += -D__PYC__=1 -I../plib -I../ifalib -I/usr/include/python2.5
+CFLAGS += -D__PYC__=1 -I../plib -I../ifalib -I/usr/include/python2.5 -Ilib -Ilib/os
+LIBS += -lpcre
 ifdef USE_GC
 LIBS += -L../ifalib -lifa_gc -L../plib -lplib_gc -lpython2.5 
 IFALIB = ../ifalib/libifa_gc.a
@@ -27,8 +28,8 @@ endif
 
 AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODULE)/pyc.1 $(MODULE)/pyc.cat
 
-LIB_SRCS = lib/builtin.cc
-LIB_OBJS = $(LIB_SRCS:%.cc=%.o)
+LIB_SRCS = lib/builtin.cpp $(wildcard lib/*.cpp) $(wildcard lib/os/*.cpp)
+LIB_OBJS = $(LIB_SRCS:%.cpp=%.o)
 
 PYC_SRCS = pyc.cc python_ifa.cc c_codegen.cc version.cc
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
@@ -126,8 +127,8 @@ pyc.o: pyc.cc defs.h /usr/include/python2.5/Python.h \
   ../plib/freelist.h ../plib/defalloc.h ../plib/list.h ../plib/log.h \
   ../plib/vec.h ../plib/map.h ../plib/threadpool.h ../plib/misc.h \
   ../plib/util.h ../plib/conn.h ../plib/md5.h ../plib/mt64.h \
-  ../plib/prime.h ../plib/service.h ../plib/unit.h ../ifalib/ifa.h \
-  ../plib/plib.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
+  ../plib/prime.h ../plib/service.h ../plib/timer.h ../plib/unit.h \
+  ../ifalib/ifa.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
   ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
   ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
   ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
@@ -172,8 +173,8 @@ python_ifa.o: python_ifa.cc defs.h /usr/include/python2.5/Python.h \
   ../plib/freelist.h ../plib/defalloc.h ../plib/list.h ../plib/log.h \
   ../plib/vec.h ../plib/map.h ../plib/threadpool.h ../plib/misc.h \
   ../plib/util.h ../plib/conn.h ../plib/md5.h ../plib/mt64.h \
-  ../plib/prime.h ../plib/service.h ../plib/unit.h ../ifalib/ifa.h \
-  ../plib/plib.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
+  ../plib/prime.h ../plib/service.h ../plib/timer.h ../plib/unit.h \
+  ../ifalib/ifa.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
   ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
   ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
   ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
@@ -185,9 +186,9 @@ c_codegen.o: c_codegen.cc ../ifalib/ifadefs.h ../plib/plib.h \
   ../plib/defalloc.h ../plib/list.h ../plib/log.h ../plib/vec.h \
   ../plib/map.h ../plib/threadpool.h ../plib/misc.h ../plib/util.h \
   ../plib/conn.h ../plib/md5.h ../plib/mt64.h ../plib/prime.h \
-  ../plib/service.h ../plib/unit.h ../ifalib/ast.h ../ifalib/ifadefs.h \
-  ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h \
-  ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
+  ../plib/service.h ../plib/timer.h ../plib/unit.h ../ifalib/ast.h \
+  ../ifalib/ifadefs.h ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h \
+  ../ifalib/sym.h ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
   ../ifalib/builtin.h ../ifalib/builtin_symbols.h ../ifalib/fail.h \
   ../ifalib/fa.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h \
   ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/pattern.h \
@@ -232,14 +233,45 @@ version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   ../plib/freelist.h ../plib/defalloc.h ../plib/list.h ../plib/log.h \
   ../plib/vec.h ../plib/map.h ../plib/threadpool.h ../plib/misc.h \
   ../plib/util.h ../plib/conn.h ../plib/md5.h ../plib/mt64.h \
-  ../plib/prime.h ../plib/service.h ../plib/unit.h ../ifalib/ifa.h \
-  ../plib/plib.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
+  ../plib/prime.h ../plib/service.h ../plib/timer.h ../plib/unit.h \
+  ../ifalib/ifa.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
   ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
   ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
   ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
   ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h ../ifalib/pdb.h \
   ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h ../ifalib/prim.h \
   python_ifa.h
-builtin.o: lib/builtin.cc lib/builtin.h
+builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
+ConfigParser.o: lib/ConfigParser.cpp lib/ConfigParser.hpp lib/builtin.hpp \
+  lib/re.hpp
+bisect.o: lib/bisect.cpp lib/bisect.hpp lib/builtin.hpp
+builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
+cStringIO.o: lib/cStringIO.cpp lib/cStringIO.hpp lib/builtin.hpp
+collections.o: lib/collections.cpp lib/collections.hpp lib/builtin.hpp
+copy.o: lib/copy.cpp lib/copy.hpp lib/builtin.hpp
+datetime.o: lib/datetime.cpp lib/datetime.hpp lib/builtin.hpp \
+  lib/time.hpp lib/string.hpp
+fnmatch.o: lib/fnmatch.cpp lib/fnmatch.hpp lib/builtin.hpp \
+  lib/os/path.hpp lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp \
+  lib/os/__init__.hpp lib/re.hpp
+getopt.o: lib/getopt.cpp lib/getopt.hpp lib/builtin.hpp lib/sys.hpp \
+  lib/os/__init__.hpp lib/builtin.hpp
+glob.o: lib/glob.cpp lib/glob.hpp lib/builtin.hpp lib/os/path.hpp \
+  lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp lib/fnmatch.hpp \
+  lib/os/__init__.hpp lib/re.hpp
+math.o: lib/math.cpp lib/math.hpp lib/builtin.hpp
+random.o: lib/random.cpp lib/random.hpp lib/builtin.hpp lib/math.hpp \
+  lib/time.hpp
+re.o: lib/re.cpp lib/re.hpp lib/builtin.hpp
+signal.o: lib/signal.cpp lib/signal.hpp lib/builtin.hpp
+socket.o: lib/socket.cpp lib/socket.hpp lib/builtin.hpp
+stat.o: lib/stat.cpp lib/stat.hpp lib/builtin.hpp
+string.o: lib/string.cpp lib/string.hpp lib/builtin.hpp
+sys.o: lib/sys.cpp lib/sys.hpp lib/builtin.hpp
+time.o: lib/time.cpp lib/time.hpp lib/builtin.hpp
+__init__.o: lib/os/__init__.cpp lib/os/__init__.hpp lib/builtin.hpp \
+  lib/os/path.hpp lib/os/__init__.hpp lib/stat.hpp lib/builtin.hpp
+path.o: lib/os/path.cpp lib/os/path.hpp lib/builtin.hpp \
+  lib/os/__init__.hpp lib/stat.hpp lib/builtin.hpp
 
 # IF YOU PUT ANYTHING HERE IT WILL GO AWAY
