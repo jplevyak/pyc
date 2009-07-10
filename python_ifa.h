@@ -38,6 +38,7 @@ class PycAST : public IFAAST {
   int source_line();
   int line();
   Sym *symbol();  
+  void html(FILE *fp, Fun *f);
   IFAAST *copy_tree(ASTCopyContext* context);
   IFAAST *copy_node(ASTCopyContext* context);
   Vec<Fun *> *visible_functions(Sym *arg0);
