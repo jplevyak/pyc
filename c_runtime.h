@@ -31,8 +31,8 @@
 #endif
 
 #define __PYC__
-#include "lib/builtin.h"
-using namespace __pyc__;
+#include "lib/builtin.hpp"
+using namespace __shedskin__;
 
 typedef char int8;
 typedef unsigned char uint8;
@@ -81,6 +81,7 @@ typedef void *_CG_nil_type;
 #define _CG_primitive _CG_symbol
 #define _CG_make_tuple _CG_symbol
 #define _CG_Symbol(_x, _y) ((void*)(uintptr_t)_x)
+#define _CG_String(_x) ((char*)_x)
 #define null ((void*)0)
 #define bool int
 #define True 1
@@ -128,3 +129,4 @@ static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
   _r->e0 = _f;                                  \
   _r->e1 = _a;                                  \
 } while (0)
+#define _CG_prim_primitive_exit(_status) ::exit(_status)
