@@ -1,4 +1,3 @@
-1. dead code test should use much more conservative criteria: is_live for
-primitives which is only true for exit() and things which do IO
-
-
+1. dead code test should be applied at the AVAR/ES level and then cloning
+should be used to prune dead code in a call site specific way... it is possible
+to even do this during analysis
