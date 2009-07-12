@@ -188,9 +188,9 @@ class list:
   def __len__(self):
     return 0
   def __getitem__(self, key):
-    return "#primitive"("index_object", self, key);
+    return "#primitive"("index_object", self, key)
   def __setitem__(self, key, value):
-    return "#primitive"("set_index_object", self, key, value);
+    return "#primitive"("set_index_object", self, key, value)
   def __delitem__(self, key):
     pass
   def __iter__(self):
@@ -210,9 +210,11 @@ class list:
   def __imul__(self, l):
     pass
   def append(self, l):
-    return "#primitive"("set_index_object", self, 0, l);
+    return "#primitive"("set_index_object", self, 0, l)
   def index(self, index, start=0, end=0):
     pass
   def count(self, l):
     pass
 
+def exit(status = 0):
+    "#primitive"("exit", status)

@@ -49,7 +49,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___null__ = 0;
+static Sym *sym___null__ = 0, *sym_exit = 0;
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -152,6 +152,92 @@ PycAST::visible_functions(Sym *arg0) {
   return NULL;
 }
 
+static cchar *
+stmt_string(enum _stmt_kind k) {
+  switch (k) {
+    default: assert(!"bad case");
+    case FunctionDef_kind: return "FunctionDef";
+    case ClassDef_kind: return "ClassDef";
+    case Return_kind: return "Return";
+    case Delete_kind: return "Delete";
+    case Assign_kind: return "Assign";
+    case AugAssign_kind: return "AugAssign";
+    case Print_kind: return "Print";
+    case For_kind: return "For";
+    case While_kind: return "While";
+    case If_kind: return "If";
+    case With_kind: return "With";
+    case Raise_kind: return "Raise";
+    case TryExcept_kind: return "TryExcept";
+    case TryFinally_kind: return "TryFinally";
+    case Assert_kind: return "Assert";
+    case Import_kind: return "Import";
+    case ImportFrom_kind: return "ImportFrom";
+    case Exec_kind: return "Exec";
+    case Global_kind: return "Global";
+#if PY_MAJOR_VERSION == 3
+    case NonLocal_kind: return "Global";
+#endif
+    case Expr_kind: return "Expr";
+    case Pass_kind: return "Pass";
+    case Break_kind: return "Break";
+    case Continue_kind: return "Continue";
+  }
+};
+
+static cchar *
+expr_string(enum _expr_kind k) {
+  switch (k) {
+    default: assert(!"bad case");
+    case BoolOp_kind: return "BoolOp";
+    case BinOp_kind: return "BinOp";
+    case UnaryOp_kind: return "UnaryOp";
+    case Lambda_kind: return "Lambda";
+    case IfExp_kind: return "IfExp";
+    case Dict_kind: return "Dict";
+    case ListComp_kind: return "ListComp";
+#if PY_MAJOR_VERSION == 3
+    case SetComp_kind: return "SetComp";
+#endif
+    case GeneratorExp_kind: return "GeneratorExp";
+    case Yield_kind: return "Yield";
+    case Compare_kind: return "Compare";
+    case Call_kind: return "Call";
+    case Repr_kind: return "Repr";
+    case Num_kind: return "Num";
+    case Str_kind: return "Str";
+    case Attribute_kind: return "Attribute";
+    case Subscript_kind: return "Subscript";
+#if PY_MAJOR_VERSION == 3
+    case Starred_kind: return "Starred";
+#endif
+    case Name_kind: return "Name";
+    case List_kind: return "List";
+    case Tuple_kind: return "Tuple";
+  }
+}
+
+static void ast_html(PycAST *a, FILE *fp, Fun *f, int indent) {
+  Sym *s = a->sym && a->sym->name ? a->sym : a->rval;
+  if (a->xstmt) {
+    fprintf(fp, "<li>%s %s\n", stmt_string(a->xstmt->kind), s && s->name ? s->name : "");
+  } else if (a->xexpr) {
+    fprintf(fp, "<li>%s %s %s\n", expr_string(a->xexpr->kind), s && s->name ? s->name : "", s->is_constant && s->constant ? s->constant : "");
+  }
+  if (a->pre_scope_children.n + a->children.n > 0) 
+    fprintf(fp, "<ul>\n");
+  for (int i = 0; i < a->pre_scope_children.n; i++) ast_html(a->pre_scope_children[i], fp, f, indent+1);
+  for (int i = 0; i < a->children.n; i++) ast_html(a->children[i], fp, f, indent+1);
+  if (a->pre_scope_children.n + a->children.n > 0) 
+    fprintf(fp, "</ul>\n");
+  fprintf(fp, "</li>\n");
+}
+
+void
+PycAST::html(FILE *fp, Fun *f) {        
+  ast_html(this, fp, f, 0);
+}
+
 static PycSymbol *
 new_PycSymbol(cchar *name) {
   PycSymbol *s = new PycSymbol;
@@ -184,7 +270,7 @@ PycCallbacks::new_Sym(cchar *name) {
 }
 
 static Sym *
-new_sym(char *name = 0, int global = 0) {
+new_sym(cchar *name = 0, int global = 0) {
   Sym *s = new_PycSymbol(name)->sym;
   if (!global)
     s->nesting_depth = LOCALLY_NESTED;
@@ -200,7 +286,15 @@ new_sym(PycAST *ast, int global = 0) {
 }
 
 static Sym *
-new_global(PycAST *ast, char *name = 0) {
+new_sym(PycAST *ast, cchar *name, int global = 0) {
+  Sym *s = new_sym(name);
+  s->ast = ast;
+  s->is_local = !global;
+  return s;
+}
+
+static Sym *
+new_global(PycAST *ast, cchar *name = 0) {
   Sym *sym = new_PycSymbol(name)->sym;
   sym->ast = ast;
   sym->nesting_depth = 0;
@@ -232,12 +326,13 @@ build_builtin_symbols() {
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
+  sym_exit = if1_make_symbol(if1, "exit");
   sym_super = if1_make_symbol(if1, "super");
   cannonical_self = cannonicalize_string("self");
 
   init_default_builtin_types();
 
-  new_builtin_global_variable(sym_init, "init");
+  new_builtin_global_variable(sym___main__, "__main__");
 
   // override default sizes
   sym_int->type_kind = Type_ALIAS;
@@ -748,6 +843,8 @@ static Sym *new_fun(PycAST *ast, Sym *fun = 0) {
     fun = new_sym(ast, 1);
   else
     fun->ast = ast;
+  if (!fun->name && ast->rval && ast->rval->name) 
+    fun->name = ast->rval->name;
   fun->is_fun = 1;
   fun->cont = new_sym(ast);
   fun->ret = new_sym(ast);
@@ -805,10 +902,11 @@ build_syms(stmt_ty s, PycContext &ctx) {
         ast->sym->self = new_global(ast); // prototype
       else
         ast->sym->self = new_base_instance(ast->sym, ast);
-      Sym *fn = new_sym(ast, 1);
+      Sym *fn = new_sym(ast, "___init___", 1);  // builtin construtor
       ast->rval = def_fun(s, ast, fn, ctx, 1);
       ast->rval->self = new_sym(ast);
       ast->rval->self->must_implement_and_specialize(ast->sym);
+      ast->rval->self->in = fn;
       break;
     }
     case Global_kind: // identifier* names
@@ -845,8 +943,10 @@ build_syms(stmt_ty s, PycContext &ctx) {
         ast->sym->inherits_add(getAST((expr_ty)asdl_seq_GET(s->v.ClassDef.bases, i), ctx)->sym);
       }
       form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
-        if (!MARKED(x->value) && !x->value->sym->is_fun)
+        if (!MARKED(x->value) && !x->value->sym->is_fun) {
           ast->sym->has.add(x->value->sym);
+          x->value->sym->in = ast->sym;
+        }
       break;
     case Continue_kind: ast->label[0] = ctx.lcontinue; break;
     case Break_kind: ast->label[0] = ctx.lbreak; break;
@@ -1039,11 +1139,12 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     fn->nesting_depth = ctx.scope_stack.n;
     fn->self = new_sym(ast);
     fn->self->must_implement_and_specialize(cls);
+    fn->self->in = fn;
     body = 0;
     if1_move(if1, &body, fn->self, fn->ret);
     if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
     Vec<Sym *> as;
-    as.add(new_sym(ast));
+    as.add(new_sym(ast, "__init__"));
     as[0]->must_implement_and_specialize(sym___init__);
     as.add(fn->self);
     if1_closure(if1, fn, body, as.n, as.v);
@@ -1053,7 +1154,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;
     Vec<Sym *> as;
-    as.add(new_sym(ast));
+    as.add(new_sym(ast, "__new__"));
     as[0]->must_implement_and_specialize(ast->sym->meta_type);
     for (int i = 2; i < init_sym->has.n; i++)
       as.add(new_sym(ast));
@@ -1075,7 +1176,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;
     Vec<Sym *> as;
-    as.add(new_sym(ast));
+    as.add(new_sym(ast, "__call__"));
     as[0]->must_implement_and_specialize(cls);
     int n = call_sym->has.n - 1;
     for (int i = 2; i <= n; i++)
@@ -1316,8 +1417,7 @@ build_if1(stmt_ty s, PycContext &ctx) {
       for (int i = 0; i < asdl_seq_LEN(s->v.Print.values); i++) {
         PycAST *a = getAST((expr_ty)asdl_seq_GET(s->v.Print.values, i), ctx);
         if1_gen(if1, &ast->code, a->code);
-        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, 
-                 a->rval, new_sym(ast))->ast = ast;
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, a->rval, new_sym(ast))->ast = ast;
       }
       if (s->v.Print.nl)
         if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_writeln, make_string(""), new_sym(ast))->ast = ast; 
@@ -1758,7 +1858,7 @@ build_environment(mod_ty mod, PycContext &ctx) {
 }
 
 static void build_init(Code *code) {
-  Sym *fn = sym_init;
+  Sym *fn = sym___main__;
   fn->cont = new_sym();
   fn->ret = sym_nil;
   if1_send(if1, &code, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret);
@@ -1773,10 +1873,9 @@ return_nil_transfer_function(PNode *pn, EntrySet *es) {
 
 static void
 add_primitive_transfer_functions() {
-  pdb->fa->primitive_transfer_functions.put(
-    sym_write->name, new RegisteredPrim(return_nil_transfer_function));
-  pdb->fa->primitive_transfer_functions.put(
-    sym_writeln->name, new RegisteredPrim(return_nil_transfer_function));
+  pdb->fa->register_primitive(sym_write->name, return_nil_transfer_function)->is_visible = 1;
+  pdb->fa->register_primitive(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
+  pdb->fa->register_primitive(sym_exit->name, return_nil_transfer_function)->is_visible = 1;
 }
 
 /*
