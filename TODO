@@ -1,0 +1,4 @@
+1. dead code test should use much more conservative criteria: is_live for
+primitives which is only true for exit() and things which do IO
+
+
