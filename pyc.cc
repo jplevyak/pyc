@@ -46,6 +46,7 @@ static ArgumentDescription arg_desc[] = {
   {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
 #endif
   {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
+  {"html", ' ', "Output as HTML", "+", &fdump_html, "PYC_HTML", NULL},
   {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
   {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
   {"license", ' ', "Show License", NULL, NULL, NULL, license},
@@ -64,8 +65,7 @@ static void init_system() {
   assert(!getrlimit(RLIMIT_NOFILE, &nfiles));
 }
 
-void
-analyze(cchar *fn) {
+void analyze(cchar *fn) {
   if (ifa_analyze(fn) < 0)
     fail("program does not type");
   if (fgraph)
@@ -73,7 +73,6 @@ analyze(cchar *fn) {
   if (fdump_html) {
     char mktree_dir[512];
     strcpy(mktree_dir, system_dir);
-    strcat(mktree_dir, "/etc/www");
     ifa_html(fn, mktree_dir);
   }
   if (fcg) {
