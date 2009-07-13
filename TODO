@@ -1,3 +1,25 @@
 1. dead code test should be applied at the AVAR/ES level and then cloning
 should be used to prune dead code in a call site specific way... it is possible
 to even do this during analysis
+
+Yah, have to go this route which means maintaining the AVars.
+
+2. dead code should be detectd via flow through the AVars, paricularly to
+handle weird bits ... or should it? maybe it is better to do it at the var level
+
+-- need to figure out a way to edit those for simple inlining
+
+dead_code detection should work at the Var level
+
+of course that means after simple inlining the avars info is mangled.
+
+humm...
+
+... detect non-const non parameter arguments and bail out of simple ininling
+...
+
+make simple inlining optional
+
+
+
+A

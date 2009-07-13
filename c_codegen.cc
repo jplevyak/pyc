@@ -1,3 +1,6 @@
+/* -*-Mode: c++;-*-
+   Copyright (c) 2003-2009 John Plevyak, All Rights Reserved
+*/
 #include <ctype.h>
 #include "ifadefs.h"
 #include "pattern.h"
@@ -11,6 +14,7 @@
 #include "fa.h"
 #include "var.h"
 #include "fail.h"
+#include "pattern.h"
 
 static inline cchar *
 c_type(Var *v) {
@@ -29,7 +33,7 @@ c_type(Sym *s) {
 static void
 write_c_fun_proto(FILE *fp, Fun *f, int type = 0) {
   assert(f->rets.n == 1);
-  fputs(f->rets[0]->type->cg_string, fp);
+  fputs(c_type(f->rets[0]), fp);
   if (type)
     fputs(" (*", fp);
   else
@@ -44,14 +48,17 @@ write_c_fun_proto(FILE *fp, Fun *f, int type = 0) {
     fputs("(", fp);
   MPosition p;
   p.push(1);
+  int wrote_one = 0;
   for (int i = 0; i < f->sym->has.n; i++) {
     MPosition *cp = cannonicalize_mposition(p);
+    p.inc();
     Var *v = f->args.get(cp);
-    if (i)
+    if (!v->live) continue;
+    if (wrote_one)
       fputs(", ", fp);
+    wrote_one = 1;
     fputs(c_type(v), fp);
     fprintf(fp, " a%d", i);
-    p.inc();
   }
   fputs(")", fp);
 }
@@ -150,9 +157,12 @@ num_string(Sym *s) {
 
 static cchar *
 c_rhs(Var *v) {
-  if (!v->sym->is_fun)
-    return v->cg_string;
-  else {
+  if (!v->sym->is_fun) {
+    if (!v->cg_string)
+      return "0";
+    else
+      return v->cg_string;
+  } else {
     char s[100];
     sprintf(s, "((_CG_function*)%s)", v->cg_string);
     return dupstr(s);
@@ -163,6 +173,10 @@ static int
 write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
   switch (n->prim->index) {
     default: return 0;
+    case P_prim_reply: {
+      fprintf(fp, "  return %s;\n", c_rhs(n->rvals[3]));
+      break;
+    }
     case P_prim_tuple: {
       fputs("  ", fp);
       cchar *t = c_type(n->lvals[0]);
@@ -228,7 +242,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         if (symbol == obj->has[i]->name) {
           fprintf(fp, "((%s)%s)->e%d = %s;\n", 
                   obj->cg_string, n->rvals[1]->cg_string, i, c_rhs(n->rvals.v[4]));
-          if (n->lvals[0]->live()) {
+          if (n->lvals[0]->live) {
             assert(n->lvals[0]->cg_string);
             fprintf(fp, "%s = ((%s)%s)->e%d;\n", n->lvals[0]->cg_string, 
                     obj->cg_string, n->rvals[1]->cg_string, i);
@@ -373,30 +387,8 @@ get_target_fun(PNode *n, Fun *f) {
 }
 
 static void
-write_c_fun_arg(FILE *fp, char *s, char *e, Sym *sym, int i) {
-  if (i) fprintf(fp, ", ");
-  if (!i && sym->type_kind == Type_FUN && !sym->fun && sym->has.n) {
-    assert(0);
-    for (int i = 0; i < sym->type->has.n; i++) {
-      if (i) fprintf(fp, ", ");
-      sprintf(e, "->e%d", i);
-      write_c_fun_arg(fp, s, s + strlen(s), sym->has[i], i);
-      fputs(s, fp);
-    }
-  } else {
-    Fun *f = sym->type->fun;
-    if (f)
-      fprintf(fp, "((_CG_function)&%s)", f->cg_string);
-    else {
-      sprintf(e, "->e%d", i);
-      fputs(s, fp);
-    }
-  }
-}
-
-static void
 simple_move(FILE *fp, Var *lhs, Var *rhs) {
-  if (!lhs->live())
+  if (!lhs->live)
     return;
   if (lhs->sym->type_kind || rhs->sym->type_kind)
     return;
@@ -409,6 +401,64 @@ simple_move(FILE *fp, Var *lhs, Var *rhs) {
     fprintf(fp, "  %s = (_CG_function)&%s;\n", lhs->cg_string, rhs->cg_string);
   else
     fprintf(fp, "  %s = NULL;\n", lhs->cg_string);
+}
+
+static int
+write_c_fun_arg(FILE *fp, char *s, char *e, Sym *sym, int i, int &wrote_one) {
+  if (!i && sym->type_kind == Type_FUN && !sym->fun && sym->has.n) {
+    assert(0);
+    for (int i = 0; i < sym->type->has.n; i++) {
+      if (i) fprintf(fp, ", ");
+      sprintf(e, "->e%d", i);
+      write_c_fun_arg(fp, s, s + strlen(s), sym->has[i], i, wrote_one);
+      fputs(s, fp);
+    }
+  } else {
+    if (wrote_one) fprintf(fp, ", ");
+    wrote_one = 1;
+    Fun *f = sym->type->fun;
+    if (f)
+      fprintf(fp, "((_CG_function)&%s)", f->cg_string);
+    else {
+      sprintf(e, "->e%d", i);
+      fputs(s, fp);
+    }
+  }
+  return 1;
+}
+
+static void
+write_send_arg(FILE *fp, Var *av, MPosition *p, int &wrote_one) {
+  assert(0);
+}
+
+static int
+is_closure_var(Var *v) {
+  Sym *t = v->type;
+  return (t && t->type_kind == Type_FUN && !t->fun && t->has.n);
+}
+
+static void
+write_send_arg(FILE *fp, PNode *n, MPosition *p, int &wrote_one) {
+  int i = Position2int(p->pos[0])-1;
+  Var *v0 = n->rvals[0];
+  if (is_closure_var(v0)) {
+    if (i < v0->type->has.n) {
+      char ss[4096];
+      sprintf(ss, "%s", v0->cg_string);
+      char *ee = ss + strlen(ss);
+      write_c_fun_arg(fp, ss, ee, v0->type->has[i], i, wrote_one);
+      return;
+    } else
+      i -= v0->type->has.n - 1;
+  }
+  Var *v = n->rvals[i];
+  if (p->pos.n <= 1) {
+    if (wrote_one) fprintf(fp, ", ");
+    wrote_one = 1;
+    fputs(c_rhs(v), fp);
+  } else
+    write_send_arg(fp, v, p->down, wrote_one);
 }
 
 static void
@@ -435,21 +485,11 @@ write_send(FILE *fp, FA *fa, Fun *f, PNode *n) {
     Fun *target = get_target_fun(n, f);
     fputs(target->cg_string, fp);
     fputs("(", fp);
-    for (int i = 0; i < n->rvals.n; i++) {
-      if (i) fprintf(fp, ", ");
-      Sym *t = n->rvals[i]->type;
-      if (!i && (t->type_kind == Type_FUN && !t->fun && t->has.n)) { // closure call
-        char ss[4096];
-        sprintf(ss, "%s", n->rvals[0]->cg_string);
-        char *ee = ss + strlen(ss);
-        for (int i = 0; i < t->has.n; i++)
-          write_c_fun_arg(fp, ss, ee, t->has[i], i);
-      } else {
-        if (t->fun)
-          fprintf(fp, "((_CG_function)&%s)", n->rvals[i]->cg_string);
-        else
-          fputs(n->rvals[i]->cg_string, fp);
-      }
+    int wrote_one = 0;
+    forv_MPosition(p, target->positional_arg_positions) {
+      Var *av = target->args.get(p);
+      if (!av->live) continue;
+      write_send_arg(fp, n, p, wrote_one);
     }
     fputs(");\n", fp);
   }
@@ -500,11 +540,18 @@ write_c_pnode(FILE *fp, FA *fa, Fun *f, PNode *n, Vec<PNode *> &done) {
         fprintf(fp, "  if (%s) {\n", n->rvals[0]->cg_string);
         do_phy_nodes(fp, n, 0);
         do_phi_nodes(fp, n, 0);
-        fprintf(fp, "  goto L%d;\n}\n", n->code->label[0]->id);
-        fprintf(fp, "  else {\n");
+        if (done.set_add(n->cfg_succ[0]))
+          write_c_pnode(fp, fa, f, n->cfg_succ[0], done);
+        else
+          fprintf(fp, "  goto L%d;\n", n->code->label[0]->id);
+        fprintf(fp, "  } else {\n");
         do_phy_nodes(fp, n, 1);
         do_phi_nodes(fp, n, 1);
-        fprintf(fp, "  goto L%d;\n}\n", n->code->label[1]->id);
+        if (done.set_add(n->cfg_succ[1]))
+          write_c_pnode(fp, fa, f, n->cfg_succ[1], done);
+        else
+          fprintf(fp, "  goto L%d;\n", n->code->label[1]->id);
+        fputs("  }\n", fp);
       } else {
         do_phy_nodes(fp, n, 0);
         do_phi_nodes(fp, n, 0);
@@ -554,7 +601,7 @@ write_c_args(FILE *fp, Fun *f) {
   forv_MPosition(p, f->positional_arg_positions) {
     Var *v = f->args.get(p);
     Sym *s = v->sym;
-    if (v->cg_string && !s->is_symbol && !s->is_fun) {
+    if (v->cg_string && !s->is_symbol && !s->is_fun && v->live) {
       fprintf(fp, "  %s = ", v->cg_string);
       write_arg_position(fp, p);
       fprintf(fp, ";\n");
@@ -586,7 +633,7 @@ write_c(FILE *fp, FA *fa, Fun *f, Vec<Var *> *globals = 0) {
     if (v->sym->is_local)
       v->cg_string = 0;
   forv_Var(v, vars) if (!v->is_internal) {
-    if (!v->cg_string && v->live() && !v->sym->is_symbol) {
+    if (!v->cg_string && v->live && !v->sym->is_symbol && v->type != sym_continuation) {
       char s[100];
       sprintf(s, "t%d", index++);
       v->cg_string = dupstr(s);
@@ -659,9 +706,9 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
     Vec<Var *> vars;
     f->collect_Vars(vars);
     forv_Var(v, vars) {
-      if ((v->live() && !v->sym->is_local && v->sym->nesting_depth != f->sym->nesting_depth + 1) || v->sym->is_symbol || v->sym->is_fun)
+      if ((v->live && !v->sym->is_local && v->sym->nesting_depth != f->sym->nesting_depth + 1) || v->sym->is_symbol || v->sym->is_fun)
         globals.set_add(v);
-      if (v->type && v->live())
+      if (v->type && v->live)
         allsyms.set_add(v->type);
     }
   }
@@ -783,7 +830,7 @@ c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
     if (v->sym->is_fun)
       v->cg_string = v->sym->fun->cg_string;
   forv_Var(v, globals) {
-    if (!v->live())
+    if (!v->live)
       continue;
     if (v->sym->imm.const_kind != IF1_NUM_KIND_NONE && v->sym->imm.const_kind != IF1_CONST_KIND_STRING) {
       char s[100];
@@ -824,7 +871,7 @@ c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
     write_c(fp, fa, f);
   write_c(fp, fa, init, &globals);
   fprintf(fp, "\nint main(int argc, char *argv[]) { (void)argc; (void) argv;\n"
-          "  %s(0);\n"
+          "  %s();\n"
           "  return 0;\n"
           "}\n", init->cg_string);
 }
