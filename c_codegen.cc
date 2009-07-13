@@ -93,28 +93,28 @@ cg_writeln(FILE *fp, Vec<Var *> &vars, int ln) {
     if (vars[i]->type == sym_int8 ||
         vars[i]->type == sym_int16 ||
         vars[i]->type == sym_int32)
-      fprintf(fp, "printf(\"%%d\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "  printf(\"%%d\", %s);\n", vars[i]->cg_string);
     else if (vars[i]->type == sym_bool ||
              vars[i]->type == sym_uint8 ||
              vars[i]->type == sym_uint16 ||
              vars[i]->type == sym_uint32)
-      fprintf(fp, "printf(\"%%u\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "  printf(\"%%u\", %s);\n", vars[i]->cg_string);
     else if (vars[i]->type == sym_int64)
-      fprintf(fp, "printf(\"%%lld\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "  printf(\"%%lld\", %s);\n", vars[i]->cg_string);
     else if (vars[i]->type == sym_uint64)
-      fprintf(fp, "printf(\"%%llu\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "  printf(\"%%llu\", %s);\n", vars[i]->cg_string);
     else if (vars[i]->type == sym_float32 ||
              vars[i]->type == sym_float64 ||
              vars[i]->type == sym_float128)
-      fprintf(fp, "printf(\"%%g\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "  printf(\"%%g\", %s);\n", vars[i]->cg_string);
     else if (vars[i]->type == sym_string) {
       if (strcmp("_CG_String(\"\")", vars[i]->cg_string))
-        fprintf(fp, "printf(\"%%s\", %s);\n", vars[i]->cg_string);
+        fprintf(fp, "  printf(\"%%s\", %s);\n", vars[i]->cg_string);
     } else
-      fprintf(fp, "printf(\"<unsupported type>\");\n");
+      fprintf(fp, "  printf(\"<unsupported type>\");\n");
   }
   if (ln)
-    fprintf(fp, "printf(\"\\n\");\n");
+    fputs("  printf(\"\\n\");\n", fp);
   return 0;
 }
 
@@ -335,11 +335,10 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       break;
     }
     case P_prim_primitive: {
-      fputs("  ", fp);
       if (n->lvals.n) {
         assert(n->lvals.n == 1);
         if (n->lvals[0]->cg_string)
-          fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+          fprintf(fp, "  %s = ", n->lvals[0]->cg_string);
       }
       cchar *name = n->rvals[1]->sym->name;
       if (!name) 
@@ -349,6 +348,8 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       else if (!strcmp("writeln", name))
         cg_writeln(fp, n->rvals, 1);
       else {
+        if (!n->lvals.n)
+          fprintf(fp, "  ");
         fprintf(fp, "_CG_%s_%s(", n->prim->name, name);
         for (int i = 2; i < n->rvals.n; i++) {
           if (i > 2) fprintf(fp, ", ");
