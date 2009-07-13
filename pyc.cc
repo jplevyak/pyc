@@ -68,6 +68,8 @@ static void init_system() {
 void analyze(cchar *fn) {
   if (ifa_analyze(fn) < 0)
     fail("program does not type");
+  if (ifa_optimize() < 0)
+    fail("unable to optimize program");
   if (fgraph)
     ifa_graph(fn);
   if (fdump_html) {

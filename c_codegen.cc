@@ -18,7 +18,7 @@
 
 static inline cchar *
 c_type(Var *v) {
-  if (!v->type->cg_string)
+  if (!v->type || !v->type->cg_string)
     return "_CG_void";
   return v->type->cg_string;
 }
@@ -230,23 +230,22 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       break;
     }
     case P_prim_setter: {
-      fputs("  ", fp);
-      Vec<Sym *> symbols;
-      symbol_info(n->rvals[3], symbols);
-      assert(symbols.n == 1);
-      cchar *symbol = symbols[0]->name;
+      cchar *symbol = n->rvals[3]->sym->is_symbol ? n->rvals[3]->sym->name : 0;
+      if (!symbol) {
+        Vec<Sym *> symbols;
+        symbol_info(n->rvals[3], symbols);
+        assert(symbols.n == 1);
+        symbol = symbols[0]->name;
+      }
       Sym *obj = n->rvals[1]->type;
       if (obj->type_kind == Type_LUB)
         obj = obj->has[0];
       for (int i = 0; i < obj->has.n; i++) {
         if (symbol == obj->has[i]->name) {
-          fprintf(fp, "((%s)%s)->e%d = %s;\n", 
+          fprintf(fp, "  ((%s)%s)->e%d = %s;\n", 
                   obj->cg_string, n->rvals[1]->cg_string, i, c_rhs(n->rvals.v[4]));
-          if (n->lvals[0]->live) {
-            assert(n->lvals[0]->cg_string);
-            fprintf(fp, "%s = ((%s)%s)->e%d;\n", n->lvals[0]->cg_string, 
-                    obj->cg_string, n->rvals[1]->cg_string, i);
-          }
+          if (n->lvals[0]->live)
+            fprintf(fp, "  %s = ((%s)%s);\n", n->lvals[0]->cg_string, obj->cg_string, n->rvals[1]->cg_string);
           goto Lsetter_found;
         }
       }
