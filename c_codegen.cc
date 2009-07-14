@@ -805,9 +805,11 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
         if (s->has.n) {
           fprintf(fp, "struct _CG_s%d {\n", s->id);
           for (int i = 0; i <  s->has.n; i++) {
-            fputs("  ", fp);
-            fputs(c_type(s->has[i]), fp);
-            fprintf(fp, " e%d;\n", i);
+            //if (s->has[i]->live) {
+              fputs("  ", fp);
+              fputs(c_type(s->has[i]), fp);
+              fprintf(fp, " e%d;\n", i);
+            //}
           }
           fprintf(fp, "};\n");
         }

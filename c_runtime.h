@@ -95,6 +95,15 @@ static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
   return x;
 }
 
+static inline char * _CG_strcat(char *a, char *b) {
+  int la = strlen(a), lb = strlen(b);
+  char *x = (char*)GC_MALLOC(la + lb + 1);
+  memcpy(x, a, la);
+  memcpy(x + la, b, lb);
+  x[la + lb] = 0;
+  return x;
+}
+
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_tuple(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
@@ -105,6 +114,8 @@ static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
 #define _CG_prim_primitive(_p, _x) printf("%d\n", (unsigned int)(uintptr_t)_x);
 #define _CG_prim_add(_a, _op, _b) ((_a) + (_b))
 #define _CG_prim_subtract(_a, _op, _b) ((_a) - (_b))
+#define _CG_prim_rsh(_a, _op, _b) ((_a) >> (_b))
+#define _CG_prim_lsh(_a, _op, _b) ((_a) << (_b))
 #define _CG_prim_mult(_a, _op, _b) ((_a) * (_b))
 #define _CG_prim_pow(_a, _op, _b) (pow((_a),(_b)))
 #define _CG_prim_div(_a, _op, _b) ((_a) / (_b))
@@ -123,6 +134,7 @@ static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
 #define _CG_prim_set(_a, _b) (_a) = (_b)
 #define _CG_prim_minus(_op, _a) (- (_a))
 #define _CG_prim_not(_op, _a) (~ (_a))
+#define _CG_prim_strcat(_a, _op, _b) (_CG_strcat(_a, _b))
 #define _CG_prim_apply(_a, _b) ((*(_a)->e0)((_a)->e1))
 #define _CG_make_apply(_r, _s, _f, _a) do {     \
   _r = (_s)GC_MALLOC(sizeof(*((_s)0)));         \

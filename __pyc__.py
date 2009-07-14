@@ -8,6 +8,13 @@ class __None_type__:
   def __null__(self):
     return True
 
+class basestring:
+  pass
+
+class str(basestring):
+  def __add__(self, x):
+    return "#operator"(self, "::", x)
+
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
 #  def __add__(self, x):
@@ -155,22 +162,6 @@ class float:
   def __null__(self):
     return False
 
-class range:
-  i = 0
-  j = 0
-  def __init__(this, ai, aj):
-    i = ai
-    j = aj
-    return this
-  def __iter__(this):
-    return this
-  def next(self):
-    if (self.i >= self.j):
-      return None  
-    x = self.i
-    self.i += 1
-    return x
-  
 class __list_iter__:
   thelist = None
   position = 0
@@ -216,5 +207,63 @@ class list:
   def count(self, l):
     pass
 
+def abs(x):
+  if (x < 0):
+    return -x
+  return x
+
+def all(iterable):
+  for element in iterable:
+    if not element:
+      return False
+  return True
+
+def any(iterable):
+  for element in iterable:
+    if element:
+      return True
+  return False
+
+def bin(x): # return integer as string in binary
+  if x <= 0:
+    return "0"
+  else:
+    if (x&1 == 0):
+      s = "0"
+    else:
+      s = "1"
+    x = x >> 1
+    while (x > 0):
+      if (x&1 == 0):
+        s = "0" + s
+      else:
+        s = "1" + s
+      x = x >> 1
+    return s
+
 def exit(status = 0):
     "#primitive"("exit", status)
+
+def range(start, end):
+  result = []
+  while (start < end):
+    result += [start]
+  return result
+
+class xrange:
+  i = 0
+  j = 0
+  def __init__(this, ai, aj):
+    i = ai
+    j = aj
+    return this
+  def __iter__(this):
+    return this
+  def next(self):
+    if (self.i >= self.j):
+      return None  
+    x = self.i
+    self.i += 1
+    return x
+
+  

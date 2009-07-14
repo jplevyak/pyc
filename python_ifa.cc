@@ -1846,6 +1846,7 @@ build_environment(mod_ty mod, PycContext &ctx) {
   scope_sym(ctx, sym_long);
   scope_sym(ctx, sym_float);
   scope_sym(ctx, sym_complex);
+  scope_sym(ctx, sym_string);
   scope_sym(ctx, sym_true);
   scope_sym(ctx, sym_false);
   scope_sym(ctx, sym_nil);
