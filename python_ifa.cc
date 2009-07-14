@@ -95,7 +95,7 @@ PycSymbol::ast_id() {
 }
 
 PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), parent(0),code(0), sym(0), rval(0),
-                   is_builtin(0), is_member(0) {
+                   is_builtin(0), is_member(0), is_object_index(0) {
   label[0] = label[1] = 0;
 }
 
@@ -1385,7 +1385,9 @@ build_if1(stmt_ty s, PycContext &ctx) {
         if (a->is_member)
           if1_send(if1, &ast->code, 5, 1, sym_operator, 
                    a->rval, sym_setter, a->sym, v->rval, (ast->rval = new_sym(ast)))->ast = ast;
-        else 
+        else if (a->is_object_index)
+          if1_add_send_arg(if1, a->code, v->rval);
+        else
           if1_move(if1, &ast->code, v->rval, a->sym);
       }
       break;
@@ -1758,12 +1760,20 @@ build_if1(expr_ty e, PycContext &ctx) {
       break;
     case Subscript_kind: { // expr value, slice slice, expr_context ctx
       assert(e->v.Subscript.slice->kind == Index_kind);
-      // AugLoad, Load, AugStore, Store, Del, !Param      
-      assert(e->v.Subscript.ctx == Load);
-      if1_send(if1, &ast->code, 4, 1, sym_primitive, sym_index_object,
-               getAST(e->v.Subscript.value, ctx)->rval, 
-               getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval, 
-               (ast->rval = new_sym(ast)))->ast = ast;
+      // AugLoad, Load, AugStore, Store, Del, !Param
+      ast->is_object_index = 1;
+      if (e->v.Subscript.ctx == Load) {
+        if1_send(if1, &ast->code, 4, 1, sym_primitive, sym_index_object,
+                 getAST(e->v.Subscript.value, ctx)->rval, 
+                 getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval, 
+                 (ast->rval = new_sym(ast)))->ast = ast;
+      } else {
+        assert(e->v.Subscript.ctx == Store);
+        if1_send(if1, &ast->code, 4, 1, sym_primitive, sym_set_index_object,
+                 getAST(e->v.Subscript.value, ctx)->rval, 
+                 getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval, 
+                 (ast->rval = new_sym(ast)))->ast = ast;
+      }
       break;
     }
     case Name_kind: { // identifier id, expr_context ctx
