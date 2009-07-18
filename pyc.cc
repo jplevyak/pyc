@@ -41,12 +41,14 @@ license(ArgumentState *arg_state, char *arg_unused) {
 
 static ArgumentDescription arg_desc[] = {
   {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
+  {"debug_info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
+  {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
 #ifdef DEBUG
   {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
   {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
 #endif
+  {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
   {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
-  {"html", ' ', "Output as HTML", "+", &fdump_html, "PYC_HTML", NULL},
   {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
   {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
   {"license", ' ', "Show License", NULL, NULL, NULL, license},
@@ -65,7 +67,7 @@ static void init_system() {
   assert(!getrlimit(RLIMIT_NOFILE, &nfiles));
 }
 
-void analyze(cchar *fn) {
+void compile(cchar *fn) {
   if (ifa_analyze(fn) < 0)
     fail("program does not type");
   if (ifa_optimize() < 0)
@@ -132,8 +134,10 @@ int main(int argc, char *argv[]) {
         mods.add(new PycModule(mod, filename, i < 0));
     }
   }
-  ast_to_if1(mods);
-  analyze(first_filename);
+  if (mods.n > 1) {
+    ast_to_if1(mods);
+    compile(first_filename);
+  }
   PyArena_Free(arena);
   Py_Finalize();
   Service::stop_all();

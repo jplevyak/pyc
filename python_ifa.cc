@@ -1467,6 +1467,12 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case Assert_kind: // expr test, expr? msg
       fail("error line %d, 'assert' not yet supported", ctx.lineno); break;
     case Import_kind: // alias* name
+      for (int i = 0; i < asdl_seq_LEN(s->v.Import.names); i++) {
+        alias_ty a = (alias_ty)asdl_seq_GET(s->v.Import.names, i);
+        // Py_GetPath() returns the path
+        printf("import %s\n", PyString_AsString(a->name));
+        if (a->asname) printf("as %s\n", PyString_AsString(a->asname));
+      }
       break;
     case ImportFrom_kind: // identifier module, alias *names, int? level
       break;

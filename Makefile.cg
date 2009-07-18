@@ -1,4 +1,3 @@
-
 OS_TYPE = $(shell uname -s | \
   awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
 
@@ -10,7 +9,15 @@ ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt
 endif
 
-CC = g++ -O3
+CC = g++
+
+ifdef OPTIMIZE
+  CFLAGS += -O3 
+endif
+
+ifdef DEBUG
+  CFLAGS += -g
+endif
 
 all: $(CG_FILES)
 	@$(CC) $(CFLAGS) $(LDFLAGS) -o $(CG_TARGET) $(CG_FILES) $(LIBS)

@@ -2,6 +2,7 @@
    Copyright (c) 2003-2009 John Plevyak, All Rights Reserved
 */
 #include <ctype.h>
+#include "defs.h"
 #include "ifadefs.h"
 #include "pattern.h"
 #include "cg.h"
@@ -893,7 +894,7 @@ c_codegen_compile(cchar *filename) {
   char target[512], s[1024];
   strcpy(target, filename);
   *strrchr(target, '.') = 0;
-  sprintf(s, "make --no-print-directory -f %s/Makefile.cg CG_ROOT=%s CG_TARGET=%s CG_FILES=%s.c",
-          system_dir, system_dir, target, filename);
+  sprintf(s, "make --no-print-directory -f %s/Makefile.cg CG_ROOT=%s CG_TARGET=%s CG_FILES=%s.c %s %s",
+          system_dir, system_dir, target, filename, codegen_optimize ? "OPTIMIZE=1" : "", codegen_debug ? "DEBUG=1" : "");
   return system(s);
 }
