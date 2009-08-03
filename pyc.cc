@@ -1,5 +1,5 @@
 /*
-  Copyright 2003-2008 John Plevyak, All Rights Reserved
+  Copyright 2003-2009 John Plevyak, All Rights Reserved
 */
 #define EXTERN
 #include <signal.h>

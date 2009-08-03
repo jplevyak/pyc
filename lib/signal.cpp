@@ -12,7 +12,9 @@ void __init() {
 #ifndef __APPLE__
     __ss_SIGCLD = SIGCLD;
     __ss_SIGPOLL = SIGPOLL;
+#ifndef __CYGWIN__
     __ss_SIGPWR = SIGPWR;
+#endif
     __ss_SIGRTMAX = SIGRTMAX;
     __ss_SIGRTMIN = SIGRTMIN;
 #endif
@@ -27,7 +29,9 @@ void __init() {
     __ss_SIGILL = SIGILL;
     __ss_SIGINT = SIGINT;
     __ss_SIGIO = SIGIO;
+#ifndef __CYGWIN__
     __ss_SIGIOT = SIGIOT;
+#endif
     __ss_SIGKILL = SIGKILL;
     __ss_SIGPIPE = SIGPIPE;
     __ss_SIGPROF = SIGPROF;

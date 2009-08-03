@@ -530,9 +530,11 @@ int __ss_WEXITSTATUS(int status) {
     return WEXITSTATUS(status);
 }
 
+#ifndef __CYGWIN__
 int __ss_WIFCONTINUED(int status) {
     return WIFCONTINUED(status);
 }
+#endif
 
 int __ss_WIFEXITED(int status) {
     return WIFEXITED(status);
@@ -829,6 +831,7 @@ int fpathconf(int fd, int name) {
     return limit;
 }
 
+#ifndef __CYGWIN__
 str *confstr(str *name) {
     if(!confstr_names->__contains__(name))
         throw new ValueError(new str("unrecognized configuration name"));
@@ -841,6 +844,7 @@ str *confstr(int name) {
         throw new OSError(new str("os.confstr"));
     return new str(buf);
 }
+#endif
 
 int sysconf(str *name) {
     if(!sysconf_names->__contains__(name))
@@ -852,12 +856,14 @@ int sysconf(int name) {
     return limit;
 }
 
+#ifndef __CYGWIN__
 tuple2<double, double> *getloadavg() {
     double load[3];
     if(::getloadavg(load, 3) != 3)
         throw new OSError(new str("os.getloadavg"));
     return new tuple2<double, double>(3, load[0], load[1], load[2]);
 }
+#endif
 
 void *mkfifo(str *path, int mode) {
     if(::mkfifo(path->unit.c_str(), mode) == -1)
