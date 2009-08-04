@@ -1,3 +1,19 @@
-- constant propogation working in c_codegen and dead code elimination
-- simple closure removal
+- handle __name__ and other builtin variables 
+- modules
 - dead code detection at at Var level
+
+Support for C includes and external functions:
+
+__c_include__("stdio.h")
+argv = []
+n = __c_function__("int GET_ARGC();")
+for x in range(n):
+  argv[x] = __c_function__("const char *GET_ARGV(int)", x)
+
+
+MOSTLY DONE
+
+- simple closure removal -- MOSTLY DONE
+- constant propogation working in c_codegen and dead code elimination - MOSTLY DONE
+
+

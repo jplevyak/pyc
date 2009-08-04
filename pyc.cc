@@ -40,7 +40,6 @@ license(ArgumentState *arg_state, char *arg_unused) {
 }
 
 static ArgumentDescription arg_desc[] = {
-  {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
   {"debug_info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
   {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
 #ifdef DEBUG
@@ -49,6 +48,7 @@ static ArgumentDescription arg_desc[] = {
 #endif
   {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
   {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
+  {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
   {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
   {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
   {"license", ' ', "Show License", NULL, NULL, NULL, license},

@@ -266,4 +266,4 @@ class xrange:
     self.i += 1
     return x
 
-  
+__name__ = "__main__"
