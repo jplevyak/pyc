@@ -31,6 +31,7 @@ struct PycContext : public gc {
   cchar *filename;
   int lineno;
   void *node;
+  Vec<PycModule *> *modules;
   Vec<PycScope *> scope_stack;
   Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
@@ -39,8 +40,7 @@ struct PycContext : public gc {
   Sym *fun() { return scope_stack.last()->fun; }
   Sym *cls() { return scope_stack.last()->cls; }
   bool in_class() { return (cls() && scope_stack.last()->in == cls()); }
-  PycContext() : lineno(-1), lbreak(0), lcontinue(0), lreturn(0),
-                 is_builtin(0) {}
+  PycContext() : lineno(-1), lbreak(0), lcontinue(0), lreturn(0), is_builtin(0) {}
 };
 
 static Map<stmt_ty, PycAST *> stmtmap;
@@ -736,7 +736,7 @@ static PycSymbol *find_PycSymbol(PycContext &ctx, cchar *name, int *level = 0, i
 //  return find_PycSymbol(ctx, cannonicalize_string(PyString_AS_STRING(o)), level, type);
 //}
 
-static PycSymbol *make_PycSymbol(PycContext &ctx, char *n, PYC_SCOPINGS scoping) {
+static PycSymbol *make_PycSymbol(PycContext &ctx, cchar *n, PYC_SCOPINGS scoping) {
   cchar *name = cannonicalize_string(n);
   TEST_SCOPE printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
   int level = 0, type = 0;
@@ -1470,11 +1470,19 @@ build_if1(stmt_ty s, PycContext &ctx) {
       for (int i = 0; i < asdl_seq_LEN(s->v.Import.names); i++) {
         alias_ty a = (alias_ty)asdl_seq_GET(s->v.Import.names, i);
         // Py_GetPath() returns the path
-        printf("import %s\n", PyString_AsString(a->name));
-        if (a->asname) printf("as %s\n", PyString_AsString(a->asname));
+        printf("import %s", PyString_AsString(a->name));
+        if (a->asname) printf(" as %s\n", PyString_AsString(a->asname));
+        else printf("\n");
       }
       break;
     case ImportFrom_kind: // identifier module, alias *names, int? level
+      printf("import from %s\n", PyString_AsString(s->v.ImportFrom.module));
+      for (int i = 0; i < asdl_seq_LEN(s->v.ImportFrom.names); i++) {
+        alias_ty a = (alias_ty)asdl_seq_GET(s->v.ImportFrom.names, i);
+        printf("import-from %s", PyString_AsString(a->name));
+        if (a->asname) printf(" as %s\n", PyString_AsString(a->asname));
+        else printf("\n");
+      }
       break;
     case Exec_kind: // expr body, expr? globals, expr? locals
       fail("error line %d, 'exec' not yet supported", ctx.lineno); break;
@@ -1914,8 +1922,34 @@ fixup_aspect() {
 }
 
 static void
-import_scope(PycContext &ctx, mod_ty mod) {
+import_scope(mod_ty mod, PycContext &ctx) {
   ctx.imports.add(ctx.saved_scopes.get(mod));
+}
+
+static void
+build_module_attributes_syms(PycModule *mod, PycContext &ctx) {
+  ctx.node = mod->mod;
+  enter_scope(ctx);
+  mod->name_sym = make_PycSymbol(ctx, "__name__", PYC_GLOBAL);
+  mod->file_sym = make_PycSymbol(ctx, "__file__", PYC_GLOBAL);
+  scope_sym(ctx, mod->name_sym->sym);
+  scope_sym(ctx, mod->file_sym->sym);
+  // scope_sym(ctx, sym___path__); package support
+  exit_scope(ctx);
+}
+
+static void
+build_module_attributes_if1(PycModule *mod, PycContext &ctx, Code **code) {
+  ctx.node = mod->mod;
+  enter_scope(ctx);
+  Sym *f = make_string(mod->filename);
+  if (mod == ctx.modules->v[1])
+    if1_move(if1, code, make_string("__main__"), mod->name_sym->sym);
+  else
+    if1_move(if1, code, f, mod->name_sym->sym);
+  if1_move(if1, code, f, mod->file_sym->sym);
+  // if1_move(if1, code, ..., __path__);
+  exit_scope(ctx);
 }
 
 int 
@@ -1925,22 +1959,26 @@ ast_to_if1(Vec<PycModule *> &mods) {
   build_builtin_symbols();
   add_primitive_transfer_functions();
   PycContext ctx;
+  ctx.modules = &mods;
   Code *code = 0;
   forv_Vec(PycModule, x, mods)
     x->filename = cannonicalize_string(x->filename);
   ctx.filename = mods[0]->filename;
   ctx.is_builtin = mods[0]->is_builtin;
   build_environment(mods[0]->mod, ctx);
-  forv_Vec(PycModule, x, mods) {
+  Vec<PycModule *> base_mods(mods);
+  forv_Vec(PycModule, x, base_mods) {
     ctx.filename = x->filename;
     ctx.is_builtin = x->is_builtin;
-    if (!ctx.is_builtin) import_scope(ctx, mods[0]->mod);
+    if (!ctx.is_builtin) import_scope(mods[0]->mod, ctx);
+    build_module_attributes_syms(x, ctx);
     if (build_syms(x->mod, ctx) < 0) return -1;
   }
   finalize_types(if1);
   forv_Vec(PycModule, x, mods) {
     ctx.filename = x->filename;
     ctx.is_builtin = x->is_builtin;
+    build_module_attributes_if1(x, ctx, &code);
     if (build_if1(x->mod, ctx, &code) < 0) return -1;
   }
   finalize_types(if1);

@@ -1,5 +1,5 @@
-- handle __name__ and other builtin variables 
-- modules
+- handle __name__ and other builtin variables (__file__(set even for __main__, __path__ (unset for non-packages))
+- modules (__all__ is the list of "public" names or names not starting with "_")
 - dead code detection at at Var level
 
 Support for C includes and external functions:
@@ -7,7 +7,7 @@ Support for C includes and external functions:
 __c_include__("stdio.h")
 argv = []
 n = __c_function__("int GET_ARGC();")
-for x in range(n):
+ofor x in range(n):
   argv[x] = __c_function__("const char *GET_ARGV(int)", x)
 
 

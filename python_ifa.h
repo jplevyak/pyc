@@ -67,9 +67,11 @@ class PycAST : public IFAAST {
 class PycModule : public gc { public:
   mod_ty mod;
   cchar *filename;
+  PycSymbol *name_sym;
+  PycSymbol *file_sym;
   int is_builtin;
   PycModule(mod_ty amod, cchar *afilename, int an_is_builtin)
-    : mod(amod), filename(afilename), is_builtin(an_is_builtin) {}
+    : mod(amod), filename(afilename), name_sym(0), file_sym(0), is_builtin(an_is_builtin) {}
 };
 
 int ast_to_if1(Vec<PycModule *> &mods);
