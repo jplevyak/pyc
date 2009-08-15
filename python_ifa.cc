@@ -1012,6 +1012,8 @@ build_syms(expr_ty e, PycContext &ctx) {
       for (int i = 0; i < asdl_seq_LEN(e->v.Tuple.elts); i++)
         ast->sym->has.add(getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i), ctx)->sym);
       break;
+    case Import_kind:
+      break;
   }
   exit_scope(e, ctx);
   return 0;
@@ -1469,8 +1471,7 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case Import_kind: // alias* name
       for (int i = 0; i < asdl_seq_LEN(s->v.Import.names); i++) {
         alias_ty a = (alias_ty)asdl_seq_GET(s->v.Import.names, i);
-        // Py_GetPath() returns the path
-        printf("import %s", PyString_AsString(a->name));
+        printf("import %s path %s", PyString_AsString(a->name), Py_GetPath());
         if (a->asname) printf(" as %s\n", PyString_AsString(a->asname));
         else printf("\n");
       }
@@ -1975,7 +1976,7 @@ ast_to_if1(Vec<PycModule *> &mods) {
     if (build_syms(x->mod, ctx) < 0) return -1;
   }
   finalize_types(if1);
-  forv_Vec(PycModule, x, mods) {
+  forv_Vec(PycModule, x, base_mods) {
     ctx.filename = x->filename;
     ctx.is_builtin = x->is_builtin;
     build_module_attributes_if1(x, ctx, &code);

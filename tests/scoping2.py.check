@@ -1,4 +1,8 @@
 enter scope level 1
+make_PycSymbol global '__name__'
+make_PycSymbol global '__file__'
+exit scope level 1
+enter scope level 1
 make_PycSymbol local 'x'
 make_PycSymbol local 'f'
 enter scope level 2
@@ -14,6 +18,8 @@ make_PycSymbol use 'g'
 exit scope level 2
 make_PycSymbol use 'f'
 make_PycSymbol use 'x'
+exit scope level 1
+enter scope level 1
 exit scope level 1
 enter scope level 1
 found 'x' at level 0

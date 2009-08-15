@@ -6,6 +6,7 @@ setenv VALGRIND ' '
 cd tests
 set failed = 0
 foreach g (*.py)
+  if (-e $g.ignore) continue
   if (-e $g.flags) then
     set flags = `cat $g.flags`
   else
