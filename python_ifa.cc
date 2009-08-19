@@ -14,7 +14,7 @@
    __radd__ etc. see __pyc__.py
 */
 
-#define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin))
+#define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin()))
 
 typedef MapElem<cchar *, PycSymbol*> MapCharPycSymbolElem;
 
@@ -40,7 +40,7 @@ struct PycContext : public gc {
   Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
   Vec<PycScope *> imports;
-  uint32 is_builtin:1;
+  bool is_builtin() { return mod->is_builtin; }
   Sym *fun() { return scope_stack.last()->fun; }
   Sym *cls() { return scope_stack.last()->cls; }
   bool in_class() { return (cls() && scope_stack.last()->in == cls()); }
@@ -66,7 +66,7 @@ PycSymbol::PycSymbol() : symbol(0), filename(0) {
 void PycContext::init() {
   lineno = -1;
   node = 0;
-  package = 0;
+  mod = package = 0;
   lbreak = 0;
   lcontinue = 0; 
   lreturn = 0; 
@@ -394,7 +394,7 @@ static inline PycAST *getAST(stmt_ty s, PycContext &ctx) {
   if (ast) return ast;
   ast = new PycAST;
   ast->filename = ctx.filename;
-  ast->is_builtin = ctx.is_builtin;
+  ast->is_builtin = ctx.is_builtin();
   ast->xstmt = s;
   stmtmap.put(s, ast);
   return ast;
@@ -405,7 +405,7 @@ static inline PycAST *getAST(expr_ty e, PycContext &ctx) {
   if (ast) return ast;
   ast = new PycAST;
   ast->filename = ctx.filename;
-  ast->is_builtin = ctx.is_builtin;
+  ast->is_builtin = ctx.is_builtin();
   ast->xexpr = e;
   exprmap.put(e, ast);
   return ast;
@@ -851,7 +851,7 @@ static void get_syms_args(
 #endif
     has.add(sym);
   }
-  if (ctx.is_builtin && decorators) {
+  if (ctx.is_builtin() && decorators) {
     for (int j = 0; j < asdl_seq_LEN(decorators); j++) {
       expr_ty e = (expr_ty)asdl_seq_GET(decorators, j);
       if (e->kind == Call_kind) {
@@ -966,7 +966,7 @@ build_syms(stmt_ty s, PycContext &ctx) {
       break;
     }
     case ClassDef_kind: { // identifier name, expr* bases, stmt* body
-      PYC_SCOPINGS scope = (ctx.is_builtin && ctx.scope_stack.n == 1) ? PYC_GLOBAL : PYC_LOCAL;
+      PYC_SCOPINGS scope = (ctx.is_builtin() && ctx.scope_stack.n == 1) ? PYC_GLOBAL : PYC_LOCAL;
       ast->sym = unalias_type(make_PycSymbol(ctx, s->v.ClassDef.name, scope)->sym);
       if (!ast->sym->type_kind)
         ast->sym->type_kind = Type_RECORD; // do not override
@@ -1135,9 +1135,9 @@ build_module_attributes_syms(PycModule *mod, PycContext &ctx) {
 
 static int build_syms(PycModule *x, PycContext &ctx) {
   x->ctx = &ctx;
+  ctx.mod = x;
   ctx.filename = x->filename;
-  ctx.is_builtin = x->is_builtin;
-  if (!ctx.is_builtin) import_scope(ctx.modules->v[0], ctx);
+  if (!ctx.is_builtin()) import_scope(ctx.modules->v[0], ctx);
   build_module_attributes_syms(x, ctx);
   if (build_syms(x->mod, ctx) < 0) return -1;
   return 0;
@@ -1966,8 +1966,9 @@ build_if1(mod_ty mod, PycContext &ctx, Code **code) {
 }
 
 static void 
-build_environment(mod_ty mod, PycContext &ctx) {
-  ctx.node = mod;
+build_environment(PycModule *mod, PycContext &ctx) {
+  ctx.mod = mod;
+  ctx.node = mod->mod;
   enter_scope(ctx);
   scope_sym(ctx, sym_int);
   scope_sym(ctx, sym_long);
@@ -2117,9 +2118,8 @@ ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
   forv_Vec(PycModule, x, mods)
     x->filename = cannonicalize_string(x->filename);
   ctx.filename = mods[0]->filename;
-  ctx.is_builtin = mods[0]->is_builtin;
   build_search_path(ctx);
-  build_environment(mods[0]->mod, ctx);
+  build_environment(mods[0], ctx);
   Vec<PycModule *> base_mods(mods);
   forv_Vec(PycModule, x, base_mods)
     if (build_syms(x, ctx) < 0) return -1;

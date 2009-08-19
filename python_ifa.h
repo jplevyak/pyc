@@ -74,10 +74,10 @@ class PycModule : public gc { public:
   PycSymbol *name_sym;
   PycSymbol *file_sym;
   PycContext *ctx;
-  int is_builtin;
-  int built_if1;
-  PycModule(mod_ty amod, cchar *afilename, int ais_builtin = 0)
-    : mod(amod), filename(afilename), name_sym(0), file_sym(0), ctx(0), is_builtin(ais_builtin), built_if1(0) {
+  bool is_builtin;
+  bool built_if1;
+  PycModule(mod_ty amod, cchar *afilename, bool ais_builtin = false)
+    : mod(amod), filename(afilename), name_sym(0), file_sym(0), ctx(0), is_builtin(ais_builtin), built_if1(false) {
     name = mod_name_from_filename(filename);
   }
 };
