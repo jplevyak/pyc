@@ -1,6 +1,9 @@
-- handle __name__ and other builtin variables (__file__(set even for __main__, __path__ (unset for non-packages))
+- handle __path__ builtin
 - modules (__all__ is the list of "public" names or names not starting with "_")
+- import doesn't handle zip files
 - dead code detection at at Var level
+- import does lookup in the current package first
+- import explicit relative imports (e.g. one of . .. ..Filters ) 
 
 Support for C includes and external functions:
 

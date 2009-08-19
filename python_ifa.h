@@ -64,16 +64,22 @@ class PycAST : public IFAAST {
   PycAST();
 };
 
+cchar *mod_name_from_filename(cchar *);
+
 class PycModule : public gc { public:
   mod_ty mod;
   cchar *filename;
+  cchar *name;
   PycSymbol *name_sym;
   PycSymbol *file_sym;
   int is_builtin;
-  PycModule(mod_ty amod, cchar *afilename, int an_is_builtin)
-    : mod(amod), filename(afilename), name_sym(0), file_sym(0), is_builtin(an_is_builtin) {}
+  PycModule(mod_ty amod, cchar *afilename, int ais_builtin = 0)
+    : mod(amod), filename(afilename), name_sym(0), file_sym(0), is_builtin(ais_builtin) {
+    name = mod_name_from_filename(filename);
+  }
 };
 
-int ast_to_if1(Vec<PycModule *> &mods);
+mod_ty file_to_mod(cchar *filename, PyArena *arena);
+int ast_to_if1(Vec<PycModule *> &mods, PyArena *arena);
 
 #endif

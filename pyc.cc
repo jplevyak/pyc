@@ -86,6 +86,15 @@ void compile(cchar *fn) {
   return;
 }
 
+cchar *mod_name_from_filename(cchar *n) {
+  cchar *start = strrchr(n, '/');
+  if (!start) start = n; else start++;
+  cchar *end = strrchr(n, '.');
+  assert(end);
+  end--;
+  return dupstr(start,end);
+}
+
 int main(int argc, char *argv[]) {
   MEM_INIT();
   INIT_RAND64(0x1234567);
@@ -120,22 +129,12 @@ int main(int argc, char *argv[]) {
       filename = arg_state.file_argument[i];
     if (!i)
       first_filename = filename;
-    FILE *fp = fopen(filename, "r");
-    if (!fp)
-      fail("unable to read file '%s'", filename);
-    mod_ty mod = PyParser_ASTFromFile(fp, filename, Py_file_input, 0, 0, 0, 0, arena);
-    if (!mod)
-      error("unable to parse file '%s'", filename);
-    else {
-      PyFutureFeatures *pyc_future = PyFuture_FromAST(mod, filename);
-      if (!pyc_future)
-        error("unable to parse futures for file '%s'", filename);
-      else
-        mods.add(new PycModule(mod, filename, i < 0));
-    }
+    mod_ty mod = file_to_mod(filename, arena);
+    if (mod)
+      mods.add(new PycModule(mod, filename, i < 0));
   }
   if (mods.n > 1) {
-    ast_to_if1(mods);
+    ast_to_if1(mods, arena);
     compile(first_filename);
   }
   PyArena_Free(arena);
