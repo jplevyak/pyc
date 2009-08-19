@@ -33,10 +33,9 @@ struct PycContext : public gc {
   int lineno;
   void *node;
   PyArena *arena;
-  PycModule *package;
+  PycModule *mod, *package;
   Vec<PycModule *> *modules;
-  Vec<cchar *> search_path;
-  HashMap<cchar *, StringHashFns, PycModule *> modmap;
+  Vec<cchar *> *search_path;
   Vec<PycScope *> scope_stack;
   Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
@@ -45,7 +44,9 @@ struct PycContext : public gc {
   Sym *fun() { return scope_stack.last()->fun; }
   Sym *cls() { return scope_stack.last()->cls; }
   bool in_class() { return (cls() && scope_stack.last()->in == cls()); }
-  PycContext() : lineno(-1), node(0), package(0), lbreak(0), lcontinue(0), lreturn(0), is_builtin(0) {}
+  void init();
+  PycContext() { init(); }
+  PycContext(PycContext &c);
 };
 
 static Map<stmt_ty, PycAST *> stmtmap;
@@ -60,6 +61,21 @@ static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
 
 PycSymbol::PycSymbol() : symbol(0), filename(0) {
+}
+
+void PycContext::init() {
+  lineno = -1;
+  node = 0;
+  package = 0;
+  lbreak = 0;
+  lcontinue = 0; 
+  lreturn = 0; 
+}
+
+PycContext::PycContext(PycContext &c) {
+  init();
+  arena = c.arena;
+  modules = c.modules;
 }
 
 cchar *
@@ -796,6 +812,8 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, PyObject *o, PYC_SCOPINGS type
 
 static int build_syms(stmt_ty s, PycContext &ctx);
 static int build_syms(expr_ty e, PycContext &ctx);
+static int build_syms(PycModule *x, PycContext &ctx);
+
 
 #define AST_RECURSE_PRE(_ast, _fn, _ctx) \
   PycAST *ast = getAST(_ast, _ctx); \
@@ -882,7 +900,17 @@ static void import_file(cchar *name, cchar *p, PycContext &ctx) {
   cchar *f = dupstrs(p, "/", name, ".py");
   mod_ty mod = file_to_mod(f, ctx.arena);
   PycModule *m = new PycModule(mod, f);
-  (void)m;
+  ctx.modules->add(m);
+  m->ctx = new PycContext(ctx);
+  build_syms(m, *m->ctx);
+}
+
+PycModule *get_module(cchar *name, PycContext &ctx) {
+  forv_Vec(PycModule, m, *ctx.modules) {
+    if (!strcmp(name, m->name))
+      return m;
+  }
+  return 0;
 }
 
 typedef void import_fn(char *sym, char *as, char *from, PycContext &ctx);
@@ -891,9 +919,9 @@ static void build_import_syms(char *sym, char *as, char *from, PycContext &ctx) 
   char *mod = from ? from : sym;
   assert(!strchr(mod, '.')); // package
   assert(!ctx.package); // package 
-  PycModule *m = ctx.modmap.get(mod);
+  PycModule *m = get_module(mod, ctx);
   if (!m) {
-    forv_Vec(cchar, p, ctx.search_path) {
+    forv_Vec(cchar, p, *ctx.search_path) {
       if (file_exists(p, "/__init__.py")) continue; // package
       if (!is_regular_file(p, "/", mod, ".py")) continue;
       import_file(mod, p, ctx);
@@ -1069,8 +1097,7 @@ static int build_syms_stmts(asdl_seq *stmts, PycContext &ctx) {
   return 0;
 }
 
-static int
-build_syms(mod_ty mod, PycContext &ctx) {
+static int build_syms(mod_ty mod, PycContext &ctx) {
   int r = 0;
   ctx.node = mod;
   enter_scope(ctx);
@@ -1085,8 +1112,8 @@ build_syms(mod_ty mod, PycContext &ctx) {
 }
 
 static void
-import_scope(mod_ty mod, PycContext &ctx) {
-  ctx.imports.add(ctx.saved_scopes.get(mod));
+import_scope(PycModule *mod, PycContext &ctx) {
+  ctx.imports.add(mod->ctx->saved_scopes.get(mod->mod));
 }
 
 static void scope_sym(PycContext &ctx, Sym *sym) {
@@ -1107,9 +1134,10 @@ build_module_attributes_syms(PycModule *mod, PycContext &ctx) {
 }
 
 static int build_syms(PycModule *x, PycContext &ctx) {
+  x->ctx = &ctx;
   ctx.filename = x->filename;
   ctx.is_builtin = x->is_builtin;
-  if (!ctx.is_builtin) import_scope(ctx.modules->v[0]->mod, ctx);
+  if (!ctx.is_builtin) import_scope(ctx.modules->v[0], ctx);
   build_module_attributes_syms(x, ctx);
   if (build_syms(x->mod, ctx) < 0) return -1;
   return 0;
@@ -1418,10 +1446,19 @@ call_method(IF1 *if1, Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, .
   }
 }
 
+static int build_if1(mod_ty mod, PycContext &ctx, Code **code);
+static void build_module_attributes_if1(PycModule *mod, PycContext &ctx, Code **code);
+
 static void build_import_if1(char *sym, char *as, char *from, PycContext &ctx) {
   char *mod = from ? from : sym;
-  PycModule *m = ctx.modmap.get(mod);
+  PycModule *m = get_module(mod, ctx);
   assert(m);
+  if (!m->built_if1) {
+    Code **c = &getAST((stmt_ty)ctx.node, ctx)->code;
+    build_module_attributes_if1(m, *m->ctx, c);
+    build_if1(m->mod, *m->ctx, c);
+    m->built_if1 = true;
+  }
 }
 
 #define RECURSE(_ast, _fn, _ctx) \
@@ -1991,12 +2028,11 @@ static void
 build_module_attributes_if1(PycModule *mod, PycContext &ctx, Code **code) {
   ctx.node = mod->mod;
   enter_scope(ctx);
-  Sym *f = make_string(mod->filename);
   if (mod == ctx.modules->v[1])
     if1_move(if1, code, make_string("__main__"), mod->name_sym->sym);
   else
-    if1_move(if1, code, f, mod->name_sym->sym);
-  if1_move(if1, code, f, mod->file_sym->sym);
+    if1_move(if1, code, make_string(mod->name), mod->name_sym->sym);
+  if1_move(if1, code, make_string(mod->filename), mod->file_sym->sym);
   // if1_move(if1, code, ..., __path__);
   exit_scope(ctx);
 }
@@ -2015,9 +2051,9 @@ add_dirnames(cchar *p, Vec<cchar *> &a) {
     if (is_regular_file(p, "/__init__.py")) continue;
     a.add(dupstrs(p, "/", namelist[i]->d_name));
     r++;
-    //free(namelist[i]); leak, GC doesn't play well with standard malloc/free
+    // free(namelist[i]); GC doesn't play well with standard malloc/free
   }
-  //free(namelist); leak, GC doesn't play well with standard malloc/free
+  // free(namelist); GC doesn't play well with standard malloc/free
   return r;
 }
 
@@ -2034,15 +2070,16 @@ build_search_path(PycContext &ctx) {
   char *path = Py_GetPath();
   char f[PATH_MAX];
   char *here = dupstr(getcwd(f, PATH_MAX));
-  ctx.search_path.add(here);
+  ctx.search_path = new Vec<cchar *>;
+  ctx.search_path->add(here);
   while (1) {
     char *p = path;
     char *e = strchr(p, ':'), *ee = e;
     while (e > p && e[-1] == '/') e--;
     p = dupstr(p, e);
     if (file_exists(p)) {
-      ctx.search_path.add(p);
-      add_subdirs(p, ctx.search_path);
+      ctx.search_path->add(p);
+      add_subdirs(p, *ctx.search_path);
     }
     if (!e) break;
     path = ee + 1;
@@ -2076,8 +2113,6 @@ ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
   PycContext ctx;
   ctx.arena = arena;
   ctx.modules = &mods;
-  forv_Vec(PycModule, x, mods)
-    ctx.modmap.put(x->name, x);
   Code *code = 0;
   forv_Vec(PycModule, x, mods)
     x->filename = cannonicalize_string(x->filename);
@@ -2090,8 +2125,7 @@ ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
     if (build_syms(x, ctx) < 0) return -1;
   finalize_types(if1);
   forv_Vec(PycModule, x, base_mods) {
-    ctx.filename = x->filename;
-    ctx.is_builtin = x->is_builtin;
+    ctx.mod = x;
     build_module_attributes_if1(x, ctx, &code);
     if (build_if1(x->mod, ctx, &code) < 0) return -1;
   }

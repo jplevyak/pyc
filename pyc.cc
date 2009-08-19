@@ -91,7 +91,6 @@ cchar *mod_name_from_filename(cchar *n) {
   if (!start) start = n; else start++;
   cchar *end = strrchr(n, '.');
   assert(end);
-  end--;
   return dupstr(start,end);
 }
 
