@@ -76,6 +76,7 @@ PycContext::PycContext(PycContext &c) {
   init();
   arena = c.arena;
   modules = c.modules;
+  search_path = c.search_path;
 }
 
 cchar *
@@ -1461,6 +1462,15 @@ static void build_import_if1(char *sym, char *as, char *from, PycContext &ctx) {
   }
 }
 
+static Code *find_send(Code *c) {
+  if (c->kind == Code_SEND) return c;
+  assert(c->kind == Code_SUB);
+  for (int i = 0; i < c->sub.n; i++)
+    if (c->sub[i]->kind == Code_SEND)
+      return c->sub[i];
+  return 0;
+}
+
 #define RECURSE(_ast, _fn, _ctx) \
   PycAST *ast = getAST(_ast, ctx); \
   forv_Vec(PycAST, x, ast->pre_scope_children) \
@@ -1506,7 +1516,7 @@ build_if1(stmt_ty s, PycContext &ctx) {
           if1_send(if1, &ast->code, 5, 1, sym_operator, 
                    a->rval, sym_setter, a->sym, v->rval, (ast->rval = new_sym(ast)))->ast = ast;
         else if (a->is_object_index)
-          if1_add_send_arg(if1, a->code, v->rval);
+          if1_add_send_arg(if1, find_send(a->code), v->rval);
         else
           if1_move(if1, &ast->code, v->rval, a->sym);
       }
@@ -1556,8 +1566,6 @@ build_if1(stmt_ty s, PycContext &ctx) {
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i->rval, iter)->ast = ast; 
       call_method(if1, &cond, ast, iter, sym_next, tmp, 0);
       call_method(if1, &cond, ast, tmp, sym___null__, tmp2, 0);
-      //if1_send(if1, &cond, 4, 1, sym_operator, iter, sym_period, sym_next, tmp)->ast = ast;
-      //if1_send(if1, &cond, 4, 1, sym_operator, tmp, sym_period, sym___null__, tmp2)->ast = ast;
       if1_move(if1, &cond, tmp, t->sym);
       if1_loop(if1, &ast->code, ast->label[0], ast->label[1], 
                tmp2, 0, cond, next, body, ast);
