@@ -1,6 +1,8 @@
 class object:
   def __null__(self):
     return False
+  def __done__(self):
+    return False
 
 class __None_type__:
   def __nonzero__(self):
@@ -13,6 +15,8 @@ class basestring:
 
 class str(basestring):
   def __add__(self, x):
+    return "#operator"(self, "::", x)
+  def __iadd__(self, x):
     return "#operator"(self, "::", x)
 
 class int:
@@ -167,12 +171,11 @@ class __list_iter__:
   position = 0
   def __init__(self, l):
     self.thelist = l
+  def __done__(self):
+    return self.position >= thelist.len 
   def next(self):
-    if (self.position < self.thelist.len()):
-      self.position += 1
-      return thelist.__getitem__(self.thelist, position-1)
-    else:
-      return None
+    self.position += 1
+    return thelist.__getitem__(self.thelist, position-1)
 
 class list:
   len = 0
@@ -206,6 +209,25 @@ class list:
     pass
   def count(self, l):
     pass
+
+class __tuple_iter__:
+  thetuple = None
+  position = 0
+  def __init__(self, t):
+    self.thetuple = l
+  def __done__(self):
+    return self.position >= thetuple.len 
+  def next(self):
+    self.position += 1
+    return thetuple.__getitem__(self.thetuple, position-1)
+
+class tuple:
+  def __getitem__(self, key):
+    return "#primitive"("index_object", self, key)
+  def __setitem__(self, key, value):
+    return "#primitive"("set_index_object", self, key, value)
+  def __iter__(self):
+    return __tuple_iter__(self)
 
 def abs(x):
   if (x < 0):

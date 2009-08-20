@@ -55,7 +55,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___null__ = 0, *sym_exit = 0;
+static Sym *sym___null__ = 0, *sym___done__ = 0, *sym_exit = 0;
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -333,6 +333,10 @@ new_base_instance(Sym *c, PycAST *ast) {
   }
   if (c == sym_nil_type)
     return sym_nil;
+  if (c == sym_list)
+    return sym_empty_list;
+  if (c == sym_tuple)
+    return sym_empty_tuple;
   fail("no instance for type '%s' found", c->name);
   return 0;
 }
@@ -348,6 +352,7 @@ build_builtin_symbols() {
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
+  sym___done__ = if1_make_symbol(if1, "__done__");
   sym_exit = if1_make_symbol(if1, "exit");
   sym_super = if1_make_symbol(if1, "super");
   cannonical_self = cannonicalize_string("self");
@@ -374,6 +379,8 @@ build_builtin_symbols() {
 
   // new types and objects
   new_builtin_primitive_type(sym_unicode, "unicode");
+  new_builtin_primitive_type(sym_list, "list");
+  new_builtin_primitive_type(sym_tuple, "tuple");
   new_builtin_primitive_type(sym_buffer, "buffer");
   new_builtin_primitive_type(sym_xrange, "xrange");
   new_builtin_primitive_type(sym_ellipsis_type, "Ellipsis_type");
@@ -383,6 +390,7 @@ build_builtin_symbols() {
   builtin_functions.set_add(sym_super);
 
   sym_list->element = new_sym();
+  sym_tuple->element = new_sym();
 }
 
 void
@@ -1426,19 +1434,11 @@ static Sym *map_cmp_operator(cmpop_ty op) {
 static void
 call_method(IF1 *if1, Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...) {
   va_list ap;
-#if 1
-  //if (!n) {
-  //if1_send(if1, code, 4, 1, sym_operator, o, sym_period, m, r)->ast = ast;
-  //return;
-  //}
   Sym *t = new_sym(ast);
   Code *method = if1_send(if1, code, 4, 1, sym_operator, o, sym_period, m, t);
   method->ast = ast;
   method->partial = Partial_OK;
   Code *send = if1_send(if1, code, 1, 1, t, r);
-#else
-  Code *send = if1_send(if1, code, 2, 1, m, o, r);
-#endif
   send->ast = ast;
   va_start(ap, n);
   for (int i = 0; i < n; i++) {
@@ -1557,18 +1557,17 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case For_kind: // expr target, expr iter, stmt* body, stmt* orelse
     {
       PycAST *t = getAST(s->v.For.target, ctx), *i = getAST(s->v.For.iter, ctx);
-      Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
-      get_stmts_code(s->v.For.body, &body, ctx);
-      get_stmts_code(s->v.For.orelse, &orelse, ctx);
-      Sym *iter = new_sym(ast), *tmp = new_sym(ast), *tmp2 = new_sym(ast);
+      Sym *iter = new_sym(ast), *tmp = new_sym(ast);
       if1_gen(if1, &ast->code, i->code);
       if1_gen(if1, &ast->code, t->code);
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i->rval, iter)->ast = ast; 
-      call_method(if1, &cond, ast, iter, sym_next, tmp, 0);
-      call_method(if1, &cond, ast, tmp, sym___null__, tmp2, 0);
-      if1_move(if1, &cond, tmp, t->sym);
+      Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
+      call_method(if1, &cond, ast, iter, sym___done__, tmp, 0);
+      call_method(if1, &body, ast, iter, sym_next, t->sym, 0);
+      get_stmts_code(s->v.For.body, &body, ctx);
+      get_stmts_code(s->v.For.orelse, &orelse, ctx);
       if1_loop(if1, &ast->code, ast->label[0], ast->label[1], 
-               tmp2, 0, cond, next, body, ast);
+               tmp, 0, cond, next, body, ast);
       if1_gen(if1, &ast->code, orelse);
       break;
     }
@@ -1983,6 +1982,8 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_float);
   scope_sym(ctx, sym_complex);
   scope_sym(ctx, sym_string);
+  scope_sym(ctx, sym_list);
+  scope_sym(ctx, sym_tuple);
   scope_sym(ctx, sym_true);
   scope_sym(ctx, sym_false);
   scope_sym(ctx, sym_nil);
