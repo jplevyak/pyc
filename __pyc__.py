@@ -15,84 +15,84 @@ class basestring:
 
 class str(basestring):
   def __add__(self, x):
-    return "#operator"(self, "::", x)
+    return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __iadd__(self, x):
-    return "#operator"(self, "::", x)
+    return __pyc_operator__(self, __pyc_symbol__("::"), x)
 
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
 #  def __add__(self, x):
-#    return "#operator"(self, "+", x)
+#    return __pyc_operator__(self, "+", x)
 #  def __add__(self, x):
 #    return x.__radd__(self)
   def __add__(self, x):
-    return "#operator"(self, "+", x)
+    return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __sub__(self, x):
-    return "#operator"(self, "-", x)
+    return __pyc_operator__(self, __pyc_symbol__("-"), x)
   def __mul__(self, x):
-    return "#operator"(self, "*", x)
+    return __pyc_operator__(self, __pyc_symbol__("*"), x)
   def __div__(self, x):
-    return "#operator"(self, "/", x)
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __mod__(self, x):
-    return "#operator"(self, "%", x)
+    return __pyc_operator__(self, __pyc_symbol__("%"), x)
   def __pow__(self, x):
-    return "#operator"(self, "**", x)
+    return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __lshift__(self, x):
-    return "#operator"(self, "<<", x)
+    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
   def __rshift__(self, x):
-    return "#operator"(self, ">>", x)
+    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
   def __or__(self, x):
-    return "#operator"(self, "|", x)
+    return __pyc_operator__(self, __pyc_symbol__("|"), x)
   def __xor__(self, x):
-    return "#operator"(self, "^", x)
+    return __pyc_operator__(self, __pyc_symbol__("^"), x)
   def __and__(self, x):
-    return "#operator"(self, "&", x)
+    return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __floordiv__(self, x):
-    return "#operator"(self, "/", x)
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __iadd__(self, x):
-    return "#operator"(self, "+", x)
+    return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __isub__(self, x):
-    return "#operator"(self, "-", x)
+    return __pyc_operator__(self, __pyc_symbol__("-"), x)
   def __imul__(self, x):
-    return "#operator"(self, "*", x)
+    return __pyc_operator__(self, __pyc_symbol__("*"), x)
   def __idiv__(self, x):
-    return "#operator"(self, "/", x)
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __imod__(self, x):
-    return "#operator"(self, "%", x)
+    return __pyc_operator__(self, __pyc_symbol__("%"), x)
   def __ipow__(self, x):
-    return "#operator"(self, "**", x)
+    return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __ilshift__(self, x):
-    return "#operator"(self, "<<", x)
+    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
   def __irshift__(self, x):
-    return "#operator"(self, ">>", x)
+    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
   def __ior__(self, x):
-    return "#operator"(self, "|", x)
+    return __pyc_operator__(self, __pyc_symbol__("|"), x)
   def __ixor__(self, x):
-    return "#operator"(self, "^", x)
+    return __pyc_operator__(self, __pyc_symbol__("^"), x)
   def __iand__(self, x):
-    return "#operator"(self, "&", x)
+    return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __ifloordiv__(self, x):
-    return "#operator"(self, "/", x)
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __invert__(self):
-    return "#operator"("~", self)
+    return __pyc_operator__(__pyc_symbol__("~"), self)
   def __pos__(self):
-    return "#operator"("+", self)
+    return __pyc_operator__(__pyc_symbol__("+"), self)
   def __neg__(self):
-    return "#operator"("-", self)
+    return __pyc_operator__(__pyc_symbol__("-"), self)
   def __not__(self):
-    return "#operator"("!", self)
+    return __pyc_operator__(__pyc_symbol__("!"), self)
   def __eq__(self, x):
-    return "#operator"(self, "==", x)
+    return __pyc_operator__(self, __pyc_symbol__("=="), x)
   def __ne__(self, x):
-    return "#operator"(self, "!=", x)
+    return __pyc_operator__(self, __pyc_symbol__("!="), x)
   def __lt__(self, x):
-    return "#operator"(self, "<", x)
+    return __pyc_operator__(self, __pyc_symbol__("<"), x)
   def __le__(self, x):
-    return "#operator"(self, "<=", x)
+    return __pyc_operator__(self, __pyc_symbol__("<="), x)
   def __gt__(self, x):
-    return "#operator"(self, ">", x)
+    return __pyc_operator__(self, __pyc_symbol__(">"), x)
   def __ge__(self, x):
-    return "#operator"(self, ">=", x)
+    return __pyc_operator__(self, __pyc_symbol__(">="), x)
   def __hash__(self):
     return self
   def __cmp__(self, x):
@@ -110,49 +110,49 @@ class int:
 
 class float:
   def __add__(self, x):
-    return "#operator"(self, "+", x)
+    return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __sub__(self, x):
-    return "#operator"(self, "-", x)
+    return __pyc_operator__(self, __pyc_symbol__("-"), x)
   def __mul__(self, x):
-    return "#operator"(self, "*", x)
+    return __pyc_operator__(self, __pyc_symbol__("*"), x)
   def __div__(self, x):
-    return "#operator"(self, "/", x)
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __mod__(self, x):
-    return "#operator"(self, "%", x)
+    return __pyc_operator__(self, __pyc_symbol__("%"), x)
   def __pow__(self, x):
-    return "#operator"(self, "**", x)
+    return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __lshift__(self, x):
-    return "#operator"(self, "<<", x)
+    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
   def __rshift__(self, x):
-    return "#operator"(self, ">>", x)
+    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
   def __or__(self, x):
-    return "#operator"(self, "|", x)
+    return __pyc_operator__(self, __pyc_symbol__("|"), x)
   def __xor__(self, x):
-    return "#operator"(self, "^", x)
+    return __pyc_operator__(self, __pyc_symbol__("^"), x)
   def __and__(self, x):
-    return "#operator"(self, "&", x)
+    return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __floordiv__(self, x):
-    return "#operator"(self, "/", x)
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __invert__(self):
-    return "#operator"("~", self)
+    return __pyc_operator__(__pyc_symbol__("~"), self)
   def __pos__(self):
-    return "#operator"("+", self)
+    return __pyc_operator__(__pyc_symbol__("+"), self)
   def __neg__(self):
-    return "#operator"("-", self)
+    return __pyc_operator__(__pyc_symbol__("-"), self)
   def __not__(self):
-    return "#operator"("!", self)
+    return __pyc_operator__(__pyc_symbol__("!"), self)
   def __eq__(self, x):
-    return "#operator"(self, "==", x)
+    return __pyc_operator__(self, __pyc_symbol__("=="), x)
   def __ne__(self, x):
-    return "#operator"(self, "!=", x)
+    return __pyc_operator__(self, __pyc_symbol__("!="), x)
   def __lt__(self, x):
-    return "#operator"(self, "<", x)
+    return __pyc_operator__(self, __pyc_symbol__("<"), x)
   def __le__(self, x):
-    return "#operator"(self, "<=", x)
+    return __pyc_operator__(self, __pyc_symbol__("<="), x)
   def __gt__(self, x):
-    return "#operator"(self, ">", x)
+    return __pyc_operator__(self, __pyc_symbol__(">"), x)
   def __ge__(self, x):
-    return "#operator"(self, ">=", x)
+    return __pyc_operator__(self, __pyc_symbol__(">="), x)
   def __cmp__(self, x):
     if (self < x):
       return -1
@@ -182,9 +182,9 @@ class list:
   def __len__(self):
     return 0
   def __getitem__(self, key):
-    return "#primitive"("index_object", self, key)
+    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __setitem__(self, key, value):
-    return "#primitive"("set_index_object", self, key, value)
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
   def __delitem__(self, key):
     pass
   def __iter__(self):
@@ -204,7 +204,7 @@ class list:
   def __imul__(self, l):
     pass
   def append(self, l):
-    return "#primitive"("set_index_object", self, 0, l)
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, 0, l)
   def index(self, index, start=0, end=0):
     pass
   def count(self, l):
@@ -223,9 +223,9 @@ class __tuple_iter__:
 
 class tuple:
   def __getitem__(self, key):
-    return "#primitive"("index_object", self, key)
+    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __setitem__(self, key, value):
-    return "#primitive"("set_index_object", self, key, value)
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
   def __iter__(self):
     return __tuple_iter__(self)
 
@@ -264,7 +264,7 @@ def bin(x): # return integer as string in binary
     return s
 
 def exit(status = 0):
-    "#primitive"("exit", status)
+    __pyc_primitive__(__pyc_symbol__("exit"), status)
 
 def range(start, end):
   result = []

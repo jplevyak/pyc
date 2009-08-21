@@ -55,7 +55,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___null__ = 0, *sym___done__ = 0, *sym_exit = 0;
+static Sym *sym___null__ = 0, *sym___done__ = 0, *sym_exit = 0, *sym___pyc_symbol__ = 0;
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -353,6 +353,7 @@ build_builtin_symbols() {
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
   sym___done__ = if1_make_symbol(if1, "__done__");
+  sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
   sym_exit = if1_make_symbol(if1, "exit");
   sym_super = if1_make_symbol(if1, "super");
   cannonical_self = cannonicalize_string("self");
@@ -388,6 +389,7 @@ build_builtin_symbols() {
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
 
   builtin_functions.set_add(sym_super);
+  builtin_functions.set_add(sym___pyc_symbol__);
 
   sym_list->element = new_sym();
   sym_tuple->element = new_sym();
@@ -1125,9 +1127,9 @@ import_scope(PycModule *mod, PycContext &ctx) {
   ctx.imports.add(mod->ctx->saved_scopes.get(mod->mod));
 }
 
-static void scope_sym(PycContext &ctx, Sym *sym) {
+static void scope_sym(PycContext &ctx, Sym *sym, cchar *name = 0) {
   PycSymbol *s = (PycSymbol*)sym->asymbol;
-  ctx.scope_stack.last()->map.put(sym->name, s);
+  ctx.scope_stack.last()->map.put(name ? cannonicalize_string(name) : sym->name, s);
 }
 
 static void
@@ -1663,37 +1665,20 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
           if1_move(if1, &ast->code, a1->rval, ast->rval);
         }
       }
+    } else if (f == sym___pyc_symbol__) {
+      Vec<Sym *> as;
+      get_syms_args(ast, ((PycAST*)ctx.fun()->ast)->xstmt->v.FunctionDef.args, as, ctx);
+      int n = asdl_seq_LEN(e->v.Call.args);
+     if (n != 1)
+       fail("bad number of arguments to builtin function %s", f->name);
+      PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
+      if (a0->rval->type != sym_string || !a0->rval->constant)
+       fail("string argument required for builtin function %s", f->name);
+      ast->rval = make_symbol(a0->rval->constant);
     } else
       fail("unimplemented builtin '%s'", fun->sym->name);
     return 1;
-  } if (ast->is_builtin && fun->rval && fun->rval->is_constant && fun->rval->type == sym_string) {
-    cchar *s = fun->rval->constant;
-    if (*s == '#' && !strncmp(&s[1], "operator", 8)) {
-      Code *send = if1_send1(if1, &ast->code, ast);
-      if1_add_send_arg(if1, send, sym_operator);
-      for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
-        Sym *v = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i), ctx)->rval;
-        if (v->is_constant && v->type == sym_string)
-          if1_add_send_arg(if1, send, if1_make_symbol(if1, v->constant));
-        else
-          if1_add_send_arg(if1, send, v);
-      }
-      if1_add_send_result(if1, send, (ast->rval = new_sym(ast)));
-      return 1;
-    } else if (*s == '#' && !strncmp(&s[1], "primitive", 9)) {
-      Code *send = if1_send1(if1, &ast->code, ast);
-      if1_add_send_arg(if1, send, sym_primitive);
-      for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
-        Sym *v = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, i), ctx)->rval;
-        if (v->is_constant && v->type == sym_string)
-          if1_add_send_arg(if1, send, if1_make_symbol(if1, v->constant));
-        else
-          if1_add_send_arg(if1, send, v);
-      }
-      if1_add_send_result(if1, send, (ast->rval = new_sym(ast)));
-      return 1;
-    }
-  }
+  } 
   return 0;
 }
 
@@ -1992,6 +1977,9 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_ellipsis);
   scope_sym(ctx, sym_object);
   scope_sym(ctx, sym_super);
+  scope_sym(ctx, sym___pyc_symbol__);
+  scope_sym(ctx, sym_operator, "__pyc_operator__");
+  scope_sym(ctx, sym_primitive, "__pyc_primitive__");
   exit_scope(ctx);
 }
 
