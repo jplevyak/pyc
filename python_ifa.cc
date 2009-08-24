@@ -54,8 +54,8 @@ static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
-static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___null__ = 0, *sym___done__ = 0, *sym_exit = 0, *sym___pyc_symbol__ = 0;
+static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0, *sym_len = 0;
+static Sym *sym___null__ = 0, *sym___pyc_done__ = 0, *sym_exit = 0, *sym___pyc_symbol__ = 0;
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -345,6 +345,7 @@ static void
 build_builtin_symbols() {
   sym_write = if1_make_symbol(if1, "write");
   sym_writeln = if1_make_symbol(if1, "writeln");
+  sym_len = if1_make_symbol(if1, "len");
   sym___iter__ = if1_make_symbol(if1, "__iter__");
   sym_next = if1_make_symbol(if1, "next");
   sym_append = if1_make_symbol(if1, "append");
@@ -352,7 +353,7 @@ build_builtin_symbols() {
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
-  sym___done__ = if1_make_symbol(if1, "__done__");
+  sym___pyc_done__ = if1_make_symbol(if1, "__pyc_done__");
   sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
   sym_exit = if1_make_symbol(if1, "exit");
   sym_super = if1_make_symbol(if1, "super");
@@ -1559,13 +1560,14 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case For_kind: // expr target, expr iter, stmt* body, stmt* orelse
     {
       PycAST *t = getAST(s->v.For.target, ctx), *i = getAST(s->v.For.iter, ctx);
-      Sym *iter = new_sym(ast), *tmp = new_sym(ast);
+      Sym *iter = new_sym(ast), *tmp = new_sym(ast), *tmp2 = new_sym(ast);
       if1_gen(if1, &ast->code, i->code);
       if1_gen(if1, &ast->code, t->code);
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i->rval, iter)->ast = ast; 
       Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
-      call_method(if1, &cond, ast, iter, sym___done__, tmp, 0);
-      call_method(if1, &body, ast, iter, sym_next, t->sym, 0);
+      call_method(if1, &cond, ast, iter, sym___pyc_done__, tmp, 0);
+      call_method(if1, &body, ast, iter, sym_next, tmp2, 0);
+      if1_move(if1, &body, tmp2, t->sym, ast);
       get_stmts_code(s->v.For.body, &body, ctx);
       get_stmts_code(s->v.For.orelse, &orelse, ctx);
       if1_loop(if1, &ast->code, ast->label[0], ast->label[1], 
@@ -1978,6 +1980,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_object);
   scope_sym(ctx, sym_super);
   scope_sym(ctx, sym___pyc_symbol__);
+  scope_sym(ctx, sym___pyc_done__);
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
   exit_scope(ctx);
@@ -1998,10 +2001,17 @@ return_nil_transfer_function(PNode *pn, EntrySet *es) {
 }
 
 static void
+return_int_transfer_function(PNode *pn, EntrySet *es) {
+  AVar *result = make_AVar(pn->lvals[0], es);
+  update_gen(result, make_abstract_type(sym_int));
+}
+
+static void
 add_primitive_transfer_functions() {
   pdb->fa->register_primitive(sym_write->name, return_nil_transfer_function)->is_visible = 1;
   pdb->fa->register_primitive(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
   pdb->fa->register_primitive(sym_exit->name, return_nil_transfer_function)->is_visible = 1;
+  pdb->fa->register_primitive(sym_len->name, return_int_transfer_function)->is_visible = 1;
 }
 
 /*

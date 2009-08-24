@@ -7,6 +7,7 @@ __done__ "#operator" __c_code__ to __pyc_done__ __pyc_operator__ __pyc_c_code__
 - import explicit relative imports (e.g. one of . .. ..Filters ) 
 - call_method should know if it is global (in main) so as to call new_sym with
 the global flag
+- remove dead function members removed through static binding
 
 Support for C includes and external functions:
 

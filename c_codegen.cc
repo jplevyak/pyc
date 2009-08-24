@@ -26,9 +26,12 @@ c_type(Var *v) {
 
 static inline cchar *
 c_type(Sym *s) {
+  return c_type(s->var);
+#if 0
   if (!s->type->cg_string)
     return "_CG_void";
   return s->type->cg_string;
+#endif
 }
 
 static void
@@ -182,8 +185,8 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       fputs("  ", fp);
       cchar *t = c_type(n->lvals[0]);
       fprintf(fp, "%s = _CG_prim_tuple(%s);\n", n->lvals[0]->cg_string, t);
-      for (int i = 1; i < n->rvals.n; i++)
-        fprintf(fp, "%s->e%d = %s;\n", n->lvals[0]->cg_string, i-1, n->rvals.v[i]->cg_string);
+      for (int i = 2; i < n->rvals.n; i++)
+        fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, i-2, n->rvals.v[i]->cg_string);
       break;
     }
     case P_prim_vector: {
@@ -720,9 +723,11 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
     Vec<Sym *> loopsyms;
     loopsyms.copy(allsyms);
     for (int i = 0; i < loopsyms.n; i++) 
-      if (loopsyms[i] && !loopsyms.v[i]->type_kind) {
+      if (loopsyms[i] && loopsyms.v[i]->type_kind) {
         forv_Sym(s, loopsyms[i]->has) {
           again = allsyms.set_add(s) || again;
+          if (s->var)
+            again = allsyms.set_add(s->var->type) || again;
         }
       }
   }
@@ -769,6 +774,12 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
     else 
       if (s->is_symbol)
         s->cg_string = sym_symbol->cg_string;
+    if (s->type_kind == Type_LUB && s->has.n == 2) {
+      if (s->has[0] == sym_nil_type)
+        s->cg_string = s->has[1]->cg_string;
+      else if (s->has[1] == sym_nil_type)
+        s->cg_string = s->has[0]->cg_string;
+    }
   }
   if (allsyms.n)
     fputs("\n", fp);
@@ -806,11 +817,11 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
         if (s->has.n) {
           fprintf(fp, "struct _CG_s%d {\n", s->id);
           for (int i = 0; i <  s->has.n; i++) {
-            //if (s->has[i]->live) {
+            if (s->has[i]->live) {
               fputs("  ", fp);
               fputs(c_type(s->has[i]), fp);
               fprintf(fp, " e%d;\n", i);
-            //}
+            }
           }
           fprintf(fp, "};\n");
         }
@@ -835,6 +846,10 @@ c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
   forv_Var(v, globals) {
     if (!v->live)
       continue;
+    if (v->type == sym_nil_type) {
+      v->cg_string = "NULL";
+      continue;
+    }
     if (v->sym->imm.const_kind != IF1_NUM_KIND_NONE && v->sym->imm.const_kind != IF1_CONST_KIND_STRING) {
       char s[100];
       sprint_imm(s, v->sym->imm);

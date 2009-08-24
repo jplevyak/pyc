@@ -1,7 +1,7 @@
 class object:
   def __null__(self):
     return False
-  def __done__(self):
+  def __pyc_done__(self):
     return False
 
 class __None_type__:
@@ -171,16 +171,15 @@ class __list_iter__:
   position = 0
   def __init__(self, l):
     self.thelist = l
-  def __done__(self):
-    return self.position >= thelist.len 
+  def __pyc_done__(self):
+    return self.position >= len(self.thelist)
   def next(self):
     self.position += 1
-    return thelist.__getitem__(self.thelist, position-1)
+    return self.thelist.__getitem__(self.thelist, self.position-1)
 
 class list:
-  len = 0
   def __len__(self):
-    return 0
+    return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __setitem__(self, key, value):
@@ -214,12 +213,12 @@ class __tuple_iter__:
   thetuple = None
   position = 0
   def __init__(self, t):
-    self.thetuple = l
-  def __done__(self):
-    return self.position >= thetuple.len 
+    self.thetuple = t
+  def __pyc_done__(self):
+    return self.position >= len(self.thetuple)
   def next(self):
     self.position += 1
-    return thetuple.__getitem__(self.thetuple, position-1)
+    return self.thetuple.__getitem__(self.position-1)
 
 class tuple:
   def __getitem__(self, key):
@@ -228,6 +227,8 @@ class tuple:
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
   def __iter__(self):
     return __tuple_iter__(self)
+  def __len__(self):
+    return __pyc_primitive__(__pyc_symbol__("len"), self)
 
 def abs(x):
   if (x < 0):
@@ -287,3 +288,6 @@ class xrange:
     x = self.i
     self.i += 1
     return x
+
+def len(x):
+  return x.__len__()
