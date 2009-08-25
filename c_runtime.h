@@ -104,6 +104,18 @@ static inline char * _CG_strcat(char *a, char *b) {
   return x;
 }
 
+static inline int _CG_float_printf(double d) {
+  char s[100], *p = s;
+  snprintf(s, 100, "%.17g", d);
+  while (*p) if (*p < '0' || *p > '9') break; else p++;
+  if (!*p) {
+    *p++ = '.';
+    *p++ = '0';
+    *p++ = 0;
+  }
+  fputs(s, stdout);
+}
+
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_tuple(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))

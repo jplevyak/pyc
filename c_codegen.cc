@@ -110,7 +110,7 @@ cg_writeln(FILE *fp, Vec<Var *> &vars, int ln) {
     else if (vars[i]->type == sym_float32 ||
              vars[i]->type == sym_float64 ||
              vars[i]->type == sym_float128)
-      fprintf(fp, "  printf(\"%%g\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "  _CG_float_printf(%s);\n", vars[i]->cg_string);
     else if (vars[i]->type == sym_string) {
       if (strcmp("_CG_String(\"\")", vars[i]->cg_string))
         fprintf(fp, "  printf(\"%%s\", %s);\n", vars[i]->cg_string);
@@ -287,28 +287,41 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       fputs("  ", fp);
       assert(n->lvals.n == 1);
       int o = (n->rvals.v[0]->sym == sym_primitive) ? 1 : 0;
-      Sym *t = n->rvals[1+o]->type, *e = t->element->type;
-      e = e ? e : sym_void_type;
-      fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-      fprintf(fp, "((list<%s>*)(%s))->__getitem__(", e->cg_string, n->rvals[1+o]->cg_string);
-      for (int i = 2+o; i < n->rvals.n; i++) {
-        if (i != 2+o) fputs(", ", fp);
-        fprintf(fp, "%s-%d", n->rvals[i]->cg_string, fa->tuple_index_base);
+      Sym *t = n->rvals[1+o]->type;
+      if (t != sym_tuple || !n->rvals[2+o]->sym->constant) {
+        Sym *e = n->lvals[0]->type;
+        fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+        fprintf(fp, "((%s", e->cg_string);
+        for (int i = 2+o; i < n->rvals.n; i++) fprintf(fp, "*");
+
+        fprintf(fp, ")(%s))", n->rvals[1+o]->cg_string);
+        for (int i = 2+o; i < n->rvals.n; i++) {
+          if (i != 2+o) fputs(", ", fp);
+          fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+        }
+        fprintf(fp, ";\n");
+      } else {
+        fprintf(fp, "%s = ((%s)%s)->e%s;\n", n->lvals[0]->cg_string, 
+                t->cg_string, n->rvals[1+o]->cg_string, n->rvals[2+o]->sym->constant);
       }
-      fprintf(fp, ");\n");
       break;
     }
     case P_prim_set_index_object: {
       fputs("  ", fp);
       int o = (n->rvals.v[0]->sym == sym_primitive) ? 1 : 0;
-      fprintf(fp, "((%s", n->lvals[0]->type->cg_string);
-      for (int i = 2+o; i < n->rvals.n-1; i++) fprintf(fp, "*");
-      fprintf(fp, ")(%s))", n->rvals[1]->cg_string);
-      for (int i = 2+o; i < n->rvals.n-1; i++) 
-        fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
-      fprintf(fp, " = ");
-      fprintf(fp, "%s", n->rvals[n->rvals.n-1]->cg_string);
-      fprintf(fp, " /* prim_set_index */ ;\n");
+      Sym *t = n->rvals[1+o]->type;
+      if (t != sym_tuple || !n->rvals[2+o]->sym->constant) {
+        fprintf(fp, "((%s", n->lvals[0]->type->cg_string);
+        for (int i = 2+o; i < n->rvals.n-1; i++) fprintf(fp, "*");
+        fprintf(fp, ")(%s))", n->rvals[1]->cg_string);
+        for (int i = 2+o; i < n->rvals.n-1; i++) 
+          fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+        fprintf(fp, " = %s;\n", n->rvals[n->rvals.n-1]->cg_string);
+      } else {
+        fprintf(fp, "((%s)%s)->e%s = %s;\n",
+                t->cg_string, n->rvals[1+o]->cg_string, n->rvals[2+o]->sym->constant,
+                n->rvals[n->rvals.n-1]->cg_string);
+      }
       break;
     }
     case P_prim_new: {
@@ -363,19 +376,23 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       }
       break;
     }
+    case P_prim_tuple_len: {
+      assert(!"tuple_len must be constant");
+      break;
+    }
     case P_prim_list: {
       fputs("  ", fp);
       assert(n->lvals.n == 1);
       Sym *t = n->lvals.v[0]->type, *e = t->element->type;
       e = e ? e : sym_void_type;
-      if (n->lvals[0]->cg_string)
-        fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-      fprintf(fp, "(void*)new list<%s>(%d", e->cg_string, n->rvals.n-2);
+      assert(n->lvals[0]->cg_string);
+      fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+      fprintf(fp, "(void*)new(%s)[%d];\n", e->cg_string, n->rvals.n-2);
       for (int i = 2; i < n->rvals.n; i++) {
-        fprintf(fp, ", ");
+        fprintf(fp, "  (((%s)*)(%s))[%d] = ", e->cg_string, n->lvals[0]->cg_string, i-2);
         fputs(n->rvals[i]->cg_string, fp);
+        fprintf(fp, ";\n");
       }
-      fputs(");\n", fp);
       break;
     }
   }

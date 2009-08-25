@@ -1,7 +1,7 @@
 class object:
   def __null__(self):
     return False
-  def __pyc_done__(self):
+  def __pyc_more__(self):
     return False
 
 class __None_type__:
@@ -171,8 +171,8 @@ class __list_iter__:
   position = 0
   def __init__(self, l):
     self.thelist = l
-  def __pyc_done__(self):
-    return self.position >= len(self.thelist)
+  def __pyc_more__(self):
+    return self.position < len(self.thelist)
   def next(self):
     self.position += 1
     return self.thelist.__getitem__(self.thelist, self.position-1)
@@ -214,21 +214,21 @@ class __tuple_iter__:
   position = 0
   def __init__(self, t):
     self.thetuple = t
-  def __pyc_done__(self):
-    return self.position >= len(self.thetuple)
+  def __pyc_more__(self):
+    return self.position < len(self.thetuple)
   def next(self):
     self.position += 1
     return self.thetuple.__getitem__(self.position-1)
 
 class tuple:
   def __getitem__(self, key):
-    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
+    return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
   def __setitem__(self, key, value):
-    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, __pyc_clone_constants__(key), value)
   def __iter__(self):
     return __tuple_iter__(self)
   def __len__(self):
-    return __pyc_primitive__(__pyc_symbol__("len"), self)
+    return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("tuple_len"), self))
 
 def abs(x):
   if (x < 0):
