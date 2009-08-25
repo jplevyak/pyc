@@ -288,7 +288,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       assert(n->lvals.n == 1);
       int o = (n->rvals.v[0]->sym == sym_primitive) ? 1 : 0;
       Sym *t = n->rvals[1+o]->type;
-      if (t != sym_tuple || !n->rvals[2+o]->sym->constant) {
+      if (t->implementors.v[0] != sym_tuple || !n->rvals[2+o]->sym->constant) {
         Sym *e = n->lvals[0]->type;
         fprintf(fp, "%s = ", n->lvals[0]->cg_string);
         fprintf(fp, "((%s", e->cg_string);
@@ -310,7 +310,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       fputs("  ", fp);
       int o = (n->rvals.v[0]->sym == sym_primitive) ? 1 : 0;
       Sym *t = n->rvals[1+o]->type;
-      if (t != sym_tuple || !n->rvals[2+o]->sym->constant) {
+      if (t->implementors.v[0] != sym_tuple || !n->rvals[2+o]->sym->constant) {
         fprintf(fp, "((%s", n->lvals[0]->type->cg_string);
         for (int i = 2+o; i < n->rvals.n-1; i++) fprintf(fp, "*");
         fprintf(fp, ")(%s))", n->rvals[1]->cg_string);
