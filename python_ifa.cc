@@ -395,7 +395,7 @@ build_builtin_symbols() {
   builtin_functions.set_add(sym___pyc_clone_constants__);
 
   sym_list->element = new_sym();
-  sym_tuple->element = new_sym();
+  sym_vector->element = new_sym();
 }
 
 void

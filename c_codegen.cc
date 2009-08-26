@@ -182,6 +182,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       break;
     }
     case P_prim_tuple: {
+    Ltuple:
       fputs("  ", fp);
       cchar *t = c_type(n->lvals[0]);
       fprintf(fp, "%s = _CG_prim_tuple(%s);\n", n->lvals[0]->cg_string, t);
@@ -189,15 +190,20 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, i-2, n->rvals.v[i]->cg_string);
       break;
     }
-    case P_prim_vector: {
+    case P_prim_vector:
+    case P_prim_list: {
+      Sym *t = n->lvals.v[0]->type, *e = t->element->type;
+      if (t->type_kind == Type_RECORD) goto Ltuple;
       fputs("  ", fp);
-      if (n->rvals.n > 2) {
-        int rank = 0;
-        n->rvals[1]->sym->imm_int(&rank);
-        fprintf(fp, "%s = (void*)%s /* prim_vector */ ;\n", n->lvals[0]->cg_string,
-                n->rvals[2]->cg_string);
-      } else {
-        fprintf(fp, "%s = (void*)0; /* prim_vector */ ;\n", n->lvals[0]->cg_string);
+      assert(n->lvals.n == 1);
+      e = e ? e : sym_void_type;
+      assert(n->lvals[0]->cg_string);
+      fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+      fprintf(fp, "(void*)new(%s)[%d];\n", e->cg_string, n->rvals.n-2);
+      for (int i = 2; i < n->rvals.n; i++) {
+        fprintf(fp, "  (((%s)*)(%s))[%d] = ", e->cg_string, n->lvals[0]->cg_string, i-2);
+        fputs(n->rvals[i]->cg_string, fp);
+        fprintf(fp, ";\n");
       }
       break;
     }
@@ -288,7 +294,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       assert(n->lvals.n == 1);
       int o = (n->rvals.v[0]->sym == sym_primitive) ? 1 : 0;
       Sym *t = n->rvals[1+o]->type;
-      if (t->implementors.v[0] != sym_tuple || !n->rvals[2+o]->sym->constant) {
+      if (t->type_kind != Type_RECORD || !n->rvals[2+o]->sym->constant) {
         Sym *e = n->lvals[0]->type;
         fprintf(fp, "%s = ", n->lvals[0]->cg_string);
         fprintf(fp, "((%s", e->cg_string);
@@ -310,12 +316,16 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       fputs("  ", fp);
       int o = (n->rvals.v[0]->sym == sym_primitive) ? 1 : 0;
       Sym *t = n->rvals[1+o]->type;
-      if (t->implementors.v[0] != sym_tuple || !n->rvals[2+o]->sym->constant) {
+      if (t->type_kind != Type_RECORD || !n->rvals[2+o]->sym->constant) {
         fprintf(fp, "((%s", n->lvals[0]->type->cg_string);
         for (int i = 2+o; i < n->rvals.n-1; i++) fprintf(fp, "*");
         fprintf(fp, ")(%s))", n->rvals[1]->cg_string);
-        for (int i = 2+o; i < n->rvals.n-1; i++) 
-          fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+        for (int i = 2+o; i < n->rvals.n-1; i++) {
+          if (!fa->tuple_index_base)
+            fprintf(fp, "[%s]", n->rvals[i]->cg_string);
+          else
+            fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+        }
         fprintf(fp, " = %s;\n", n->rvals[n->rvals.n-1]->cg_string);
       } else {
         fprintf(fp, "((%s)%s)->e%s = %s;\n",
@@ -378,21 +388,6 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
     }
     case P_prim_tuple_len: {
       assert(!"tuple_len must be constant");
-      break;
-    }
-    case P_prim_list: {
-      fputs("  ", fp);
-      assert(n->lvals.n == 1);
-      Sym *t = n->lvals.v[0]->type, *e = t->element->type;
-      e = e ? e : sym_void_type;
-      assert(n->lvals[0]->cg_string);
-      fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-      fprintf(fp, "(void*)new(%s)[%d];\n", e->cg_string, n->rvals.n-2);
-      for (int i = 2; i < n->rvals.n; i++) {
-        fprintf(fp, "  (((%s)*)(%s))[%d] = ", e->cg_string, n->lvals[0]->cg_string, i-2);
-        fputs(n->rvals[i]->cg_string, fp);
-        fprintf(fp, ";\n");
-      }
       break;
     }
   }
