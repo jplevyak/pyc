@@ -191,7 +191,7 @@ class list:
   def __contains__(self, item):
     pass
   def __add__(self, l):
-    pass
+    return __pyc_primitive__(__pyc_symbol__("merge"), self, l)
   def __radd__(self, l):
     pass
   def __iadd__(self, l):
@@ -203,7 +203,7 @@ class list:
   def __imul__(self, l):
     pass
   def append(self, l):
-    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, 0, l)
+    return __pyc_primitive__(__pyc_symbol__("merge"), self, l)
   def index(self, index, start=0, end=0):
     pass
   def count(self, l):
@@ -228,7 +228,7 @@ class tuple:
   def __iter__(self):
     return __tuple_iter__(self)
   def __len__(self):
-    return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("tuple_len"), self))
+    return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("len"), self))
 
 def abs(x):
   if (x < 0):

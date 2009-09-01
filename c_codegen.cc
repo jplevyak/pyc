@@ -386,7 +386,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       }
       break;
     }
-    case P_prim_tuple_len: {
+    case P_prim_len: {
       assert(!"tuple_len must be constant");
       break;
     }
