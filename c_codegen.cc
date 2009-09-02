@@ -378,9 +378,13 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         if (!n->lvals.n)
           fprintf(fp, "  ");
         fprintf(fp, "_CG_%s_%s(", n->prim->name, name);
+        bool first = true;
         for (int i = 2; i < n->rvals.n; i++) {
-          if (i > 2) fprintf(fp, ", ");
-          fputs(n->rvals[i]->cg_string, fp);
+          if (n->rvals[i]->cg_string) {
+            if (!first) fprintf(fp, ", ");
+            fputs(n->rvals[i]->cg_string, fp);
+            first = false;
+          }
         }
         fputs(");\n", fp);
       }
@@ -646,9 +650,9 @@ write_c(FILE *fp, FA *fa, Fun *f, Vec<Var *> *globals = 0) {
   Vec<Var *> vars, defs;
   f->collect_Vars(vars, 0, FUN_COLLECT_VARS_NO_TVALS);
   forv_Var(v, vars)
-    if (v->sym->is_local)
+    if (v->sym->is_local || v->sym->is_fake)
       v->cg_string = 0;
-  forv_Var(v, vars) if (!v->is_internal) {
+  forv_Var(v, vars) if (!v->is_internal && !v->sym->is_fake) {
     if (!v->cg_string && v->live && !v->sym->is_symbol && v->type != sym_continuation) {
       char s[100];
       sprintf(s, "t%d", index++);

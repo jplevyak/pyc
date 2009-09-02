@@ -57,6 +57,7 @@ static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
 static Sym *sym___null__ = 0, *sym_exit = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
+static Sym *sym___pyc_c_code__ = 0;
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -354,6 +355,7 @@ build_builtin_symbols() {
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
   sym___pyc_more__ = if1_make_symbol(if1, "__pyc_more__");
+  sym___pyc_c_code__ = if1_make_symbol(if1, "__pyc_c_code__");
   sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
   sym___pyc_clone_constants__ = if1_make_symbol(if1, "__pyc_clone_constants__");
   sym_exit = if1_make_symbol(if1, "exit");
@@ -393,6 +395,7 @@ build_builtin_symbols() {
   builtin_functions.set_add(sym_super);
   builtin_functions.set_add(sym___pyc_symbol__);
   builtin_functions.set_add(sym___pyc_clone_constants__);
+  builtin_functions.set_add(sym___pyc_c_code__);
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
@@ -1617,6 +1620,20 @@ build_if1(stmt_ty s, PycContext &ctx) {
   return 0;
 }
 
+static Code *
+splice_primitive(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
+  Code *send = if1_send1(if1, &ast->code, ast);
+  if1_add_send_arg(if1, send, sym_primitive);
+  if1_add_send_arg(if1, send, fun->rval);
+  for (int i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
+    expr_ty arg = (expr_ty)asdl_seq_GET(e->v.Call.args, i);
+    if1_add_send_arg(if1, send, getAST(arg, ctx)->rval);
+  }
+  ast->rval = new_sym(ast);
+  if1_add_send_result(if1, send, ast->rval);
+  return send;
+}
+
 static int
 build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
   Sym *f = fun->sym;
@@ -1671,11 +1688,13 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       Vec<Sym *> as;
       get_syms_args(ast, ((PycAST*)ctx.fun()->ast)->xstmt->v.FunctionDef.args, as, ctx);
       int n = asdl_seq_LEN(e->v.Call.args);
-     if (n != 1)
-       fail("bad number of arguments to builtin function %s", f->name);
+      if (n != 1)
+        fail("bad number of arguments to builtin function %s", f->name);
       PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
       ast->rval = a0->rval;
       ast->rval->clone_for_constants = 1;
+    } else if (f == sym___pyc_c_code__) {
+      splice_primitive(fun, e, ast, ctx)->rvals.v[2]->is_fake = 1;
     } else
       fail("unimplemented builtin '%s'", fun->sym->name);
     return 1;
@@ -1981,6 +2000,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym___pyc_symbol__);
   scope_sym(ctx, sym___pyc_clone_constants__);
   scope_sym(ctx, sym___pyc_more__);
+  scope_sym(ctx, sym___pyc_c_code__);
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
   exit_scope(ctx);
@@ -1995,10 +2015,18 @@ static void build_init(Code *code) {
 }
 
 static void
+c_code_transfer_function(PNode *pn, EntrySet *es) {
+  AVar *a = make_AVar(pn->rvals[2], es);
+  AVar *result = make_AVar(pn->lvals[0], es);
+  flow_vars(a, result);
+}
+
+static void
 add_primitive_transfer_functions() {
   pdb->fa->register_primitive(sym_write->name, return_nil_transfer_function)->is_visible = 1;
   pdb->fa->register_primitive(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
   pdb->fa->register_primitive(sym_exit->name, return_nil_transfer_function)->is_visible = 1;
+  pdb->fa->register_primitive(sym___pyc_c_code__->name, c_code_transfer_function)->is_visible = 1;
 }
 
 /*
