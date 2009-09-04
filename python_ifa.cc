@@ -55,7 +55,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___null__ = 0, *sym_exit = 0;
+static Sym *sym___null__ = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
 static Sym *sym___pyc_c_code__ = 0;
 static cchar *cannonical_self = 0;
@@ -358,7 +358,6 @@ build_builtin_symbols() {
   sym___pyc_c_code__ = if1_make_symbol(if1, "__pyc_c_code__");
   sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
   sym___pyc_clone_constants__ = if1_make_symbol(if1, "__pyc_clone_constants__");
-  sym_exit = if1_make_symbol(if1, "exit");
   sym_super = if1_make_symbol(if1, "super");
   cannonical_self = cannonicalize_string("self");
 
@@ -2022,11 +2021,23 @@ c_code_transfer_function(PNode *pn, EntrySet *es) {
 }
 
 static void
+c_code_codegen(FILE *fp, PNode *n, Fun *f) {
+  for (int i = 2; i < n->rvals.n; i++) {
+    if (n->rvals[i]->cg_string) {
+      if (n->rvals[i]->sym->constant && n->rvals[i]->type == sym_string)
+        fputs(n->rvals[i]->sym->constant, fp);
+      else
+        fputs(n->rvals[i]->cg_string, fp);
+    }
+  }
+  fputs(";\n", fp);
+}
+
+static void
 add_primitive_transfer_functions() {
-  pdb->fa->register_primitive(sym_write->name, return_nil_transfer_function)->is_visible = 1;
-  pdb->fa->register_primitive(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
-  pdb->fa->register_primitive(sym_exit->name, return_nil_transfer_function)->is_visible = 1;
-  pdb->fa->register_primitive(sym___pyc_c_code__->name, c_code_transfer_function)->is_visible = 1;
+  prim_reg(sym_write->name, return_nil_transfer_function)->is_visible = 1;
+  prim_reg(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
+  prim_reg(sym___pyc_c_code__->name, c_code_transfer_function, c_code_codegen)->is_visible = 1;
 }
 
 /*

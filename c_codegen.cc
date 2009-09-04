@@ -366,7 +366,10 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         assert(n->lvals.n == 1);
         if (n->lvals[0]->cg_string)
           fprintf(fp, "  %s = ", n->lvals[0]->cg_string);
-      }
+         else
+           fprintf(fp, "  ");
+      } else
+        fprintf(fp, "  ");
       cchar *name = n->rvals[1]->sym->name;
       if (!name) 
         name = n->rvals[1]->sym->constant;
@@ -375,18 +378,21 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       else if (!strcmp("writeln", name))
         cg_writeln(fp, n->rvals, 1);
       else {
-        if (!n->lvals.n)
-          fprintf(fp, "  ");
-        fprintf(fp, "_CG_%s_%s(", n->prim->name, name);
-        bool first = true;
-        for (int i = 2; i < n->rvals.n; i++) {
-          if (n->rvals[i]->cg_string) {
-            if (!first) fprintf(fp, ", ");
-            fputs(n->rvals[i]->cg_string, fp);
-            first = false;
+        RegisteredPrim *p = prim_get(name);
+        if (p && p->cgfn)
+          p->cgfn(fp, n, f);
+        else {
+          fprintf(fp, "_CG_%s_%s(", n->prim->name, name);
+          bool first = true;
+          for (int i = 2; i < n->rvals.n; i++) {
+            if (n->rvals[i]->cg_string) {
+              if (!first) fprintf(fp, ", ");
+              fputs(n->rvals[i]->cg_string, fp);
+              first = false;
+            }
           }
+          fputs(");\n", fp);
         }
-        fputs(");\n", fp);
       }
       break;
     }

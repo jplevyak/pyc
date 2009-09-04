@@ -191,7 +191,7 @@ class list:
   def __contains__(self, item):
     pass
   def __add__(self, l):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), self, l)
+    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), "__CG_list_add(", self, ", ",l,")")
   def __radd__(self, l):
     pass
   def __iadd__(self, l):
@@ -265,7 +265,7 @@ def bin(x): # return integer as string in binary
     return s
 
 def exit(status = 0):
-    __pyc_primitive__(__pyc_symbol__("exit"), status)
+    __pyc_c_code__(int, "::exit(", status, ")")
 
 def range(start, end):
   result = []
