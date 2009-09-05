@@ -214,7 +214,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       assert(symbols.n == 1);
       cchar *symbol = symbols[0]->name;
       Sym *obj = n->rvals[1]->type;
-      if (obj->type_kind == Type_LUB)
+      if (obj->type_kind == Type_SUM)
         obj = obj->has[0];
       if (n->lvals[0]->type->type_kind == Type_FUN && n->creates) { // creates a closure
         fprintf(fp, "  %s = _CG_prim_closure(%s);\n", n->lvals[0]->cg_string, t);
@@ -248,7 +248,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         symbol = symbols[0]->name;
       }
       Sym *obj = n->rvals[1]->type;
-      if (obj->type_kind == Type_LUB)
+      if (obj->type_kind == Type_SUM)
         obj = obj->has[0];
       for (int i = 0; i < obj->has.n; i++) {
         if (symbol == obj->has[i]->name) {
@@ -796,7 +796,7 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
     else 
       if (s->is_symbol)
         s->cg_string = sym_symbol->cg_string;
-    if (s->type_kind == Type_LUB && s->has.n == 2) {
+    if (s->type_kind == Type_SUM && s->has.n == 2) {
       if (s->has[0] == sym_nil_type)
         s->cg_string = s->has[1]->cg_string;
       else if (s->has[1] == sym_nil_type)
