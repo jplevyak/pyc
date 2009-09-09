@@ -55,7 +55,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___null__ = 0;
+static Sym *sym___null__ = 0, *sym___str__ = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
 static Sym *sym___pyc_c_code__ = 0;
 static cchar *cannonical_self = 0;
@@ -339,6 +339,8 @@ new_base_instance(Sym *c, PycAST *ast) {
     return sym_empty_list;
   if (c == sym_tuple)
     return sym_empty_tuple;
+  if (c == sym_any)
+    return NULL;
   fail("no instance for type '%s' found", c->name);
   return 0;
 }
@@ -354,6 +356,7 @@ build_builtin_symbols() {
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
+  sym___str__ = if1_make_symbol(if1, "__str__");
   sym___pyc_more__ = if1_make_symbol(if1, "__pyc_more__");
   sym___pyc_c_code__ = if1_make_symbol(if1, "__pyc_c_code__");
   sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
@@ -376,10 +379,11 @@ build_builtin_symbols() {
   // override default names
   sym_string->name = cannonicalize_string("str");
   sym_nil->name = cannonicalize_string("None");
-  sym_nil_type->name = cannonicalize_string("__None_type__");
-  sym_unknown->name = cannonicalize_string("Unimplemented");
+  sym_nil_type->name = cannonicalize_string("__pyc_None_type__");
+  sym_unknown->name = cannonicalize_string("NotImplemented");
   sym_true->name = cannonicalize_string("True");
   sym_false->name = cannonicalize_string("False");
+  sym_any->name = cannonicalize_string("__pyc_any_type__");
 
   // new types and objects
   new_builtin_primitive_type(sym_unicode, "unicode");
@@ -1544,10 +1548,14 @@ build_if1(stmt_ty s, PycContext &ctx) {
       for (int i = 0; i < asdl_seq_LEN(s->v.Print.values); i++) {
         PycAST *a = getAST((expr_ty)asdl_seq_GET(s->v.Print.values, i), ctx);
         if1_gen(if1, &ast->code, a->code);
-        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, a->rval, new_sym(ast))->ast = ast;
+        if (i)
+          if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, make_string(" "), new_sym(ast))->ast = ast; 
+        Sym *t = new_sym(ast);
+        call_method(if1, &ast->code, ast, a->rval, sym___str__, t, 0);
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, t, new_sym(ast))->ast = ast;
       }
       if (s->v.Print.nl)
-        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_writeln, make_string(""), new_sym(ast))->ast = ast; 
+        if1_send(if1, &ast->code, 2, 1, sym_primitive, sym_writeln, new_sym(ast))->ast = ast; 
       break;
     case For_kind: // expr target, expr iter, stmt* body, stmt* orelse
     {
@@ -1992,6 +2000,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_false);
   scope_sym(ctx, sym_nil);
   scope_sym(ctx, sym_nil_type);
+  scope_sym(ctx, sym_any);
   scope_sym(ctx, sym_unknown);
   scope_sym(ctx, sym_ellipsis);
   scope_sym(ctx, sym_object);
@@ -2038,6 +2047,7 @@ add_primitive_transfer_functions() {
   prim_reg(sym_write->name, return_nil_transfer_function)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
   prim_reg(sym___pyc_c_code__->name, c_code_transfer_function, c_code_codegen)->is_visible = 1;
+  prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
 }
 
 /*

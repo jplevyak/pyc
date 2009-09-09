@@ -1,14 +1,22 @@
+class __pyc_any_type__:
+  def __str__(self):
+    return "<instance>"
+
 class object:
   def __null__(self):
     return False
   def __pyc_more__(self):
     return False
+  def __str__(self):
+    return "<object>"
 
-class __None_type__:
+class __pyc_None_type__:
   def __nonzero__(self):
     return False
   def __null__(self):
     return True
+  def __str__(self):
+    return "None"
 
 class basestring:
   pass
@@ -18,6 +26,8 @@ class str(basestring):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __iadd__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
+  def __str__(self):
+    return self
 
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
@@ -107,6 +117,8 @@ class int:
      return self != 0
   def __null__(self):
      return False
+  def __str__(self):
+    return __pyc_primitive__(__pyc_symbol__("to_string"), self)
 
 class float:
   def __add__(self, x):
@@ -165,6 +177,8 @@ class float:
     return self != 0.0
   def __null__(self):
     return False
+  def __str__(self):
+    return __pyc_primitive__(__pyc_symbol__("to_string"), self)
 
 class __list_iter__:
   thelist = None

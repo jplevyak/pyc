@@ -1,38 +1,14 @@
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
 
-#define USE_GC
-
-#ifdef LEAK_DETECT
-#define GC_DEBUG
-#include "gc.h"
-#define MALLOC(n) GC_MALLOC(n)
-#define CALLOC(m,n) GC_MALLOC((m)*(n))
-#define FREE(p) GC_FREE(p)
-#define REALLOC(p,n) GC_REALLOC((p),(n))
-#define CHECK_LEAKS() GC_gcollect()
-#define MEM_INIT() GC_INIT()
-#else
-#ifdef USE_GC
 #include "gc.h"
 #define MALLOC GC_MALLOC
 #define REALLOC GC_REALLOC
 #define FREE(_x)
 #define MEM_INIT() GC_INIT()
-#else
-#include <stdlib.h>
-#define MALLOC malloc
-#define REALLOC realloc
-#define FREE free
-#define MEM_INIT()
-#endif
-#endif
-
-#define __PYC__
-#include "lib/builtin.hpp"
-using namespace __shedskin__;
 
 typedef char int8;
 typedef unsigned char uint8;
@@ -104,16 +80,33 @@ static inline char * _CG_strcat(char *a, char *b) {
   return x;
 }
 
-static inline int _CG_float_printf(double d) {
+static inline char *_CG_prim_primitive_to_string(double d) {
   char s[100], *p = s;
   snprintf(s, 100, "%.17g", d);
   while (*p) if (*p < '0' || *p > '9') break; else p++;
   if (!*p) {
     *p++ = '.';
     *p++ = '0';
-    *p++ = 0;
-  }
+  } else 
+    while (*p) p++;
+  char *r = (char*)MALLOC(p-s);
+  memcpy(r, s, p-s);
+  return r;
+}
+
+static inline char *_CG_prim_primitive_to_string(int i) {
+  char s[100];
+  snprintf(s, 100, "%d", i);
+  int l = strlen(s);
+  char *r = (char*)MALLOC(l+1);
+  memcpy(r, s, l+1);
+  return r;
+}
+
+static inline int _CG_float_printf(double d, bool ln) {
+  char *s = _CG_prim_primitive_to_string(d);
   fputs(s, stdout);
+  if (ln) fputs("\n", stdout);
 }
 
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
@@ -153,4 +146,3 @@ static inline int _CG_float_printf(double d) {
   _r->e0 = _f;                                  \
   _r->e1 = _a;                                  \
 } while (0)
-#define _CG_prim_primitive_exit(_status) ::exit(_status)

@@ -94,31 +94,33 @@ write_c_apply_arg(FILE *fp, cchar *base, int n, int i) {
 static int
 cg_writeln(FILE *fp, Vec<Var *> &vars, int ln) {
   for (int i = 2; i < vars.n; i++) {
+    bool doln = i == vars.n -1 && ln;
+    cchar *sln = doln ? "\\n" : "";
     if (vars[i]->type == sym_int8 ||
         vars[i]->type == sym_int16 ||
         vars[i]->type == sym_int32)
-      fprintf(fp, "  printf(\"%%d\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%d%s\", %s);\n", sln, vars[i]->cg_string);
     else if (vars[i]->type == sym_bool ||
              vars[i]->type == sym_uint8 ||
              vars[i]->type == sym_uint16 ||
              vars[i]->type == sym_uint32)
-      fprintf(fp, "  printf(\"%%u\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%u%s\", %s);\n", sln, vars[i]->cg_string);
     else if (vars[i]->type == sym_int64)
-      fprintf(fp, "  printf(\"%%lld\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%lld%s\", %s);\n", sln, vars[i]->cg_string);
     else if (vars[i]->type == sym_uint64)
-      fprintf(fp, "  printf(\"%%llu\", %s);\n", vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%llu%s\", %s);\n", sln, vars[i]->cg_string);
     else if (vars[i]->type == sym_float32 ||
              vars[i]->type == sym_float64 ||
              vars[i]->type == sym_float128)
-      fprintf(fp, "  _CG_float_printf(%s);\n", vars[i]->cg_string);
+      fprintf(fp, "_CG_float_printf(%s,%d);\n", vars[i]->cg_string, doln);
     else if (vars[i]->type == sym_string) {
-      if (strcmp("_CG_String(\"\")", vars[i]->cg_string))
-        fprintf(fp, "  printf(\"%%s\", %s);\n", vars[i]->cg_string);
+      if (ln || strcmp("_CG_String(\"\")", vars[i]->cg_string))
+        fprintf(fp, "printf(\"%%s%s\", %s);\n", sln, vars[i]->cg_string);
     } else
-      fprintf(fp, "  printf(\"<unsupported type>\");\n");
+      fprintf(fp, "printf(\"<unsupported type>%s\");\n", sln);
   }
-  if (ln)
-    fputs("  printf(\"\\n\");\n", fp);
+  if (vars.n < 3 && ln)
+    fputs("printf(\"\\n\");\n", fp);
   return 0;
 }
 
@@ -911,6 +913,7 @@ c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
     write_c(fp, fa, f);
   write_c(fp, fa, init, &globals);
   fprintf(fp, "\nint main(int argc, char *argv[]) { (void)argc; (void) argv;\n"
+          "  MEM_INIT();\n"
           "  %s();\n"
           "  return 0;\n"
           "}\n", init->cg_string);
