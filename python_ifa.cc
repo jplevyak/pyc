@@ -1682,8 +1682,6 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
         }
       }
     } else if (f == sym___pyc_symbol__) {
-      Vec<Sym *> as;
-      get_syms_args(ast, ((PycAST*)ctx.fun()->ast)->xstmt->v.FunctionDef.args, as, ctx);
       int n = asdl_seq_LEN(e->v.Call.args);
      if (n != 1)
        fail("bad number of arguments to builtin function %s", f->name);
