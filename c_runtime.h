@@ -109,6 +109,8 @@ static inline int _CG_float_printf(double d, bool ln) {
   if (ln) fputs("\n", stdout);
 }
 
+
+
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_tuple(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))

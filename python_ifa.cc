@@ -369,12 +369,11 @@ build_builtin_symbols() {
   new_builtin_global_variable(sym___main__, "__main__");
 
   // override default sizes
-  sym_int->type_kind = Type_ALIAS;
   sym_int->alias = sym_int32;
-  sym_float->type_kind = Type_ALIAS;
   sym_float->alias = sym_float64;
-  sym_complex->type_kind = Type_ALIAS;
   sym_complex->alias = sym_complex64;
+  sym_size->alias = sym_int32;
+
 
   // override default names
   sym_string->name = cannonicalize_string("str");
@@ -895,7 +894,7 @@ static Sym *new_fun(PycAST *ast, Sym *fun = 0) {
 }
 
 static Sym *
-def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycContext &ctx, int constructor = 0) {
+def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycContext &ctx) {
   fn->in = ctx.scope_stack.last()->in;
   new_fun(ast, fn);
   enter_scope(s, ast, ctx);
@@ -994,8 +993,8 @@ build_syms(stmt_ty s, PycContext &ctx) {
         ast->sym->self = new_global(ast); // prototype
       else
         ast->sym->self = new_base_instance(ast->sym, ast);
-      Sym *fn = new_sym(ast, "___init___", 1);  // builtin construtor
-      ast->rval = def_fun(s, ast, fn, ctx, 1);
+      Sym *fn = new_sym(ast, "___init___", 1);  // builtin constructor
+      ast->rval = def_fun(s, ast, fn, ctx);
       ast->rval->self = new_sym(ast);
       ast->rval->self->must_implement_and_specialize(ast->sym);
       ast->rval->self->in = fn;
@@ -1277,6 +1276,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     Vec<Sym *> as;
     as.add(new_sym(ast, "__new__"));
     as[0]->must_implement_and_specialize(ast->sym->meta_type);
+    fn->name = as[0]->name;
     for (int i = 2; i < init_sym->has.n; i++)
       as.add(new_sym(ast));
     body = 0;

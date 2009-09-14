@@ -189,7 +189,7 @@ class __list_iter__:
     return self.position < len(self.thelist)
   def next(self):
     self.position += 1
-    return self.thelist.__getitem__(self.thelist, self.position-1)
+    return self.thelist.__getitem__(self.position-1)
 
 class list:
   def __len__(self):
@@ -222,6 +222,11 @@ class list:
     pass
   def count(self, l):
     pass
+  def __str__(self):
+    __pyc_primitive__(__pyc_symbol__("write"), "[")
+    for k in self:
+      __pyc_primitive__(__pyc_symbol__("write"), k.__str__())
+    __pyc_primitive__(__pyc_symbol__("write"), "]")
 
 class __tuple_iter__:
   thetuple = None
