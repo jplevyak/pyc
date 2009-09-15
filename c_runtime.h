@@ -109,8 +109,25 @@ static inline int _CG_float_printf(double d, bool ln) {
   if (ln) fputs("\n", stdout);
 }
 
+static inline _CG_list _CG_to_list(_CG_list l) { return l; }
 
+#define _CG_prim_len(_c, _l) (((uint32*)_l)[-1])
+#define _CG_prim_total_len(_c, _l) (((uint32*)_l)[-2])
+#define _CG_ptr_to_list(_l) ((_CG_list)(&((uint32*)_l)[2]))
 
+static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 size) {
+  uint32 s1 = _CG_prim_len(0,l1), s2 = _CG_prim_len(0,l2);
+  _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * s2 + sizeof(uint32) * 2));
+  _CG_prim_len(0,x) = s1 + s2;
+  _CG_prim_total_len(0,x) = s1 + s2;
+  if (s1)
+    memcpy(x, l1, s1 * size);
+  if (s2)
+    memcpy(((char*)x) + s1 * size, l2, s2 * size);
+  return x;
+}
+
+#define _CG_list_add(_l1, _l2, _s) (_CG_list_add_internal(_CG_to_list(_l1), _CG_to_list(_l2), _s))
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_tuple(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))

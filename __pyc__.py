@@ -205,7 +205,8 @@ class list:
   def __contains__(self, item):
     pass
   def __add__(self, l):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), "__CG_list_add(", self, ", ",l,")")
+    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
+                          "_CG_list_add(", self, ", ",l,", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
   def __radd__(self, l):
     pass
   def __iadd__(self, l):
@@ -223,10 +224,13 @@ class list:
   def count(self, l):
     pass
   def __str__(self):
-    __pyc_primitive__(__pyc_symbol__("write"), "[")
-    for k in self:
-      __pyc_primitive__(__pyc_symbol__("write"), k.__str__())
-    __pyc_primitive__(__pyc_symbol__("write"), "]")
+    x = "["
+    for k in xrange(0,len(self)):
+      if (k):
+        x += ", "
+      x += self[k].__str__()
+    x += "]"
+    return x
 
 class __tuple_iter__:
   thetuple = None
@@ -295,15 +299,15 @@ def range(start, end):
 class xrange:
   i = 0
   j = 0
-  def __init__(this, ai, aj):
-    i = ai
-    j = aj
-    return this
+  def __init__(self, ai, aj):
+    self.i = ai
+    self.j = aj
+    return self
+  def __pyc_more__(self):
+    return self.i < self.j
   def __iter__(this):
     return this
   def next(self):
-    if (self.i >= self.j):
-      return None  
     x = self.i
     self.i += 1
     return x

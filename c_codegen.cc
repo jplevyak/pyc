@@ -369,6 +369,35 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       fputs(");\n", fp);
       break;
     }
+    case P_prim_sizeof: {
+      if (n->lvals.n) {
+        assert(n->lvals.n == 1);
+        if (n->lvals[0]->cg_string)
+          fprintf(fp, "  %s = ", n->lvals[0]->cg_string);
+         else
+           fprintf(fp, "  ");
+      } else
+        fprintf(fp, "  ");
+      Sym *t = n->rvals[o]->type;
+      fprintf(fp, "%d;\n", t->size);
+      break;
+    }
+    case P_prim_sizeof_element: {
+      if (n->lvals.n) {
+        assert(n->lvals.n == 1);
+        if (n->lvals[0]->cg_string)
+          fprintf(fp, "  %s = ", n->lvals[0]->cg_string);
+         else
+           fprintf(fp, "  ");
+      } else
+        fprintf(fp, "  ");
+      Sym *t = n->rvals[o]->type;
+      if (!t->element->type->size && t->type_kind == Type_RECORD)
+        fprintf(fp, "%d;\n", t->has[0]->type->size);
+      else
+        fprintf(fp, "%d;\n", t->element->type->size);
+      break;
+    }
     case P_prim_primitive: {
       if (n->lvals.n) {
         assert(n->lvals.n == 1);
@@ -408,10 +437,6 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       for (int i = 0; i < n->lvals.n; i++)
         destruct_prim(fp, n->lvals.v[i], n->rvals.v[o+i]);
       break;
-    case P_prim_len: {
-      assert(!"tuple_len must be constant");
-      break;
-    }
   }
   return 1;
 }
@@ -709,6 +734,15 @@ write_c(FILE *fp, FA *fa, Fun *f, Vec<Var *> *globals = 0) {
   fputs("}\n", fp);
 }
 
+static inline bool
+homogeneous_tuple(Sym *s) {
+  for (int i = 0; i < s->has.n -1; i++)
+    for (int j = i; j < s->has.n; j++)
+      if (s->has[i]->type != s->has[j]->type)
+        return false;
+  return true;
+}
+
 static int
 build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
   // build builtin map
@@ -860,6 +894,19 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
           fprintf(fp, "};\n");
         }
       }
+    }
+  }
+  if (allsyms.n)
+    fputs("\n/*\n Builtin Functions\n*/\n\n", fp);
+  forv_Sym(s, allsyms) {
+    if (s->type_kind == Type_RECORD && s->creators[0]->sym == sym_list && homogeneous_tuple(s)) {
+      fprintf(fp, "static inline _CG_list _CG_to_list(%s p) {\n", s->cg_string);
+      fprintf(fp, "  uint32 *x = (uint32*)MALLOC(8+sizeof(_CG_s%d));\n", s->id);
+      fprintf(fp, "  x[0] = %d;\n", s->has.n);
+      fprintf(fp, "  x[1] = %d;\n", s->has.n);
+      for (int i = 0; i < s->has.n; i++)
+        fprintf(fp, "  x[2+%d] = p->e%d;\n", i, i);
+      fprintf(fp, "  return (_CG_list)&x[2];\n}\n\n");
     }
   }
   return 0;
