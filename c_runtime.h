@@ -127,7 +127,18 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
   return x;
 }
 
+static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size) {
+  uint32 s1 = _CG_prim_len(0,l1);
+  _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * l + sizeof(uint32) * 2));
+  _CG_prim_len(0,x) = s1 * l;
+  _CG_prim_total_len(0,x) = s1 * l;
+  for (int i = 0; i < l; i++)
+    memcpy(((char*)x) + (i * size * s1), l1, s1 * size);
+  return x;
+}
+
 #define _CG_list_add(_l1, _l2, _s) (_CG_list_add_internal(_CG_to_list(_l1), _CG_to_list(_l2), _s))
+#define _CG_list_mult(_l1, _l, _s) (_CG_list_mult_internal(_CG_to_list(_l1), _l, _s))
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_tuple(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))

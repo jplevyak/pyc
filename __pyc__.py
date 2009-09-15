@@ -18,6 +18,14 @@ class __pyc_None_type__:
   def __str__(self):
     return "None"
 
+class True:
+  def __str__(self):
+    return "True"
+
+class False:
+  def __str__(self):
+    return "False"
+
 class basestring:
   pass
 
@@ -212,7 +220,8 @@ class list:
   def __iadd__(self, l):
     pass
   def __mul__(self, l):
-    pass
+    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
+                          "_CG_list_mult(", self, ", ",l,", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
   def __rmul__(self, l):
     pass
   def __imul__(self, l):

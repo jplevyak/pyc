@@ -987,12 +987,15 @@ build_syms(stmt_ty s, PycContext &ctx) {
     case ClassDef_kind: { // identifier name, expr* bases, stmt* body
       PYC_SCOPINGS scope = (ctx.is_builtin() && ctx.scope_stack.n == 1) ? PYC_GLOBAL : PYC_LOCAL;
       ast->sym = unalias_type(make_PycSymbol(ctx, s->v.ClassDef.name, scope)->sym);
-      if (!ast->sym->type_kind)
-        ast->sym->type_kind = Type_RECORD; // do not override
-      if (ast->sym->type_kind == Type_RECORD)
-        ast->sym->self = new_global(ast); // prototype
-      else
-        ast->sym->self = new_base_instance(ast->sym, ast);
+      if (!ast->sym->is_constant) {
+        if (!ast->sym->type_kind)
+          ast->sym->type_kind = Type_RECORD; // do not override
+        if (ast->sym->type_kind == Type_RECORD)
+          ast->sym->self = new_global(ast); // prototype
+        else
+          ast->sym->self = new_base_instance(ast->sym, ast);
+      } else
+        ast->sym->self = ast->sym;
       Sym *fn = new_sym(ast, "___init___", 1);  // builtin constructor
       ast->rval = def_fun(s, ast, fn, ctx);
       ast->rval->self = new_sym(ast);
