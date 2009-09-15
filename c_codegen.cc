@@ -459,7 +459,10 @@ simple_move(FILE *fp, Var *lhs, Var *rhs) {
     return;
   if (!rhs->sym->fun) {
     ASSERT(rhs->cg_string);
-    fprintf(fp, "  %s = (%s)%s;\n", lhs->cg_string, c_type(lhs), rhs->cg_string);
+    if (rhs->type != lhs->type)
+      fprintf(fp, "  %s = (%s)%s;\n", lhs->cg_string, c_type(lhs), rhs->cg_string);
+    else
+      fprintf(fp, "  %s = %s;\n", lhs->cg_string, rhs->cg_string);
   } else if (rhs->cg_string)
     fprintf(fp, "  %s = (_CG_function)&%s;\n", lhs->cg_string, rhs->cg_string);
   else
@@ -794,7 +797,7 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
       if (loopsyms[i] && loopsyms.v[i]->type_kind) {
         forv_Sym(s, loopsyms[i]->has) {
           again = allsyms.set_add(s) || again;
-          if (s->var)
+          if (s->var && s->var->type)
             again = allsyms.set_add(s->var->type) || again;
         }
       }
