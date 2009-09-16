@@ -1761,7 +1761,9 @@ build_if1(expr_ty e, PycContext &ctx) {
           PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.BoolOp.values, i), ctx);
           if1_gen(if1, &ast->code, v->code);
           if1_move(if1, &ast->code, v->rval, ast->rval);
-          Code *ifcode = if1_if_goto(if1, &ast->code, v->rval, ast);
+          Sym *t = new_sym(ast);
+          call_method(if1, &ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
+          Code *ifcode = if1_if_goto(if1, &ast->code, t, ast);
           if (a) {
             if1_if_label_false(if1, ifcode, ast->label[0]);
             if1_if_label_true(if1, ifcode, if1_label(if1, &ast->code, ast));
