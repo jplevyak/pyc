@@ -5,6 +5,7 @@ setenv VALGRIND ' '
 
 cd tests
 set failed = 0
+set expected_failed = 0
 foreach g (*.py)
   if (-e $g.ignore) continue
   if (-e $g.flags) then
@@ -14,7 +15,10 @@ foreach g (*.py)
   endif
   $VALGRIND ../pyc -D.. $flags $g >&! $g.out
   if ($?) then
-    if (-e $g.check_fail) then
+    if (-e $g.expect_fail) then
+      echo $g "COMPILE EXPECTED FAIL"
+      set expected_failed = `expr $expected_failed + 1`
+    else if (-e $g.check_fail) then
       echo $g "COMPILE PASSED"
     else 
       echo $g "******** COMPILE FAILED ********"
@@ -41,10 +45,16 @@ foreach g (*.py)
           echo $g "EXECUTE PASSED"
         endif
         python $g >&! $g.python.out
-        diff $g.exec.out $g.python.out
+        diff $g.exec.out $g.python.out > /dev/null
         if ($?) then
-          echo $g "******** CPYTHON VERIFY FAILED ********"
-          set failed = `expr $failed + 1`
+          if (-e $g.python.expect_fail) then
+            echo $g "PYTHON EXPECTED FAIL"
+            set expected_failed = `expr $expected_failed + 1`
+          else
+            echo $g "******** CPYTHON VERIFY FAILED ********"
+            diff $g.exec.out $g.python.out
+            set failed = `expr $failed + 1`
+          endif
         endif
       endif
     endif
@@ -52,8 +62,8 @@ foreach g (*.py)
 end
 echo "---------------------------------------"
 if (! $failed) then
-  echo "ALL tests PASSED"
+  echo "ALL tests PASSED ($expected_failed expected fails)"
 else
-  echo "********" $failed "test(s) FAILED *********"
+  echo "********" $failed "test(s) FAILED (not including $expected_failed expected fails) *********"
 endif
 cd ..
