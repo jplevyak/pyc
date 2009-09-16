@@ -248,7 +248,8 @@ class list:
     pass
   def __add__(self, l):
     return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
-                          "_CG_list_add(", self, ", ",l,", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
+                          "_CG_list_add(", self, ", ", l, ", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                          ", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), l), ")")
   def __radd__(self, l):
     pass
   def __iadd__(self, l):

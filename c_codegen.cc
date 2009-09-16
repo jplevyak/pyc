@@ -399,9 +399,12 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       } else
         fprintf(fp, "  ");
       Sym *t = n->rvals[o]->type;
-      if (!t->element->type->size && t->type_kind == Type_RECORD)
-        fprintf(fp, "%d;\n", t->has[0]->type->size);
-      else
+      if (!t->element->type->size && t->type_kind == Type_RECORD) {
+        if (t->has.n)
+          fprintf(fp, "%d;\n", t->has[0]->type->size);
+        else
+          fprintf(fp, "0;\n");
+      } else
         fprintf(fp, "%d;\n", t->element->type->size);
       break;
     }
