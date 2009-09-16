@@ -9,6 +9,14 @@ class object:
     return False
   def __str__(self):
     return "<object>"
+  def __nonzero__(self):
+    return True
+  def __len__(self):
+    return 1
+  def __pyc_to_bool__(self):
+    return __pyc_operator__(__pyc_operator__(__pyc_symbol__("!"), self.__nonzero__().__pyc_to_bool__()),
+                            __pyc_symbol__("&&"),
+                            self.__len__() != 0)
 
 class __pyc_None_type__:
   def __nonzero__(self):
@@ -17,14 +25,32 @@ class __pyc_None_type__:
     return True
   def __str__(self):
     return "None"
+  def __pyc_to_bool__(self):
+    return False
 
-class True:
+class bool:
+  def __and__(self, x):
+    if (self):
+      return x
+    else:
+      return self
+  def __or__(self, x):
+    if (self):
+      return self
+    else:
+      return x
+  def __not__(self):
+    if (self):
+      return False
+    else:
+      return True
   def __str__(self):
-    return "True"
-
-class False:
-  def __str__(self):
-    return "False"
+    if (self):
+      return "True"
+    else:
+      return "False"
+  def __pyc_to_bool__(self):
+    return self
 
 class basestring:
   pass
@@ -127,6 +153,8 @@ class int:
      return False
   def __str__(self):
     return __pyc_primitive__(__pyc_symbol__("to_string"), self)
+  def __pyc_to_bool__(self):
+    return self != 0
 
 class float:
   def __add__(self, x):
@@ -141,17 +169,21 @@ class float:
     return __pyc_operator__(self, __pyc_symbol__("%"), x)
   def __pow__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("**"), x)
-  def __lshift__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
-  def __rshift__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
-  def __or__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("|"), x)
-  def __xor__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("^"), x)
-  def __and__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __floordiv__(self, x):
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+  def __iadd__(self, x):
+    return __pyc_operator__(self, __pyc_symbol__("+"), x)
+  def __isub__(self, x):
+    return __pyc_operator__(self, __pyc_symbol__("-"), x)
+  def __imul__(self, x):
+    return __pyc_operator__(self, __pyc_symbol__("*"), x)
+  def __idiv__(self, x):
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+  def __imod__(self, x):
+    return __pyc_operator__(self, __pyc_symbol__("%"), x)
+  def __ipow__(self, x):
+    return __pyc_operator__(self, __pyc_symbol__("**"), x)
+  def __ifloordiv__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __invert__(self):
     return __pyc_operator__(__pyc_symbol__("~"), self)
@@ -187,6 +219,8 @@ class float:
     return False
   def __str__(self):
     return __pyc_primitive__(__pyc_symbol__("to_string"), self)
+  def __pyc_to_bool__(self):
+    return self != 0.0
 
 class __list_iter__:
   thelist = None
@@ -240,6 +274,8 @@ class list:
       x += self[k].__str__()
     x += "]"
     return x
+  def __pyc_to_bool__(self):
+    return self.__len__() != 0
 
 class __tuple_iter__:
   thetuple = None
@@ -261,6 +297,8 @@ class tuple:
     return __tuple_iter__(self)
   def __len__(self):
     return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("len"), self))
+  def __pyc_to_bool__(self):
+    return self.__len__() != 0
 
 def abs(x):
   if (x < 0):

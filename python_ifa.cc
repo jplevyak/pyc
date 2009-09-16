@@ -1997,6 +1997,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_string);
   scope_sym(ctx, sym_list);
   scope_sym(ctx, sym_tuple);
+  scope_sym(ctx, sym_bool);
   scope_sym(ctx, sym_true);
   scope_sym(ctx, sym_false);
   scope_sym(ctx, sym_nil);
