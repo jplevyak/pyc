@@ -185,6 +185,7 @@ destruct_prim(FILE *fp, Var *l, Var *r) {
 static int
 write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
   int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
+  bool listish_tuple = false;
   switch (n->prim->index) {
     default: return 0;
     case P_prim_reply: {
@@ -195,15 +196,21 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
     Ltuple:
       fputs("  ", fp);
       cchar *t = c_type(n->lvals[0]);
-      fprintf(fp, "%s = _CG_prim_tuple(%s);\n", n->lvals[0]->cg_string, t);
+      if (n->rvals.n > 2)
+        fprintf(fp, "%s = _CG_prim_tuple%s(%s, %d);\n", n->lvals[0]->cg_string, listish_tuple ? "_list" : "", t, n->rvals.n - 2);
+      else
+        fprintf(fp, "%s = 0;\n", n->lvals[0]->cg_string);
       for (int i = 2; i < n->rvals.n; i++)
-        fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, i-2, n->rvals.v[i]->cg_string);
+         fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, i-2, n->rvals.v[i]->cg_string);
       break;
     }
     case P_prim_vector:
     case P_prim_list: {
       Sym *t = n->lvals.v[0]->type, *e = t->element->type;
-      if (t->type_kind == Type_RECORD) goto Ltuple;
+      if (t->type_kind == Type_RECORD) {
+        listish_tuple = true;
+        goto Ltuple;
+      }
       fputs("  ", fp);
       assert(n->lvals.n == 1);
       e = e ? e : sym_void_type;
@@ -902,7 +909,7 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
   if (allsyms.n)
     fputs("\n/*\n Builtin Functions\n*/\n\n", fp);
   forv_Sym(s, allsyms) {
-    if (s->type_kind == Type_RECORD && s->creators[0]->sym == sym_list && homogeneous_tuple(s)) {
+    if (s->type_kind == Type_RECORD && s->creators[0]->sym == sym_list && homogeneous_tuple(s) && s->has.n) {
       fprintf(fp, "static inline _CG_list _CG_to_list(%s p) {\n", s->cg_string);
       fprintf(fp, "  uint32 *x = (uint32*)MALLOC(8+sizeof(_CG_s%d));\n", s->id);
       fprintf(fp, "  x[0] = %d;\n", s->has.n);

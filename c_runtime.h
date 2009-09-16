@@ -111,15 +111,17 @@ static inline int _CG_float_printf(double d, bool ln) {
 
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
 
-#define _CG_prim_len(_c, _l) (((uint32*)_l)[-1])
-#define _CG_prim_total_len(_c, _l) (((uint32*)_l)[-2])
+#define _CG_list_len(_l) (((uint32*)_l)[-1])
+#define _CG_list_total_len(_c, _l) (((uint32*)_l)[-2])
+#define _CG_prim_len(_c, _l) ((_l)?_CG_list_len(_l):0)
 #define _CG_ptr_to_list(_l) ((_CG_list)(&((uint32*)_l)[2]))
 
 static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 size) {
   uint32 s1 = _CG_prim_len(0,l1), s2 = _CG_prim_len(0,l2);
+  if (!(s1 + s2)) return 0;
   _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * s2 + sizeof(uint32) * 2));
-  _CG_prim_len(0,x) = s1 + s2;
-  _CG_prim_total_len(0,x) = s1 + s2;
+  _CG_list_len(x) = s1 + s2;
+  _CG_list_total_len(0,x) = s1 + s2;
   if (s1)
     memcpy(x, l1, s1 * size);
   if (s2)
@@ -128,20 +130,30 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
 }
 
 static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size) {
+  if (!l) return 0;
   uint32 s1 = _CG_prim_len(0,l1);
   _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * l + sizeof(uint32) * 2));
-  _CG_prim_len(0,x) = s1 * l;
-  _CG_prim_total_len(0,x) = s1 * l;
+  _CG_list_len(x) = s1 * l;
+  _CG_list_total_len(0,x) = s1 * l;
   for (int i = 0; i < l; i++)
     memcpy(((char*)x) + (i * size * s1), l1, s1 * size);
   return x;
 }
 
+static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
+  if (!n) return 0;
+  void *x = _CG_ptr_to_list(GC_MALLOC(s + sizeof(uint32) * 2));
+  _CG_list_len(x) = n;
+  _CG_list_total_len(0,x) = n;
+  return x;
+}
+
+#define _CG_prim_tuple_list(_c, _n) (_c)(_CG_prim_tuple_list_internal(sizeof(*((_c)0)), _n))
+#define _CG_prim_tuple(_c, _n) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_list_add(_l1, _l2, _s) (_CG_list_add_internal(_CG_to_list(_l1), _CG_to_list(_l2), _s))
 #define _CG_list_mult(_l1, _l, _s) (_CG_list_mult_internal(_CG_to_list(_l1), _l, _s))
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
-#define _CG_prim_tuple(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_vector(_c, _n) (void*)GC_MALLOC(sizeof(_c*) * _n)
 #define _CG_prim_new(_c) (_c) GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_clone(_c) _CG_prim_primitive_clone(_c, sizeof(*(_c)))
@@ -159,12 +171,13 @@ static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size
 #define _CG_prim_or(_a, _op, _b) ((_a) | (_b))
 #define _CG_prim_lor(_a, _op, _b) ((_a) || (_b))
 #define _CG_prim_land(_a, _op, _b) ((_a) && (_b))
-#define _CG_prim_bnot(_op, _a) (~(_a))
+#define _CG_prim_lnot(_op, _a) (~(_a))
 #define _CG_prim_less(_a, _op, _b) ((_a) < (_b))
 #define _CG_prim_lessorequal(_a, _op, _b) ((_a) <= (_b))
 #define _CG_prim_greater(_a, _op, _b) ((_a) > (_b))
 #define _CG_prim_greaterorequal(_a, _op, _b) ((_a) >= (_b))
 #define _CG_prim_equal(_a, _op, _b) ((_a) == (_b))
+#define _CG_prim_notequal(_a, _op, _b) ((_a) != (_b))
 #define _CG_prim_paren(_f, _a) ((*(_f))((_f), (_a)))
 #define _CG_prim_set(_a, _b) (_a) = (_b)
 #define _CG_prim_minus(_op, _a) (- (_a))

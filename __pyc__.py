@@ -61,7 +61,7 @@ class str(basestring):
   def __iadd__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __str__(self):
-    return self
+    return __pyc_clone_constants__(self)
 
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__

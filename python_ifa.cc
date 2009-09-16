@@ -57,7 +57,7 @@ static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
 static Sym *sym___null__ = 0, *sym___str__ = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
-static Sym *sym___pyc_c_code__ = 0;
+static Sym *sym___pyc_c_code__ = 0, *sym___pyc_to_bool__ = 0;
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -359,6 +359,7 @@ build_builtin_symbols() {
   sym___str__ = if1_make_symbol(if1, "__str__");
   sym___pyc_more__ = if1_make_symbol(if1, "__pyc_more__");
   sym___pyc_c_code__ = if1_make_symbol(if1, "__pyc_c_code__");
+  sym___pyc_to_bool__ = if1_make_symbol(if1, "__pyc_to_bool__");
   sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
   sym___pyc_clone_constants__ = if1_make_symbol(if1, "__pyc_clone_constants__");
   sym_super = if1_make_symbol(if1, "super");
@@ -1325,17 +1326,39 @@ get_stmts_code(asdl_seq *stmts, Code **code, PycContext &ctx) {
 }
 
 static void
+call_method(IF1 *if1, Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...) {
+  va_list ap;
+  Sym *t = new_sym(ast);
+  Code *method = if1_send(if1, code, 4, 1, sym_operator, o, sym_period, m, t);
+  method->ast = ast;
+  method->partial = Partial_OK;
+  Code *send = if1_send(if1, code, 1, 1, t, r);
+  send->ast = ast;
+  va_start(ap, n);
+  for (int i = 0; i < n; i++) {
+    Sym * v = va_arg(ap, Sym *);
+    if1_add_send_arg(if1, send, v);
+  }
+}
+
+static void
 gen_if(PycAST *ifcond, asdl_seq *ifif, asdl_seq *ifelse, PycAST *ast, PycContext &ctx) {
   Code *ifif_code = 0, *ifelse_code = 0;
+  Sym *t = new_sym(ast);
   get_stmts_code(ifif, &ifif_code, ctx);
   get_stmts_code(ifelse, &ifelse_code, ctx);
-  if1_if(if1, &ast->code, ifcond->code, ifcond->rval, ifif_code, 0, ifelse_code, 0, 0, ast);
+  if1_gen(if1, &ast->code, ifcond->code);
+  call_method(if1, &ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
+  if1_if(if1, &ast->code, 0, t, ifif_code, 0, ifelse_code, 0, 0, ast);
 }
 
 static void
 gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast) {
   ast->rval = new_sym(ast);
-  if1_if(if1, &ast->code, ifcond->code, ifcond->rval, ifif->code, ifif->rval,
+  if1_gen(if1, &ast->code, ifcond->code);
+  Sym *t = new_sym(ast);
+  call_method(if1, &ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
+  if1_if(if1, &ast->code, 0, t, ifif->code, ifif->rval,
          ifelse ? ifelse->code : 0, ifelse ? ifelse->rval : 0, 
          ast->rval, ast);
 }
@@ -1430,23 +1453,6 @@ static Sym *map_cmp_operator(cmpop_ty op) {
     case NotIn: return make_symbol("__ncontains__");
   }
   return 0;
-}
-
-
-static void
-call_method(IF1 *if1, Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...) {
-  va_list ap;
-  Sym *t = new_sym(ast);
-  Code *method = if1_send(if1, code, 4, 1, sym_operator, o, sym_period, m, t);
-  method->ast = ast;
-  method->partial = Partial_OK;
-  Code *send = if1_send(if1, code, 1, 1, t, r);
-  send->ast = ast;
-  va_start(ap, n);
-  for (int i = 0; i < n; i++) {
-    Sym * v = va_arg(ap, Sym *);
-    if1_add_send_arg(if1, send, v);
-  }
 }
 
 static int build_if1(mod_ty mod, PycContext &ctx, Code **code);
@@ -1749,12 +1755,12 @@ build_if1(expr_ty e, PycContext &ctx) {
         ast->code = v->code;
         ast->rval = v->rval;
       } else {
-        ast->label[0] = if1_alloc_label(if1); // short circuit
-        ast->label[1] = if1_alloc_label(if1); // end
+        ast->label[0] = if1_alloc_label(if1);
         ast->rval = new_sym(ast);
         for (int i = 0; i < n - 1; i++) {
           PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.BoolOp.values, i), ctx);
           if1_gen(if1, &ast->code, v->code);
+          if1_move(if1, &ast->code, v->rval, ast->rval);
           Code *ifcode = if1_if_goto(if1, &ast->code, v->rval, ast);
           if (a) {
             if1_if_label_false(if1, ifcode, ast->label[0]);
@@ -1767,13 +1773,7 @@ build_if1(expr_ty e, PycContext &ctx) {
         PycAST *v = getAST((expr_ty)asdl_seq_GET(e->v.BoolOp.values, n-1), ctx);
         if1_gen(if1, &ast->code, v->code);
         if1_move(if1, &ast->code, v->rval, ast->rval, ast);
-        if1_goto(if1, &ast->code, ast->label[1]);
         if1_label(if1, &ast->code, ast, ast->label[0]);
-        if (a)
-          if1_move(if1, &ast->code, sym_false, ast->rval, ast); 
-        else
-          if1_move(if1, &ast->code, sym_true, ast->rval, ast); 
-        if1_label(if1, &ast->code, ast, ast->label[1]);
       }
       break;
     }
@@ -2011,6 +2011,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym___pyc_clone_constants__);
   scope_sym(ctx, sym___pyc_more__);
   scope_sym(ctx, sym___pyc_c_code__);
+  scope_sym(ctx, sym___pyc_to_bool__);
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
   exit_scope(ctx);
