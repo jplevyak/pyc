@@ -1,0 +1,17 @@
+#!/bin/tcsh
+
+if ($1 == "") then
+  echo "add_test localname.py [testname.py]"
+  exit 1
+endif
+set f = $1
+if ($2 == "") then
+  set t = $f
+else
+  set t = $2
+endif
+cp $f tests/$t
+pyc $f
+$t:r > tests/$t.exec.out
+git add tests/$t
+git add tests/$t.exec.out

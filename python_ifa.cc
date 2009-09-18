@@ -1104,11 +1104,22 @@ build_syms(expr_ty e, PycContext &ctx) {
     case GeneratorExp_kind: // expr elt, comprehension* generators
       build_syms_comprehension(ctx, e->v.GeneratorExp.generators, e->v.GeneratorExp.elt, 0);
       break;
-    case Tuple_kind: // expr *elts, expr_context ctx
-      ast->sym = ast->rval = new_sym(ast);
+    case List_kind: // expr *elts, expr_context ctx
+      // FALL THROUGH
+    case Tuple_kind: { // expr *elts, expr_context ctx
+      ast->rval = new_sym(ast);
+      bool def = true;
       for (int i = 0; i < asdl_seq_LEN(e->v.Tuple.elts); i++)
-        ast->sym->has.add(getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i), ctx)->sym);
+        def = !!getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i), ctx)->sym && def;
+      if (def) {
+        ast->sym = new_sym(ast);
+        ast->sym->type_kind = Type_RECORD;
+        ast->sym->inherits_add(sym_tuple);
+        for (int i = 0; i < asdl_seq_LEN(e->v.Tuple.elts); i++)
+          ast->sym->has.add(getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i), ctx)->sym);
+      }
       break;
+    }
   }
   exit_scope(e, ctx);
   return 0;
@@ -1519,14 +1530,26 @@ build_if1(stmt_ty s, PycContext &ctx) {
       if1_gen(if1, &ast->code, v->code);
       for (int i = 0; i < asdl_seq_LEN(s->v.Assign.targets); i++) {
         PycAST *a = getAST((expr_ty)asdl_seq_GET(s->v.Assign.targets, i), ctx);
-        if1_gen(if1, &ast->code, a->code);
-        if (a->is_member)
-          if1_send(if1, &ast->code, 5, 1, sym_operator, 
-                   a->rval, sym_setter, a->sym, v->rval, (ast->rval = new_sym(ast)))->ast = ast;
-        else if (a->is_object_index)
-          if1_add_send_arg(if1, find_send(a->code), v->rval);
-        else
-          if1_move(if1, &ast->code, v->rval, a->sym);
+        if (a->xexpr && a->xexpr->kind == Tuple_kind) { // destructure
+          if (!a->sym)
+            fail("error line %d, illegal destructuring", ctx.lineno);
+          Code *send = if1_send(if1, &ast->code, 4, 0, sym_primitive, sym_destruct, v->rval, a->sym);
+          send->ast = ast;
+          expr_ty t = a->xexpr;
+          for (int i = 0; i < asdl_seq_LEN(t->v.Tuple.elts); i++) {
+            expr_ty ret = (expr_ty)asdl_seq_GET(t->v.Tuple.elts, i);
+            if1_add_send_result(if1, send, getAST(ret, ctx)->rval);
+          }
+        } else {
+          if1_gen(if1, &ast->code, a->code);
+          if (a->is_member)
+            if1_send(if1, &ast->code, 5, 1, sym_operator, 
+                     a->rval, sym_setter, a->sym, v->rval, (ast->rval = new_sym(ast)))->ast = ast;
+          else if (a->is_object_index)
+            if1_add_send_arg(if1, find_send(a->code), v->rval);
+          else
+            if1_move(if1, &ast->code, v->rval, a->sym);
+        }
       }
       break;
     }
@@ -1603,7 +1626,6 @@ build_if1(stmt_ty s, PycContext &ctx) {
     case TryExcept_kind: // stmt* body, excepthandler *handlers, stmt *orelse
     case TryFinally_kind: // stmt *body, stmt *finalbody
       fail("error line %d, exceptions not yet supported", ctx.lineno); break;
-      break;
     case Assert_kind: // expr test, expr? msg
       fail("error line %d, 'assert' not yet supported", ctx.lineno); break;
     case Import_kind: // alias* name
@@ -1951,7 +1973,6 @@ build_if1(expr_ty e, PycContext &ctx) {
           expr_ty arg = (expr_ty)asdl_seq_GET(e->v.List.elts, i);
           if1_add_send_arg(if1, send, getAST(arg, ctx)->rval);
         }
-        ast->rval = new_sym(ast);
         if1_add_send_result(if1, send, ast->rval);
       }
       break;
