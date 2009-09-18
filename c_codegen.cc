@@ -313,15 +313,18 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       if (t->type_kind != Type_RECORD || !n->rvals[o+1]->sym->constant) {
         Sym *e = n->lvals[0]->type;
         fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-        fprintf(fp, "((%s", e->cg_string);
-        for (int i = o+1; i < n->rvals.n; i++) fprintf(fp, "*");
-
-        fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
-        for (int i = o+1; i < n->rvals.n; i++) {
-          if (i != o+1) fputs(", ", fp);
-          fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+        if (sym_string->specializers.set_in(t))
+          fprintf(fp, "_CG_char_from_string(%s,%s);\n", n->rvals[o]->cg_string, n->rvals[o+1]->cg_string);
+        else {
+          fprintf(fp, "((%s", e->cg_string);
+          for (int i = o+1; i < n->rvals.n; i++) fprintf(fp, "*");
+          fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
+          for (int i = o+1; i < n->rvals.n; i++) {
+            if (i != o+1) fputs(", ", fp);
+            fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+          }
+          fprintf(fp, ";\n");
         }
-        fprintf(fp, ";\n");
       } else {
         fprintf(fp, "%s = ((%s)%s)->e%s;\n", n->lvals[0]->cg_string, 
                 t->cg_string, n->rvals[o]->cg_string, n->rvals[o+1]->sym->constant);
@@ -361,6 +364,17 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       fputs("  ", fp);
       fprintf(fp, "%s = (%s)", n->lvals[0]->cg_string, num_string(n->lvals.v[0]->type));
       fprintf(fp, "%s;\n", n->rvals[3]->cg_string);
+      break;
+    }
+    case P_prim_len: {
+      fputs("  ", fp);
+      if (n->lvals.n && n->lvals[0]->cg_string)
+        fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+      Sym *t = n->rvals[o]->type;
+      if (sym_string->specializers.set_in(t))
+        fprintf(fp, "_CG_string_len(%s);\n", n->rvals[o]->cg_string);
+      else
+        fprintf(fp, "_CG_prim_len(%s,%s);\n", n->rvals[o-1]->cg_string, n->rvals[o]->cg_string);
       break;
     }
     case P_prim_clone: {

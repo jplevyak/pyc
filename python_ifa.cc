@@ -374,7 +374,7 @@ build_builtin_symbols() {
   sym_float->alias = sym_float64;
   sym_complex->alias = sym_complex64;
   sym_size->alias = sym_int32;
-
+  sym_char->alias = sym_string;
 
   // override default names
   sym_string->name = cannonicalize_string("str");
@@ -1926,6 +1926,8 @@ build_if1(expr_ty e, PycContext &ctx) {
       break;
     case Subscript_kind: { // expr value, slice slice, expr_context ctx
       assert(e->v.Subscript.slice->kind == Index_kind);
+      if1_gen(if1, &ast->code, getAST(e->v.Subscript.value, ctx)->code);
+      if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Index.value, ctx)->code);
       // AugLoad, Load, AugStore, Store, Del, !Param
       ast->is_object_index = 1;
       if (e->v.Subscript.ctx == Load) {

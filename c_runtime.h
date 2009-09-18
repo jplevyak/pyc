@@ -80,6 +80,13 @@ static inline char * _CG_strcat(char *a, char *b) {
   return x;
 }
 
+static inline char * _CG_char_from_string(void *s, int i) {
+  char *x = (char*)GC_MALLOC(2);
+  x[0] = ((char*)s)[i];
+  x[1] = 0;
+  return x;
+}
+
 static inline char *_CG_prim_primitive_to_string(double d) {
   char s[100], *p = s;
   snprintf(s, 100, "%.17g", d);
@@ -149,6 +156,7 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
   return x;
 }
 
+#define _CG_string_len(_s) strlen(_s)
 #define _CG_prim_tuple_list(_c, _n) (_c)(_CG_prim_tuple_list_internal(sizeof(*((_c)0)), _n))
 #define _CG_prim_tuple(_c, _n) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_list_add(_l1, _l2, _s1, _s2) (_CG_list_add_internal(_CG_to_list(_l1), _CG_to_list(_l2), _s1, _s2))

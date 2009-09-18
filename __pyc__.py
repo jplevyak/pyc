@@ -62,6 +62,12 @@ class str(basestring):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __str__(self):
     return __pyc_clone_constants__(self)
+  def __getitem__(self, key):
+    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
+  def __setitem__(self, key, value):
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
+  def __len__(self):
+    return __pyc_primitive__(__pyc_symbol__("len"), self)
 
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
