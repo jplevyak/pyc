@@ -55,6 +55,19 @@ class bool:
 class basestring:
   pass
 
+class __str_iter__:
+  thestr = None
+  position = 0
+  slen = 0
+  def __init__(self, s):
+    self.thestr = s
+    self.slen = len(s)
+  def __pyc_more__(self):
+    return self.position < self.slen
+  def next(self):
+    self.position += 1
+    return self.thestr.__getitem__(self.position-1)
+
 class str(basestring):
   def __add__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
@@ -68,6 +81,8 @@ class str(basestring):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
   def __len__(self):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
+  def __iter__(self):
+    return __str_iter__(self)
 
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__

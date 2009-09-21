@@ -1,3 +1,7 @@
+
+why is the string iterator always created? (e.g. t53.py)
+
+
 __done__ "#operator" __c_code__ to __pyc_done__ __pyc_operator__ __pyc_c_code__
 - handle __path__ builtin
 - modules (__all__ is the list of "public" names or names not starting with "_")

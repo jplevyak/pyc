@@ -26,7 +26,9 @@ c_type(Var *v) {
 
 static inline cchar *
 c_type(Sym *s) {
-  return c_type(s->var);
+  if (!s->type || !s->type->cg_string)
+    return "_CG_void";
+  return s->type->cg_string;
 }
 
 static void
@@ -494,13 +496,13 @@ simple_move(FILE *fp, Var *lhs, Var *rhs) {
 }
 
 static int
-write_c_fun_arg(FILE *fp, char *s, char *e, Sym *sym, int i, int &wrote_one) {
+write_c_fun_arg(FILE *fp, Fun *f, char *s, char *e, Sym *sym, int i, int &wrote_one) {
   if (!i && sym->type_kind == Type_FUN && !sym->fun && sym->has.n) {
     assert(0);
     for (int i = 0; i < sym->type->has.n; i++) {
       if (i) fprintf(fp, ", ");
       sprintf(e, "->e%d", i);
-      write_c_fun_arg(fp, s, s + strlen(s), sym->has[i], i, wrote_one);
+      write_c_fun_arg(fp, f, s, s + strlen(s), sym->has[i], i, wrote_one);
       fputs(s, fp);
     }
   } else {
@@ -518,7 +520,7 @@ write_c_fun_arg(FILE *fp, char *s, char *e, Sym *sym, int i, int &wrote_one) {
 }
 
 static void
-write_send_arg(FILE *fp, Var *av, MPosition *p, int &wrote_one) {
+write_send_arg(FILE *fp, Fun *f, Var *av, MPosition *p, int &wrote_one) {
   assert(0);
 }
 
@@ -529,15 +531,15 @@ is_closure_var(Var *v) {
 }
 
 static void
-write_send_arg(FILE *fp, PNode *n, MPosition *p, int &wrote_one) {
+write_send_arg(FILE *fp, Fun *f, PNode *n, MPosition *p, int &wrote_one) {
   int i = Position2int(p->pos[0])-1;
   Var *v0 = n->rvals[0];
   if (is_closure_var(v0)) {
     if (i < v0->type->has.n) {
       char ss[4096];
-      sprintf(ss, "%s", v0->cg_string);
+      sprintf(ss, "(%s)%s", c_type(f->args.get(p)), v0->cg_string);
       char *ee = ss + strlen(ss);
-      write_c_fun_arg(fp, ss, ee, v0->type->has[i], i, wrote_one);
+      write_c_fun_arg(fp, f, ss, ee, v0->type->has[i], i, wrote_one);
       return;
     } else
       i -= v0->type->has.n - 1;
@@ -548,7 +550,7 @@ write_send_arg(FILE *fp, PNode *n, MPosition *p, int &wrote_one) {
     wrote_one = 1;
     fputs(c_rhs(v), fp);
   } else
-    write_send_arg(fp, v, p->down, wrote_one);
+    write_send_arg(fp, f, v, p->down, wrote_one);
 }
 
 static void
@@ -579,7 +581,7 @@ write_send(FILE *fp, FA *fa, Fun *f, PNode *n) {
     forv_MPosition(p, target->positional_arg_positions) {
       Var *av = target->args.get(p);
       if (!av->live) continue;
-      write_send_arg(fp, n, p, wrote_one);
+      write_send_arg(fp, target, n, p, wrote_one);
     }
     fputs(");\n", fp);
   }
@@ -912,10 +914,13 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
         if (s->has.n) {
           fprintf(fp, "struct _CG_s%d {\n", s->id);
           for (int i = 0; i <  s->has.n; i++) {
-            if (s->has[i]->live) {
+            if (s->has[i]->type) {
               fputs("  ", fp);
               fputs(c_type(s->has[i]), fp);
-              fprintf(fp, " e%d;\n", i);
+              fprintf(fp, " e%d;", i);
+              if (s->has[i]->name)
+                fprintf(fp, " /* %s */;", s->has[i]->name);
+              fputs("\n", fp);
             }
           }
           fprintf(fp, "};\n");
