@@ -81,7 +81,8 @@ void compile(cchar *fn) {
   }
   if (fcg) {
     c_codegen_write_c(pdb->fa, if1->top->fun, fn);
-    c_codegen_compile(fn);
+    if (c_codegen_compile(fn))
+      fail("compilation failure");
   }
   return;
 }
