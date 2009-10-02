@@ -36,7 +36,7 @@ typedef void *_CG_void;
 typedef void *_CG_void_type;
 typedef void *_CG_object;
 typedef int _CG_int;
-typedef int _CG_bool;
+typedef uint8 _CG_bool;
 typedef uint8 _CG_uint8;
 typedef uint16 _CG_uint16;
 typedef uint32 _CG_uint32;

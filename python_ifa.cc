@@ -55,6 +55,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
+static Sym *sym___getitem__ = 0, *sym___setitem__ = 0;
 static Sym *sym___null__ = 0, *sym___str__ = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
 static Sym *sym___pyc_c_code__ = 0, *sym___pyc_to_bool__ = 0;
@@ -353,6 +354,8 @@ build_builtin_symbols() {
   sym_next = if1_make_symbol(if1, "next");
   sym_append = if1_make_symbol(if1, "append");
   sym___new__ = if1_make_symbol(if1, "__new__");
+  sym___getitem__ = if1_make_symbol(if1, "__getitem__");
+  sym___setitem__ = if1_make_symbol(if1, "__setitem__");
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
@@ -1485,7 +1488,7 @@ static void build_import_if1(char *sym, char *as, char *from, PycContext &ctx) {
 static Code *find_send(Code *c) {
   if (c->kind == Code_SEND) return c;
   assert(c->kind == Code_SUB);
-  for (int i = 0; i < c->sub.n; i++)
+  for (int i = c->sub.n-1; i >= 0; i++)
     if (c->sub[i]->kind == Code_SEND)
       return c->sub[i];
   return 0;
@@ -1534,12 +1537,10 @@ build_if1(stmt_ty s, PycContext &ctx) {
         if (a->xexpr && a->xexpr->kind == Tuple_kind) { // destructure
           if (!a->sym)
             fail("error line %d, illegal destructuring", ctx.lineno);
-          Code *send = if1_send(if1, &ast->code, 4, 0, sym_primitive, sym_destruct, v->rval, a->sym);
-          send->ast = ast;
           expr_ty t = a->xexpr;
           for (int i = 0; i < asdl_seq_LEN(t->v.Tuple.elts); i++) {
             expr_ty ret = (expr_ty)asdl_seq_GET(t->v.Tuple.elts, i);
-            if1_add_send_result(if1, send, getAST(ret, ctx)->rval);
+            call_method(if1, &ast->code, ast, v->rval, sym___getitem__, getAST(ret, ctx)->rval, 1, int32_constant(i));
           }
         } else {
           if1_gen(if1, &ast->code, a->code);
@@ -1552,6 +1553,7 @@ build_if1(stmt_ty s, PycContext &ctx) {
             if1_move(if1, &ast->code, v->rval, a->sym);
         }
       }
+      ast->rval = 0;
       break;
     }
     case AugAssign_kind: // expr target, operator op, expr value
@@ -1932,16 +1934,12 @@ build_if1(expr_ty e, PycContext &ctx) {
       // AugLoad, Load, AugStore, Store, Del, !Param
       ast->is_object_index = 1;
       if (e->v.Subscript.ctx == Load) {
-        if1_send(if1, &ast->code, 4, 1, sym_primitive, sym_index_object,
-                 getAST(e->v.Subscript.value, ctx)->rval, 
-                 getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval, 
-                 (ast->rval = new_sym(ast)))->ast = ast;
+        call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getitem__, 
+                    (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
       } else {
         assert(e->v.Subscript.ctx == Store);
-        if1_send(if1, &ast->code, 4, 1, sym_primitive, sym_set_index_object,
-                 getAST(e->v.Subscript.value, ctx)->rval, 
-                 getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval, 
-                 (ast->rval = new_sym(ast)))->ast = ast;
+        call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setitem__, 
+                    (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
       }
       break;
     }

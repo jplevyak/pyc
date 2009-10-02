@@ -1,6 +1,8 @@
 class __pyc_any_type__:
   def __str__(self):
     return "<instance>"
+  def __pyc_tuplify__(self):
+    return __pyc_primitive__(__pyc_symbol__("make_tuple"), self)
 
 class object:
   def __null__(self):
@@ -83,6 +85,8 @@ class str(basestring):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __iter__(self):
     return __str_iter__(self)
+  def __mod__(self, t):
+    return __pyc_c_code__(str, "_CG_format_string(", self, ", ", t, ")")
 
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
@@ -321,6 +325,8 @@ class tuple:
     return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("len"), self))
   def __pyc_to_bool__(self):
     return self.__len__() != 0
+  def __pyc_tuplify__(self):
+    return self
 
 def abs(x):
   if (x < 0):

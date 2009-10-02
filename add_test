@@ -12,6 +12,6 @@ else
 endif
 cp $f tests/$t
 pyc $f
-$f:r > tests/$t.exec.out
+$f:r > tests/$t.exec.check
 git add tests/$t
-git add tests/$t.exec.out
+git add tests/$t.exec.check

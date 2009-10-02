@@ -18,5 +18,5 @@ def nsieve(m, c=0):
     print 'Primes up to', m, c;
 
 for k in 0, 1, 2:
-    nsieve((1 << ((10) - k)) * 10000, 0)
+    nsieve(100000, 0)
 

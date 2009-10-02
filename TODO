@@ -1,6 +1,10 @@
 
-why is the string iterator always created? (e.g. t53.py)
+change c_code to be c_call and make it always a call
 
+add ability to use __pyc_rest__ to tag a symbol is_rest and add prim_rest to
+destruct the rest of a tuple.
+
+print should handle print "foo %d %s" % (1, "hi")
 
 __done__ "#operator" __c_code__ to __pyc_done__ __pyc_operator__ __pyc_c_code__
 - handle __path__ builtin
@@ -20,11 +24,4 @@ argv = []
 n = __c_function__("int GET_ARGC();")
 ofor x in range(n):
   argv[x] = __c_function__("const char *GET_ARGV(int)", x)
-
-
-MOSTLY DONE
-
-- simple closure removal -- MOSTLY DONE
-- constant propogation working in c_codegen and dead code elimination - MOSTLY DONE
-
 
