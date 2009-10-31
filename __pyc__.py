@@ -86,7 +86,7 @@ class str(basestring):
   def __iter__(self):
     return __str_iter__(self)
   def __mod__(self, t):
-    return __pyc_c_code__(str, "_CG_format_string(", self, ", ", t, ")")
+    return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t)
 
 class int:
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
@@ -273,21 +273,27 @@ class list:
     pass
   def __add__(self, l):
     return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
-                          "_CG_list_add(", self, ", ", l, ", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
-                          ", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), l), ")")
+                          "_CG_list_add", 
+                          list, self, 
+                          int, l, 
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), l))
   def __radd__(self, l):
     pass
   def __iadd__(self, l):
     pass
   def __mul__(self, l):
     return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
-                          "_CG_list_mult(", self, ", ",l,", ", __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
+                          "_CG_list_mult", 
+                          list, self, 
+                          int, l, 
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
   def __rmul__(self, l):
     pass
   def __imul__(self, l):
     pass
   def append(self, l):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), self, l)
+    return __add__(self, l)
   def index(self, index, start=0, end=0):
     pass
   def count(self, l):
@@ -363,7 +369,7 @@ def bin(x): # return integer as string in binary
     return s
 
 def exit(status = 0):
-    __pyc_c_code__(int, "::exit(", status, ")")
+    __pyc_c_code__(int, "::exit", int, status)
 
 def range(start, end):
   result = []

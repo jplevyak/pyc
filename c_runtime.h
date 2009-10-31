@@ -1,6 +1,8 @@
+#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <string.h>
 #include <math.h>
 
@@ -64,6 +66,20 @@ typedef void *_CG_nil_type;
 #define False 0
 #define __init ((void*)0)
 #define nil_type 0
+
+static inline char * _CG_format_string(char *str, ...) {
+  int l = strlen(str) + 24;
+  char *s = 0;
+  va_list ap;
+  while (1) {
+    va_start(ap, str);
+    s = (char*)GC_MALLOC(l);
+    int ll = vsnprintf(s, l, str, ap);
+    if (ll < l-1) break;
+    l = l * 2;
+  }
+  return s;
+}
 
 static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
   void *x = GC_MALLOC(s);

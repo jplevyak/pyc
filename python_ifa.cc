@@ -58,7 +58,7 @@ static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 
 static Sym *sym___getitem__ = 0, *sym___setitem__ = 0;
 static Sym *sym___null__ = 0, *sym___str__ = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
-static Sym *sym___pyc_c_code__ = 0, *sym___pyc_to_bool__ = 0;
+static Sym *sym___pyc_c_code__ = 0, *sym___pyc_to_bool__ = 0, *sym___pyc_format_string__ = 0;
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -362,6 +362,7 @@ build_builtin_symbols() {
   sym___str__ = if1_make_symbol(if1, "__str__");
   sym___pyc_more__ = if1_make_symbol(if1, "__pyc_more__");
   sym___pyc_c_code__ = if1_make_symbol(if1, "__pyc_c_code__");
+  sym___pyc_format_string__ = if1_make_symbol(if1, "__pyc_format_string__");
   sym___pyc_to_bool__ = if1_make_symbol(if1, "__pyc_to_bool__");
   sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
   sym___pyc_clone_constants__ = if1_make_symbol(if1, "__pyc_clone_constants__");
@@ -2036,6 +2037,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym___pyc_more__);
   scope_sym(ctx, sym___pyc_c_code__);
   scope_sym(ctx, sym___pyc_to_bool__);
+  scope_sym(ctx, sym___pyc_format_string__);
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
   exit_scope(ctx);
@@ -2053,20 +2055,46 @@ static void
 c_code_transfer_function(PNode *pn, EntrySet *es) {
   AVar *a = make_AVar(pn->rvals[2], es);
   AVar *result = make_AVar(pn->lvals[0], es);
-  flow_vars(a, result);
+  // either provide an example or an explicity type (which will be a meta_type)
+  if (a->out->n == 1 && a->out->v[0]->sym->is_meta_type)
+    update_gen(result, make_abstract_type(a->out->v[0]->sym->meta_type));
+  else
+    flow_vars(a, result);
 }
 
 static void
 c_code_codegen(FILE *fp, PNode *n, Fun *f) {
-  for (int i = 2; i < n->rvals.n; i++) {
-    if (n->rvals[i]->cg_string) {
-      if (n->rvals[i]->sym->constant && n->rvals[i]->type == sym_string)
-        fputs(n->rvals[i]->sym->constant, fp);
-      else
-        fputs(n->rvals[i]->cg_string, fp);
-    }
+  fputs(n->rvals[3]->sym->constant, fp);
+  fputs("(", fp);
+  int first = 1;
+  for (int i = 5; i < n->rvals.n; i += 2) {
+    if (!first) {
+      fputs(", ", fp);
+    } else first = 0;
+    fputs(n->rvals[i]->cg_string, fp);
   }
-  fputs(";\n", fp);
+  fputs(");\n", fp);
+}
+
+static void
+format_string_transfer_function(PNode *pn, EntrySet *es) {
+  AVar *result = make_AVar(pn->lvals[0], es);
+  update_gen(result, make_abstract_type(sym_string));
+}
+
+static void
+format_string_codegen(FILE *fp, PNode *n, Fun *f) {
+  fputs("_CG_format_string(", fp);
+  fputs(n->rvals[2]->cg_string, fp);
+  Var *v = n->rvals[3];
+  if (v->type->type_kind == Type_RECORD) {
+    for (int i = 0; i < v->type->has.n; i++)
+      fprintf(fp, ", %s->e%d", v->cg_string, i);
+  } else {
+    fputs(", ", fp);
+    fputs(n->rvals[3]->cg_string, fp);
+  }
+  fputs(");\n", fp);
 }
 
 static void
@@ -2074,6 +2102,7 @@ add_primitive_transfer_functions() {
   prim_reg(sym_write->name, return_nil_transfer_function)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
   prim_reg(sym___pyc_c_code__->name, c_code_transfer_function, c_code_codegen)->is_visible = 1;
+  prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
 }
 
