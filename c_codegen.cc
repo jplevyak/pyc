@@ -931,15 +931,8 @@ build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
   if (allsyms.n)
     fputs("\n/*\n Builtin Functions\n*/\n\n", fp);
   forv_Sym(s, allsyms) {
-    if (s->type_kind == Type_RECORD && s->creators[0]->sym == sym_list && homogeneous_tuple(s) && s->has.n) {
-      fprintf(fp, "static inline _CG_list _CG_to_list(%s p) {\n", s->cg_string);
-      fprintf(fp, "  uint32 *x = (uint32*)MALLOC(8+sizeof(_CG_s%d));\n", s->id);
-      fprintf(fp, "  x[0] = %d;\n", s->has.n);
-      fprintf(fp, "  x[1] = %d;\n", s->has.n);
-      for (int i = 0; i < s->has.n; i++)
-        fprintf(fp, "  x[2+%d] = p->e%d;\n", i, i);
-      fprintf(fp, "  return (_CG_list)&x[2];\n}\n\n");
-    }
+    if (s->type_kind == Type_RECORD && s->creators[0]->sym == sym_list && homogeneous_tuple(s) && s->has.n)
+      fprintf(fp, "_CG_TUPLE_TO_LIST_FUN(%d, %d);\n", s->id, s->has.n);
   }
   return 0;
 }

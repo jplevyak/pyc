@@ -67,6 +67,37 @@ typedef void *_CG_nil_type;
 #define __init ((void*)0)
 #define nil_type 0
 
+struct _CG_list_struct {
+  uint32 total_len;
+  uint32 len;
+  void *list;
+  char x[4]; // preallocated space
+};
+#define SIZEOF_LIST_HEADER (sizeof(void*)+8)
+  
+/*
+  Lists and Tuples      
+
+  Tuples are stored as a pointer directly to the structure
+  containing the tuple elements.
+
+  Lists are stored as _CG_list_struct and a _CG_list 
+  is a pointer to &((_CG_list_struct*)list)->x[0]
+  
+  This makes immutable/constant Lists and Tuples compatible
+  and puts the elements of such lists in the same cache line as
+  the list information.
+*/
+
+#define _CG_TUPLE_TO_LIST_FUN(_s, _n) \
+static inline _CG_list _CG_to_list(_CG_ps##_s p) { \
+  _CG_list x = _CG_ptr_to_list(MALLOC(SIZEOF_LIST_HEADER+sizeof(_CG_s##_s))); \
+  _CG_list_len(x) = _n; \
+  _CG_list_total_len(0,x) = _n;    \
+  memcpy(x, p, sizeof(_CG_s##_s)); \
+  return x; \
+}
+
 static inline char * _CG_format_string(char *str, ...) {
   int l = strlen(str) + 24;
   char *s = 0;
@@ -134,16 +165,17 @@ static inline int _CG_float_printf(double d, bool ln) {
 
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
 
-#define _CG_list_len(_l) (((uint32*)_l)[-1])
-#define _CG_list_total_len(_c, _l) (((uint32*)_l)[-2])
+#define _CG_list_to_struct(_l) ((_CG_list_struct*)(((char*)(_l))-SIZEOF_LIST_HEADER))
+#define _CG_list_len(_l) (_CG_list_to_struct(_l)->len)
+#define _CG_list_total_len(_c, _l) (_CG_list_to_struct(_l)->total_len)
 #define _CG_prim_len(_c, _l) ((_l)?_CG_list_len(_l):0)
-#define _CG_ptr_to_list(_l) ((_CG_list)(&((uint32*)_l)[2]))
+#define _CG_ptr_to_list(_l) ((_CG_list)(((char*)(_l))+SIZEOF_LIST_HEADER))
 
 static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 size1, uint32 size2) {
   uint32 s1 = _CG_prim_len(0,l1), s2 = _CG_prim_len(0,l2);
   if (!(s1 + s2)) return 0;
   uint32 size = size1 ? size1 : size2;
-  _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * s2 + sizeof(uint32) * 2));
+  _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * s2 + SIZEOF_LIST_HEADER));
   _CG_list_len(x) = s1 + s2;
   _CG_list_total_len(0,x) = s1 + s2;
   if (s1)
@@ -156,7 +188,7 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
 static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size) {
   if (!l) return 0;
   uint32 s1 = _CG_prim_len(0,l1);
-  _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * l + sizeof(uint32) * 2));
+  _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * l + SIZEOF_LIST_HEADER));
   _CG_list_len(x) = s1 * l;
   _CG_list_total_len(0,x) = s1 * l;
   for (int i = 0; i < l; i++)
@@ -166,7 +198,7 @@ static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size
 
 static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
   if (!n) return 0;
-  void *x = _CG_ptr_to_list(GC_MALLOC(s + sizeof(uint32) * 2));
+  _CG_list x = _CG_ptr_to_list(GC_MALLOC(s + SIZEOF_LIST_HEADER));
   _CG_list_len(x) = n;
   _CG_list_total_len(0,x) = n;
   return x;

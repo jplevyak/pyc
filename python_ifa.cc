@@ -1929,19 +1929,23 @@ build_if1(expr_ty e, PycContext &ctx) {
       }
       break;
     case Subscript_kind: { // expr value, slice slice, expr_context ctx
-      assert(e->v.Subscript.slice->kind == Index_kind);
-      if1_gen(if1, &ast->code, getAST(e->v.Subscript.value, ctx)->code);
-      if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Index.value, ctx)->code);
-      // AugLoad, Load, AugStore, Store, Del, !Param
-      ast->is_object_index = 1;
-      if (e->v.Subscript.ctx == Load) {
-        call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getitem__, 
-                    (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
-      } else {
-        assert(e->v.Subscript.ctx == Store);
-        call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setitem__, 
-                    (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
-      }
+      if (e->v.Subscript.slice->kind == Index_kind) {
+        if1_gen(if1, &ast->code, getAST(e->v.Subscript.value, ctx)->code);
+        if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Index.value, ctx)->code);
+        // AugLoad, Load, AugStore, Store, Del, !Param
+        ast->is_object_index = 1;
+        if (e->v.Subscript.ctx == Load) {
+          call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getitem__, 
+                      (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
+        } else {
+          assert(e->v.Subscript.ctx == Store);
+          call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setitem__, 
+                      (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
+        }
+      } else if (e->v.Subscript.slice->kind == Slice_kind) {
+        assert(!"implemented");
+      } else
+        assert(!"implemented");
       break;
     }
     case Name_kind: { // identifier id, expr_context ctx
