@@ -3,6 +3,8 @@ class __pyc_any_type__:
     return "<instance>"
   def __pyc_tuplify__(self):
     return __pyc_primitive__(__pyc_symbol__("make_tuple"), self)
+  def __getslice__(self, i, j):
+    return self.__getitem__(slice(i,j,1))
 
 class object:
   def __null__(self):
@@ -247,6 +249,28 @@ class float:
   def __pyc_to_bool__(self):
     return self != 0.0
 
+class __slice_iter__:
+  theslice = None
+  position = 0
+  def __init__(self, s):
+    self.theslice = s
+  def __pyc_more__(self):
+    return self.position < self.theslice.upper
+  def next(self):
+    self.position += self.step
+    return self.position - 1
+
+class slice:
+  lower = 0
+  upper = 0
+  step = 1
+  def __init__(self, alower, anupper, astep):
+    self.lower = alower
+    self.upper = anupper
+    self.step = astep
+  def __iter__(self):
+    return __tuple_iter__(self)
+
 class __list_iter__:
   thelist = None
   position = 0
@@ -263,6 +287,13 @@ class list:
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
+  def __getslice__(self, i, j):
+    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
+                          "_CG_list_getslice", 
+                          list, self, 
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                          int, i,
+                          int, j)
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
   def __delitem__(self, key):

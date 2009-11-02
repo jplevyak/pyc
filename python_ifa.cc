@@ -55,7 +55,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___getitem__ = 0, *sym___setitem__ = 0;
+static Sym *sym___getitem__ = 0, *sym___setitem__ = 0, *sym___getslice__ = 0, *sym___setslice__ = 0;
 static Sym *sym___null__ = 0, *sym___str__ = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
 static Sym *sym___pyc_c_code__ = 0, *sym___pyc_to_bool__ = 0, *sym___pyc_format_string__ = 0;
@@ -356,6 +356,8 @@ build_builtin_symbols() {
   sym___new__ = if1_make_symbol(if1, "__new__");
   sym___getitem__ = if1_make_symbol(if1, "__getitem__");
   sym___setitem__ = if1_make_symbol(if1, "__setitem__");
+  sym___getslice__ = if1_make_symbol(if1, "__getslice__");
+  sym___setslice__ = if1_make_symbol(if1, "__setslice__");
   sym___init__ = if1_make_symbol(if1, "__init__");
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
@@ -434,6 +436,12 @@ static inline PycAST *getAST(expr_ty e, PycContext &ctx) {
   ast->xexpr = e;
   exprmap.put(e, ast);
   return ast;
+}
+
+static inline Sym *getAST_rval_or_NULL(expr_ty e, PycContext &ctx) {
+  if (!e)
+    return NULL;
+  return getAST(e, ctx)->rval;
 }
 
 template<class C>
@@ -1352,8 +1360,11 @@ call_method(IF1 *if1, Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, .
   send->ast = ast;
   va_start(ap, n);
   for (int i = 0; i < n; i++) {
-    Sym * v = va_arg(ap, Sym *);
-    if1_add_send_arg(if1, send, v);
+    Sym *v = va_arg(ap, Sym *);
+    if (v)
+      if1_add_send_arg(if1, send, v);
+    else
+      if1_add_send_arg(if1, send, sym_nil);
   }
 }
 
@@ -1929,11 +1940,11 @@ build_if1(expr_ty e, PycContext &ctx) {
       }
       break;
     case Subscript_kind: { // expr value, slice slice, expr_context ctx
+      if1_gen(if1, &ast->code, getAST(e->v.Subscript.value, ctx)->code);
+      ast->is_object_index = 1;
       if (e->v.Subscript.slice->kind == Index_kind) {
-        if1_gen(if1, &ast->code, getAST(e->v.Subscript.value, ctx)->code);
         if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Index.value, ctx)->code);
         // AugLoad, Load, AugStore, Store, Del, !Param
-        ast->is_object_index = 1;
         if (e->v.Subscript.ctx == Load) {
           call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getitem__, 
                       (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
@@ -1943,7 +1954,24 @@ build_if1(expr_ty e, PycContext &ctx) {
                       (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
         }
       } else if (e->v.Subscript.slice->kind == Slice_kind) {
-        assert(!"implemented");
+        if (e->v.Subscript.slice->v.Slice.lower)
+          if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Slice.lower, ctx)->code);
+        if (e->v.Subscript.slice->v.Slice.upper)
+          if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Slice.upper, ctx)->code);
+        if (e->v.Subscript.slice->v.Slice.step)
+          if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Slice.step, ctx)->code);
+        if (e->v.Subscript.ctx == Load) {
+          if (!e->v.Subscript.slice->v.Slice.step) {
+            Sym *l = getAST_rval_or_NULL(e->v.Subscript.slice->v.Slice.lower, ctx);
+            if (!l) l = int32_constant(0);
+            Sym *h = getAST_rval_or_NULL(e->v.Subscript.slice->v.Slice.upper, ctx);
+            if (!h) l = int32_constant(INT_MAX);
+            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getslice__, 
+                        (ast->rval = new_sym(ast)), 2, l, h);
+          } else
+            assert(!"implemented");
+        } else {
+        }
       } else
         assert(!"implemented");
       break;

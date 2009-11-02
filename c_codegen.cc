@@ -198,10 +198,12 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
     Ltuple:
       fputs("  ", fp);
       cchar *t = c_type(n->lvals[0]);
-      if (n->rvals.n > 2)
-        fprintf(fp, "%s = _CG_prim_tuple%s(%s, %d);\n", n->lvals[0]->cg_string, listish_tuple ? "_list" : "", t, n->rvals.n - 2);
-      else
-        fprintf(fp, "%s = 0;\n", n->lvals[0]->cg_string);
+      int voidish = n->rvals.n < 3 && n->lvals[0]->type->element->type == sym_void;
+      fprintf(fp, "%s = _CG_prim_tuple%s(%s, %d);\n", 
+              n->lvals[0]->cg_string,
+              listish_tuple ? "_list" : "", 
+              voidish ? "int*" : t,
+              n->rvals.n - 2);
       for (int i = 2; i < n->rvals.n; i++)
          fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, i-2, n->rvals.v[i]->cg_string);
       break;
@@ -339,7 +341,7 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       if (t->type_kind != Type_RECORD || !n->rvals[o+1]->sym->constant) {
         fprintf(fp, "((%s", n->lvals[0]->type->cg_string);
         for (int i = o+1; i < n->rvals.n-1; i++) fprintf(fp, "*");
-        fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
+        fprintf(fp, ")(_CG_list_ptr(%s)))", n->rvals[o]->cg_string);
         for (int i = o+1; i < n->rvals.n-1; i++) {
           if (!fa->tuple_index_base)
             fprintf(fp, "[%s]", n->rvals[i]->cg_string);
