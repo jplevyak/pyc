@@ -220,9 +220,9 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       e = e ? e : sym_void_type;
       assert(n->lvals[0]->cg_string);
       fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-      fprintf(fp, "(void*)new(%s)[%d];\n", e->cg_string, n->rvals.n-2);
+      fprintf(fp, "(_CG_list)_CG_prim_list(%s,%d);\n", e->cg_string, n->rvals.n-2);
       for (int i = 2; i < n->rvals.n; i++) {
-        fprintf(fp, "  (((%s)*)(%s))[%d] = ", e->cg_string, n->lvals[0]->cg_string, i-2);
+        fprintf(fp, "  ((%s*)(_CG_list_ptr(%s)))[%d] = ", e->cg_string, n->lvals[0]->cg_string, i-2);
         fputs(n->rvals[i]->cg_string, fp);
         fprintf(fp, ";\n");
       }
@@ -322,7 +322,10 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         else {
           fprintf(fp, "((%s", e->cg_string);
           for (int i = o+1; i < n->rvals.n; i++) fprintf(fp, "*");
-          fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
+          if (t->type_kind == Type_RECORD)
+            fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
+          else
+            fprintf(fp, ")(_CG_list_ptr(%s)))", n->rvals[o]->cg_string);
           for (int i = o+1; i < n->rvals.n; i++) {
             if (i != o+1) fputs(", ", fp);
             fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
@@ -341,7 +344,10 @@ write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
       if (t->type_kind != Type_RECORD || !n->rvals[o+1]->sym->constant) {
         fprintf(fp, "((%s", n->lvals[0]->type->cg_string);
         for (int i = o+1; i < n->rvals.n-1; i++) fprintf(fp, "*");
-        fprintf(fp, ")(_CG_list_ptr(%s)))", n->rvals[o]->cg_string);
+        if (t->type_kind == Type_RECORD)
+          fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
+        else
+          fprintf(fp, ")(_CG_list_ptr(%s)))", n->rvals[o]->cg_string);
         for (int i = o+1; i < n->rvals.n-1; i++) {
           if (!fa->tuple_index_base)
             fprintf(fp, "[%s]", n->rvals[i]->cg_string);

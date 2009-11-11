@@ -296,6 +296,14 @@ class list:
                           int, j)
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
+  def __setslice__(self, i, j, s):
+    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, s), 
+                          "_CG_list_setslice", 
+                          list, self, 
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                          int, i,
+                          int, j,
+                          list, s)
   def __delitem__(self, key):
     pass
   def __iter__(self):

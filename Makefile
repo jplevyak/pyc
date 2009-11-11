@@ -130,17 +130,17 @@ pyc.o: pyc.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/pyfpe.h /usr/include/python2.5/Python-ast.h \
   /usr/include/python2.5/asdl.h /usr/include/python2.5/symtable.h \
   ../plib/plib.h ../plib/arg.h ../plib/barrier.h ../plib/config.h \
-  ../plib/freelist.h ../plib/defalloc.h ../plib/list.h ../plib/log.h \
-  ../plib/vec.h ../plib/map.h ../plib/threadpool.h ../plib/misc.h \
-  ../plib/util.h ../plib/conn.h ../plib/md5.h ../plib/mt64.h \
-  ../plib/prime.h ../plib/service.h ../plib/timer.h ../plib/unit.h \
-  ../ifalib/ifa.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
-  ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
-  ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
-  ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
-  ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h \
-  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h COPYRIGHT.i LICENSE.i
+  ../plib/dlmalloc.h ../plib/freelist.h ../plib/defalloc.h ../plib/list.h \
+  ../plib/log.h ../plib/vec.h ../plib/map.h ../plib/threadpool.h \
+  ../plib/misc.h ../plib/util.h ../plib/conn.h ../plib/md5.h \
+  ../plib/mt64.h ../plib/persist.h ../plib/prime.h ../plib/service.h \
+  ../plib/timer.h ../plib/unit.h ../ifalib/ifa.h ../ifalib/ifadefs.h \
+  ../ifalib/ast.h ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h \
+  ../ifalib/sym.h ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
+  ../ifalib/builtin.h ../ifalib/builtin_symbols.h ../ifalib/fail.h \
+  ../ifalib/fa.h ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h \
+  ../ifalib/fun.h ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h \
+  ../ifalib/fa.h ../ifalib/prim.h python_ifa.h COPYRIGHT.i LICENSE.i
 python_ifa.o: python_ifa.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
@@ -176,17 +176,17 @@ python_ifa.o: python_ifa.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/pyfpe.h /usr/include/python2.5/Python-ast.h \
   /usr/include/python2.5/asdl.h /usr/include/python2.5/symtable.h \
   ../plib/plib.h ../plib/arg.h ../plib/barrier.h ../plib/config.h \
-  ../plib/freelist.h ../plib/defalloc.h ../plib/list.h ../plib/log.h \
-  ../plib/vec.h ../plib/map.h ../plib/threadpool.h ../plib/misc.h \
-  ../plib/util.h ../plib/conn.h ../plib/md5.h ../plib/mt64.h \
-  ../plib/prime.h ../plib/service.h ../plib/timer.h ../plib/unit.h \
-  ../ifalib/ifa.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
-  ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
-  ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
-  ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
-  ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h \
-  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h
+  ../plib/dlmalloc.h ../plib/freelist.h ../plib/defalloc.h ../plib/list.h \
+  ../plib/log.h ../plib/vec.h ../plib/map.h ../plib/threadpool.h \
+  ../plib/misc.h ../plib/util.h ../plib/conn.h ../plib/md5.h \
+  ../plib/mt64.h ../plib/persist.h ../plib/prime.h ../plib/service.h \
+  ../plib/timer.h ../plib/unit.h ../ifalib/ifa.h ../ifalib/ifadefs.h \
+  ../ifalib/ast.h ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h \
+  ../ifalib/sym.h ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
+  ../ifalib/builtin.h ../ifalib/builtin_symbols.h ../ifalib/fail.h \
+  ../ifalib/fa.h ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h \
+  ../ifalib/fun.h ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h \
+  ../ifalib/fa.h ../ifalib/prim.h python_ifa.h
 c_codegen.o: c_codegen.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
@@ -222,20 +222,20 @@ c_codegen.o: c_codegen.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/pyfpe.h /usr/include/python2.5/Python-ast.h \
   /usr/include/python2.5/asdl.h /usr/include/python2.5/symtable.h \
   ../plib/plib.h ../plib/arg.h ../plib/barrier.h ../plib/config.h \
-  ../plib/freelist.h ../plib/defalloc.h ../plib/list.h ../plib/log.h \
-  ../plib/vec.h ../plib/map.h ../plib/threadpool.h ../plib/misc.h \
-  ../plib/util.h ../plib/conn.h ../plib/md5.h ../plib/mt64.h \
-  ../plib/prime.h ../plib/service.h ../plib/timer.h ../plib/unit.h \
-  ../ifalib/ifa.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
-  ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
-  ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
-  ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
-  ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h \
-  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h ../ifalib/ifadefs.h ../ifalib/pattern.h \
-  ../ifalib/cg.h ../ifalib/if1.h ../ifalib/builtin.h ../ifalib/pdb.h \
-  ../ifalib/fun.h ../ifalib/pnode.h ../ifalib/var.h ../ifalib/fail.h \
-  ../ifalib/builtin_symbols.h
+  ../plib/dlmalloc.h ../plib/freelist.h ../plib/defalloc.h ../plib/list.h \
+  ../plib/log.h ../plib/vec.h ../plib/map.h ../plib/threadpool.h \
+  ../plib/misc.h ../plib/util.h ../plib/conn.h ../plib/md5.h \
+  ../plib/mt64.h ../plib/persist.h ../plib/prime.h ../plib/service.h \
+  ../plib/timer.h ../plib/unit.h ../ifalib/ifa.h ../ifalib/ifadefs.h \
+  ../ifalib/ast.h ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h \
+  ../ifalib/sym.h ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
+  ../ifalib/builtin.h ../ifalib/builtin_symbols.h ../ifalib/fail.h \
+  ../ifalib/fa.h ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h \
+  ../ifalib/fun.h ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h \
+  ../ifalib/fa.h ../ifalib/prim.h python_ifa.h ../ifalib/ifadefs.h \
+  ../ifalib/pattern.h ../ifalib/cg.h ../ifalib/if1.h ../ifalib/builtin.h \
+  ../ifalib/pdb.h ../ifalib/fun.h ../ifalib/pnode.h ../ifalib/var.h \
+  ../ifalib/fail.h ../ifalib/builtin_symbols.h
 version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/patchlevel.h /usr/include/python2.5/pyconfig.h \
   /usr/include/python2.5/pyconfig-64.h /usr/include/python2.5/pyport.h \
@@ -271,17 +271,17 @@ version.o: version.cc defs.h /usr/include/python2.5/Python.h \
   /usr/include/python2.5/pyfpe.h /usr/include/python2.5/Python-ast.h \
   /usr/include/python2.5/asdl.h /usr/include/python2.5/symtable.h \
   ../plib/plib.h ../plib/arg.h ../plib/barrier.h ../plib/config.h \
-  ../plib/freelist.h ../plib/defalloc.h ../plib/list.h ../plib/log.h \
-  ../plib/vec.h ../plib/map.h ../plib/threadpool.h ../plib/misc.h \
-  ../plib/util.h ../plib/conn.h ../plib/md5.h ../plib/mt64.h \
-  ../plib/prime.h ../plib/service.h ../plib/timer.h ../plib/unit.h \
-  ../ifalib/ifa.h ../ifalib/ifadefs.h ../ifalib/ast.h ../ifalib/ifa.h \
-  ../ifalib/ifalog.h ../ifalib/if1.h ../ifalib/sym.h ../ifalib/num.h \
-  ../ifalib/prim_data.h ../ifalib/code.h ../ifalib/builtin.h \
-  ../ifalib/builtin_symbols.h ../ifalib/fail.h ../ifalib/fa.h \
-  ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h ../ifalib/fun.h \
-  ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h ../ifalib/fa.h \
-  ../ifalib/prim.h python_ifa.h
+  ../plib/dlmalloc.h ../plib/freelist.h ../plib/defalloc.h ../plib/list.h \
+  ../plib/log.h ../plib/vec.h ../plib/map.h ../plib/threadpool.h \
+  ../plib/misc.h ../plib/util.h ../plib/conn.h ../plib/md5.h \
+  ../plib/mt64.h ../plib/persist.h ../plib/prime.h ../plib/service.h \
+  ../plib/timer.h ../plib/unit.h ../ifalib/ifa.h ../ifalib/ifadefs.h \
+  ../ifalib/ast.h ../ifalib/ifa.h ../ifalib/ifalog.h ../ifalib/if1.h \
+  ../ifalib/sym.h ../ifalib/num.h ../ifalib/prim_data.h ../ifalib/code.h \
+  ../ifalib/builtin.h ../ifalib/builtin_symbols.h ../ifalib/fail.h \
+  ../ifalib/fa.h ../ifalib/prim.h ../ifalib/var.h ../ifalib/pnode.h \
+  ../ifalib/fun.h ../ifalib/pdb.h ../ifalib/clone.h ../ifalib/cg.h \
+  ../ifalib/fa.h ../ifalib/prim.h python_ifa.h
 builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
 ConfigParser.o: lib/ConfigParser.cpp lib/ConfigParser.hpp lib/builtin.hpp \
   lib/re.hpp

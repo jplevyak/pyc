@@ -1,3 +1,5 @@
+add_list should take element_type of the merge
+implement setslice
 
 change c_code to be c_call and make it always a call
 

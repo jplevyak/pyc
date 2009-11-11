@@ -438,10 +438,13 @@ static inline PycAST *getAST(expr_ty e, PycContext &ctx) {
   return ast;
 }
 
-static inline Sym *getAST_rval_or_NULL(expr_ty e, PycContext &ctx) {
-  if (!e)
-    return NULL;
-  return getAST(e, ctx)->rval;
+static inline Sym *gen_or_default(expr_ty e, Sym *def, PycAST *ast, PycContext &ctx) {
+  if (e) {
+    PycAST *east = getAST(e, ctx);
+    if1_gen(if1, &ast->code, east->code);
+    return east->rval;
+  } else 
+    return def;
 }
 
 template<class C>
@@ -1954,23 +1957,22 @@ build_if1(expr_ty e, PycContext &ctx) {
                       (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
         }
       } else if (e->v.Subscript.slice->kind == Slice_kind) {
-        if (e->v.Subscript.slice->v.Slice.lower)
-          if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Slice.lower, ctx)->code);
-        if (e->v.Subscript.slice->v.Slice.upper)
-          if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Slice.upper, ctx)->code);
-        if (e->v.Subscript.slice->v.Slice.step)
-          if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Slice.step, ctx)->code);
+        Sym *l = gen_or_default(e->v.Subscript.slice->v.Slice.lower, int32_constant(0), ast, ctx);
+        Sym *u = gen_or_default(e->v.Subscript.slice->v.Slice.upper, int32_constant(INT_MAX), ast, ctx);
+        Sym *s = gen_or_default(e->v.Subscript.slice->v.Slice.step, int32_constant(1), ast, ctx);
+        (void)s;
         if (e->v.Subscript.ctx == Load) {
-          if (!e->v.Subscript.slice->v.Slice.step) {
-            Sym *l = getAST_rval_or_NULL(e->v.Subscript.slice->v.Slice.lower, ctx);
-            if (!l) l = int32_constant(0);
-            Sym *h = getAST_rval_or_NULL(e->v.Subscript.slice->v.Slice.upper, ctx);
-            if (!h) l = int32_constant(INT_MAX);
+          if (!e->v.Subscript.slice->v.Slice.step)
             call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getslice__, 
-                        (ast->rval = new_sym(ast)), 2, l, h);
-          } else
+                        (ast->rval = new_sym(ast)), 2, l, u);
+          else
             assert(!"implemented");
         } else {
+          if (!e->v.Subscript.slice->v.Slice.step)
+            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setslice__, 
+                        (ast->rval = new_sym(ast)), 2, l, u);
+          else 
+            assert(!"implemented");
         }
       } else
         assert(!"implemented");

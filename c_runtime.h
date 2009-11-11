@@ -182,9 +182,9 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
   _CG_list_total_len(0,x) = s1 + s2;
   _CG_list_ptr(x) = x;
   if (s1)
-    memcpy(x, l1, s1 * size);
+    memcpy(x, _CG_list_ptr(l1), s1 * size);
   if (s2)
-    memcpy(((char*)x) + s1 * size, l2, s2 * size);
+    memcpy(((char*)x) + s1 * size, _CG_list_ptr(l2), s2 * size);
   return x;
 }
 
@@ -196,27 +196,69 @@ static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size
   _CG_list_total_len(0,x) = s1 * l;
   _CG_list_ptr(x) = x;
   for (int i = 0; i < l; i++)
-    memcpy(((char*)x) + (i * size * s1), l1, s1 * size);
+    memcpy(((char*)x) + (i * size * s1), _CG_list_ptr(l1), s1 * size);
   return x;
 }
 
 static inline _CG_list _CG_list_getslice_internal(_CG_list v, uint32 size, int32 l, int32 h) {
   uint32 len = _CG_prim_len(0,v);
   if (l > len) l = len;
-  if (l < 0) l = len + l;
-  if (l < 0) l = 0;
+  if (l < 0) { 
+    l = len + l;
+    if (l < 0) l = 0;
+  }
   if (h > len) h = len;
-  if (h < 0) h = len + h;
-  if (h < 0) h = 0;
+  if (h < 0) {
+    h = len + h;
+    if (h < 0) h = 0;
+  }
+  if (l > h) h = l; 
   int s = h - l;
-  if (s < 0) s = 0;
   _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s + SIZEOF_LIST_HEADER));
   _CG_list_len(x) = s;
   _CG_list_total_len(0,x) = s;
   _CG_list_ptr(x) = x;
   if (s)
-    memcpy(x, ((char*)v) + l * size, s * size);
+    memcpy(x, ((char*)_CG_list_ptr(v)) + l * size, s * size);
   return x;
+}
+
+static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int32 l, int32 h, _CG_list l2) {
+  uint32 len1 = _CG_prim_len(0,l1), len2 = _CG_prim_len(0,l2);
+  if (l > len1) l = len1;
+  if (l < 0) {
+    l = len1 + l;
+    if (l < 0) l = 0;
+  }
+  if (h > len1) h = len1;
+  if (h < 0) {
+    h = len1 + h;
+    if (h < 0) h = 0;
+  }
+  if (l > h) h = l; 
+  int s = h - l; // size to delete
+  s = len1 - s; // size to save
+  int new_s = s + len2; // new size
+  _CG_list p1 = _CG_list_ptr(l1);
+  _CG_list x = (_CG_list)MALLOC(size * new_s);
+  _CG_list_len(l1) = new_s;
+  _CG_list_total_len(0,l1) = new_s;
+  _CG_list_ptr(l1) = x;
+  char *p = (char*)x;
+  if (l) {
+    memcpy(p, ((char*)p1), l * size);
+    p += l * size;
+  }
+  if (len2) {
+    memcpy(p, _CG_list_ptr(l2), len2 * size);
+    p += len2 * size;
+  }
+  int sh = len1 - h;
+  if (sh) {
+    memcpy(p, ((char*)p1) + h * size, sh * size);
+    p += sh * size;
+  }
+  return l1;
 }
 
 static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
@@ -229,10 +271,12 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
 
 #define _CG_string_len(_s) strlen(_s)
 #define _CG_prim_tuple_list(_c, _n) (_c)(_CG_prim_tuple_list_internal(sizeof(*((_c)0)), _n))
+#define _CG_prim_list(_e, _n) _CG_prim_tuple_list_internal(sizeof(_e), _n)
 #define _CG_prim_tuple(_c, _n) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_list_add(_l1, _l2, _s1, _s2) (_CG_list_add_internal(_CG_to_list(_l1), _CG_to_list(_l2), _s1, _s2))
 #define _CG_list_mult(_l1, _l, _s) (_CG_list_mult_internal(_CG_to_list(_l1), _l, _s))
 #define _CG_list_getslice(_l, _s, _lower, _upper) (_CG_list_getslice_internal(_CG_to_list(_l), _s, _lower, _upper))
+#define _CG_list_setslice(_l1, _s, _lower, _upper, _l2) (_CG_list_setslice_internal(_l1, _s, _lower, _upper, _CG_to_list(_l2)))
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c)GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_vector(_c, _n) (void*)GC_MALLOC(sizeof(_c*) * _n)
