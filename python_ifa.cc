@@ -1209,6 +1209,9 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   Sym *fn = ast->sym;
   Code *body = 0;
   Sym *in = ctx.scope_stack[ctx.scope_stack.n-2]->in;
+  for (int i = 0; i < asdl_seq_LEN(s->v.FunctionDef.args->defaults); i++) {
+    
+  }
   for (int i = 0; i < asdl_seq_LEN(s->v.FunctionDef.body); i++)
     if1_gen(if1, &body, getAST((stmt_ty)asdl_seq_GET(s->v.FunctionDef.body, i), ctx)->code);
   if1_move(if1, &body, sym_nil, fn->ret, ast);
