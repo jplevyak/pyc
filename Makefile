@@ -87,9 +87,6 @@ pyc.o: LICENSE.i COPYRIGHT.i
 
 version.o: Makefile
 
-test:
-	./pyc_tests
-
 
 -include .depend
 # DO NOT DELETE THIS LINE -- mkdep uses it.
