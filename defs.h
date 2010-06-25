@@ -5,13 +5,13 @@
 #define _defs_H_
 
 #define __STDC_LIMIT_MACROS 1
-#include <stdint.h>
 
 extern "C" {
 #include <Python.h>
 #include <Python-ast.h>
 #include <symtable.h>
 }
+
 // namespace contamination from python headers
 #if FREE != 4
 #error fixme
@@ -23,6 +23,7 @@ extern "C" {
 #undef List
 #endif
 #define PYTHON_FREE 4
+
 #include "plib.h"
 #include "ifa.h"
 #include "fa.h"

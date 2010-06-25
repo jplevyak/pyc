@@ -1,8 +1,8 @@
 /* -*-Mode: c++;-*-
    Copyright (c) 2003-2009 John Plevyak, All Rights Reserved
 */
-#include <ctype.h>
 #include "defs.h"
+#include <ctype.h>
 #include "ifadefs.h"
 #include "pattern.h"
 #include "cg.h"
@@ -111,13 +111,17 @@ cg_writeln(FILE *fp, Vec<Var *> &vars, int ln) {
              vars[i]->type == sym_float128)
       fprintf(fp, "_CG_float_printf(%s,%d);\n", vars[i]->cg_string, doln);
     else if (vars[i]->type == sym_string) {
-      if (ln || strcmp("_CG_String(\"\")", vars[i]->cg_string))
-        fprintf(fp, "printf(\"%%s%s\", %s);\n", sln, vars[i]->cg_string);
+      if (ln || strcmp("_CG_String(\"\")", vars[i]->cg_string)) {
+        if (doln)
+          fprintf(fp, "printf(%s%s\", %s);\n", sln, vars[i]->cg_string);
+        else
+          fprintf(fp, "puts( %s);\n", vars[i]->cg_string);
+      }
     } else
       fprintf(fp, "printf(\"<unsupported type>%s\");\n", sln);
   }
   if (vars.n < 3 && ln)
-    fputs("printf(\"\\n\");\n", fp);
+    fputs("putchar(\'\\n\');\n", fp);
   return 0;
 }
 

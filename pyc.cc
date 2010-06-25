@@ -2,9 +2,9 @@
   Copyright 2003-2009 John Plevyak, All Rights Reserved
 */
 #define EXTERN
+#include "defs.h"
 #include <signal.h>
 #include <sys/resource.h>
-#include "defs.h"
 
 int do_unit_tests = 0;
 static char pyc_ifa_log[256];
