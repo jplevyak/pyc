@@ -113,9 +113,9 @@ cg_writeln(FILE *fp, Vec<Var *> &vars, int ln) {
     else if (vars[i]->type == sym_string) {
       if (ln || strcmp("_CG_String(\"\")", vars[i]->cg_string)) {
         if (doln)
-          fprintf(fp, "printf(%s%s\", %s);\n", sln, vars[i]->cg_string);
+          fprintf(fp, "printf(%%s%s\", %s);\n", sln, vars[i]->cg_string);
         else
-          fprintf(fp, "puts( %s);\n", vars[i]->cg_string);
+          fprintf(fp, "fputs(%s, stdout);\n", vars[i]->cg_string);
       }
     } else
       fprintf(fp, "printf(\"<unsupported type>%s\");\n", sln);
