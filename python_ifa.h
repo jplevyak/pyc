@@ -2,6 +2,7 @@
 #define _python_ifa_H_
 
 #include "defs.h"
+#include "pattern.h"
 
 class BaseIFAAST;
 class Label;
@@ -16,6 +17,7 @@ class PycCallbacks : public IFACallbacks {
 public:
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
+  Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
 };
 
 class PycSymbol : public IFASymbol {
