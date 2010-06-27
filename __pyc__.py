@@ -419,8 +419,17 @@ def range(start, end):
 class xrange:
   i = 0
   j = 0
+  s = 1
+  def __init__(self, ai, aj, ak):
+    self.i = ai
+    self.j = aj
+    self.s = ak
+    return self
   def __init__(self, ai, aj):
     self.i = ai
+    self.j = aj
+    return self
+  def __init__(self, aj):
     self.j = aj
     return self
   def __pyc_more__(self):
@@ -429,7 +438,7 @@ class xrange:
     return this
   def next(self):
     x = self.i
-    self.i += 1
+    self.i += self.s
     return x
 
 def len(x):
