@@ -1,5 +1,5 @@
 /*
-  Copyright 2008-2009 John Plevyak, All Rights Reserved
+  Copyright 2008-2010 John Plevyak, All Rights Reserved
 */
 #include "defs.h"
 #include "dirent.h"
@@ -472,7 +472,7 @@ static void finalize_function(Fun *f) {
   if (!f->ast) return; // __main__
   PycAST *a = (PycAST*)f->ast;
   stmt_ty s = a->xstmt;
-  if (s->kind != FunctionDef_kind) return; // could be __init__ in class def
+  if (!s || s->kind != FunctionDef_kind) return; // could be __init__ in class def
   int defaults_len = s->v.FunctionDef.args ? asdl_seq_LEN(s->v.FunctionDef.args->defaults) : 0;
   if (defaults_len) {
     int skip = fn->has.n - defaults_len;
@@ -1406,11 +1406,10 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
-  as.add(fn);
+  as.add(new_sym(ast);
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
   get_syms_args(ast, s->v.FunctionDef.args, as, ctx, s->v.FunctionDef.decorator_list);
   if (in && !in->is_fun) {
-    as[0] = new_sym(ast);
-    as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
     if (as.n > 1) {
       fn->self = as[1];
       fn->self->must_implement_and_specialize(in);
