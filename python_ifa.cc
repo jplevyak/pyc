@@ -1406,7 +1406,7 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
-  as.add(new_sym(ast);
+  as.add(new_sym(ast));
   as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
   get_syms_args(ast, s->v.FunctionDef.args, as, ctx, s->v.FunctionDef.decorator_list);
   if (in && !in->is_fun) {
