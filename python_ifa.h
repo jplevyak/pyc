@@ -56,7 +56,6 @@ class PycAST : public IFAAST {
   Code *code;           // IF1 Code (including children)
   Label *label[2];      // before and after for loops (continue,break)
   Sym *sym, *rval;      // IF1 Syms
-  PycContext *ctx;      // optional saved context
 
   uint32 is_builtin:1;
   uint32 is_member:1;

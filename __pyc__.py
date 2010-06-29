@@ -420,12 +420,16 @@ class xrange:
   i = 0
   j = 0
   s = 1
-  def __init__(self, ai, aj):
+  def __init__(self, ai, aj, ak = 1):
     self.i = ai
     self.j = aj
+    self.s = ak
     return self
   def __pyc_more__(self):
-    return self.i < self.j
+    if self.s >= 0:
+      return self.i < self.j
+    else:
+      return self.i > self.j
   def __iter__(this):
     return this
   def next(self):

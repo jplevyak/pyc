@@ -64,7 +64,7 @@ static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
 
-static void install_new_stmt(stmt_ty s, PycContext &ctx);
+static void install_new_fun(Sym *f);
 
 PycSymbol::PycSymbol() : symbol(0), filename(0) {
 }
@@ -122,7 +122,7 @@ PycSymbol::ast_id() {
   return 0;
 }
 
-PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), parent(0),code(0), sym(0), rval(0), ctx(0),
+PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), parent(0),code(0), sym(0), rval(0),
                    is_builtin(0), is_member(0), is_object_index(0) {
   label[0] = label[1] = 0;
 }
@@ -307,17 +307,21 @@ new_sym(cchar *name = 0, int global = 0) {
 
 static Sym *
 new_sym(PycAST *ast, int global = 0) {
-  Sym *s = new_sym();
+  Sym *s = new_PycSymbol(0)->sym;
   s->ast = ast;
   s->is_local = !global;
+  if (s->is_local)
+    s->nesting_depth = LOCALLY_NESTED;
   return s;
 }
 
 static Sym *
 new_sym(PycAST *ast, cchar *name, int global = 0) {
-  Sym *s = new_sym(name);
+  Sym *s = new_PycSymbol(name)->sym;
   s->ast = ast;
   s->is_local = !global;
+  if (s->is_local)
+    s->nesting_depth = LOCALLY_NESTED;
   return s;
 }
 
@@ -472,7 +476,13 @@ static void finalize_function(Fun *f) {
   if (!f->ast) return; // __main__
   PycAST *a = (PycAST*)f->ast;
   stmt_ty s = a->xstmt;
-  if (!s || s->kind != FunctionDef_kind) return; // could be __init__ in class def
+  if (!s)
+    return;
+  if (s->kind != FunctionDef_kind) {
+    if (!fn->init || ((PycAST*)fn->init->ast)->xstmt->kind != FunctionDef_kind)
+      return;
+    s = ((PycAST*)fn->init->ast)->xstmt;
+  }
   int defaults_len = s->v.FunctionDef.args ? asdl_seq_LEN(s->v.FunctionDef.args->defaults) : 0;
   if (defaults_len) {
     int skip = fn->has.n - defaults_len;
@@ -493,140 +503,48 @@ PycCallbacks::finalize_functions() {
     finalize_function(fun);
 }
 
-static expr_ty
-make_Name(identifier id, PycContext &ctx) {
-  expr_ty e = new _expr;
-  e->kind = Name_kind;
-  e->v.Name.id = id; 
-  e->v.Name.ctx = Load;
-  PycAST *ast = new PycAST;
-  ast->filename = ctx.filename;
-  ast->is_builtin = ctx.is_builtin();
-  ast->xexpr = e;
-  exprmap.put(e, ast);
-  return ast->xexpr;
+static Sym *new_fun(PycAST *ast, Sym *fun = 0) {
+  if (!fun)
+    fun = new_sym(ast, 1);
+  else
+    fun->ast = ast;
+  if (!fun->name && ast->rval && ast->rval->name) 
+    fun->name = ast->rval->name;
+  fun->is_fun = 1;
+  fun->cont = new_sym(ast);
+  fun->ret = new_sym(ast);
+  return fun;
 }
 
-static expr_ty
-make_Name(expr_ty name, PycContext &ctx) {
-  assert(name->kind == Name_kind);
-  return make_Name(name->v.Name.id, ctx);
-}
-
-static expr_ty
-make_Name(Fun *f, PycContext &ctx) {
-  expr_ty e = make_Name(((PycAST*)f->ast)->xstmt->v.FunctionDef.name, ctx);
-  e->v.Name.ctx = EXPR_CONTEXT_SYM;
-  getAST(e, ctx)->rval = f->sym;
-  return e;
-}
-
-static expr_ty
-make_Name(Sym *s, expr_ty name, PycContext &ctx) {
-  expr_ty e = make_Name(name, ctx);
-  e->v.Name.ctx = EXPR_CONTEXT_SYM;
-  getAST(e, ctx)->rval = s;
-  return e;
-}
-
-static asdl_seq *
-copy_asdl_seq(asdl_seq *s) {
-  if (!s) return s;
-  int size = sizeof(asdl_seq) + (s->size-1) * sizeof(void*);
-  asdl_seq *ss = (asdl_seq*)MALLOC(size); 
-  memcpy(ss, s, size);
-  return ss;
-}
-
-static stmt_ty
-make_Return(expr_ty e, stmt_ty o) {
-  stmt_ty p = new _stmt;
-  p->kind = Return_kind;
-  p->v.Return.value = e;
-  p->lineno = o->lineno;
-  p->col_offset = o->col_offset;
-  return p;
-}
-
-static asdl_seq *make_asdl_seq(void *a) {
-  asdl_seq *s = (asdl_seq*)MALLOC(sizeof(asdl_seq));
-  s->size = 1;
-  s->elements[0] = a;
-  return s;
-}
-
-static PycContext *
-copy_PycContext(PycContext &ctx) {
-  PycContext *c = new PycContext(ctx);
-  c->scope_stack.copy(ctx.scope_stack);
-  c->mod = ctx.mod;
-  c->filename = ctx.filename;
-  c->lineno = ctx.lineno;
-  return c;
-}
-
-static PycAST *
-make_FunctionDef(Fun *f, PycContext &ctx) {
-  stmt_ty r = new _stmt;
-  stmt_ty o = ((PycAST*)f->ast)->xstmt;
-  memcpy(r, o, sizeof(_stmt));
-  r->v.FunctionDef.args = (arguments_ty)MALLOC(sizeof(_arguments));
-  memcpy(r->v.FunctionDef.args, o->v.FunctionDef.args, sizeof(_arguments));
-  PycAST *ast = getAST(r, ctx);
-  ast->ctx = copy_PycContext(ctx);
-  return ast;
-}
-
-static expr_ty
-make_default_wrapper_Call(PycAST *fast, Fun *forig, Vec<MPosition *> &default_args) {
-  PycContext &ctx = *fast->ctx;
-  stmt_ty o = fast->xstmt;
-  expr_ty p = new _expr;
-  p->kind = Call_kind;
-  p->v.Call.func = make_Name(forig, ctx);
-  p->v.Call.args = copy_asdl_seq(((PycAST*)forig->ast)->xstmt->v.FunctionDef.args->args);
-  int skip = asdl_seq_LEN(p->v.Call.args) - default_args.n;
-  MPosition pos;
-  pos.push(2); // account for the function name which isn't part of the args in the AST
-  for (int i = 0; i < asdl_seq_LEN(p->v.Call.args); i++) {
-    if (i < skip)
-      asdl_seq_SET(p->v.Call.args, i, 
-                   make_Name((expr_ty)asdl_seq_GET(fast->xstmt->v.FunctionDef.args->args, i), ctx));
-    else {
-      asdl_seq_SET(p->v.Call.args, i, 
-                   make_Name(((PycAST*)forig->default_args.get(cannonicalize_mposition(pos)))->sym, 
-                             (expr_ty)asdl_seq_GET(fast->xstmt->v.FunctionDef.args->args, i),
-                             ctx));
-    }
-    pos.inc();
-  }
-  p->v.Call.keywords = 0;
-  p->v.Call.starargs = 0;
-  p->v.Call.kwargs = 0;
-  p->lineno = o->lineno;
-  p->col_offset = o->col_offset;
-  return p;
-}
-
-// TODO: clean up
 Fun *
 PycCallbacks::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
-  PycContext &orig_ctx = *((PycAST*)f->ast)->ctx;
-  stmt_ty o = ((PycAST*)f->ast)->xstmt;
-  PycAST *ast = make_FunctionDef(f, orig_ctx);
-  PycContext &ctx = *ast->ctx;
-  stmt_ty fun = ast->xstmt;
-  int n = asdl_seq_LEN(o->v.FunctionDef.args->args) - default_args.n;
-  fun->v.FunctionDef.args->args = copy_asdl_seq(((PycAST*)f->ast)->xstmt->v.FunctionDef.args->args);
-  fun->v.FunctionDef.args->args->size = n;
-  for (int i = 0; i < n; i++)
-    asdl_seq_SET(fun->v.FunctionDef.args->args, i, 
-                 make_Name((expr_ty)asdl_seq_GET(fun->v.FunctionDef.args->args, i), ctx));
-  fun->v.FunctionDef.body = make_asdl_seq(make_Return(make_default_wrapper_Call(getAST(fun, ctx), f, default_args), o));
-  install_new_stmt(fun, *ast->ctx);
-  Fun *fret = ast->sym->fun;
-  fret->wraps = f; 
-  return fret;
+  PycAST *ast = (PycAST*)f->ast;
+  Sym *fn = new_fun(ast);
+  fn->nesting_depth = f->sym->nesting_depth;
+  Vec<Sym *> as;
+  int n = f->sym->has.n - default_args.n;
+  MPosition pos;
+  pos.push(1);
+  Code *body = 0;
+  Sym *ret = new_sym(ast);
+  Code *send = if1_send(if1, &body, 0, 1, ret);
+  send->ast = ast;
+  for (int i = 0; i < n; i++) {
+    Sym *a = new_sym(ast);
+    as.add(a);
+    if1_add_send_arg(if1, send, a);
+    pos.inc();
+  }
+  for (int i = 0; i < default_args.n; i++) {
+    if1_add_send_arg(if1, send, ((PycAST*)f->default_args.get(cannonicalize_mposition(pos)))->sym);
+    pos.inc();
+  }
+  if1_move(if1, &body, ret, fn->ret, ast);
+  if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  if1_closure(if1, fn, body, as.n, as.v);
+  install_new_fun(fn);
+  fn->fun->wraps = f; 
+  return fn->fun;
 }
 
 template<class C>
@@ -1079,19 +997,6 @@ static void get_syms_args(
   }
 }
 
-static Sym *new_fun(PycAST *ast, Sym *fun = 0) {
-  if (!fun)
-    fun = new_sym(ast, 1);
-  else
-    fun->ast = ast;
-  if (!fun->name && ast->rval && ast->rval->name) 
-    fun->name = ast->rval->name;
-  fun->is_fun = 1;
-  fun->cont = new_sym(ast);
-  fun->ret = new_sym(ast);
-  return fun;
-}
-
 static Sym *
 def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycContext &ctx) {
   fn->in = ctx.scope_stack.last()->in;
@@ -1415,8 +1320,6 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
       fn->self->must_implement_and_specialize(in);
     }
   }
-  if (asdl_seq_LEN(s->v.FunctionDef.args->defaults))
-    ast->ctx = copy_PycContext(ctx);
   if1_closure(if1, fn, body, as.n, as.v);
 }
 
@@ -1495,6 +1398,7 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
   // build constructor
   if (is_record) {
     fn = new_fun(ast);
+    fn->init = init_sym;
     fn->nesting_depth = ctx.scope_stack.n;
     Vec<Sym *> as;
     as.add(new_sym(ast, "__new__"));
@@ -2432,11 +2336,7 @@ file_to_mod(cchar *filename, PyArena *arena) {
 }
 
 static void
-install_new_stmt(stmt_ty s, PycContext &ctx) {
-  build_syms(s, ctx);
-  finalize_types(if1);
-  build_if1(s, ctx);
-  Sym *f = getAST(s, ctx)->sym;
+install_new_fun(Sym *f) {
   if1_finalize_closure(if1, f);
   Fun *fun = new Fun(f);
   finalize_types(if1);
