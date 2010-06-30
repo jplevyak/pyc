@@ -31,6 +31,7 @@ class PycSymbol : public IFASymbol {
 
   Symbol *symbol;
   cchar *filename;
+  PycSymbol *previous;
   
   PycSymbol();
 };

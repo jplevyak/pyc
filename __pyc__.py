@@ -420,6 +420,9 @@ class xrange:
   i = 0
   j = 0
   s = 1
+  def __init__(self, aj):
+    self.j = aj
+    return self;
   def __init__(self, ai, aj, ak = 1):
     self.i = ai
     self.j = aj

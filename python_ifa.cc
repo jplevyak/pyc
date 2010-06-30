@@ -66,7 +66,7 @@ static Vec<Sym *> builtin_functions;
 
 static void install_new_fun(Sym *f);
 
-PycSymbol::PycSymbol() : symbol(0), filename(0) {
+PycSymbol::PycSymbol() : symbol(0), filename(0), previous(0) {
 }
 
 void PycContext::init() {
@@ -897,13 +897,13 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, cchar *n, PYC_SCOPINGS scoping
   cchar *name = cannonicalize_string(n);
   TEST_SCOPE printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
   int level = 0, type = 0;
-  PycSymbol *l = find_PycSymbol(ctx, name, &level, &type);
+  PycSymbol *l = find_PycSymbol(ctx, name, &level, &type), *previous = l;
   bool local = l && (ctx.scope_stack.n - 1 == level); // implies !explicitly && !implicitly
   bool global = l && !level;
   bool nonlocal = l && !global && !local;
   bool explicitly = type == EXPLICITLY_MARKED;
   bool implicitly = type == IMPLICITLY_MARKED;
-  bool isfun = l && l->sym->is_fun;
+  bool isfun = l && (l->sym->is_fun || (l->sym->alias && l->sym->alias->is_fun));
   switch (scoping) {
     case PYC_USE: {
       if (!l) goto Lglobal; // not found
@@ -920,6 +920,8 @@ static PycSymbol *make_PycSymbol(PycContext &ctx, cchar *n, PYC_SCOPINGS scoping
       if (implicitly && !isfun)
         fail("error line %d, '%s' redefined as local", ctx.lineno, name);
       ctx.scope_stack.last()->map.put(name, (l = new_PycSymbol(name, ctx)));
+      if (local && previous)
+        l->previous = previous;
       break;
     case PYC_GLOBAL:
     Lglobal:;
@@ -1396,26 +1398,33 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     if1_closure(if1, fn, body, as.n, as.v);
   }
   // build constructor
-  if (is_record) {
-    fn = new_fun(ast);
-    fn->init = init_sym;
-    fn->nesting_depth = ctx.scope_stack.n;
-    Vec<Sym *> as;
-    as.add(new_sym(ast, "__new__"));
-    as[0]->must_implement_and_specialize(ast->sym->meta_type);
-    fn->name = as[0]->name;
-    for (int i = 2; i < init_sym->has.n; i++)
-      as.add(new_sym(ast));
-    body = 0;
-    Sym *t = new_sym(ast);
-    if1_send(if1, &body, 3, 1, sym_primitive, sym_clone, proto, t)->ast = ast;
-    Code *send = if1_send(if1, &body, 2, 1, sym___init__, t, new_sym(ast));
-    send->ast = ast;
-    for (int i = 2; i < init_sym->has.n; i++)
-      if1_add_send_arg(if1, send, as[i-1]);
-    if1_move(if1, &body, t, fn->ret);
-    if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
-    if1_closure(if1, fn, body, as.n, as.v);
+  while (1) {
+    if (is_record) {
+      fn = new_fun(ast);
+      fn->init = init_sym;
+      fn->nesting_depth = ctx.scope_stack.n;
+      Vec<Sym *> as;
+      as.add(new_sym(ast, "__new__"));
+      as[0]->must_implement_and_specialize(ast->sym->meta_type);
+      fn->name = as[0]->name;
+      for (int i = 2; i < init_sym->has.n; i++)
+        as.add(new_sym(ast));
+      body = 0;
+      Sym *t = new_sym(ast);
+      if1_send(if1, &body, 3, 1, sym_primitive, sym_clone, proto, t)->ast = ast;
+      Code *send = if1_send(if1, &body, 2, 1, sym___init__, t, new_sym(ast));
+      send->ast = ast;
+      for (int i = 2; i < init_sym->has.n; i++)
+        if1_add_send_arg(if1, send, as[i-1]);
+      if1_move(if1, &body, t, fn->ret);
+      if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+      if1_closure(if1, fn, body, as.n, as.v);
+    }
+    if (init_fun && init_fun->previous) {
+      init_fun = init_fun->previous;
+      init_sym = init_fun->sym->alias;
+    } else
+      break;
   }
   PycSymbol *call_fun = ctx.scope_stack.last()->map.get(sym___call__->name);
   Sym *call_sym = call_fun ? call_fun->sym->alias : 0;
