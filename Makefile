@@ -37,7 +37,7 @@ AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODU
 LIB_SRCS = lib/builtin.cpp $(wildcard lib/*.cpp) $(wildcard lib/os/*.cpp)
 LIB_OBJS = $(LIB_SRCS:%.cpp=%.o)
 
-PYC_SRCS = pyc.cc python_ifa.cc c_codegen.cc version.cc
+PYC_SRCS = pyc.cc python_ifa.cc version.cc
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
 
 EXECUTABLE_FILES = pyc
