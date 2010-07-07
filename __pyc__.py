@@ -311,7 +311,7 @@ class list:
   def __contains__(self, item):
     pass
   def __add__(self, l):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
+    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, l), 
                           "_CG_list_add", 
                           list, self, 
                           int, l, 
@@ -331,8 +331,15 @@ class list:
     pass
   def __imul__(self, l):
     pass
-  def append(self, l):
-    return __add__(self, l)
+  def append(self, x):
+    l = __pyc_primitive__(__pyc_symbol__("len"), self)
+    tmp = __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
+                         "_CG_list_resize",
+                         list, self, 
+                         int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                         int, l + 1)
+    tmp.__setitem__(l, x)
+    return tmp
   def index(self, index, start=0, end=0):
     pass
   def count(self, l):
