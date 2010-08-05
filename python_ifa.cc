@@ -475,24 +475,29 @@ static void finalize_function(Fun *f) {
   Sym *fn = f->sym;
   if (!f->ast) return; // __main__
   PycAST *a = (PycAST*)f->ast;
-  stmt_ty s = a->xstmt;
-  if (!s)
-    return;
-  if (s->kind != FunctionDef_kind) {
-    if (!fn->init || ((PycAST*)fn->init->ast)->xstmt->kind != FunctionDef_kind)
-      return;
-    s = ((PycAST*)fn->init->ast)->xstmt;
-  }
-  int defaults_len = s->v.FunctionDef.args ? asdl_seq_LEN(s->v.FunctionDef.args->defaults) : 0;
-  if (defaults_len) {
-    int skip = fn->has.n - defaults_len;
-    assert(skip >= 0);
-    MPosition p;
-    p.push(skip + 1);
-    for (int i = 0; i < fn->has.n - skip; i++) {
-      fn->fun->default_args.put(cannonicalize_mposition(p), 
-                                getAST((expr_ty)asdl_seq_GET(s->v.FunctionDef.args->defaults, i), a));
-      p.inc();
+  arguments_ty args = 0;
+  if (a->xstmt) {
+    stmt_ty s = a->xstmt;
+    if (s->kind != FunctionDef_kind) {
+      if (!fn->init || ((PycAST*)fn->init->ast)->xstmt->kind != FunctionDef_kind)
+        return;
+      s = ((PycAST*)fn->init->ast)->xstmt;
+    }
+    args = s->v.FunctionDef.args;
+  } else if (a->xexpr && a->xexpr->kind == Lambda_kind)
+    args = a->xexpr->v.Lambda.args;
+  if (args) {
+    int defaults_len = args ? asdl_seq_LEN(args->defaults) : 0;
+    if (defaults_len) {
+      int skip = fn->has.n - defaults_len;
+      assert(skip >= 0);
+      MPosition p;
+      p.push(skip + 1);
+      for (int i = 0; i < fn->has.n - skip; i++) {
+        fn->fun->default_args.put(cannonicalize_mposition(p), 
+                                  getAST((expr_ty)asdl_seq_GET(args->defaults, i), a));
+        p.inc();
+      }
     }
   }
 }
@@ -1299,7 +1304,6 @@ static void
 gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   Sym *fn = ast->sym;
   Code *body = 0;
-  Sym *in = ctx.scope_stack[ctx.scope_stack.n-2]->in;
   for (int i = 0; i < asdl_seq_LEN(s->v.FunctionDef.args->defaults); i++) {
     PycAST *a = getAST((expr_ty)asdl_seq_GET(s->v.FunctionDef.args->defaults, i), ctx);
     if1_gen(if1, &ast->code, a->code);
@@ -1307,6 +1311,7 @@ gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
     a->sym = g; // save global
     if1_move(if1, &ast->code, a->rval, g, ast);
   }
+  Sym *in = ctx.scope_stack[ctx.scope_stack.n-2]->in;
   for (int i = 0; i < asdl_seq_LEN(s->v.FunctionDef.body); i++)
     if1_gen(if1, &body, getAST((stmt_ty)asdl_seq_GET(s->v.FunctionDef.body, i), ctx)->code);
   if1_move(if1, &body, sym_nil, fn->ret, ast);
@@ -1329,6 +1334,13 @@ static void
 gen_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
   Sym *fn = ast->rval;
   Code *body = 0;
+  for (int i = 0; i < asdl_seq_LEN(e->v.Lambda.args->defaults); i++) {
+    PycAST *a = getAST((expr_ty)asdl_seq_GET(e->v.Lambda.args->defaults, i), ctx);
+    if1_gen(if1, &ast->code, a->code);
+    Sym *g = new_sym(ast, 1);
+    a->sym = g; // save global
+    if1_move(if1, &ast->code, a->rval, g, ast);
+  }
   PycAST *b = getAST(e->v.Lambda.body, ctx);
   if1_gen(if1, &body, b->code);
   if1_move(if1, &body, b->rval, fn->ret, ast);
@@ -1871,19 +1883,18 @@ build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *ast, Code **co
     Code *before = 0, *cond = 0, *body = 0, *next = 0;
     Sym *iter = new_sym(ast), *cond_var = new_sym(ast), *tmp = new_sym(ast);
     if1_gen(if1, &before, i->code);
-    if1_gen(if1, &before, t->code);
-    if1_move(if1, &before, sym_true, cond_var);
-    if1_send(if1, &before, 4, 1, sym_operator, i->rval, sym___iter__, i->rval, iter)->ast = ast;
-    if1_send(if1, &next, 4, 1, sym_operator, iter, sym_period, sym_next, tmp)->ast = ast;
-    if1_send(if1, &cond, 4, 1, sym_operator, tmp, sym_period, sym___null__, cond_var)->ast = ast;
-    if1_move(if1, &next, tmp, t->sym);
+    if1_send(if1, &before, 2, 1, sym___iter__, i->rval, iter)->ast = ast; 
+    call_method(if1, &cond, ast, iter, sym___pyc_more__, cond_var, 0);
+    if1_gen(if1, &body, t->code);
+    call_method(if1, &body, ast, iter, sym_next, tmp, 0);
+    if1_move(if1, &body, tmp, t->sym, ast);
     build_list_comp(generators, x+1, elt, ast, &body, ctx);
     if1_loop(if1, code, ast->label[0], ast->label[1], 
              cond_var, before, cond, next, body, ast);
   } else {
     PycAST *a = getAST(elt, ctx);
-    if1_gen(if1, &ast->code, a->code);
-    if1_send(if1, &ast->code, 4, 1, ast->rval, sym_period, sym_append, a->rval, new_sym(ast))->ast = ast;
+    if1_gen(if1, code, a->code);
+    call_method(if1, code, ast, ast->rval, sym_append, new_sym(ast), 1, a->rval);
   }
 }
 
