@@ -1899,7 +1899,19 @@ build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *ast, Code **co
     if1_gen(if1, &body, t->code);
     call_method(if1, &body, ast, iter, sym_next, tmp, 0);
     if1_move(if1, &body, tmp, t->sym, ast);
-    build_list_comp(generators, x+1, elt, ast, &body, ctx);
+    if (asdl_seq_LEN(c->ifs)) {
+      Label *short_circuit = if1_alloc_label(if1);
+      for (int i = 0; i < asdl_seq_LEN(c->ifs); i++) {
+        PycAST *ifast = getAST((expr_ty)asdl_seq_GET(c->ifs, i), ctx);
+        if1_gen(if1, &body, ifast->code);
+        Code *ifcode = if1_if_goto(if1, &body, ifast->rval, ifast);
+        if1_if_label_false(if1, ifcode, short_circuit);
+        if1_if_label_true(if1, ifcode, if1_label(if1, &body, ifast));
+      }
+      build_list_comp(generators, x+1, elt, ast, &body, ctx);
+      if1_label(if1, &body, ast, short_circuit);
+    } else
+      build_list_comp(generators, x+1, elt, ast, &body, ctx);
     if1_loop(if1, code, ast->label[0], ast->label[1], 
              cond_var, before, cond, next, body, ast);
   } else {
