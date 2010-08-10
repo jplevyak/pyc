@@ -251,6 +251,17 @@ static void ast_html(PycAST *a, FILE *fp, Fun *f, int indent) {
     fprintf(fp, "<li>%s %s\n", stmt_string(a->xstmt->kind), s && s->name ? s->name : "");
   } else if (a->xexpr) {
     fprintf(fp, "<li>%s %s %s\n", expr_string(a->xexpr->kind), s && s->name ? s->name : "", s->is_constant && s->constant ? s->constant : "");
+    if ((!s->is_constant || !s->constant) && a->rval) {
+       Vec<Sym *> consts;
+       if (constant_info(a, consts, a->rval)) {
+         fprintf(fp, ":constants {");
+         forv_Sym(s, consts) {
+           fprintf(fp, " ");
+           fprint_imm(fp, s->imm);
+         }
+         fprintf(fp, " }\n");
+      }
+    }
   }
   if (a->pre_scope_children.n + a->children.n > 0) 
     fprintf(fp, "<ul>\n");

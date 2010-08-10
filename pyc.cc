@@ -133,6 +133,7 @@ int main(int argc, char *argv[]) {
     if (mod)
       mods.add(new PycModule(mod, filename, i < 0));
   }
+  fruntime_errors = true;
   if (mods.n > 1) {
     ast_to_if1(mods, arena);
     compile(first_filename);

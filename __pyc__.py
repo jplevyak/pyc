@@ -331,6 +331,16 @@ class list:
     pass
   def __imul__(self, l):
     pass
+#  @must_specialize("l:list")
+  def __eq__(self, l):
+    if l.len() != self.len():
+      return False
+    for i in xrange(self.len()):
+      if l[i] != self[i]:
+         return False
+    return True
+#  def __eq__(self, l):
+#    return False
   def append(self, x):
     l = __pyc_primitive__(__pyc_symbol__("len"), self)
     tmp = __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
