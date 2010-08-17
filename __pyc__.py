@@ -54,7 +54,7 @@ class bool:
     else:
       return "False"
   def __pyc_to_bool__(self):
-    return self
+    return __pyc_clone_constants__(self)
 
 class basestring:
   pass
@@ -97,77 +97,77 @@ class int:
 #  def __add__(self, x):
 #    return x.__radd__(self)
   def __add__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("+"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("+"), __pyc_clone_constants__(x))
   def __sub__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("-"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
   def __mul__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("*"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
   def __div__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
   def __mod__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("%"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
   def __pow__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("**"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("**"), __pyc_clone_constants__(x))
   def __lshift__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<<"), __pyc_clone_constants__(x))
   def __rshift__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">>"), __pyc_clone_constants__(x))
   def __or__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("|"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("|"), __pyc_clone_constants__(x))
   def __xor__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("^"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("^"), __pyc_clone_constants__(x))
   def __and__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("&"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("&"), __pyc_clone_constants__(x))
   def __floordiv__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
   def __iadd__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("+"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("+"), __pyc_clone_constants__(x))
   def __isub__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("-"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
   def __imul__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("*"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
   def __idiv__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
   def __imod__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("%"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
   def __ipow__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("**"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("**"), __pyc_clone_constants__(x))
   def __ilshift__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<<"), __pyc_clone_constants__(x))
   def __irshift__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">>"), __pyc_clone_constants__(x))
   def __ior__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("|"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("|"), __pyc_clone_constants__(x))
   def __ixor__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("^"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("^"), __pyc_clone_constants__(x))
   def __iand__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("&"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("&"), __pyc_clone_constants__(x))
   def __ifloordiv__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
   def __invert__(self):
-    return __pyc_operator__(__pyc_symbol__("~"), self)
+    return __pyc_operator__(__pyc_symbol__("~"), __pyc_clone_constants__(self))
   def __pos__(self):
-    return __pyc_operator__(__pyc_symbol__("+"), self)
+    return __pyc_operator__(__pyc_symbol__("+"), __pyc_clone_constants__(self))
   def __neg__(self):
-    return __pyc_operator__(__pyc_symbol__("-"), self)
+    return __pyc_operator__(__pyc_symbol__("-"), __pyc_clone_constants__(self))
   def __not__(self):
-    return __pyc_operator__(__pyc_symbol__("!"), self)
+    return __pyc_operator__(__pyc_symbol__("!"), __pyc_clone_constants__(self))
   def __eq__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("=="), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("=="), __pyc_clone_constants__(x))
   def __ne__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("!="), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("!="), __pyc_clone_constants__(x))
   def __lt__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("<"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<"), __pyc_clone_constants__(x))
   def __le__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("<="), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<="), __pyc_clone_constants__(x))
   def __gt__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__(">"), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">"), __pyc_clone_constants__(x))
   def __ge__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__(">="), x)
+    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">="), __pyc_clone_constants__(x))
   def __hash__(self):
     return self
   def __cmp__(self, x):
-    if (self < x):
+    if (__pyc_clone_constants__(self) < __pyc_clone_constants__(x)):
       return -1
     else:
       if (self > x):
@@ -175,13 +175,13 @@ class int:
       else:
         return 0
   def __nonzero__(self):
-     return self != 0
+     return __pyc_clone_constants__(self) != 0
   def __null__(self):
      return False
   def __str__(self):
-    return __pyc_primitive__(__pyc_symbol__("to_string"), self)
+    return __pyc_primitive__(__pyc_symbol__("to_string"), __pyc_clone_constants__(self))
   def __pyc_to_bool__(self):
-    return self != 0
+    return __pyc_clone_constants__(self) != 0
 
 class float:
   def __add__(self, x):
@@ -333,12 +333,20 @@ class list:
     pass
 #  @must_specialize("l:list")
   def __eq__(self, l):
-    if l.len() != self.len():
-      return False
-    for i in xrange(self.len()):
-      if l[i] != self[i]:
-         return False
-    return True
+    ll = __pyc_clone_constants__(l.len())
+    lself = __pyc_clone_constants__(self.len()); 
+    if lself == 0:
+      if ll == 0: 
+        return True
+      else:
+        return False  
+    else:
+      if ll == 0:
+        return False 
+      for i in xrange(lself):
+        if l[i] != self[i]:
+           return False
+      return True
 #  def __eq__(self, l):
 #    return False
   def append(self, x):
