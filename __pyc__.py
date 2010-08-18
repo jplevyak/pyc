@@ -286,7 +286,7 @@ class list:
   def __len__(self):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __getitem__(self, key):
-    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
+    return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
   def __getslice__(self, i, j):
     return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
                           "_CG_list_getslice", 
@@ -295,7 +295,8 @@ class list:
                           int, i,
                           int, j)
   def __setitem__(self, key, value):
-    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
+                             __pyc_clone_constants__(key), value)
   def __setslice__(self, i, j, s):
     return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, s), 
                           "_CG_list_setslice", 
