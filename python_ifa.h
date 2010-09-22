@@ -24,6 +24,7 @@ class PycSymbol : public IFASymbol {
  public:
   Sym *clone();
   cchar *pathname();
+  int column();
   int line();
   int source_line();
   int ast_id();
@@ -39,8 +40,9 @@ class PycSymbol : public IFASymbol {
 class PycAST : public IFAAST {
  public:
   cchar *pathname();
-  int source_line();
+  int column();
   int line();
+  int source_line();
   Sym *symbol();  
   void html(FILE *fp, Fun *f);
   IFAAST *copy_tree(ASTCopyContext* context);

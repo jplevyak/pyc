@@ -17,7 +17,11 @@ MINOR=0
 include ../plib/Makefile
 
 CFLAGS += -D__PYC__=1 -I../plib -I../ifa -I/usr/include/python2.6 -Ilib -Ilib/os
+# LLVM flags
+CFLAGS += -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
 LIBS += -lpcre 
+# LLVM libs
+LIBS +=-lLLVMMSIL -lLLVMMSILInfo -lLLVMLinker -lLLVMipo -lLLVMInterpreter -lLLVMInstrumentation -lLLVMJIT -lLLVMExecutionEngine -lLLVMCppBackend -lLLVMCppBackendInfo -lLLVMCBackend -lLLVMCBackendInfo -lLLVMBitWriter -lLLVMX86Disassembler -lLLVMX86AsmParser -lLLVMX86AsmPrinter -lLLVMX86CodeGen -lLLVMX86Info -lLLVMAsmParser -lLLVMArchive -lLLVMBitReader -lLLVMMCParser -lLLVMSelectionDAG -lLLVMCodeGen -lLLVMScalarOpts -lLLVMInstCombine -lLLVMTransformUtils -lLLVMipa -lLLVMAnalysis -lLLVMTarget -lLLVMMC -lLLVMCore -lLLVMAlphaInfo -lLLVMSupport -lLLVMSystem -lLLVMAsmPrinter -ldl
 ifdef USE_GC
 LIBS += -L../ifa -lifa_gc -L../plib -lplib_gc -lgc 
 IFALIB = ../ifa/libifa_gc.a
@@ -37,7 +41,7 @@ AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODU
 LIB_SRCS = lib/builtin.cpp $(wildcard lib/*.cpp) $(wildcard lib/os/*.cpp)
 LIB_OBJS = $(LIB_SRCS:%.cpp=%.o)
 
-PYC_SRCS = pyc.cc python_ifa.cc version.cc
+PYC_SRCS = pyc.cc python_ifa.cc llvm.cc version.cc
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
 
 EXECUTABLE_FILES = pyc

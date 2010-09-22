@@ -104,8 +104,25 @@ PycSymbol::pathname() {
   return 0;
 }
 
+int
+PycSymbol::column() {
+  PycAST *a = (PycAST*)sym->ast;
+  if (!a)
+    return 0;
+  if (a->xstmt)
+    return a->xstmt->lineno;
+  if (a->xexpr)
+    return a->xexpr->lineno;
+  return 0;
+}
+
 int 
 PycSymbol::line() {
+  PycAST *a = (PycAST*)sym->ast;
+  if (a->xstmt)
+    return a->xstmt->lineno;
+  if (a->xexpr)
+    return a->xexpr->lineno;
   return 0;
 }
 
@@ -130,6 +147,11 @@ PycAST::PycAST() : xstmt(0), xexpr(0), filename(0), parent(0),code(0), sym(0), r
 cchar
 *PycAST::pathname() {
   return filename;
+}
+
+int
+PycAST::column() {
+  return xstmt ? xstmt->col_offset : xexpr->col_offset;
 }
 
 int

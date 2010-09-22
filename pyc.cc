@@ -42,6 +42,8 @@ license(ArgumentState *arg_state, char *arg_unused) {
 static ArgumentDescription arg_desc[] = {
   {"debug_info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
   {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
+  {"llvm", 'b', "LLVM Codegen", "F", &codegen_llvm, "PYC_LLVM", NULL},
+  {"jit", 'j', "JIT", "F", &codegen_jit, "PYC_JIT", NULL},
 #ifdef DEBUG
   {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
   {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
@@ -80,9 +82,15 @@ void compile(cchar *fn) {
     ifa_html(fn, mktree_dir);
   }
   if (fcg) {
-    c_codegen_write_c(pdb->fa, if1->top->fun, fn);
-    if (c_codegen_compile(fn))
-      fail("compilation failure");
+    if (codegen_llvm) {
+      llvm_codegen(pdb->fa, if1->top->fun, fn);
+      if (!codegen_jit && llvm_codegen_compile(fn))
+        fail("compilation failure");
+    } else {
+      c_codegen_write_c(pdb->fa, if1->top->fun, fn);
+      if (c_codegen_compile(fn))
+        fail("compilation failure");
+    }
   }
   return;
 }

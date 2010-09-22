@@ -1,0 +1,25 @@
+OS_TYPE = $(shell uname -s | \
+  awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
+
+CFLAGS += -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I/usr/local/include/gc -g -Wno-deprecated
+
+LIBS = $(CG_ROOT)/libpyc_gc.a -lm -lgc -lpcre
+
+ifeq ($(OS_TYPE),Linux)
+  LIBS += -ldl -lrt
+endif
+
+ifdef OPTIMIZE
+  CFLAGS += -O3 
+endif
+
+ifdef DEBUG
+  CFLAGS += -g
+endif
+
+%.o: %.bc
+	llc $< -o $<.s
+	as $<.s -o $@
+
+all: $(CG_FILES)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(CG_TARGET) $(CG_FILES) $(LIBS)
