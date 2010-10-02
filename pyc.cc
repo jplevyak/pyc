@@ -62,7 +62,11 @@ static ArgumentState arg_state("pyc", arg_desc);
 static void init_system() {
   struct rlimit nfiles;
   assert(!getrlimit(RLIMIT_NOFILE, &nfiles));
+#ifdef __APPLE__
+  nfiles.rlim_cur = fmin(OPEN_MAX, nfiles.rlim_max);
+#else
   nfiles.rlim_cur = nfiles.rlim_max;
+#endif
   assert(!setrlimit(RLIMIT_NOFILE, &nfiles));
   assert(!getrlimit(RLIMIT_NOFILE, &nfiles));
 }
