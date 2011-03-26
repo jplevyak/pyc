@@ -17,6 +17,9 @@ ifdef DEBUG
   CFLAGS += -g
 endif
 
+# for an optimized compile
+# opt -std-compile-opt $< | llc | as -l $@
+
 %.o: %.bc
 	llc $< -o $<.s
 	as $<.s -o $@

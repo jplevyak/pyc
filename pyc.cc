@@ -42,7 +42,9 @@ license(ArgumentState *arg_state, char *arg_unused) {
 static ArgumentDescription arg_desc[] = {
   {"debug_info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
   {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
+#ifdef USE_LLVM
   {"llvm", 'b', "LLVM Codegen", "F", &codegen_llvm, "PYC_LLVM", NULL},
+#endif
   {"jit", 'j', "JIT", "F", &codegen_jit, "PYC_JIT", NULL},
 #ifdef DEBUG
   {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
@@ -83,9 +85,11 @@ void compile(cchar *fn) {
   }
   if (fcg) {
     if (codegen_llvm) {
+#ifdef USE_LLVM
       llvm_codegen(pdb->fa, if1->top->fun, fn);
       if (!codegen_jit && llvm_codegen_compile(fn))
         fail("compilation failure");
+#endif
     } else {
       c_codegen_write_c(pdb->fa, if1->top->fun, fn);
       if (c_codegen_compile(fn))

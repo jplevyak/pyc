@@ -2002,6 +2002,8 @@ build_if1(expr_ty e, PycContext &ctx) {
       break;
     case Dict_kind: // expr* keys, expr* values
       break;
+    case SetComp_kind: case DictComp_kind:
+      assert(!"implemented");
     case ListComp_kind: { // expr elt, comprehension* generators
       // elt is the expression describing the result
       ast->rval = new_sym(ast);
@@ -2158,6 +2160,9 @@ build_if1(expr_ty e, PycContext &ctx) {
       }
       break;
     }
+    case Set_kind:
+      assert(!"implemented");
+      break;
     case List_kind: // expr* elts, expr_context ctx
       // FALL THROUGH
     case Tuple_kind: // expr *elts, expr_context ctx
