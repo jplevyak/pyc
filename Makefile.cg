@@ -3,7 +3,7 @@ OS_TYPE = $(shell uname -s | \
 
 CFLAGS += -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I/usr/local/include/gc -g -Wno-deprecated
 
-LIBS = $(CG_ROOT)/libpyc_gc.a -lm -lgc -lpcre
+LIBS = -lm -lgc -lpcre
 
 ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt

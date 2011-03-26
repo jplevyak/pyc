@@ -84,7 +84,7 @@ deinstall:
 #	rm $(INCLUDES:%=$(PREFIX)/include/%)
 #	rm $(INSTALL_LIBRARIES:%=$(PREFIX)/lib/%)
 
-$(PYC): $(PYC_OBJS) $(LIB_OBJS) $(LIBRARIES) $(IFALIB)
+$(PYC): $(PYC_OBJS) $(IFALIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS) 
 
 pyc.cat: pyc.1
@@ -100,37 +100,5 @@ version.o: Makefile
 # DO NOT DELETE THIS LINE -- mkdep uses it.
 # DO NOT PUT ANYTHING AFTER THIS LINE, IT WILL GO AWAY.
 
-builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
-collections.o: lib/collections.cpp lib/collections.hpp lib/builtin.hpp
-random.o: lib/random.cpp lib/random.hpp lib/builtin.hpp lib/math.hpp \
- lib/time.hpp
-re.o: lib/re.cpp lib/re.hpp lib/builtin.hpp
-stat.o: lib/stat.cpp lib/stat.hpp lib/builtin.hpp
-socket.o: lib/socket.cpp lib/socket.hpp lib/builtin.hpp
-time.o: lib/time.cpp lib/time.hpp lib/builtin.hpp
-glob.o: lib/glob.cpp lib/glob.hpp lib/builtin.hpp lib/os/path.hpp \
- lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp lib/fnmatch.hpp \
- lib/os/__init__.hpp lib/re.hpp
-cStringIO.o: lib/cStringIO.cpp lib/cStringIO.hpp lib/builtin.hpp
-string.o: lib/string.cpp lib/string.hpp lib/builtin.hpp
-ConfigParser.o: lib/ConfigParser.cpp lib/ConfigParser.hpp lib/builtin.hpp \
- lib/re.hpp
-datetime.o: lib/datetime.cpp lib/datetime.hpp lib/builtin.hpp \
- lib/time.hpp lib/string.hpp
-fnmatch.o: lib/fnmatch.cpp lib/fnmatch.hpp lib/builtin.hpp \
- lib/os/path.hpp lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp \
- lib/os/__init__.hpp lib/re.hpp
-bisect.o: lib/bisect.cpp lib/bisect.hpp lib/builtin.hpp
-getopt.o: lib/getopt.cpp lib/getopt.hpp lib/builtin.hpp lib/sys.hpp \
- lib/os/__init__.hpp lib/builtin.hpp
-copy.o: lib/copy.cpp lib/copy.hpp lib/builtin.hpp
-math.o: lib/math.cpp lib/math.hpp lib/builtin.hpp
-sys.o: lib/sys.cpp lib/sys.hpp lib/builtin.hpp
-signal.o: lib/signal.cpp lib/signal.hpp lib/builtin.hpp
-builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
-__init__.o: lib/os/__init__.cpp lib/os/__init__.hpp lib/builtin.hpp \
- lib/os/path.hpp lib/os/__init__.hpp lib/stat.hpp lib/builtin.hpp
-path.o: lib/os/path.cpp lib/os/path.hpp lib/builtin.hpp \
- lib/os/__init__.hpp lib/stat.hpp lib/builtin.hpp
 
 # IF YOU PUT ANYTHING HERE IT WILL GO AWAY
