@@ -57,6 +57,7 @@ static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
 static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
 static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
 static Sym *sym___getitem__ = 0, *sym___setitem__ = 0, *sym___getslice__ = 0, *sym___setslice__ = 0;
+static Sym *sym___pyc_getslice__ = 0, *sym___pyc_setslice__ = 0;
 static Sym *sym___null__ = 0, *sym___str__ = 0;
 static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
 static Sym *sym___pyc_c_code__ = 0, *sym___pyc_to_bool__ = 0, *sym___pyc_format_string__ = 0;
@@ -402,6 +403,8 @@ build_builtin_symbols() {
   sym___call__ = if1_make_symbol(if1, "__call__");
   sym___null__ = if1_make_symbol(if1, "__null__");
   sym___str__ = if1_make_symbol(if1, "__str__");
+  sym___pyc_setslice__ = if1_make_symbol(if1, "__pyc_setslice__");
+  sym___pyc_getslice__ = if1_make_symbol(if1, "__pyc_getslice__");
   sym___pyc_more__ = if1_make_symbol(if1, "__pyc_more__");
   sym___pyc_c_code__ = if1_make_symbol(if1, "__pyc_c_code__");
   sym___pyc_format_string__ = if1_make_symbol(if1, "__pyc_format_string__");
@@ -2129,13 +2132,15 @@ build_if1(expr_ty e, PycContext &ctx) {
             call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getslice__, 
                         (ast->rval = new_sym(ast)), 2, l, u);
           else
-            assert(!"implemented");
+            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___pyc_getslice__, 
+                        (ast->rval = new_sym(ast)), 3, l, u, s);
         } else {
           if (!e->v.Subscript.slice->v.Slice.step)
             call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setslice__, 
                         (ast->rval = new_sym(ast)), 2, l, u);
           else 
-            assert(!"implemented");
+            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___pyc_setslice__, 
+                        (ast->rval = new_sym(ast)), 3, l, u, s);
         }
       } else
         assert(!"implemented");

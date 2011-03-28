@@ -3,6 +3,8 @@ class __pyc_any_type__:
     return "<instance>"
   def __pyc_tuplify__(self):
     return __pyc_primitive__(__pyc_symbol__("make_tuple"), self)
+  def __pyc_getslice__(self, i, j, s):
+    return self.__getitem__(slice(i,j,s))
   def __getslice__(self, i, j):
     return self.__getitem__(slice(i,j,1))
 
@@ -293,7 +295,16 @@ class list:
                           list, self, 
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
-                          int, j)
+                          int, j,
+                          int, 1)
+  def __pyc_getslice__(self, i, j, s):
+    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
+                          "_CG_list_getslice", 
+                          list, self, 
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                          int, i,
+                          int, j,
+                          int, s)
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
                              __pyc_clone_constants__(key), value)
