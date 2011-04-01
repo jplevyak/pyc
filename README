@@ -4,25 +4,39 @@ BUILD
 
   1. plib
 
-     git clone git://github.com/jplevyak/plib.git
+     This is expected to exist in ../plib.
 
-     This must be parallel to the ifa directory
-     
-     make USE_GC=1
+        git clone git://github.com/jplevyak/plib.git
+	cd plib
+        make USE_GC=1
 
   2. ifa
 
-     git clone git://ifa.git.sourceforge.net/gitroot/ifa/ifa
+     This is expected to exist in ../ifa.
 
-     This must be parallel to the ifa directory
+        git clone git://ifa.git.sourceforge.net/gitroot/ifa/ifa
+	cd ifa
+	make
+
 
   3. dparser
    
-     git clone git://dparser.git.sourceforge.net/gitroot/dparser/dparser
+     This just need to build and install this. Note: You should enable the
+     gc garbage collector (it's an option in the Makefile, or provide as
+     an option to make:
 
-     This just need to build and install this
+        git clone git://dparser.git.sourceforge.net/gitroot/dparser/dparser
+        make D_USE_GC=1
 
 
   4. the Boehm GC:
 
-     yum install gc-devel
+     On Fedora:
+        yum install gc gc-devel
+
+     On Ubuntu (or other debian distros):
+         apt-get install libgc libgc-dev
+
+
+     Note that this installs gc include files in a different include dir
+     so might not currently work.
