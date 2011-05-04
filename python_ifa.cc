@@ -2005,8 +2005,10 @@ build_if1(expr_ty e, PycContext &ctx) {
       break;
     case Dict_kind: // expr* keys, expr* values
       break;
+#if PY_MAJOR_VERSION > 2 || PY_MINOR_VERSION > 6
     case SetComp_kind: case DictComp_kind:
       assert(!"implemented");
+#endif
     case ListComp_kind: { // expr elt, comprehension* generators
       // elt is the expression describing the result
       ast->rval = new_sym(ast);
@@ -2165,9 +2167,11 @@ build_if1(expr_ty e, PycContext &ctx) {
       }
       break;
     }
+#if PY_MAJOR_VERSION > 2 || PY_MINOR_VERSION > 6
     case Set_kind:
       assert(!"implemented");
       break;
+#endif
     case List_kind: // expr* elts, expr_context ctx
       // FALL THROUGH
     case Tuple_kind: // expr *elts, expr_context ctx

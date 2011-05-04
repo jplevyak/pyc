@@ -4,7 +4,9 @@
 #ifndef _defs_H_
 #define _defs_H_
 
+#ifndef __STDC_LIMIT_MACROS
 #define __STDC_LIMIT_MACROS 1
+#endif
 
 extern "C" {
 #include <Python.h>
