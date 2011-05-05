@@ -479,3 +479,20 @@ class xrange:
 
 def len(x):
   return x.__len__()
+
+def chr(x):
+    return __pyc_c_code__(str, "_CG_chr", int, x)
+
+def ord(x):
+    return __pyc_c_code__(int, "_CG_ord", str, x)
+
+def __hex(x):
+  if x < 10:
+    return chr(ord('0') + x)
+  elif x < 16:
+    return chr(ord('A') + x - 10)
+  else:
+    return __hex(x / 16) + __hex(x % 16)
+
+def hex(x):
+  return "0x" + __hex(x)
