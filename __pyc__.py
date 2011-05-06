@@ -490,7 +490,7 @@ def __hex(x):
   if x < 10:
     return chr(ord('0') + x)
   elif x < 16:
-    return chr(ord('A') + x - 10)
+    return chr(ord('a') + x - 10)
   else:
     return __hex(x / 16) + __hex(x % 16)
 
