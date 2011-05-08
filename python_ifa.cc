@@ -1913,7 +1913,6 @@ static void
 build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *ast, Code **code, PycContext &ctx) {
   int n = asdl_seq_LEN(generators);
   if (x < n) {
-    ast->label[0] = if1_alloc_label(if1); ast->label[1] = if1_alloc_label(if1);
     comprehension_ty c = (comprehension_ty)asdl_seq_GET(generators, x);
     PycAST *t = getAST(c->target, ctx), *i = getAST(c->iter, ctx);
     Code *before = 0, *cond = 0, *body = 0, *next = 0;
@@ -1937,7 +1936,7 @@ build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *ast, Code **co
       if1_label(if1, &body, ast, short_circuit);
     } else
       build_list_comp(generators, x+1, elt, ast, &body, ctx);
-    if1_loop(if1, code, ast->label[0], ast->label[1], 
+    if1_loop(if1, code, if1_alloc_label(if1), if1_alloc_label(if1),
              cond_var, before, cond, next, body, ast);
   } else {
     PycAST *a = getAST(elt, ctx);
