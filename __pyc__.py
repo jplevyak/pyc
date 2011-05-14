@@ -2,7 +2,7 @@ __pyc_include_c_code__('pyc_c_runtime.h')
 
 class __pyc_any_type__:
   def __str__(self):
-    return "<instance>"
+    return __pyc_primitive__(__pyc_symbol__("__pyc_to_str__"), self)
   def __pyc_tuplify__(self):
     return __pyc_primitive__(__pyc_symbol__("make_tuple"), self)
   def __pyc_getslice__(self, i, j, s):
@@ -498,3 +498,9 @@ def __hex(x):
 
 def hex(x):
   return "0x" + __hex(x)
+
+def isinstance(obj, ci):
+  return __pyc_primitive__(__pyc_symbol__("isinstance"), obj, __pyc_clone_constants__(ci))
+
+def issubclass(c1, c2):
+  return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))

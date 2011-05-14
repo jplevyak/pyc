@@ -2258,6 +2258,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym___pyc_c_code__);
   scope_sym(ctx, sym___pyc_include_c_code__);
   scope_sym(ctx, sym___pyc_to_bool__);
+  scope_sym(ctx, sym___pyc_to_str__);
   scope_sym(ctx, sym___pyc_format_string__);
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
@@ -2304,6 +2305,12 @@ format_string_transfer_function(PNode *pn, EntrySet *es) {
 }
 
 static void
+to_str_transfer_function(PNode *pn, EntrySet *es) {
+  AVar *result = make_AVar(pn->lvals[0], es);
+  update_gen(result, make_abstract_type(sym_string));
+}
+
+static void
 format_string_codegen(FILE *fp, PNode *n, Fun *f) {
   fputs("_CG_format_string(", fp);
   fputs(n->rvals[2]->cg_string, fp);
@@ -2319,11 +2326,23 @@ format_string_codegen(FILE *fp, PNode *n, Fun *f) {
 }
 
 static void
+to_str_codegen(FILE *fp, PNode *n, Fun *f) {
+  Var *v = n->rvals[2];
+  if (v->type->is_meta_type && v->type->name) {
+    fputs("_CG_String(\"<type '", fp);
+    fputs(v->type->name, fp);
+    fputs("'>\");", fp);
+  } else
+    fputs("_CG_String(\"<instance>\");", fp);
+}
+
+static void
 add_primitive_transfer_functions() {
   prim_reg(sym_write->name, return_nil_transfer_function)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
   prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen)->is_visible = 1;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
+  prim_reg(sym___pyc_to_str__->name, to_str_transfer_function, to_str_codegen)->is_visible = 1;
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
 }
 
