@@ -430,21 +430,21 @@ def any(iterable):
   return False
 
 def bin(x): # return integer as string in binary
-  if x <= 0:
-    return "0"
+  if x < 0:
+    prefix = "-0b"
+    x = -x
   else:
+    prefix= "0b"
+  if x == 0:
+    return prefix + "0"
+  s = ""
+  while (x > 0):
     if (x&1 == 0):
-      s = "0"
+      s = "0" + s
     else:
-      s = "1"
+      s = "1" + s
     x = x >> 1
-    while (x > 0):
-      if (x&1 == 0):
-        s = "0" + s
-      else:
-        s = "1" + s
-      x = x >> 1
-    return s
+  return prefix + s
 
 def exit(status = 0):
     __pyc_c_call__(int, "::exit", int, status)
