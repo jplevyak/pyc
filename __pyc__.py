@@ -1,3 +1,5 @@
+__pyc_include_c_code__('pyc_c_runtime.h')
+
 class __pyc_any_type__:
   def __str__(self):
     return "<instance>"
@@ -290,7 +292,7 @@ class list:
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
   def __getslice__(self, i, j):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
                           "_CG_list_getslice", 
                           list, self, 
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
@@ -298,7 +300,7 @@ class list:
                           int, j,
                           int, 1)
   def __pyc_getslice__(self, i, j, s):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
                           "_CG_list_getslice", 
                           list, self, 
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
@@ -309,7 +311,7 @@ class list:
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
                              __pyc_clone_constants__(key), value)
   def __setslice__(self, i, j, s):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, s), 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, s), 
                           "_CG_list_setslice", 
                           list, self, 
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
@@ -323,7 +325,7 @@ class list:
   def __contains__(self, item):
     pass
   def __add__(self, l):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, l), 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, l), 
                           "_CG_list_add", 
                           list, self, 
                           int, l, 
@@ -334,7 +336,7 @@ class list:
   def __iadd__(self, l):
     pass
   def __mul__(self, l):
-    return __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
                           "_CG_list_mult", 
                           list, self, 
                           int, l, 
@@ -363,7 +365,7 @@ class list:
 #    return False
   def append(self, x):
     l = __pyc_primitive__(__pyc_symbol__("len"), self)
-    tmp = __pyc_c_code__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
+    tmp = __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
                          "_CG_list_resize",
                          list, self, 
                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
@@ -445,7 +447,7 @@ def bin(x): # return integer as string in binary
     return s
 
 def exit(status = 0):
-    __pyc_c_code__(int, "::exit", int, status)
+    __pyc_c_call__(int, "::exit", int, status)
 
 def range(start, end):
   result = []
@@ -481,10 +483,10 @@ def len(x):
   return x.__len__()
 
 def chr(x):
-    return __pyc_c_code__(str, "_CG_chr", int, x)
+    return __pyc_c_call__(str, "_CG_chr", int, x)
 
 def ord(x):
-    return __pyc_c_code__(int, "_CG_ord", str, x)
+    return __pyc_c_call__(int, "_CG_ord", str, x)
 
 def __hex(x):
   if x < 10:

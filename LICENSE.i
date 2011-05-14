@@ -1,4 +1,4 @@
-"Copyright (c) 1994-2010 John Bradley Plevyak, All Rights Reserved\n"
+"Copyright (c) 1994-2011 John Bradley Plevyak, All Rights Reserved\n"
 "\n"
 "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n"
 "\n"

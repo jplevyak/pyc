@@ -38,6 +38,7 @@ struct PycContext : public gc {
   Vec<PycModule *> *modules;
   Vec<cchar *> *search_path;
   Vec<PycScope *> scope_stack;
+  Vec<cchar *> c_code;
   Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
   Vec<PycScope *> imports;
@@ -54,13 +55,10 @@ static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
   *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
-static Sym *sym_write = 0, *sym_writeln = 0, *sym___iter__ = 0, *sym_next = 0, *sym_append = 0;
-static Sym *sym___new__ = 0, *sym___init__ = 0, *sym_super = 0, *sym___call__ = 0;
-static Sym *sym___getitem__ = 0, *sym___setitem__ = 0, *sym___getslice__ = 0, *sym___setslice__ = 0;
-static Sym *sym___pyc_getslice__ = 0, *sym___pyc_setslice__ = 0;
-static Sym *sym___null__ = 0, *sym___str__ = 0;
-static Sym *sym___pyc_more__ = 0, *sym___pyc_symbol__ = 0, *sym___pyc_clone_constants__ = 0;
-static Sym *sym___pyc_c_code__ = 0, *sym___pyc_to_bool__ = 0, *sym___pyc_format_string__ = 0;
+
+#define S(_x) Sym *sym_##_x = 0;
+#include "pyc_symbols.h"
+
 static cchar *cannonical_self = 0;
 static int finalized_aspect = 0;
 static Vec<Sym *> builtin_functions;
@@ -389,29 +387,11 @@ new_base_instance(Sym *c, PycAST *ast) {
 
 static void
 build_builtin_symbols() {
-  sym_write = if1_make_symbol(if1, "write");
-  sym_writeln = if1_make_symbol(if1, "writeln");
-  sym___iter__ = if1_make_symbol(if1, "__iter__");
-  sym_next = if1_make_symbol(if1, "next");
-  sym_append = if1_make_symbol(if1, "append");
-  sym___new__ = if1_make_symbol(if1, "__new__");
-  sym___getitem__ = if1_make_symbol(if1, "__getitem__");
-  sym___setitem__ = if1_make_symbol(if1, "__setitem__");
-  sym___getslice__ = if1_make_symbol(if1, "__getslice__");
-  sym___setslice__ = if1_make_symbol(if1, "__setslice__");
-  sym___init__ = if1_make_symbol(if1, "__init__");
-  sym___call__ = if1_make_symbol(if1, "__call__");
-  sym___null__ = if1_make_symbol(if1, "__null__");
-  sym___str__ = if1_make_symbol(if1, "__str__");
-  sym___pyc_setslice__ = if1_make_symbol(if1, "__pyc_setslice__");
-  sym___pyc_getslice__ = if1_make_symbol(if1, "__pyc_getslice__");
-  sym___pyc_more__ = if1_make_symbol(if1, "__pyc_more__");
-  sym___pyc_c_code__ = if1_make_symbol(if1, "__pyc_c_code__");
-  sym___pyc_format_string__ = if1_make_symbol(if1, "__pyc_format_string__");
-  sym___pyc_to_bool__ = if1_make_symbol(if1, "__pyc_to_bool__");
-  sym___pyc_symbol__ = if1_make_symbol(if1, "__pyc_symbol__");
-  sym___pyc_clone_constants__ = if1_make_symbol(if1, "__pyc_clone_constants__");
-  sym_super = if1_make_symbol(if1, "super");
+
+#undef S
+#define S(_x) sym_##_x = if1_make_symbol(if1, #_x);
+#include "pyc_symbols.h"
+
   cannonical_self = cannonicalize_string("self");
 
   init_default_builtin_types();
@@ -448,7 +428,9 @@ build_builtin_symbols() {
   builtin_functions.set_add(sym_super);
   builtin_functions.set_add(sym___pyc_symbol__);
   builtin_functions.set_add(sym___pyc_clone_constants__);
+  builtin_functions.set_add(sym___pyc_c_call__);
   builtin_functions.set_add(sym___pyc_c_code__);
+  builtin_functions.set_add(sym___pyc_include_c_code__);
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
@@ -586,6 +568,15 @@ PycCallbacks::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   install_new_fun(fn);
   fn->fun->wraps = f; 
   return fn->fun;
+}
+
+bool
+PycCallbacks::c_codegen_pre_file(FILE *fp) {
+  for (int i = 0; i < ctx->c_code.n; i++) {
+    fputs(ctx->c_code[i], fp);
+    fputs("\n", fp);
+  }
+  return true;
 }
 
 template<class C>
@@ -1885,11 +1876,11 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       }
     } else if (f == sym___pyc_symbol__) {
       int n = asdl_seq_LEN(e->v.Call.args);
-     if (n != 1)
-       fail("bad number of arguments to builtin function %s", f->name);
+      if (n != 1)
+        fail("bad number of arguments to builtin function %s", f->name);
       PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
       if (a0->rval->type != sym_string || !a0->rval->constant)
-       fail("string argument required for builtin function %s", f->name);
+        fail("string argument required for builtin function %s", f->name);
       ast->rval = make_symbol(a0->rval->constant);
     } else if (f == sym___pyc_clone_constants__) {
       Vec<Sym *> as;
@@ -1900,8 +1891,27 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
       ast->rval = a0->rval;
       ast->rval->clone_for_constants = 1;
-    } else if (f == sym___pyc_c_code__) {
+    } else if (f == sym___pyc_c_call__) {
       splice_primitive(fun, e, ast, ctx)->rvals.v[2]->is_fake = 1;
+    } else if (f == sym___pyc_c_code__) {
+      PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
+      if (a0->rval->type != sym_string || !a0->rval->constant)
+        fail("string argument required for builtin function %s", f->name);
+      ctx.c_code.add(a0->rval->constant);
+    } else if (f == sym___pyc_include_c_code__) {
+      PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
+      if (a0->rval->type != sym_string || !a0->rval->constant)
+        fail("string argument required for builtin function %s", f->name);
+      cchar *file = a0->rval->constant;
+      cchar *prefix = strrchr(ctx.filename, '/');
+      if (f->name[0] == '/' || !prefix)
+        ctx.c_code.add((char*)read_file_to_string(file));
+      else {
+        char path[PATH_MAX];
+        strcpy(path, ctx.filename);
+        strcat(path + (prefix - ctx.filename), file); 
+        ctx.c_code.add((char*)read_file_to_string(path)); 
+      } 
     } else
       fail("unimplemented builtin '%s'", fun->sym->name);
     return 1;
@@ -2244,7 +2254,9 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym___pyc_symbol__);
   scope_sym(ctx, sym___pyc_clone_constants__);
   scope_sym(ctx, sym___pyc_more__);
+  scope_sym(ctx, sym___pyc_c_call__);
   scope_sym(ctx, sym___pyc_c_code__);
+  scope_sym(ctx, sym___pyc_include_c_code__);
   scope_sym(ctx, sym___pyc_to_bool__);
   scope_sym(ctx, sym___pyc_format_string__);
   scope_sym(ctx, sym_operator, "__pyc_operator__");
@@ -2261,7 +2273,7 @@ static void build_init(Code *code) {
 }
 
 static void
-c_code_transfer_function(PNode *pn, EntrySet *es) {
+c_call_transfer_function(PNode *pn, EntrySet *es) {
   AVar *a = make_AVar(pn->rvals[2], es);
   AVar *result = make_AVar(pn->lvals[0], es);
   // either provide an example or an explicity type (which will be a meta_type)
@@ -2272,7 +2284,7 @@ c_code_transfer_function(PNode *pn, EntrySet *es) {
 }
 
 static void
-c_code_codegen(FILE *fp, PNode *n, Fun *f) {
+c_call_codegen(FILE *fp, PNode *n, Fun *f) {
   fputs(n->rvals[3]->sym->constant, fp);
   fputs("(", fp);
   int first = 1;
@@ -2310,7 +2322,7 @@ static void
 add_primitive_transfer_functions() {
   prim_reg(sym_write->name, return_nil_transfer_function)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
-  prim_reg(sym___pyc_c_code__->name, c_code_transfer_function, c_code_codegen)->is_visible = 1;
+  prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen)->is_visible = 1;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
 }
@@ -2426,33 +2438,35 @@ install_new_fun(Sym *f) {
 
 int 
 ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
-  ifa_init(new PycCallbacks);
+  PycCallbacks *callbacks = new PycCallbacks();
+  ifa_init(callbacks);
   if1->partial_default = Partial_NEVER;
   build_builtin_symbols();
   add_primitive_transfer_functions();
-  PycContext ctx;
-  ctx.arena = arena;
-  ctx.modules = &mods;
+  PycContext *ctx = new PycContext();
+  callbacks->ctx = ctx;
+  ctx->arena = arena;
+  ctx->modules = &mods;
   Code *code = 0;
   forv_Vec(PycModule, x, mods)
     x->filename = cannonicalize_string(x->filename);
-  ctx.filename = mods[0]->filename;
-  build_search_path(ctx);
-  build_environment(mods[0], ctx);
+  ctx->filename = mods[0]->filename;
+  build_search_path(*ctx);
+  build_environment(mods[0], *ctx);
   Vec<PycModule *> base_mods(mods);
   forv_Vec(PycModule, x, base_mods)
-    if (build_syms(x, ctx) < 0) return -1;
+    if (build_syms(x, *ctx) < 0) return -1;
   finalize_types(if1);
   forv_Vec(PycModule, x, base_mods) {
-    ctx.mod = x;
-    build_module_attributes_if1(x, ctx, &code);
-    if (build_if1(x->mod, ctx, &code) < 0) return -1;
+    ctx->mod = x;
+    build_module_attributes_if1(x, *ctx, &code);
+    if (build_if1(x->mod, *ctx, &code) < 0) return -1;
   }
   finalize_types(if1);
   if (test_scoping) exit(0);
-  enter_scope(ctx, mods[0]->mod);  
+  enter_scope(*ctx, mods[0]->mod);  
   build_init(code);
-  exit_scope(ctx);
+  exit_scope(*ctx);
   build_type_hierarchy();
   fixup_aspect();
   return 0;

@@ -44,8 +44,8 @@ static ArgumentDescription arg_desc[] = {
   {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
 #ifdef USE_LLVM
   {"llvm", 'b', "LLVM Codegen", "F", &codegen_llvm, "PYC_LLVM", NULL},
-#endif
   {"jit", 'j', "JIT", "F", &codegen_jit, "PYC_JIT", NULL},
+#endif
 #ifdef DEBUG
   {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
   {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},

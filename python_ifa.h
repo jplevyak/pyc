@@ -15,9 +15,11 @@ typedef PySTEntryObject Symbol;
 
 class PycCallbacks : public IFACallbacks {
 public:
+  PycContext *ctx;
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
+  bool c_codegen_pre_file(FILE *);
 };
 
 class PycSymbol : public IFASymbol {
