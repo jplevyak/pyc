@@ -1465,6 +1465,23 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     } else
       break;
   }
+  // Add coerciion functions.
+  if (cls->num_kind != IF1_NUM_KIND_NONE) {
+    fn = new_fun(ast);
+    fn->nesting_depth = ctx.scope_stack.n;
+    Vec<Sym *> as;
+    as.add(new_sym(ast, "__coerce__"));
+    as[0]->must_implement_and_specialize(ast->sym->meta_type);
+    fn->name = as[0]->name;
+    Sym *rhs = new_sym(ast);
+    as.add(rhs);
+    body = 0;
+    Sym *t = new_sym(ast);
+    if1_send(if1, &body, 4, 1, sym_primitive, sym_coerce, cls, rhs, t)->ast = ast;
+    if1_move(if1, &body, t, fn->ret);
+    if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+    if1_closure(if1, fn, body, as.n, as.v);
+  }
   PycSymbol *call_fun = ctx.scope_stack.last()->map.get(sym___call__->name);
   Sym *call_sym = call_fun ? call_fun->sym->alias : 0;
   // callable redirect to __call__
