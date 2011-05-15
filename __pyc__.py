@@ -504,3 +504,7 @@ def isinstance(obj, ci):
 
 def issubclass(c1, c2):
   return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))
+
+#def bool(x):
+#  return __pyc_to_bool__(self)
+

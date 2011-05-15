@@ -1903,13 +1903,13 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
       cchar *file = a0->rval->constant;
-      cchar *prefix = strrchr(ctx.filename, '/');
+      cchar *prefix = strrchr(ctx.mod->filename, '/');
       if (f->name[0] == '/' || !prefix)
         ctx.c_code.add((char*)read_file_to_string(file));
       else {
         char path[PATH_MAX];
-        strcpy(path, ctx.filename);
-        strcat(path + (prefix - ctx.filename), file); 
+        strcpy(path, ctx.mod->filename);
+        strcpy(path + (prefix - ctx.mod->filename + 1), file); 
         ctx.c_code.add((char*)read_file_to_string(path)); 
       } 
     } else
