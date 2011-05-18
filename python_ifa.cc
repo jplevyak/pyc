@@ -118,6 +118,8 @@ PycSymbol::column() {
 int 
 PycSymbol::line() {
   PycAST *a = (PycAST*)sym->ast;
+  if (!a)
+    return 0;
   if (a->xstmt)
     return a->xstmt->lineno;
   if (a->xexpr)
@@ -127,7 +129,7 @@ PycSymbol::line() {
 
 int 
 PycSymbol::source_line() {
-  if (sym->ast && !((PycAST*)sym->ast)->is_builtin)
+  if (sym->ast /* && !((PycAST*)sym->ast)->is_builtin */) // print them all for now
     return line();
   else
     return 0;
@@ -434,6 +436,7 @@ build_builtin_symbols() {
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
+  // sym_bytearray->element = new_sym();
 }
 
 static inline PycAST *getAST(stmt_ty s, PycContext &ctx) {
@@ -2268,6 +2271,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_ellipsis);
   scope_sym(ctx, sym_object);
   scope_sym(ctx, sym_super);
+  // scope_sym(ctx, sym_bytearray);
   scope_sym(ctx, sym___pyc_symbol__);
   scope_sym(ctx, sym___pyc_clone_constants__);
   scope_sym(ctx, sym___pyc_more__);
@@ -2277,6 +2281,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym___pyc_to_bool__);
   scope_sym(ctx, sym___pyc_to_str__);
   scope_sym(ctx, sym___pyc_format_string__);
+  scope_sym(ctx, sym_uint8, "__pyc_char__");
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
   exit_scope(ctx);

@@ -62,8 +62,7 @@ class bool:
 
 class basestring:
   pass
-
-class __str_iter__:
+class __base_iter__:
   thestr = None
   position = 0
   slen = 0
@@ -85,12 +84,10 @@ class str(basestring):
     return __pyc_clone_constants__(self)
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
-  def __setitem__(self, key, value):
-    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
   def __len__(self):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __iter__(self):
-    return __str_iter__(self)
+    return __base_iter__(self)
   def __mod__(self, t):
     return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t)
 
@@ -504,3 +501,26 @@ def isinstance(obj, ci):
 
 def issubclass(c1, c2):
   return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))
+
+class bytearray:
+  length = 0
+  def __init__(self, s):
+    length = s
+    #return __pyc_primitive__(__pyc_symbol__("make_vector"), bytearray, __pyc_char__,
+    #                         pyc_clone_constants__(s))
+  def __getitem__(self, key):
+    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
+  def __setitem__(self, key, value):
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
+                             __pyc_clone_constants__(key),
+                             __pyc_primitive__(__pyc_symbol__("coerce"), __pyc_char__, value))
+  def __len__(self):
+    return length
+  def __iter__(self):
+    return __base_iter__(self)
+  def __str__(self):
+    x = ""
+    for k in xrange(0,len(self)):
+      if self[k]:
+        x += self[k].__str__()
+    return x
