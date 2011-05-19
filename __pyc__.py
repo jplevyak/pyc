@@ -502,7 +502,7 @@ def isinstance(obj, ci):
 def issubclass(c1, c2):
   return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))
 
-@vector()
+@vector("s")
 class bytearray:
   length = 0
   def __init__(self, s):
@@ -522,5 +522,5 @@ class bytearray:
     x = ""
     for k in xrange(0,len(self)):
       if self[k]:
-        x += self[k].__str__()
+        x += chr(self[k])
     return x

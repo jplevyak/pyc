@@ -1387,6 +1387,26 @@ gen_class(stmt_ty s, PycAST *ast, PycContext &ctx) {
   Sym *fn = ast->rval, *cls = ast->sym;
   bool is_record = cls->type_kind == Type_RECORD && cls != sym_object;
   Code *body = 0;
+  // Handle class decorators
+  asdl_seq *decorators = s->v.ClassDef.decorator_list;
+  char *vector_size = 0;
+  if (ctx.is_builtin() && decorators) {
+    for (int j = 0; j < asdl_seq_LEN(decorators); j++) {
+      expr_ty e = (expr_ty)asdl_seq_GET(decorators, j);
+      if (e->kind == Call_kind && e->v.Call.func->kind == Name_kind) {
+        if (STREQ(PyString_AS_STRING(e->v.Call.func->v.Name.id), "vector")) {
+          cls->is_vector = 1;
+          cls->element = new_sym();
+          asdl_seq *args = e->v.Call.args;
+          for (int j = 0; j < asdl_seq_LEN(args); j++) {
+             expr_ty e = (expr_ty)asdl_seq_GET(args, j);
+             if (e->kind == Str_kind)
+               vector_size = PyString_AS_STRING(e->v.Str.s); 
+          }
+        }
+      }
+    }
+  }
   for (int i = 0; i < cls->includes.n; i++) {
     Sym *inc = cls->includes[i];
     for (int j = 0; j < inc->has.n; j++) {
@@ -1452,7 +1472,18 @@ gen_class(stmt_ty s, PycAST *ast, PycContext &ctx) {
         as.add(new_sym(ast));
       body = 0;
       Sym *t = new_sym(ast);
-      if1_send(if1, &body, 3, 1, sym_primitive, sym_clone, proto, t)->ast = ast;
+      if (!cls->is_vector)
+        if1_send(if1, &body, 3, 1, sym_primitive, sym_clone, proto, t)->ast = ast;
+      else {
+        Sym *vec_size = 0;
+        for (int i = 2; i < init_sym->has.n; i++)
+          if (vector_size && init_sym->has[i]->name &&
+              !strcmp(init_sym->has[i]->name, vector_size))
+            vec_size = as[i-1];
+        if (!vec_size)
+          fail("vector size missing, line %d", ctx.lineno);
+        if1_send(if1, &body, 4, 1, sym_primitive, sym_clone_vector, proto, vec_size, t)->ast = ast;
+      }
       Code *send = if1_send(if1, &body, 2, 1, sym___init__, t, new_sym(ast));
       send->ast = ast;
       for (int i = 2; i < init_sym->has.n; i++)
@@ -1505,19 +1536,6 @@ gen_class(stmt_ty s, PycAST *ast, PycContext &ctx) {
     if1_move(if1, &body, t, fn->ret);
     if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
     if1_closure(if1, fn, body, as.n, as.v);
-  }
-  // Handle class decorators
-  asdl_seq *decorators = s->v.ClassDef.decorator_list;
-  if (ctx.is_builtin() && decorators) {
-    for (int j = 0; j < asdl_seq_LEN(decorators); j++) {
-      expr_ty e = (expr_ty)asdl_seq_GET(decorators, j);
-      if (e->kind == Call_kind && e->v.Call.func->kind == Name_kind) {
-        if (STREQ(PyString_AS_STRING(e->v.Call.func->v.Name.id), "vector")) {
-          cls->is_vector = 1;
-          cls->element = new_sym();      
-        }
-      }
-    }
   }
 }
 

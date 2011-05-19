@@ -121,6 +121,13 @@ static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
   return x;
 }
 
+static inline void * _CG_prim_primitive_clone_vector(void *p, size_t s, size_t v) {
+  void *x = GC_MALLOC(s + v);
+  memcpy(x, p, s);
+  memset(((char*)x) + s, 0, v);
+  return x;
+}
+
 static inline char * _CG_strcat(char *a, char *b) {
   int la = strlen(a), lb = strlen(b);
   char *x = (char*)GC_MALLOC(la + lb + 1);
@@ -304,6 +311,7 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
 #define _CG_prim_vector(_c, _n) (void*)GC_MALLOC(sizeof(_c*) * _n)
 #define _CG_prim_new(_c) (_c) GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_clone(_c) _CG_prim_primitive_clone(_c, sizeof(*(_c)))
+#define _CG_prim_clone_vector(_c, _v) _CG_prim_primitive_clone_vector(_c, sizeof(*(_c)), _v)
 #define _CG_prim_reply(_s, _c, _r) return _r
 #define _CG_prim_primitive(_p, _x) printf("%d\n", (unsigned int)(uintptr_t)_x);
 #define _CG_prim_add(_a, _op, _b) ((_a) + (_b))
