@@ -502,20 +502,20 @@ def isinstance(obj, ci):
 def issubclass(c1, c2):
   return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))
 
+@vector()
 class bytearray:
   length = 0
   def __init__(self, s):
-    length = s
-    #return __pyc_primitive__(__pyc_symbol__("make_vector"), bytearray, __pyc_char__,
-    #                         pyc_clone_constants__(s))
+    self.length = s
   def __getitem__(self, key):
-    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
+    return __pyc_primitive__(__pyc_symbol__("coerce"), int, 
+                             __pyc_primitive__(__pyc_symbol__("index_object"), self, key))
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
                              __pyc_clone_constants__(key),
                              __pyc_primitive__(__pyc_symbol__("coerce"), __pyc_char__, value))
   def __len__(self):
-    return length
+    return self.length
   def __iter__(self):
     return __base_iter__(self)
   def __str__(self):

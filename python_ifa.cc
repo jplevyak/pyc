@@ -436,7 +436,6 @@ build_builtin_symbols() {
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
-  // sym_bytearray->element = new_sym();
 }
 
 static inline PycAST *getAST(stmt_ty s, PycContext &ctx) {
@@ -1383,7 +1382,7 @@ gen_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
 }
 
 static void
-gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
+gen_class(stmt_ty s, PycAST *ast, PycContext &ctx) {
   // build base ___init___ (class specific prototype initialization)
   Sym *fn = ast->rval, *cls = ast->sym;
   bool is_record = cls->type_kind == Type_RECORD && cls != sym_object;
@@ -1506,6 +1505,19 @@ gen_class_init(stmt_ty s, PycAST *ast, PycContext &ctx) {
     if1_move(if1, &body, t, fn->ret);
     if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
     if1_closure(if1, fn, body, as.n, as.v);
+  }
+  // Handle class decorators
+  asdl_seq *decorators = s->v.ClassDef.decorator_list;
+  if (ctx.is_builtin() && decorators) {
+    for (int j = 0; j < asdl_seq_LEN(decorators); j++) {
+      expr_ty e = (expr_ty)asdl_seq_GET(decorators, j);
+      if (e->kind == Call_kind && e->v.Call.func->kind == Name_kind) {
+        if (STREQ(PyString_AS_STRING(e->v.Call.func->v.Name.id), "vector")) {
+          cls->is_vector = 1;
+          cls->element = new_sym();      
+        }
+      }
+    }
   }
 }
 
@@ -1689,11 +1701,11 @@ static int
 build_if1(stmt_ty s, PycContext &ctx) {
   RECURSE(s, build_if1, ctx);
   switch (s->kind) {
-    case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorators
+    case FunctionDef_kind: // identifier name, arguments args, stmt* body, expr* decorator_list
       gen_fun(s, ast, ctx);
       break;
-    case ClassDef_kind: // identifier name, expr* bases, stmt* body
-      gen_class_init(s, ast, ctx);
+    case ClassDef_kind: // identifier name, expr* bases, stmt* body, expr* decorator_list
+      gen_class(s, ast, ctx);
       break;
     case Return_kind: // expr? value
       if (s->v.Return.value) {
@@ -2271,7 +2283,6 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_ellipsis);
   scope_sym(ctx, sym_object);
   scope_sym(ctx, sym_super);
-  // scope_sym(ctx, sym_bytearray);
   scope_sym(ctx, sym___pyc_symbol__);
   scope_sym(ctx, sym___pyc_clone_constants__);
   scope_sym(ctx, sym___pyc_more__);
@@ -2401,6 +2412,7 @@ build_module_attributes_if1(PycModule *mod, PycContext &ctx, Code **code) {
 
 static int
 add_dirnames(cchar *p, Vec<cchar *> &a) {
+  if (a.n > 100) return 0;
   struct dirent **namelist = 0;
   int n = scandir(p, &namelist, 0, alphasort), r = 0;
   if (n < 1) return r;
