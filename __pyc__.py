@@ -521,6 +521,5 @@ class bytearray:
   def __str__(self):
     x = ""
     for k in xrange(0,len(self)):
-      if self[k]:
-        x += chr(self[k])
+      x += chr(self[k])
     return x
