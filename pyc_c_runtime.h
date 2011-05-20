@@ -61,7 +61,6 @@ typedef void *_CG_nil_type;
 #define _CG_primitive _CG_symbol
 #define _CG_make_tuple _CG_symbol
 #define _CG_Symbol(_x, _y) ((void*)(uintptr_t)_x)
-#define _CG_String(_x) ((char*)_x)
 #define null ((void*)0)
 #define bool int
 #define True 1
@@ -89,6 +88,14 @@ struct _CG_list_struct {
   This makes immutable/constant Lists and Tuples compatible
   and puts the elements of such lists in the same cache line as
   the list information.
+
+  Strings
+
+  Strings are pointers to the data portion (C-like) preceeded by
+  an 8-byte length.  This makes them compatible with C and still
+  permits them to contain \0 and makes obtaining the length O(1). 
+  
+  Strings have a 0 sentinal at the end for C compatibility.
 */
 
 #define _CG_TUPLE_TO_LIST_FUN(_s, _n) \
@@ -101,15 +108,36 @@ static inline _CG_list _CG_to_list(_CG_ps##_s p) { \
   return x; \
 }
 
+#define _CG_string_len(_s) ((_s) ? (size_t)*(int64*)(((char*)(_s))-8) : 0)
+#define _CG_string_set_len(_s, _v) (*(int64*)(((char*)(_s))-8)) = (int64)(_v)
+
+static inline char * _CG_string_alloc(size_t s) {
+  char *str = (char*)GC_MALLOC(s + 8 + 1);
+  str += 8;
+  str[s] = 0;
+  _CG_string_set_len(str, s);
+  return str;
+}
+
+static inline char * _CG_String(const void *x) {
+  size_t len = strlen((char*)x);
+  char *str = _CG_string_alloc(len);
+  memcpy(str, x, len); 
+  return str;
+}
+
 static inline char * _CG_format_string(char *str, ...) {
-  int l = strlen(str) + 24;
+  int l = _CG_string_len(str) + 24;
   char *s = 0;
   va_list ap;
   while (1) {
     va_start(ap, str);
-    s = (char*)GC_MALLOC(l);
+    s = _CG_string_alloc(l);
     int ll = vsnprintf(s, l, str, ap);
-    if (ll < l-1) break;
+    if (ll < l-1) {
+      _CG_string_set_len(s, ll);
+      break;
+    }
     l = l * 2;
   }
   return s;
@@ -128,19 +156,17 @@ static inline void * _CG_prim_primitive_clone_vector(void *p, size_t s, size_t v
   return x;
 }
 
-static inline char * _CG_strcat(char *a, char *b) {
-  int la = strlen(a), lb = strlen(b);
-  char *x = (char*)GC_MALLOC(la + lb + 1);
+static inline char * _CG_strcat(const char *a, const char *b) {
+  size_t la = _CG_string_len(a), lb = _CG_string_len(b);
+  char *x = _CG_string_alloc(la + lb);
   memcpy(x, a, la);
   memcpy(x + la, b, lb);
-  x[la + lb] = 0;
   return x;
 }
 
 static inline char * _CG_char_from_string(void *s, int i) {
-  char *x = (char*)GC_MALLOC(2);
+  char *x = _CG_string_alloc(1);
   x[0] = ((char*)s)[i];
-  x[1] = 0;
   return x;
 }
 
@@ -153,7 +179,7 @@ static inline char *_CG_prim_primitive_to_string(double d) {
     *p++ = '0';
   } else 
     while (*p) p++;
-  char *r = (char*)MALLOC(p-s);
+  char *r = _CG_string_alloc(p-s);
   memcpy(r, s, p-s);
   return r;
 }
@@ -161,10 +187,7 @@ static inline char *_CG_prim_primitive_to_string(double d) {
 static inline char *_CG_prim_primitive_to_string(int i) {
   char s[100];
   snprintf(s, 100, "%d", i);
-  int l = strlen(s);
-  char *r = (char*)MALLOC(l+1);
-  memcpy(r, s, l+1);
-  return r;
+  return _CG_String(s);
 }
 
 static inline int _CG_float_printf(double d, bool ln) {
@@ -297,7 +320,9 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
   return x;
 }
 
-#define _CG_string_len(_s) strlen(_s)
+#define _CG_write(_s) fwrite(_s, _CG_string_len(_s), 1, stdout)
+#define _CG_writeln(_s) fwrite("\n", 1, 1, stdout);
+
 #define _CG_prim_tuple_list(_c, _n) (_c)(_CG_prim_tuple_list_internal(sizeof(*((_c)0)), _n))
 #define _CG_prim_list(_e, _n) _CG_prim_tuple_list_internal(sizeof(_e), _n)
 #define _CG_prim_tuple(_c, _n) (_c)GC_MALLOC(sizeof(*((_c)0)))
@@ -346,9 +371,8 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
   _r->e1 = _a;                                  \
 } while (0)
 static inline char* _CG_chr(int x) {
-  unsigned char *s = (unsigned char*)MALLOC(2);
+  unsigned char *s = (unsigned char*)_CG_string_alloc(1);
   s[0] = x;
-  s[1] = 0;
   return (char*)s;
 }
 static inline int _CG_ord(char *x) {

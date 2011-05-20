@@ -2388,9 +2388,22 @@ to_str_codegen(FILE *fp, PNode *n, Fun *f) {
 }
 
 static void
+write_codegen(FILE *fp, PNode *n, Fun *f) {
+  fputs("_CG_write(", fp);
+  fputs(n->rvals[n->rvals.n-1]->cg_string, fp);
+  fputs(");\n", fp);
+}
+
+static void
+writeln_codegen(FILE *fp, PNode *n, Fun *f) {
+  fputs("_CG_writeln(", fp);
+  fputs(");\n", fp);
+}
+
+static void
 add_primitive_transfer_functions() {
-  prim_reg(sym_write->name, return_nil_transfer_function)->is_visible = 1;
-  prim_reg(sym_writeln->name, return_nil_transfer_function)->is_visible = 1;
+  prim_reg(sym_write->name, return_nil_transfer_function, write_codegen)->is_visible = 1;
+  prim_reg(sym_writeln->name, return_nil_transfer_function, writeln_codegen)->is_visible = 1;
   prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen)->is_visible = 1;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(sym___pyc_to_str__->name, to_str_transfer_function, to_str_codegen)->is_visible = 1;
