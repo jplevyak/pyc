@@ -16,7 +16,10 @@ print bool(10)
 print bool(0)
 print int(3.4)
 print float(3)
-#x = bytearray(10)
-#x[1] = ord('a')
-#x[2] = ord('b')
-#print x
+x = bytearray(10)
+x[1] = ord('a')
+x[2] = ord('b')
+print x
+print 'a' * 10
+buffer = [' '] * len("foobar");
+print buffer

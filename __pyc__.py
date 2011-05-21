@@ -9,6 +9,8 @@ class __pyc_any_type__:
     return self.__getitem__(slice(i,j,s))
   def __getslice__(self, i, j):
     return self.__getitem__(slice(i,j,1))
+  def __repr__(self):
+    return self.__str__()
 
 class object:
   def __null__(self):
@@ -62,6 +64,7 @@ class bool:
 
 class basestring:
   pass
+
 class __base_iter__:
   thestr = None
   position = 0
@@ -82,12 +85,16 @@ class str(basestring):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __str__(self):
     return __pyc_clone_constants__(self)
+  def __repr__(self):
+    return "'" + __pyc_clone_constants__(self) + "'"
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __len__(self):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __iter__(self):
     return __base_iter__(self)
+  def __mul__(self, l):
+    return __pyc_c_call__(str, "_CG_string_mult", str, self, int, l)
   def __mod__(self, t):
     return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t)
 
@@ -378,7 +385,7 @@ class list:
     for k in xrange(0,len(self)):
       if (k):
         x += ", "
-      x += self[k].__str__()
+      x += self[k].__repr__()
     x += "]"
     return x
   def __pyc_to_bool__(self):

@@ -143,6 +143,14 @@ static inline char * _CG_format_string(char *str, ...) {
   return s;
 }
 
+static inline char * _CG_string_mult(char *str, int64 n) {
+  size_t l = _CG_string_len(str);
+  char *ret = _CG_string_alloc(l * n);
+  for (int64 i = 0; i < n; i++)
+    memcpy(ret + l * i, str, l); 
+  return ret;
+}
+
 static inline void * _CG_prim_primitive_clone(void *p, size_t s) {
   void *x = GC_MALLOC(s);
   memcpy(x, p, s);
