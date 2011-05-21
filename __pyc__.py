@@ -1,4 +1,4 @@
-__pyc_include_c_code__('pyc_c_runtime.h')
+__pyc_include_c_header__('pyc_c_runtime.h')
 
 class __pyc_any_type__:
   def __str__(self):

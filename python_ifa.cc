@@ -433,6 +433,7 @@ build_builtin_symbols() {
   builtin_functions.set_add(sym___pyc_c_call__);
   builtin_functions.set_add(sym___pyc_c_code__);
   builtin_functions.set_add(sym___pyc_include_c_code__);
+  builtin_functions.set_add(sym___pyc_include_c_header__);
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
@@ -1948,20 +1949,28 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
       ctx.c_code.add(a0->rval->constant);
-    } else if (f == sym___pyc_include_c_code__) {
+    } else if (f == sym___pyc_include_c_code__ || f == sym___pyc_include_c_header__) {
       PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
       cchar *file = a0->rval->constant;
       cchar *prefix = strrchr(ctx.mod->filename, '/');
+      char path[PATH_MAX];
+      cchar *pathname = 0;
       if (f->name[0] == '/' || !prefix)
-        ctx.c_code.add((char*)read_file_to_string(file));
+        pathname = file;
       else {
-        char path[PATH_MAX];
         strcpy(path, ctx.mod->filename);
         strcpy(path + (prefix - ctx.mod->filename + 1), file); 
-        ctx.c_code.add((char*)read_file_to_string(path)); 
+        pathname = path;
       } 
+      if (f == sym___pyc_include_c_code__)
+        ctx.c_code.add((char*)read_file_to_string(pathname)); 
+      else {
+        char code[PATH_MAX + 100];
+        sprintf(code, "#include \"%s\"\n", pathname);
+        ctx.c_code.add(strdup(code));
+      }
     } else
       fail("unimplemented builtin '%s'", fun->sym->name);
     return 1;
@@ -2307,6 +2316,7 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym___pyc_c_call__);
   scope_sym(ctx, sym___pyc_c_code__);
   scope_sym(ctx, sym___pyc_include_c_code__);
+  scope_sym(ctx, sym___pyc_include_c_header__);
   scope_sym(ctx, sym___pyc_to_bool__);
   scope_sym(ctx, sym___pyc_to_str__);
   scope_sym(ctx, sym___pyc_format_string__);
