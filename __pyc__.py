@@ -339,11 +339,11 @@ class list:
     pass
   def __iadd__(self, l):
     pass
-  def __mul__(self, l):
-    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, l), 
+  def __mul__(self, n):
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
                           "_CG_list_mult", 
                           list, self, 
-                          int, l, 
+                          int, n, 
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
   def __rmul__(self, l):
     pass
