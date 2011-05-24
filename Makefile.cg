@@ -1,9 +1,9 @@
 OS_TYPE = $(shell uname -s | \
   awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
 
-CFLAGS += -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I/usr/local/include/gc -g -Wno-deprecated
+CFLAGS += -DUSE_GC=1 -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I$(CG_ROOT)/../plib -I/usr/local/include/gc -g -Wno-deprecated
 
-LIBS = -lm -lgc -lpcre
+LIBS = $(CG_ROOT)/../plib/libplib_gc.a -lm -lgc -lpcre
 
 ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt
