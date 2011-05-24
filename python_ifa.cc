@@ -25,8 +25,10 @@ struct PycScope : public gc {
   int id;
   Sym *in;
   Sym *cls, *fun;
+  Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<cchar *, PycSymbol*> map;
-  PycScope() : in(0), cls(0), fun(0) { id = scope_id++; } 
+  PycScope() : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0),
+    lyield(0) { id = scope_id++; } 
 };
 
 struct PycContext : public gc {
@@ -39,12 +41,15 @@ struct PycContext : public gc {
   Vec<cchar *> *search_path;
   Vec<PycScope *> scope_stack;
   Vec<cchar *> c_code;
-  Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
   Vec<PycScope *> imports;
   bool is_builtin() { return mod->is_builtin; }
   Sym *fun() { return scope_stack.last()->fun; }
   Sym *cls() { return scope_stack.last()->cls; }
+  Label *&lbreak() { return scope_stack.last()->lbreak; }
+  Label *&lcontinue() { return scope_stack.last()->lcontinue; }
+  Label *&lreturn() { return scope_stack.last()->lreturn; }
+  Label *&lyield() { return scope_stack.last()->lyield; }
   bool in_class() { return (cls() && scope_stack.last()->in == cls()); }
   void init();
   PycContext() { init(); }
@@ -72,9 +77,6 @@ void PycContext::init() {
   lineno = -1;
   node = 0;
   mod = package = 0;
-  lbreak = 0;
-  lcontinue = 0; 
-  lreturn = 0; 
 }
 
 PycContext::PycContext(PycContext &c) {
@@ -1041,7 +1043,7 @@ def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycContext &ctx) {
   enter_scope(s, ast, ctx);
   ctx.scope_stack.last()->fun = fn;
   fn->nesting_depth = ctx.scope_stack.n - 1;
-  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
+  ctx.lreturn() = ast->label[0] = if1_alloc_label(if1);
   return fn;
 }
 
@@ -1052,7 +1054,7 @@ def_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
   enter_scope(e, ast, ctx);
   ctx.scope_stack.last()->fun = new_fun(ast, fn);
   fn->nesting_depth = ctx.scope_stack.n - 1;
-  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
+  ctx.lreturn() = ast->label[0] = if1_alloc_label(if1);
   return fn;
 }
 
@@ -1156,8 +1158,8 @@ build_syms(stmt_ty s, PycContext &ctx) {
 #endif
     case For_kind:
     case While_kind:
-      ctx.lcontinue = ast->label[0] = if1_alloc_label(if1);
-      ctx.lbreak = ast->label[1] = if1_alloc_label(if1);
+      ctx.lcontinue() = ast->label[0] = if1_alloc_label(if1);
+      ctx.lbreak() = ast->label[1] = if1_alloc_label(if1);
       break;
   }
   AST_RECURSE_POST(s, build_syms, ctx);
@@ -1183,9 +1185,9 @@ build_syms(stmt_ty s, PycContext &ctx) {
           x->value->sym->in = ast->sym;
         }
       break;
-    case Continue_kind: ast->label[0] = ctx.lcontinue; break;
-    case Break_kind: ast->label[0] = ctx.lbreak; break;
-    case Return_kind: ast->label[0] = ctx.lreturn; break;
+    case Continue_kind: ast->label[0] = ctx.lcontinue(); break;
+    case Break_kind: ast->label[0] = ctx.lbreak(); break;
+    case Return_kind: ast->label[0] = ctx.lreturn(); break;
     case Import_kind: build_import(s, build_import_syms, ctx); break;
     case ImportFrom_kind: build_import_from(s, build_import_syms, ctx); break;
   }
@@ -1224,7 +1226,7 @@ build_syms(expr_ty e, PycContext &ctx) {
 #endif
     case GeneratorExp_kind: // expr elt, comprehension* generators
       enter_scope(e, ast, ctx);
-      ctx.lyield = past->label[0] = if1_alloc_label(if1);
+      ctx.lyield() = past->label[0] = if1_alloc_label(if1);
       break;
   }
   AST_RECURSE_POST(e, build_syms, ctx);
