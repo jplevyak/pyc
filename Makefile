@@ -11,6 +11,7 @@ USE_GC=1
 #LEAK_DETECT=1
 #VALGRIND=1
 #USE_LLVM=
+USE_SS = 1
 PYTHON=python2.7
 
 MAJOR=0
@@ -39,6 +40,10 @@ LIBS += -L../ifa -lifa -L../plib -lplib
 IFALIB = ../ifa/libifa.a
 endif
 
+ifdef USE_SS
+CFLAGS += -DSSLIB="../shedskin/shedskin/lib"
+endif
+
 ifeq ($(OS_TYPE),CYGWIN)
   LIBS += -L/usr/lib/$(PYTHON)/config -l$(PYTHON).dll
 else
@@ -50,7 +55,7 @@ AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODU
 LIB_SRCS = lib/builtin.cpp $(wildcard lib/*.cpp) $(wildcard lib/os/*.cpp)
 LIB_OBJS = $(LIB_SRCS:%.cpp=%.o)
 
-PYC_SRCS = pyc.cc python_ifa.cc version.cc
+PYC_SRCS = pyc.cc python_ifa.cc shedskin.cc version.cc
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
 
 EXECUTABLE_FILES = pyc
