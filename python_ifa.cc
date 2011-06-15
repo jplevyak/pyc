@@ -1,5 +1,5 @@
 /*
-  Copyright 2008-2010 John Plevyak, All Rights Reserved
+  Copyright 2008-2011 John Plevyak, All Rights Reserved
 */
 #include "defs.h"
 #include "dirent.h"
@@ -392,7 +392,6 @@ new_base_instance(Sym *c, PycAST *ast) {
 static void
 build_builtin_symbols() {
 
-#undef S
 #define S(_x) sym_##_x = if1_make_symbol(if1, #_x);
 #include "pyc_symbols.h"
 
@@ -429,13 +428,8 @@ build_builtin_symbols() {
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
   sym_ellipsis_type->is_unique_type = 1;
 
-  builtin_functions.set_add(sym_super);
-  builtin_functions.set_add(sym___pyc_symbol__);
-  builtin_functions.set_add(sym___pyc_clone_constants__);
-  builtin_functions.set_add(sym___pyc_c_call__);
-  builtin_functions.set_add(sym___pyc_c_code__);
-  builtin_functions.set_add(sym___pyc_include_c_code__);
-  builtin_functions.set_add(sym___pyc_include_c_header__);
+#define B(_x) builtin_functions.set_add(sym_##_x);
+#include "pyc_symbols.h"
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
@@ -1951,7 +1945,8 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
       ctx.c_code.add(a0->rval->constant);
-    } else if (f == sym___pyc_include_c_code__ || f == sym___pyc_include_c_header__) {
+    } else if (f == sym___pyc_insert_c_code__ || f == sym___pyc_insert_c_header__ ||
+               f == sym___pyc_include_c_header) {
       PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
@@ -1966,12 +1961,20 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
         strcpy(path + (prefix - ctx.mod->filename + 1), file); 
         pathname = path;
       } 
-      if (f == sym___pyc_include_c_code__)
+      if (f == sym___pyc_insert_c_code__)
         ctx.c_code.add((char*)read_file_to_string(pathname)); 
-      else {
+      else if (f == sym___pyc_insert_c_header__) {
         char code[PATH_MAX + 100];
         sprintf(code, "#include \"%s\"\n", pathname);
         ctx.c_code.add(strdup(code));
+      } else {
+        char cmd[PATH_MAX + 100];
+        sprintf(cmd, "gcc -E "%s", pathname);
+        FILE *fp = popen(cmd);
+        if (!fp)
+          fail("unable to include '%s'", pathname);
+        pclose(fp);
+        sprintf(cmd, "#include \"%s\"\n", pathname);
       }
     } else
       fail("unimplemented builtin '%s'", fun->sym->name);
@@ -2312,19 +2315,11 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_ellipsis);
   scope_sym(ctx, sym_object);
   scope_sym(ctx, sym_super);
-  scope_sym(ctx, sym___pyc_symbol__);
-  scope_sym(ctx, sym___pyc_clone_constants__);
-  scope_sym(ctx, sym___pyc_more__);
-  scope_sym(ctx, sym___pyc_c_call__);
-  scope_sym(ctx, sym___pyc_c_code__);
-  scope_sym(ctx, sym___pyc_include_c_code__);
-  scope_sym(ctx, sym___pyc_include_c_header__);
-  scope_sym(ctx, sym___pyc_to_bool__);
-  scope_sym(ctx, sym___pyc_to_str__);
-  scope_sym(ctx, sym___pyc_format_string__);
   scope_sym(ctx, sym_uint8, "__pyc_char__");
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
+#define P(_x) scope_sym(ctx, sym_##_x);
+#include "pyc_symbols.h"
   exit_scope(ctx);
 }
 

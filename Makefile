@@ -7,11 +7,11 @@ MODULE=pyc
 DEBUG=1
 #OPTIMIZE=1
 #PROFILE=1
-USE_GC=1
+USE_GC=1  # required
 #LEAK_DETECT=1
 #VALGRIND=1
-#USE_LLVM=
-USE_SS = 1
+#USE_LLVM=1  # incomplete
+#USE_SS=1  # incomplete
 PYTHON=python2.7
 
 MAJOR=0
@@ -40,6 +40,8 @@ LIBS += -L../ifa -lifa -L../plib -lplib
 IFALIB = ../ifa/libifa.a
 endif
 
+LIBS += -ldparse_gc
+
 ifdef USE_SS
 CFLAGS += -DSSLIB="../shedskin/shedskin/lib"
 endif
@@ -55,7 +57,13 @@ AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODU
 LIB_SRCS = lib/builtin.cpp $(wildcard lib/*.cpp) $(wildcard lib/os/*.cpp)
 LIB_OBJS = $(LIB_SRCS:%.cpp=%.o)
 
-PYC_SRCS = pyc.cc python_ifa.cc shedskin.cc version.cc
+PYC_SRCS = pyc.cc python_ifa.cc gnuc.g.d_parser.cc version.cc
+ifdef USE_SS
+PYC_SRCS += shedskin.cc
+endif
+ifdef USE_LLVM
+PYC_SRCS += llvm.cc
+endif
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
 
 EXECUTABLE_FILES = pyc
@@ -93,6 +101,9 @@ deinstall:
 	rm $(MANPAGES:%=$(PREFIX)/man/man1/%)
 #	rm $(INCLUDES:%=$(PREFIX)/include/%)
 #	rm $(INSTALL_LIBRARIES:%=$(PREFIX)/lib/%)
+
+%.g.d_parser.cc: %.g
+	make_dparser -v -Xcc -I $<
 
 $(PYC): $(PYC_OBJS) $(IFALIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS) 
