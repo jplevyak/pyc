@@ -1,5 +1,5 @@
 /*
-  Copyright 2008-2010 John Plevyak, All Rights Reserved
+  Copyright 2008-2011 John Plevyak, All Rights Reserved
 */
 #include "defs.h"
 #include "dirent.h"
@@ -25,8 +25,10 @@ struct PycScope : public gc {
   int id;
   Sym *in;
   Sym *cls, *fun;
+  Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<cchar *, PycSymbol*> map;
-  PycScope() : in(0), cls(0), fun(0) { id = scope_id++; } 
+  PycScope() : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0),
+    lyield(0) { id = scope_id++; } 
 };
 
 struct PycContext : public gc {
@@ -39,12 +41,15 @@ struct PycContext : public gc {
   Vec<cchar *> *search_path;
   Vec<PycScope *> scope_stack;
   Vec<cchar *> c_code;
-  Label *lbreak, *lcontinue, *lreturn, *lyield;
   Map<void *, PycScope*> saved_scopes;
   Vec<PycScope *> imports;
   bool is_builtin() { return mod->is_builtin; }
   Sym *fun() { return scope_stack.last()->fun; }
   Sym *cls() { return scope_stack.last()->cls; }
+  Label *&lbreak() { return scope_stack.last()->lbreak; }
+  Label *&lcontinue() { return scope_stack.last()->lcontinue; }
+  Label *&lreturn() { return scope_stack.last()->lreturn; }
+  Label *&lyield() { return scope_stack.last()->lyield; }
   bool in_class() { return (cls() && scope_stack.last()->in == cls()); }
   void init();
   PycContext() { init(); }
@@ -72,9 +77,6 @@ void PycContext::init() {
   lineno = -1;
   node = 0;
   mod = package = 0;
-  lbreak = 0;
-  lcontinue = 0; 
-  lreturn = 0; 
 }
 
 PycContext::PycContext(PycContext &c) {
@@ -390,7 +392,6 @@ new_base_instance(Sym *c, PycAST *ast) {
 static void
 build_builtin_symbols() {
 
-#undef S
 #define S(_x) sym_##_x = if1_make_symbol(if1, #_x);
 #include "pyc_symbols.h"
 
@@ -427,13 +428,8 @@ build_builtin_symbols() {
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
   sym_ellipsis_type->is_unique_type = 1;
 
-  builtin_functions.set_add(sym_super);
-  builtin_functions.set_add(sym___pyc_symbol__);
-  builtin_functions.set_add(sym___pyc_clone_constants__);
-  builtin_functions.set_add(sym___pyc_c_call__);
-  builtin_functions.set_add(sym___pyc_c_code__);
-  builtin_functions.set_add(sym___pyc_include_c_code__);
-  builtin_functions.set_add(sym___pyc_include_c_header__);
+#define B(_x) builtin_functions.set_add(sym_##_x);
+#include "pyc_symbols.h"
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
@@ -1041,7 +1037,7 @@ def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycContext &ctx) {
   enter_scope(s, ast, ctx);
   ctx.scope_stack.last()->fun = fn;
   fn->nesting_depth = ctx.scope_stack.n - 1;
-  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
+  ctx.lreturn() = ast->label[0] = if1_alloc_label(if1);
   return fn;
 }
 
@@ -1052,7 +1048,7 @@ def_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
   enter_scope(e, ast, ctx);
   ctx.scope_stack.last()->fun = new_fun(ast, fn);
   fn->nesting_depth = ctx.scope_stack.n - 1;
-  ctx.lreturn = ast->label[0] = if1_alloc_label(if1);
+  ctx.lreturn() = ast->label[0] = if1_alloc_label(if1);
   return fn;
 }
 
@@ -1156,8 +1152,8 @@ build_syms(stmt_ty s, PycContext &ctx) {
 #endif
     case For_kind:
     case While_kind:
-      ctx.lcontinue = ast->label[0] = if1_alloc_label(if1);
-      ctx.lbreak = ast->label[1] = if1_alloc_label(if1);
+      ctx.lcontinue() = ast->label[0] = if1_alloc_label(if1);
+      ctx.lbreak() = ast->label[1] = if1_alloc_label(if1);
       break;
   }
   AST_RECURSE_POST(s, build_syms, ctx);
@@ -1183,9 +1179,9 @@ build_syms(stmt_ty s, PycContext &ctx) {
           x->value->sym->in = ast->sym;
         }
       break;
-    case Continue_kind: ast->label[0] = ctx.lcontinue; break;
-    case Break_kind: ast->label[0] = ctx.lbreak; break;
-    case Return_kind: ast->label[0] = ctx.lreturn; break;
+    case Continue_kind: ast->label[0] = ctx.lcontinue(); break;
+    case Break_kind: ast->label[0] = ctx.lbreak(); break;
+    case Return_kind: ast->label[0] = ctx.lreturn(); break;
     case Import_kind: build_import(s, build_import_syms, ctx); break;
     case ImportFrom_kind: build_import_from(s, build_import_syms, ctx); break;
   }
@@ -1224,7 +1220,7 @@ build_syms(expr_ty e, PycContext &ctx) {
 #endif
     case GeneratorExp_kind: // expr elt, comprehension* generators
       enter_scope(e, ast, ctx);
-      ctx.lyield = past->label[0] = if1_alloc_label(if1);
+      ctx.lyield() = past->label[0] = if1_alloc_label(if1);
       break;
   }
   AST_RECURSE_POST(e, build_syms, ctx);
@@ -1949,7 +1945,8 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
       ctx.c_code.add(a0->rval->constant);
-    } else if (f == sym___pyc_include_c_code__ || f == sym___pyc_include_c_header__) {
+    } else if (f == sym___pyc_insert_c_code__ || f == sym___pyc_insert_c_header__ ||
+               f == sym___pyc_include_c_header) {
       PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
@@ -1964,12 +1961,20 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
         strcpy(path + (prefix - ctx.mod->filename + 1), file); 
         pathname = path;
       } 
-      if (f == sym___pyc_include_c_code__)
+      if (f == sym___pyc_insert_c_code__)
         ctx.c_code.add((char*)read_file_to_string(pathname)); 
-      else {
+      else if (f == sym___pyc_insert_c_header__) {
         char code[PATH_MAX + 100];
         sprintf(code, "#include \"%s\"\n", pathname);
         ctx.c_code.add(strdup(code));
+      } else {
+        char cmd[PATH_MAX + 100];
+        sprintf(cmd, "gcc -E "%s", pathname);
+        FILE *fp = popen(cmd);
+        if (!fp)
+          fail("unable to include '%s'", pathname);
+        pclose(fp);
+        sprintf(cmd, "#include \"%s\"\n", pathname);
       }
     } else
       fail("unimplemented builtin '%s'", fun->sym->name);
@@ -2310,19 +2315,11 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_ellipsis);
   scope_sym(ctx, sym_object);
   scope_sym(ctx, sym_super);
-  scope_sym(ctx, sym___pyc_symbol__);
-  scope_sym(ctx, sym___pyc_clone_constants__);
-  scope_sym(ctx, sym___pyc_more__);
-  scope_sym(ctx, sym___pyc_c_call__);
-  scope_sym(ctx, sym___pyc_c_code__);
-  scope_sym(ctx, sym___pyc_include_c_code__);
-  scope_sym(ctx, sym___pyc_include_c_header__);
-  scope_sym(ctx, sym___pyc_to_bool__);
-  scope_sym(ctx, sym___pyc_to_str__);
-  scope_sym(ctx, sym___pyc_format_string__);
   scope_sym(ctx, sym_uint8, "__pyc_char__");
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
+#define P(_x) scope_sym(ctx, sym_##_x);
+#include "pyc_symbols.h"
   exit_scope(ctx);
 }
 

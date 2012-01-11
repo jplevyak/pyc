@@ -50,6 +50,9 @@ static ArgumentDescription arg_desc[] = {
   {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
   {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
 #endif
+#ifdef USE_SS
+  {"ss", 's', "Shedskin Codegen", "F", &codegen_shedskin, "PYC_SS", NULL},
+#endif
   {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
   {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
   {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
@@ -88,13 +91,20 @@ void compile(cchar *fn) {
     ifa_html(fn, mktree_dir);
   }
   if (fcg) {
-    if (codegen_llvm) {
+#ifdef USE_SS
+    if (codegen_shedskin) {
+      if (shedskin_codegen(pdb->fa, if1->top->fun, fn))
+        fail("compilation failure");
+    } else 
+#endif
 #ifdef USE_LLVM
+    if (codegen_llvm) {
       llvm_codegen(pdb->fa, if1->top->fun, fn);
       if (!codegen_jit && llvm_codegen_compile(fn))
         fail("compilation failure");
+    } else
 #endif
-    } else {
+    {
       c_codegen_write_c(pdb->fa, if1->top->fun, fn);
       if (c_codegen_compile(fn))
         fail("compilation failure");
