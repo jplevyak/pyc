@@ -1946,7 +1946,7 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
         fail("string argument required for builtin function %s", f->name);
       ctx.c_code.add(a0->rval->constant);
     } else if (f == sym___pyc_insert_c_code__ || f == sym___pyc_insert_c_header__ ||
-               f == sym___pyc_include_c_header) {
+               f == sym___pyc_include_c_header__) {
       PycAST *a0 = getAST((expr_ty)asdl_seq_GET(e->v.Call.args, 0), ctx);
       if (a0->rval->type != sym_string || !a0->rval->constant)
         fail("string argument required for builtin function %s", f->name);
@@ -1969,8 +1969,8 @@ build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
         ctx.c_code.add(strdup(code));
       } else {
         char cmd[PATH_MAX + 100];
-        sprintf(cmd, "gcc -E "%s", pathname);
-        FILE *fp = popen(cmd);
+        sprintf(cmd, "gcc -E %s", pathname);
+        FILE *fp = popen(cmd, "r");
         if (!fp)
           fail("unable to include '%s'", pathname);
         pclose(fp);
