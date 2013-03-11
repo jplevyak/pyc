@@ -338,7 +338,7 @@ class list:
   def __radd__(self, l):
     pass
   def __iadd__(self, l):
-    pass
+    return __add__(self, l)
   def __mul__(self, n):
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
                           "_CG_list_mult", 
@@ -453,10 +453,15 @@ def bin(x): # return integer as string in binary
 def exit(status = 0):
     __pyc_c_call__(int, "::exit", int, status)
 
-def range(start, end):
+# TODO: allow specialization to detect single argument
+def range(start, end = 0, delta = 1):
+  if end == 0:
+    end = start
+    start = 0
   result = []
   while (start < end):
     result += [start]
+    start += delta 
   return result
 
 class xrange:

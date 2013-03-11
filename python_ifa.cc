@@ -1694,9 +1694,15 @@ static void build_import_if1(char *sym, char *as, char *from, PycContext &ctx) {
 static Code *find_send(Code *c) {
   if (c->kind == Code_SEND) return c;
   assert(c->kind == Code_SUB);
-  for (int i = c->sub.n-1; i >= 0; i++)
+  for (int i = c->sub.n-1; i >= 0; i--) {
+   if (c->sub[i]->kind == Code_SUB) {
+      Code *cc = find_send(c->sub[i]);
+      if (cc)
+        return cc;
+    }
     if (c->sub[i]->kind == Code_SEND)
       return c->sub[i];
+  }
   return 0;
 }
 
@@ -1777,6 +1783,10 @@ build_if1(stmt_ty s, PycContext &ctx) {
                  tmp2, v->rval, tmp)->ast = ast; 
         if1_send(if1, &ast->code, 5, 1, sym_operator, 
                  t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))->ast = ast;
+      } else if (t->is_object_index) {
+        if1_add_send_arg(if1, find_send(ast->code), v->rval);
+        if1_send(if1, &ast->code, 3, 1, map_ioperator(s->v.AugAssign.op),
+                 t->rval, v->rval, (ast->rval = new_sym(ast)))->ast = ast; 
       } else {
         if1_send(if1, &ast->code, 3, 1, map_ioperator(s->v.AugAssign.op),
                  t->rval, v->rval, (ast->rval = new_sym(ast)))->ast = ast; 
