@@ -9,7 +9,7 @@ class Label;
 class Code;
 class IFAASTCopyContext;
 class Sym;
-class PycContext;
+struct PycContext;
 
 typedef PySTEntryObject Symbol;
 

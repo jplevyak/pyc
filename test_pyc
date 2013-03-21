@@ -1,6 +1,6 @@
 #!/bin/tcsh 
 
-#setenv VALGRIND 'valgrind -q '
+#setenv VALGRIND 'valgrind -q --dsymutil=yes'
 setenv VALGRIND ' '
 
 cd tests

@@ -1708,11 +1708,11 @@ static Code *find_send(Code *c) {
 
 #define RECURSE(_ast, _fn, _ctx) \
   PycAST *ast = getAST(_ast, ctx); \
-  forv_Vec(PycAST, x, ast->pre_scope_children) \
-    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx); \
+  forv_Vec(PycAST, x, ast->pre_scope_children) { \
+    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx); } \
   enter_scope(_ast, ast, ctx);                                           \
-  forv_Vec(PycAST, x, ast->children) \
-    if (x->xstmt) _fn(x->xstmt, ctx); else if (x->xexpr) _fn(x->xexpr, ctx); \
+  forv_Vec(PycAST, x, ast->children) { \
+    if (x->xstmt) _fn(x->xstmt, ctx); else  if (x->xexpr) _fn(x->xexpr, ctx); } \
   ASSERT(ast == getAST(_ast, ctx));
 
 static int build_if1(stmt_ty s, PycContext &ctx);
