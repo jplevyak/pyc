@@ -53,6 +53,7 @@ static ArgumentDescription arg_desc[] = {
 #ifdef USE_SS
   {"ss", 's', "Shedskin Codegen", "F", &codegen_shedskin, "PYC_SS", NULL},
 #endif
+  {"runtime_errors", 'r', "Use runtime type checks", "f", &runtime_errors, "PYC_RUNTIME_ERRORS", NULL},
   {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
   {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
   {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
@@ -159,7 +160,7 @@ int main(int argc, char *argv[]) {
     if (mod)
       mods.add(new PycModule(mod, filename, i < 0));
   }
-  fruntime_errors = true;
+  fruntime_errors = runtime_errors;
   if (mods.n > 1) {
     ast_to_if1(mods, arena);
     compile(first_filename);
