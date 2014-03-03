@@ -59,7 +59,7 @@ struct PycContext : public gc {
 static Map<stmt_ty, PycAST *> stmtmap;
 static Map<expr_ty, PycAST *> exprmap;
 static Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0,
-  *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0;
+  *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0, *sym_declare = 0;
 
 #define S(_x) Sym *sym_##_x = 0;
 #include "pyc_symbols.h"
@@ -400,6 +400,7 @@ build_builtin_symbols() {
   init_default_builtin_types();
 
   new_builtin_global_variable(sym___main__, "__main__");
+  new_builtin_global_variable(sym_declare, "pyc__declare__");
 
   // override default sizes
   sym_int->alias = sym_int32;
@@ -1778,11 +1779,11 @@ build_if1(stmt_ty s, PycContext &ctx) {
         Sym *tmp = new_sym(ast);
         Sym *tmp2 = new_sym(ast);
         if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, 
-                 tmp2)->ast = ast;
+            tmp2)->ast = ast;
         if1_send(if1, &ast->code, 3, 1, map_ioperator(s->v.AugAssign.op),
-                 tmp2, v->rval, tmp)->ast = ast; 
+            tmp2, v->rval, tmp)->ast = ast; 
         if1_send(if1, &ast->code, 5, 1, sym_operator, 
-                 t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))->ast = ast;
+            t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))->ast = ast;
       } else if (t->is_object_index) {
         if1_add_send_arg(if1, find_send(ast->code), v->rval);
         if1_send(if1, &ast->code, 3, 1, map_ioperator(s->v.AugAssign.op),
@@ -2328,6 +2329,8 @@ build_environment(PycModule *mod, PycContext &ctx) {
   scope_sym(ctx, sym_uint8, "__pyc_char__");
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
+  scope_sym(ctx, sym_declare, "__pyc_declare__");
+  sym_declare->is_fake = true;
 #define P(_x) scope_sym(ctx, sym_##_x);
 #include "pyc_symbols.h"
   exit_scope(ctx);
