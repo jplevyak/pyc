@@ -1076,6 +1076,7 @@ static void build_import_syms(char *sym, char *as, char *from, PycContext &ctx) 
   char *mod = from ? from : sym;
   assert(!strchr(mod, '.')); // package
   assert(!ctx.package); // package 
+  if (!strcmp(mod, "pyc_compat")) return;
   PycModule *m = get_module(mod, ctx);
   if (!m) {
     forv_Vec(cchar, p, *ctx.search_path) {
@@ -1682,6 +1683,7 @@ static void build_module_attributes_if1(PycModule *mod, PycContext &ctx, Code **
 
 static void build_import_if1(char *sym, char *as, char *from, PycContext &ctx) {
   char *mod = from ? from : sym;
+  if (!strcmp(mod, "pyc_compat")) return;
   PycModule *m = get_module(mod, ctx);
   assert(m);
   if (!m->built_if1) {
