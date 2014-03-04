@@ -6,6 +6,7 @@ setenv VALGRIND ' '
 cd tests
 set failed = 0
 set expected_failed = 0
+cp ../pyc_compat.py .
 foreach g (*.py)
   if (-e $g.ignore) continue
   if (-e $g.flags) then
