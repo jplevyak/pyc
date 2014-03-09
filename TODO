@@ -27,3 +27,5 @@ n = __c_function__("int GET_ARGC();")
 ofor x in range(n):
   argv[x] = __c_function__("const char *GET_ARGV(int)", x)
 
+
+change __pyc_declare__ to use sym_unknown?
