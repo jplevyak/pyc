@@ -25,6 +25,36 @@ extern "C" {
 #undef List
 #endif
 #define PYTHON_FREE 4
+#ifdef HAVE_MMAP
+#undef HAVE_MMAP
+#endif
+#ifdef Name
+#undef Name
+#endif
+#ifdef alias
+#undef alias
+#endif
+#ifdef Pass
+#undef Pass
+#endif
+#ifdef Set
+#undef Set
+#endif
+#ifdef Attribute
+#undef Attribute
+#endif
+#ifdef Index
+#undef Index
+#endif
+#ifdef Str
+#undef Str
+#endif
+#ifdef DEBUG
+#undef DEBUG
+#endif
+#ifdef Module
+#undef Module
+#endif
 
 #include "plib.h"
 #include "ifa.h"

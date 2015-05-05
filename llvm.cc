@@ -3,23 +3,21 @@
 */
 #include "defs.h"
 
-#undef Module
-
-#include "llvm/LLVMContext.h"
-#include "llvm/Module.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Instructions.h"
-#include "llvm/ExecutionEngine/JIT.h"
+#include "llvm/DebugInfo/DIContext.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/ExecutionEngine/MCJIT.h"
 #include "llvm/ExecutionEngine/Interpreter.h"
 #include "llvm/ExecutionEngine/GenericValue.h"
-#include "llvm/Analysis/Verifier.h"
-#include "llvm/Analysis/DebugInfo.h"
-#include "llvm/Target/TargetSelect.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Bitcode/ReaderWriter.h"
-#include "llvm/Support/IRBuilder.h"
 #include <iostream>
 #include <fstream>
 
@@ -37,12 +35,15 @@ using namespace llvm;
 #endif
 
 static cchar *main_fn = 0;
+#ifdef DEBUG_INFO
 static DIFactory *di_factory = 0;
 static DICompileUnit *di_compile_unit = 0;
 static HashMap<cchar *, StringHashFns, DIFile *> di_file;
 static Map<Fun *, DISubprogram *> di_subprogram;
+#endif
 
-static void build_main_function(LLVMContext &c, Module &m) {
+namespace {
+void build_main_function(LLVMContext &c, Module &m) {
   Function *main_func = cast<Function>(
     m.getOrInsertFunction("main", IntegerType::getInt32Ty(c),
                           IntegerType::getInt32Ty(c),
@@ -58,11 +59,11 @@ static void build_main_function(LLVMContext &c, Module &m) {
   ReturnInst::Create(c, ConstantInt::get(c, APInt(32, 0)), bb);
 }
 
-static Value *llvm_value(IRBuilder<> &b, Var *v) {
+Value *llvm_value(IRBuilder<> &b, Var *v) {
   return b.CreateLoad(v->llvm_value);
 }
 
-static void simple_move(IRBuilder<> &b, Var *lhs, Var *rhs) {
+void simple_move(IRBuilder<> &b, Var *lhs, Var *rhs) {
   if (!lhs->live)
     return;
   if (lhs->sym->type_kind || rhs->sym->type_kind)
@@ -75,7 +76,7 @@ static void simple_move(IRBuilder<> &b, Var *lhs, Var *rhs) {
 }
 
 #ifdef DEBUG_INFO
-static DIFile *get_di_file(cchar *fn) {
+DIFile *get_di_file(cchar *fn) {
   if (!fn) 
     fn = main_fn;
   DIFile *n = di_file.get(fn);
@@ -86,7 +87,7 @@ static DIFile *get_di_file(cchar *fn) {
   return n;
 }
  
-static DISubprogram *   
+DISubprogram *   
   n = new DISubprogram(di_factory->CreateSubprogram(
                          *di_compile_unit,
                          fn, fn, fn /* linkage name */,
@@ -98,7 +99,7 @@ static DISubprogram *
 
 #endif
 
-static int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
+int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
   //int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
   //bool listish_tuple = false;
   switch (n->prim->index) {
@@ -110,13 +111,19 @@ static int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) 
   return 1;
 }
 
-static void write_llvm_send(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
+void write_llvm_send(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
 }
 
-static void build_llvm_pnode(Fun *f, PNode *n,
+void do_phy_nodes(PNode *n, int isucc) {
+}
+
+void do_phi_nodes(PNode *n, int isucc) {
+}
+
+void build_llvm_pnode(Fun *f, PNode *n,
                              LLVMContext &c, IRBuilder<> &b, Module &m,
-                             Vec<PNode*> &done) 
-{
+                             Vec<PNode*> &done) {
+  auto theFunction = b.GetInsertionPoint()->GetParent();
 #ifdef DEBUG_INFO
   b.SetCurrentDebugLocation(
     DebugLoc::getFromDILocation(
@@ -148,16 +155,19 @@ static void build_llvm_pnode(Fun *f, PNode *n,
           if (done.set_add(n->cfg_succ[1]))
             build_llvm_pnode(f, n->cfg_succ[1], c, b, m, done);
         } else {
-          b.CreateCondBr(llvm_value(b, n->rvals[0]));
-          do_phy_nodes(n, 0);
-          do_phi_nodes(n, 0);
+          auto thenBB = BasicBlock::Create(c, "then", theFunction);
+          auto elseBB = BasicBlock::Create(c, "else");
+          auto mergeBB = BasicBlock::Create(c, "merge");
+          b.CreateCondBr(llvm_value(b, n->rvals[0]), thenBB, elseBB);
+          do_phy_nodes(n);
+          do_phi_nodes(n);
           if (done.set_add(n->cfg_succ[0]))
             build_llvm_pnode(f, n->cfg_succ[0], c, b, m, done);
           else
             fprintf("  goto L%d;\n", n->code->label[0]->id);
           fprintf("  } else {\n");
-          do_phy_nodes(n, 1);
-          do_phi_nodes(n, 1);
+          do_phy_nodes(n);
+          do_phi_nodes(n);
           if (done.set_add(n->cfg_succ[1]))
             build_llvm_pnode(f, n->cfg_succ[1], c, b, m, done);
           else
@@ -165,12 +175,12 @@ static void build_llvm_pnode(Fun *f, PNode *n,
           fputs("  }\n", fp);
         }
       } else {
-        do_phy_nodes(n, 0);
-        do_phi_nodes(n, 0);
+        do_phy_nodes(n);
+        do_phi_nodes(n);
       }
       break;
     case Code_GOTO:
-      do_phi_nodes(n, 0);
+      do_phi_nodes(n);
       if (n->live && n->fa_live)
         fprintf("  goto L%d;\n", n->code->label[0]->id);
       break;
@@ -178,10 +188,10 @@ static void build_llvm_pnode(Fun *f, PNode *n,
       if ((!n->live || !n->fa_live) && n->prim && n->prim->index == P_prim_reply)
         fprintf("  return 0;\n");
       else
-        do_phi_nodes(n, 0);
+        do_phi_nodes(n);
       break;
     default:
-      do_phi_nodes(n, 0);
+      do_phi_nodes(n);
       break;
   }
   // InsertPoint saveAndClearIP()
@@ -189,7 +199,7 @@ static void build_llvm_pnode(Fun *f, PNode *n,
   // SetInstDebugLocation(Instruction);
 }
 
-static void build_llvm_fun(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m) {
+void build_llvm_fun(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m) {
   Function *fun = f->llvm;
   //m.getOrInsertNamedMetadata(f->sym->name);
   BasicBlock *bb = BasicBlock::Create(c, "entry", fun);
@@ -214,7 +224,7 @@ static void build_llvm_fun(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m) {
   verifyFunction(*fun);
 }
 
-static void build_llvm_prototype(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m, PATypeHolder *h) {
+void build_llvm_prototype(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m, PATypeHolder *h) {
   std::vector<const Type*> argtype;
   MPosition p;
   p.push(1);
@@ -238,7 +248,7 @@ static void build_llvm_prototype(Fun *f, LLVMContext &c, IRBuilder<> &b, Module 
   m.getOrInsertFunction(f->sym->name, ft);
 }
 
-static const Type *
+const Type *
 num_type(Sym *s, LLVMContext &c) {
   switch (s->num_kind) {
     default: assert(!"case");
@@ -265,7 +275,7 @@ num_type(Sym *s, LLVMContext &c) {
   return 0;
 }
 
-static GlobalVariable *create_global_string(LLVMContext &c, Module &m, cchar *s) {
+GlobalVariable *create_global_string(LLVMContext &c, Module &m, cchar *s) {
   Constant *str = ConstantArray::get(c, s, true);
   GlobalVariable *gv = new GlobalVariable(m, str->getType(),
                                           true, GlobalValue::InternalLinkage,
@@ -274,7 +284,7 @@ static GlobalVariable *create_global_string(LLVMContext &c, Module &m, cchar *s)
   return gv;
 }
 
-static void build_llvm_globals(LLVMContext &c, IRBuilder<> &b, Module &m, Vec<Var *> &globals) {
+void build_llvm_globals(LLVMContext &c, IRBuilder<> &b, Module &m, Vec<Var *> &globals) {
   forv_Var(v, globals) {
     if (!v->live)
       continue;
@@ -318,7 +328,7 @@ static void build_llvm_globals(LLVMContext &c, IRBuilder<> &b, Module &m, Vec<Va
   }
 }
 
-static void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
+void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
   Vec<Sym *> typesyms;
   Vec<Var *> globals;
 
@@ -390,7 +400,7 @@ static void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module 
   build_llvm_globals(c, b, m, globals);
 }
 
-static void build_llvm_ir(LLVMContext &c, Module &m, Fun *main) {
+void build_llvm_ir(LLVMContext &c, Module &m, Fun *main) {
   IRBuilder<> b(c);
 
   build_llvm_types_and_globals(c, b, m);
@@ -399,7 +409,12 @@ static void build_llvm_ir(LLVMContext &c, Module &m, Fun *main) {
   build_main_function(c, m);
 }
 
+}
+
 void llvm_codegen(FA *fa_unused, Fun *main, cchar *fn) {
+  InitializeNativeTarget(); 
+  InitializeNativeTargetAsmPrinter(); 
+  InitializeNativeTargetAsmParser(); 
   main_fn = fn;
   LLVMContext &c = getGlobalContext();
   Module m("pyc", c);
@@ -417,7 +432,6 @@ void llvm_codegen(FA *fa_unused, Fun *main, cchar *fn) {
                                         ));
   build_llvm_ir(c, m, main);
   if (codegen_jit) {
-    InitializeNativeTarget(); 
     ExecutionEngine *ee = EngineBuilder(&m).create();
     std::vector<GenericValue> args;
     Function *f = m.getFunction("__main__");

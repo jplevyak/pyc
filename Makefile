@@ -10,7 +10,7 @@ DEBUG=1
 USE_GC=1  # required
 #LEAK_DETECT=1
 #VALGRIND=1
-#USE_LLVM=1  # incomplete
+USE_LLVM=1  # incomplete
 #USE_SS=1  # incomplete
 PYTHON=python2.7
 
@@ -23,9 +23,9 @@ ifeq ($(OS_TYPE),Darwin)
 PYTHON=python2.6
 endif
 
-CFLAGS += -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON) -Ilib -Ilib/os
+CFLAGS += --std=gnu++11 -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON) -Ilib -Ilib/os
 # LLVM flags
-CFLAGS += -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
+CFLAGS += -I/usr/include/llvm-c-3.6 -I/usr/include/llvm-3.6 -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
 LIBS += -lpcre 
 ifdef USE_LLVM
 # LLVM libs
