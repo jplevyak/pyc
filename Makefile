@@ -10,7 +10,7 @@ DEBUG=1
 USE_GC=1  # required
 #LEAK_DETECT=1
 #VALGRIND=1
-USE_LLVM=1  # incomplete
+#USE_LLVM=1  # incomplete
 #USE_SS=1  # incomplete
 PYTHON=python2.7
 
@@ -23,13 +23,13 @@ ifeq ($(OS_TYPE),Darwin)
 PYTHON=python2.6
 endif
 
-CFLAGS += --std=gnu++11 -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON) -Ilib -Ilib/os
+CFLAGS += -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON) -Ilib -Ilib/os
 # LLVM flags
-CFLAGS += -I/usr/include/llvm-c-3.6 -I/usr/include/llvm-3.6 -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
+CFLAGS += -I/home/jplevyak/src/llvm-build/include -I/home/jplevyak/src/llvm/include -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
 LIBS += -lpcre 
 ifdef USE_LLVM
 # LLVM libs
-LIBS +=-lLLVMMSIL -lLLVMMSILInfo -lLLVMLinker -lLLVMipo -lLLVMInterpreter -lLLVMInstrumentation -lLLVMJIT -lLLVMExecutionEngine -lLLVMCppBackend -lLLVMCppBackendInfo -lLLVMCBackend -lLLVMCBackendInfo -lLLVMBitWriter -lLLVMX86Disassembler -lLLVMX86AsmParser -lLLVMX86AsmPrinter -lLLVMX86CodeGen -lLLVMX86Info -lLLVMAsmParser -lLLVMArchive -lLLVMBitReader -lLLVMMCParser -lLLVMSelectionDAG -lLLVMCodeGen -lLLVMScalarOpts -lLLVMInstCombine -lLLVMTransformUtils -lLLVMipa -lLLVMTarget -lLLVMMC -lLLVMCore -lLLVMAlphaInfo -lLLVMSupport -lLLVMSystem -lLLVMAsmPrinter -lLLVMAnalysis -ldl
+LIBS += -L/home/jplevyak/src/llvm-build/lib -lLLVMMSIL -lLLVMMSILInfo -lLLVMLinker -lLLVMipo -lLLVMInterpreter -lLLVMInstrumentation -lLLVMJIT -lLLVMExecutionEngine -lLLVMCppBackend -lLLVMCppBackendInfo -lLLVMCBackend -lLLVMCBackendInfo -lLLVMBitWriter -lLLVMX86Disassembler -lLLVMX86AsmParser -lLLVMX86AsmPrinter -lLLVMX86CodeGen -lLLVMX86Info -lLLVMAsmParser -lLLVMArchive -lLLVMBitReader -lLLVMMCParser -lLLVMSelectionDAG -lLLVMCodeGen -lLLVMScalarOpts -lLLVMInstCombine -lLLVMTransformUtils -lLLVMipa -lLLVMTarget -lLLVMMC -lLLVMCore -lLLVMAlphaInfo -lLLVMSupport -lLLVMSystem -lLLVMAsmPrinter -lLLVMAnalysis -ldl
 CFLAGS += -DUSE_LLVM=1
 endif
 ifdef USE_GC
@@ -105,7 +105,7 @@ deinstall:
 	make_dparser -v -Xcc -I $<
 
 $(PYC): $(PYC_OBJS) $(IFALIB)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS) 
+	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS) 
 
 pyc.cat: pyc.1
 	rm -f pyc.cat
@@ -163,12 +163,12 @@ pyc.o: pyc.cc defs.h /usr/include/python2.7/Python.h \
  ../plib/misc.h ../plib/util.h ../plib/conn.h ../plib/md5.h \
  ../plib/mt64.h ../plib/hash.h ../plib/persist.h ../plib/prime.h \
  ../plib/service.h ../plib/timer.h ../plib/unit.h ../ifa/ifa.h \
- ../ifa/ifadefs.h ../ifa/ast.h ../ifa/ifa.h ../ifa/ifalog.h ../ifa/if1.h \
- ../ifa/sym.h ../ifa/num.h ../ifa/prim_data.h ../ifa/code.h \
- ../ifa/builtin.h ../ifa/builtin_symbols.h ../ifa/fail.h ../ifa/fa.h \
- ../ifa/prim.h ../ifa/var.h ../ifa/pnode.h ../ifa/fun.h ../ifa/pdb.h \
- ../ifa/clone.h ../ifa/cg.h ../ifa/fa.h ../ifa/prim.h python_ifa.h \
- ../ifa/pattern.h COPYRIGHT.i LICENSE.i
+ ../ifa/ifadefs.h ../ifa/ast.h ../ifa/ifa.h ../ifa/builtin.h \
+ ../ifa/builtin_symbols.h ../ifa/cg.h ../ifa/fa.h ../ifa/code.h \
+ ../ifa/prim.h ../ifa/prim_data.h ../ifa/sym.h ../ifa/num.h \
+ ../ifa/clone.h ../ifa/fail.h ../ifa/fun.h ../ifa/if1.h ../ifa/ifalog.h \
+ ../ifa/pdb.h ../ifa/pnode.h ../ifa/var.h ../ifa/fa.h ../ifa/prim.h \
+ python_ifa.h ../ifa/pattern.h COPYRIGHT.i LICENSE.i
 python_ifa.o: python_ifa.cc defs.h /usr/include/python2.7/Python.h \
  /usr/include/python2.7/patchlevel.h /usr/include/python2.7/pyconfig.h \
  /usr/include/python2.7/pymacconfig.h /usr/include/python2.7/pyport.h \
@@ -212,12 +212,12 @@ python_ifa.o: python_ifa.cc defs.h /usr/include/python2.7/Python.h \
  ../plib/misc.h ../plib/util.h ../plib/conn.h ../plib/md5.h \
  ../plib/mt64.h ../plib/hash.h ../plib/persist.h ../plib/prime.h \
  ../plib/service.h ../plib/timer.h ../plib/unit.h ../ifa/ifa.h \
- ../ifa/ifadefs.h ../ifa/ast.h ../ifa/ifa.h ../ifa/ifalog.h ../ifa/if1.h \
- ../ifa/sym.h ../ifa/num.h ../ifa/prim_data.h ../ifa/code.h \
- ../ifa/builtin.h ../ifa/builtin_symbols.h ../ifa/fail.h ../ifa/fa.h \
- ../ifa/prim.h ../ifa/var.h ../ifa/pnode.h ../ifa/fun.h ../ifa/pdb.h \
- ../ifa/clone.h ../ifa/cg.h ../ifa/fa.h ../ifa/prim.h python_ifa.h \
- ../ifa/pattern.h pyc_symbols.h
+ ../ifa/ifadefs.h ../ifa/ast.h ../ifa/ifa.h ../ifa/builtin.h \
+ ../ifa/builtin_symbols.h ../ifa/cg.h ../ifa/fa.h ../ifa/code.h \
+ ../ifa/prim.h ../ifa/prim_data.h ../ifa/sym.h ../ifa/num.h \
+ ../ifa/clone.h ../ifa/fail.h ../ifa/fun.h ../ifa/if1.h ../ifa/ifalog.h \
+ ../ifa/pdb.h ../ifa/pnode.h ../ifa/var.h ../ifa/fa.h ../ifa/prim.h \
+ python_ifa.h ../ifa/pattern.h pyc_symbols.h
 version.o: version.cc defs.h /usr/include/python2.7/Python.h \
  /usr/include/python2.7/patchlevel.h /usr/include/python2.7/pyconfig.h \
  /usr/include/python2.7/pymacconfig.h /usr/include/python2.7/pyport.h \
@@ -261,40 +261,40 @@ version.o: version.cc defs.h /usr/include/python2.7/Python.h \
  ../plib/misc.h ../plib/util.h ../plib/conn.h ../plib/md5.h \
  ../plib/mt64.h ../plib/hash.h ../plib/persist.h ../plib/prime.h \
  ../plib/service.h ../plib/timer.h ../plib/unit.h ../ifa/ifa.h \
- ../ifa/ifadefs.h ../ifa/ast.h ../ifa/ifa.h ../ifa/ifalog.h ../ifa/if1.h \
- ../ifa/sym.h ../ifa/num.h ../ifa/prim_data.h ../ifa/code.h \
- ../ifa/builtin.h ../ifa/builtin_symbols.h ../ifa/fail.h ../ifa/fa.h \
- ../ifa/prim.h ../ifa/var.h ../ifa/pnode.h ../ifa/fun.h ../ifa/pdb.h \
- ../ifa/clone.h ../ifa/cg.h ../ifa/fa.h ../ifa/prim.h python_ifa.h \
- ../ifa/pattern.h
+ ../ifa/ifadefs.h ../ifa/ast.h ../ifa/ifa.h ../ifa/builtin.h \
+ ../ifa/builtin_symbols.h ../ifa/cg.h ../ifa/fa.h ../ifa/code.h \
+ ../ifa/prim.h ../ifa/prim_data.h ../ifa/sym.h ../ifa/num.h \
+ ../ifa/clone.h ../ifa/fail.h ../ifa/fun.h ../ifa/if1.h ../ifa/ifalog.h \
+ ../ifa/pdb.h ../ifa/pnode.h ../ifa/var.h ../ifa/fa.h ../ifa/prim.h \
+ python_ifa.h ../ifa/pattern.h
 builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
-ConfigParser.o: lib/ConfigParser.cpp lib/ConfigParser.hpp lib/builtin.hpp \
- lib/re.hpp
-bisect.o: lib/bisect.cpp lib/bisect.hpp lib/builtin.hpp
-builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
-cStringIO.o: lib/cStringIO.cpp lib/cStringIO.hpp lib/builtin.hpp
-collections.o: lib/collections.cpp lib/collections.hpp lib/builtin.hpp
-copy.o: lib/copy.cpp lib/copy.hpp lib/builtin.hpp
 datetime.o: lib/datetime.cpp lib/datetime.hpp lib/builtin.hpp \
  lib/time.hpp lib/string.hpp
-fnmatch.o: lib/fnmatch.cpp lib/fnmatch.hpp lib/builtin.hpp \
- lib/os/path.hpp lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp \
- lib/os/__init__.hpp lib/re.hpp
-getopt.o: lib/getopt.cpp lib/getopt.hpp lib/builtin.hpp lib/sys.hpp \
- lib/os/__init__.hpp lib/builtin.hpp
-glob.o: lib/glob.cpp lib/glob.hpp lib/builtin.hpp lib/os/path.hpp \
- lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp lib/fnmatch.hpp \
- lib/os/__init__.hpp lib/re.hpp
-math.o: lib/math.cpp lib/math.hpp lib/builtin.hpp
 random.o: lib/random.cpp lib/random.hpp lib/builtin.hpp lib/math.hpp \
  lib/time.hpp
 re.o: lib/re.cpp lib/re.hpp lib/builtin.hpp
-signal.o: lib/signal.cpp lib/signal.hpp lib/builtin.hpp
-socket.o: lib/socket.cpp lib/socket.hpp lib/builtin.hpp
+glob.o: lib/glob.cpp lib/glob.hpp lib/builtin.hpp lib/os/path.hpp \
+ lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp lib/fnmatch.hpp \
+ lib/os/__init__.hpp lib/re.hpp
 stat.o: lib/stat.cpp lib/stat.hpp lib/builtin.hpp
-string.o: lib/string.cpp lib/string.hpp lib/builtin.hpp
-sys.o: lib/sys.cpp lib/sys.hpp lib/builtin.hpp
+socket.o: lib/socket.cpp lib/socket.hpp lib/builtin.hpp
 time.o: lib/time.cpp lib/time.hpp lib/builtin.hpp
+getopt.o: lib/getopt.cpp lib/getopt.hpp lib/builtin.hpp lib/sys.hpp \
+ lib/os/__init__.hpp lib/builtin.hpp
+cStringIO.o: lib/cStringIO.cpp lib/cStringIO.hpp lib/builtin.hpp
+string.o: lib/string.cpp lib/string.hpp lib/builtin.hpp
+ConfigParser.o: lib/ConfigParser.cpp lib/ConfigParser.hpp lib/builtin.hpp \
+ lib/re.hpp
+fnmatch.o: lib/fnmatch.cpp lib/fnmatch.hpp lib/builtin.hpp \
+ lib/os/path.hpp lib/builtin.hpp lib/os/__init__.hpp lib/stat.hpp \
+ lib/os/__init__.hpp lib/re.hpp
+bisect.o: lib/bisect.cpp lib/bisect.hpp lib/builtin.hpp
+copy.o: lib/copy.cpp lib/copy.hpp lib/builtin.hpp
+math.o: lib/math.cpp lib/math.hpp lib/builtin.hpp
+sys.o: lib/sys.cpp lib/sys.hpp lib/builtin.hpp
+signal.o: lib/signal.cpp lib/signal.hpp lib/builtin.hpp
+collections.o: lib/collections.cpp lib/collections.hpp lib/builtin.hpp
+builtin.o: lib/builtin.cpp lib/builtin.hpp lib/re.hpp
 __init__.o: lib/os/__init__.cpp lib/os/__init__.hpp lib/builtin.hpp \
  lib/os/path.hpp lib/os/__init__.hpp lib/stat.hpp lib/builtin.hpp
 path.o: lib/os/path.cpp lib/os/path.hpp lib/builtin.hpp \

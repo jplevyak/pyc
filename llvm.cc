@@ -42,7 +42,9 @@ static HashMap<cchar *, StringHashFns, DIFile *> di_file;
 static Map<Fun *, DISubprogram *> di_subprogram;
 #endif
 
-namespace {
+struct LLVM_CG {
+};
+
 void build_main_function(LLVMContext &c, Module &m) {
   Function *main_func = cast<Function>(
     m.getOrInsertFunction("main", IntegerType::getInt32Ty(c),
@@ -123,7 +125,7 @@ void do_phi_nodes(PNode *n, int isucc) {
 void build_llvm_pnode(Fun *f, PNode *n,
                              LLVMContext &c, IRBuilder<> &b, Module &m,
                              Vec<PNode*> &done) {
-  auto theFunction = b.GetInsertionPoint()->GetParent();
+  auto theFunction = b.GetInsertBlock()->getParent();
 #ifdef DEBUG_INFO
   b.SetCurrentDebugLocation(
     DebugLoc::getFromDILocation(
@@ -159,24 +161,25 @@ void build_llvm_pnode(Fun *f, PNode *n,
           auto elseBB = BasicBlock::Create(c, "else");
           auto mergeBB = BasicBlock::Create(c, "merge");
           b.CreateCondBr(llvm_value(b, n->rvals[0]), thenBB, elseBB);
-          do_phy_nodes(n);
-          do_phi_nodes(n);
+          do_phy_nodes(n, 0);
+          do_phi_nodes(n, 0);
           if (done.set_add(n->cfg_succ[0]))
             build_llvm_pnode(f, n->cfg_succ[0], c, b, m, done);
-          else
-            fprintf("  goto L%d;\n", n->code->label[0]->id);
-          fprintf("  } else {\n");
-          do_phy_nodes(n);
-          do_phi_nodes(n);
+          else {
+            // "   goto L%d;\n", n->code->label[0]->id
+          }
+          // "} else {"
+          do_phy_nodes(n, 1);
+          do_phi_nodes(n, 1);
           if (done.set_add(n->cfg_succ[1]))
             build_llvm_pnode(f, n->cfg_succ[1], c, b, m, done);
           else
-            fprintf("  goto L%d;\n", n->code->label[1]->id);
-          fputs("  }\n", fp);
+            // "  goto L%d;\n", n->code->label[1]->id
+          // "  }\n"
         }
       } else {
-        do_phy_nodes(n);
-        do_phi_nodes(n);
+        do_phy_nodes(n, 0);
+        do_phi_nodes(n, 0);
       }
       break;
     case Code_GOTO:
@@ -188,10 +191,10 @@ void build_llvm_pnode(Fun *f, PNode *n,
       if ((!n->live || !n->fa_live) && n->prim && n->prim->index == P_prim_reply)
         fprintf("  return 0;\n");
       else
-        do_phi_nodes(n);
+        do_phi_nodes(n, 0);
       break;
     default:
-      do_phi_nodes(n);
+      do_phi_nodes(n, 0);
       break;
   }
   // InsertPoint saveAndClearIP()
@@ -409,8 +412,6 @@ void build_llvm_ir(LLVMContext &c, Module &m, Fun *main) {
   build_main_function(c, m);
 }
 
-}
-
 void llvm_codegen(FA *fa_unused, Fun *main, cchar *fn) {
   InitializeNativeTarget(); 
   InitializeNativeTargetAsmPrinter(); 
@@ -446,7 +447,7 @@ void llvm_codegen(FA *fa_unused, Fun *main, cchar *fn) {
     WriteBitcodeToFile(&m, *out);
     delete out;
   }
-  // llvm_shutdown();
+  llvm_shutdown();
 }
 
 int llvm_codegen_compile(cchar *filename) {

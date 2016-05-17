@@ -49,9 +49,6 @@ extern "C" {
 #ifdef Str
 #undef Str
 #endif
-#ifdef DEBUG
-#undef DEBUG
-#endif
 #ifdef Module
 #undef Module
 #endif
