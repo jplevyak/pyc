@@ -19,6 +19,7 @@ public:
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
+  bool reanalyze(Vec<ATypeViolation*> &type_violations);
   bool c_codegen_pre_file(FILE *);
 };
 
@@ -35,7 +36,7 @@ class PycSymbol : public IFASymbol {
   Symbol *symbol;
   cchar *filename;
   PycSymbol *previous;
-  
+
   PycSymbol();
 };
 
@@ -45,7 +46,7 @@ class PycAST : public IFAAST {
   int column();
   int line();
   int source_line();
-  Sym *symbol();  
+  Sym *symbol();
   void html(FILE *fp, Fun *f);
   IFAAST *copy_tree(ASTCopyContext* context);
   IFAAST *copy_node(ASTCopyContext* context);
@@ -65,7 +66,7 @@ class PycAST : public IFAAST {
   uint32 is_builtin:1;
   uint32 is_member:1;
   uint32 is_object_index:1;
-  
+
   bool is_call() { return xexpr && xexpr->kind == Call_kind; }
   bool is_assign() { return xstmt && (xstmt->kind == Assign_kind || xstmt->kind == AugAssign_kind); }
 

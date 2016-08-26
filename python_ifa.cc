@@ -571,6 +571,32 @@ PycCallbacks::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
 }
 
 bool
+PycCallbacks::reanalyze(Vec<ATypeViolation*> &type_violations) {
+  if (!type_violations.n) return false;
+  bool again = false;
+  forv_Vec(ATypeViolation, v, type_violations) if (v) {
+    if (v->kind == ATypeViolation_NOTYPE) {
+      if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
+      AVar *av =
+          make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
+      forv_CreationSet(cs, av->out->sorted) {
+        forv_Vec(cchar*, i, cs->unknown_vars) {
+          again = true;
+          Sym *s = new_PycSymbol(i)->sym;
+          s->var = new Var(s);
+          cs->sym->has.add(s);
+          AVar *iv = unique_AVar(s->var, cs);
+          add_var_constraint(iv);
+          cs->vars.add(iv);
+          cs->var_map.put(i, iv);
+        }
+      }
+    }
+  }
+  return again;
+}
+
+bool
 PycCallbacks::c_codegen_pre_file(FILE *fp) {
   for (int i = 0; i < ctx->c_code.n; i++) {
     fputs(ctx->c_code[i], fp);
