@@ -76,7 +76,7 @@ static void simple_move(IRBuilder<> &b, Var *lhs, Var *rhs) {
 
 #ifdef DEBUG_INFO
 static DIFile *get_di_file(cchar *fn) {
-  if (!fn) 
+  if (!fn)
     fn = main_fn;
   DIFile *n = di_file.get(fn);
   if (n)
@@ -85,15 +85,15 @@ static DIFile *get_di_file(cchar *fn) {
   di_file.put(fn, n);
   return n;
 }
- 
-static DISubprogram *   
+
+static DISubprogram *
   n = new DISubprogram(di_factory->CreateSubprogram(
                          *di_compile_unit,
                          fn, fn, fn /* linkage name */,
                          false /* internal linkage */
                          1, /* */
-                         llvm::DIType(), 
-                         false, 
+                         llvm::DIType(),
+                         false,
                          true));
 
 #endif
@@ -115,13 +115,13 @@ static void write_llvm_send(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m)
 
 static void build_llvm_pnode(Fun *f, PNode *n,
                              LLVMContext &c, IRBuilder<> &b, Module &m,
-                             Vec<PNode*> &done) 
+                             Vec<PNode*> &done)
 {
 #ifdef DEBUG_INFO
   b.SetCurrentDebugLocation(
     DebugLoc::getFromDILocation(
       di_factory->CreateLocation(
-        (unsigned int)n->code->ast->line(), 
+        (unsigned int)n->code->ast->line(),
         (unsigned int)n->code->ast->column(),
         *get_di_subprogram(f))));
 #endif
@@ -290,9 +290,9 @@ static void build_llvm_globals(LLVMContext &c, IRBuilder<> &b, Module &m, Vec<Va
           v->llvm_type = num_type(v->sym, c);
           if (v->sym->imm.num_index == IF1_FLOAT_TYPE_32)
             v->llvm_value = ConstantFP::get(v->llvm_type, v->sym->imm.v_float32);
-          else 
+          else
             v->llvm_value = ConstantFP::get(v->llvm_type, v->sym->imm.v_float64);
-        } else if (v->sym->imm.const_kind == IF1_NUM_KIND_UINT || 
+        } else if (v->sym->imm.const_kind == IF1_NUM_KIND_UINT ||
                    v->sym->imm.const_kind == IF1_NUM_KIND_INT) {
           v->llvm_type = v->sym->type->llvm_type;
           switch (v->sym->imm.num_index) {
@@ -417,7 +417,7 @@ void llvm_codegen(FA *fa_unused, Fun *main, cchar *fn) {
                                         ));
   build_llvm_ir(c, m, main);
   if (codegen_jit) {
-    InitializeNativeTarget(); 
+    InitializeNativeTarget();
     ExecutionEngine *ee = EngineBuilder(&m).create();
     std::vector<GenericValue> args;
     Function *f = m.getFunction("__main__");
