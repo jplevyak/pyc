@@ -14,7 +14,7 @@ help(ArgumentState *arg_state, char *arg_unused) {
   char ver[30];
   get_version(ver);
   fprintf(stderr, "PYC Version %s ", ver);
-  fprintf(stderr, 
+  fprintf(stderr,
 #include "COPYRIGHT.i"
 );
   usage(arg_state, arg_unused);
@@ -25,7 +25,7 @@ version(ArgumentState *arg_state, char *arg_unused) {
   char ver[30];
   get_version(ver);
   fprintf(stderr, "PYC Version %s ", ver);
-  fprintf(stderr, 
+  fprintf(stderr,
 #include "COPYRIGHT.i"
 );
   exit(0);
@@ -96,7 +96,7 @@ void compile(cchar *fn) {
     if (codegen_shedskin) {
       if (shedskin_codegen(pdb->fa, if1->top->fun, fn))
         fail("compilation failure");
-    } else 
+    } else
 #endif
 #ifdef USE_LLVM
     if (codegen_llvm) {

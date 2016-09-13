@@ -105,7 +105,7 @@ deinstall:
 	make_dparser -v -Xcc -I $<
 
 $(PYC): $(PYC_OBJS) $(IFALIB)
-	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS) 
+	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 pyc.cat: pyc.1
 	rm -f pyc.cat

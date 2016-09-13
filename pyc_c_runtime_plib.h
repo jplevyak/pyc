@@ -47,8 +47,8 @@ typedef void *_CG_nil_type;
 
   Strings are pointers to the data portion (C-like) preceeded by
   an 8-byte length.  This makes them compatible with C and still
-  permits them to contain \0 and makes obtaining the length O(1). 
-  
+  permits them to contain \0 and makes obtaining the length O(1).
+
   Strings have a 0 sentinal at the end for C compatibility.
 */
 #define _CG_string_len(_s) ((_s) ? (size_t)*(int64*)(((char*)(_s))-8) : 0)
@@ -65,7 +65,7 @@ static inline char * _CG_string_alloc(size_t s) {
 static inline char * _CG_String(const void *x) {
   size_t len = strlen((char*)x);
   char *str = _CG_string_alloc(len);
-  memcpy(str, x, len); 
+  memcpy(str, x, len);
   return str;
 }
 
@@ -90,7 +90,7 @@ static inline char * _CG_string_mult(char *str, int64 n) {
   size_t l = _CG_string_len(str);
   char *ret = _CG_string_alloc(l * n);
   for (int64 i = 0; i < n; i++)
-    memcpy(ret + l * i, str, l); 
+    memcpy(ret + l * i, str, l);
   return ret;
 }
 
@@ -128,7 +128,7 @@ static inline char *_CG_prim_primitive_to_string(double d) {
   if (!*p) {
     *p++ = '.';
     *p++ = '0';
-  } else 
+  } else
     while (*p) p++;
   char *r = _CG_string_alloc(p-s);
   memcpy(r, s, p-s);
@@ -146,16 +146,16 @@ static inline int _CG_float_printf(double d, bool ln) {
   fputs(s, stdout);
   if (ln) fputs("\n", stdout);
 }
-  
+
 /*
-  Lists and Tuples      
+  Lists and Tuples
 
   Tuples are stored as a pointer directly to the structure
   containing the tuple elements.
 
-  Lists are stored as _CG_list_struct and a _CG_list 
+  Lists are stored as _CG_list_struct and a _CG_list
   is a pointer to &((_CG_list_struct*)list)->x[0]
-  
+
   This makes immutable/constant Lists and Tuples compatible
   and puts the elements of such lists in the same cache line as
   the list information.
@@ -227,7 +227,7 @@ static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size
 static inline _CG_list _CG_list_getslice_internal(_CG_list v, uint32 size, int32 l, int32 h, int32 s) {
   uint32 len = _CG_prim_len(0,v);
   if (l > len) l = len;
-  if (l < 0) { 
+  if (l < 0) {
     l = len + l;
     if (l < 0) l = 0;
   }
@@ -236,7 +236,7 @@ static inline _CG_list _CG_list_getslice_internal(_CG_list v, uint32 size, int32
     h = len + h;
     if (h < 0) h = 0;
   }
-  if (l > h) h = l; 
+  if (l > h) h = l;
   int n = h - l;
   n = n / s;
   _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * n + SIZEOF_LIST_HEADER));
@@ -265,7 +265,7 @@ static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int3
     h = len1 + h;
     if (h < 0) h = 0;
   }
-  if (l > h) h = l; 
+  if (l > h) h = l;
   int s = h - l; // size to delete
   s = len1 - s; // size to save
   int new_s = s + len2; // new size

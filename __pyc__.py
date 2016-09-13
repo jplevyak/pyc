@@ -243,7 +243,7 @@ class float:
   def __cmp__(self, x):
     if (self < x):
       return -1
-    else: 
+    else:
       if (self > x):
         return 1
       else:
@@ -296,17 +296,17 @@ class list:
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
   def __getslice__(self, i, j):
-    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
-                          "_CG_list_getslice", 
-                          list, self, 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
+                          "_CG_list_getslice",
+                          list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
                           int, j,
                           int, 1)
   def __pyc_getslice__(self, i, j, s):
-    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self), 
-                          "_CG_list_getslice", 
-                          list, self, 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
+                          "_CG_list_getslice",
+                          list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
                           int, j,
@@ -315,9 +315,9 @@ class list:
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
                              __pyc_clone_constants__(key), value)
   def __setslice__(self, i, j, s):
-    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, s), 
-                          "_CG_list_setslice", 
-                          list, self, 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, s),
+                          "_CG_list_setslice",
+                          list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
                           int, j,
@@ -329,10 +329,10 @@ class list:
   def __contains__(self, item):
     pass
   def __add__(self, l):
-    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, l), 
-                          "_CG_list_add", 
-                          list, self, 
-                          int, l, 
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, l),
+                          "_CG_list_add",
+                          list, self,
+                          int, l,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), l))
   def __radd__(self, l):
@@ -341,9 +341,9 @@ class list:
     return __add__(self, l)
   def __mul__(self, n):
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
-                          "_CG_list_mult", 
-                          list, self, 
-                          int, n, 
+                          "_CG_list_mult",
+                          list, self,
+                          int, n,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
   def __rmul__(self, l):
     pass
@@ -352,15 +352,15 @@ class list:
 #  @must_specialize("l:list")
   def __eq__(self, l):
     ll = __pyc_clone_constants__(l.len())
-    lself = __pyc_clone_constants__(self.len()); 
+    lself = __pyc_clone_constants__(self.len());
     if lself == 0:
-      if ll == 0: 
+      if ll == 0:
         return True
       else:
-        return False  
+        return False
     else:
       if ll == 0:
-        return False 
+        return False
       for i in xrange(lself):
         if l[i] != self[i]:
            return False
@@ -371,7 +371,7 @@ class list:
     l = __pyc_primitive__(__pyc_symbol__("len"), self)
     tmp = __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
                          "_CG_list_resize",
-                         list, self, 
+                         list, self,
                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                          int, l + 1)
     tmp.__setitem__(l, x)
@@ -461,7 +461,7 @@ def range(start, end = 0, delta = 1):
   result = []
   while (start < end):
     result += [start]
-    start += delta 
+    start += delta
   return result
 
 class xrange:
@@ -520,7 +520,7 @@ class bytearray:
   def __init__(self, s):
     self.length = s
   def __getitem__(self, key):
-    return __pyc_primitive__(__pyc_symbol__("coerce"), int, 
+    return __pyc_primitive__(__pyc_symbol__("coerce"), int,
                              __pyc_primitive__(__pyc_symbol__("index_object"), self, key))
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
