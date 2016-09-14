@@ -458,10 +458,12 @@ def range(start, end = 0, delta = 1):
   if end == 0:
     end = start
     start = 0
-  result = []
+  result = [0] * (end - start)
+  i = 0
   while (start < end):
-    result += [start]
+    result[i] = start
     start += delta
+    i += 1
   return result
 
 class xrange:

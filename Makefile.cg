@@ -12,7 +12,7 @@ endif
 CC = g++
 
 ifdef OPTIMIZE
-  CFLAGS += -O3 
+  CFLAGS += -O3
 endif
 
 ifdef DEBUG

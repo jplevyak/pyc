@@ -391,10 +391,10 @@ static void build_builtin_symbols() {
   new_builtin_global_variable(sym_declare, "pyc__declare__");
 
   // override default sizes
-  sym_int->alias = sym_int32;
+  sym_int->alias = sym_int64;
   sym_float->alias = sym_float64;
   sym_complex->alias = sym_complex64;
-  sym_size->alias = sym_int32;
+  sym_size->alias = sym_int64;
   sym_char->alias = sym_string;
 
   // override default names
@@ -559,6 +559,7 @@ bool PycCallbacks::reanalyze(Vec<ATypeViolation *> &type_violations) {
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
       forv_CreationSet(cs, av->out->sorted) {
         forv_Vec(cchar *, i, cs->unknown_vars) {
+          if (cs->var_map.get(i)) continue;
           again = true;
           Sym *s = new_PycSymbol(i)->sym;
           s->var = new Var(s);
@@ -1605,12 +1606,12 @@ static void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast
 static Sym *make_num(PyObject *o, PycContext &ctx) {
   Sym *sym = 0;
   if (PyInt_Check(o)) {
-    int i = (int)PyInt_AsLong(o);
+    int64 i = (int64)PyInt_AsLong(o);
     Immediate imm;
-    imm.v_int32 = i;
+    imm.v_int64 = i;
     char s[80];
-    sprintf(s, "%d", i);
-    sym = if1_const(if1, sym_int32, s, &imm);
+    sprintf(s, "%ld", i);
+    sym = if1_const(if1, sym_int64, s, &imm);
   } else if (PyFloat_Check(o)) {
     double f = PyFloat_AsDouble(o);
     Immediate imm;
@@ -1818,7 +1819,7 @@ static int build_if1(stmt_ty s, PycContext &ctx) {
           expr_ty t = a->xexpr;
           for (int i = 0; i < asdl_seq_LEN(t->v.Tuple.elts); i++) {
             expr_ty ret = (expr_ty)asdl_seq_GET(t->v.Tuple.elts, i);
-            call_method(if1, &ast->code, ast, v->rval, sym___getitem__, getAST(ret, ctx)->rval, 1, int32_constant(i));
+            call_method(if1, &ast->code, ast, v->rval, sym___getitem__, getAST(ret, ctx)->rval, 1, int64_constant(i));
           }
         } else {
           if1_gen(if1, &ast->code, a->code);
@@ -2264,9 +2265,9 @@ static int build_if1(expr_ty e, PycContext &ctx) {
                       (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
         }
       } else if (e->v.Subscript.slice->kind == Slice_kind) {
-        Sym *l = gen_or_default(e->v.Subscript.slice->v.Slice.lower, int32_constant(0), ast, ctx);
-        Sym *u = gen_or_default(e->v.Subscript.slice->v.Slice.upper, int32_constant(INT_MAX), ast, ctx);
-        Sym *s = gen_or_default(e->v.Subscript.slice->v.Slice.step, int32_constant(1), ast, ctx);
+        Sym *l = gen_or_default(e->v.Subscript.slice->v.Slice.lower, int64_constant(0), ast, ctx);
+        Sym *u = gen_or_default(e->v.Subscript.slice->v.Slice.upper, int64_constant(INT_MAX), ast, ctx);
+        Sym *s = gen_or_default(e->v.Subscript.slice->v.Slice.step, int64_constant(1), ast, ctx);
         (void)s;
         if (e->v.Subscript.ctx == Load) {
           if (!e->v.Subscript.slice->v.Slice.step)

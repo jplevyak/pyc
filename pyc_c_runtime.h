@@ -171,9 +171,15 @@ static inline char *_CG_prim_primitive_to_string(double d) {
   return r;
 }
 
-static inline char *_CG_prim_primitive_to_string(int i) {
+static inline char *_CG_prim_primitive_to_string(int32 i) {
   char s[100];
   snprintf(s, 100, "%d", i);
+  return _CG_String(s);
+}
+
+static inline char *_CG_prim_primitive_to_string(int64 i) {
+  char s[100];
+  snprintf(s, 100, "%lld", i);
   return _CG_String(s);
 }
 
