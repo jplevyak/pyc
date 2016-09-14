@@ -42,14 +42,12 @@ static HashMap<cchar *, StringHashFns, DIFile *> di_file;
 static Map<Fun *, DISubprogram *> di_subprogram;
 #endif
 
-struct LLVM_CG {
-};
+struct LLVM_CG {};
 
 void build_main_function(LLVMContext &c, Module &m) {
   Function *main_func = cast<Function>(
-    m.getOrInsertFunction("main", IntegerType::getInt32Ty(c),
-                          IntegerType::getInt32Ty(c),
-                          PointerType::getUnqual(PointerType::getUnqual(IntegerType::getInt8Ty(c))), NULL));
+      m.getOrInsertFunction("main", IntegerType::getInt32Ty(c), IntegerType::getInt32Ty(c),
+                            PointerType::getUnqual(PointerType::getUnqual(IntegerType::getInt8Ty(c))), NULL));
   Function::arg_iterator args = main_func->arg_begin();
   Value *arg_0 = args++;
   arg_0->setName("argc");
@@ -61,51 +59,40 @@ void build_main_function(LLVMContext &c, Module &m) {
   ReturnInst::Create(c, ConstantInt::get(c, APInt(32, 0)), bb);
 }
 
-Value *llvm_value(IRBuilder<> &b, Var *v) {
-  return b.CreateLoad(v->llvm_value);
-}
+Value *llvm_value(IRBuilder<> &b, Var *v) { return b.CreateLoad(v->llvm_value); }
 
 void simple_move(IRBuilder<> &b, Var *lhs, Var *rhs) {
-  if (!lhs->live)
-    return;
-  if (lhs->sym->type_kind || rhs->sym->type_kind)
-    return;
-  if (rhs->type == sym_void->type || lhs->type == sym_void->type)
-    return;
-  if (!lhs->llvm_value || !rhs->llvm_value)
-    return;
+  if (!lhs->live) return;
+  if (lhs->sym->type_kind || rhs->sym->type_kind) return;
+  if (rhs->type == sym_void->type || lhs->type == sym_void->type) return;
+  if (!lhs->llvm_value || !rhs->llvm_value) return;
   b.CreateStore(b.CreateLoad(rhs->llvm_value), lhs->llvm_value);
 }
 
 #ifdef DEBUG_INFO
 DIFile *get_di_file(cchar *fn) {
-  if (!fn)
-    fn = main_fn;
+  if (!fn) fn = main_fn;
   DIFile *n = di_file.get(fn);
-  if (n)
-    return n;
+  if (n) return n;
   n = di_factory->CreateFile(fn, "", *di_compile_unit);
   di_file.put(fn, n);
   return n;
 }
- 
-DISubprogram *
-  n = new DISubprogram(di_factory->CreateSubprogram(
-                         *di_compile_unit,
-                         fn, fn, fn /* linkage name */,
-                         false /* internal linkage */
-                         1, /* */
-                         llvm::DIType(),
-                         false,
-                         true));
+
+DISubprogram *n = new DISubprogram(di_factory->CreateSubprogram(*di_compile_unit, fn, fn, fn /* linkage name */,
+                                                                false /* internal linkage */
+                                                                1,    /* */
+                                                                llvm::DIType(),
+                                                                false, true));
 
 #endif
 
 int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
-  //int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
-  //bool listish_tuple = false;
+  // int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
+  // bool listish_tuple = false;
   switch (n->prim->index) {
-    default: return 0;
+    default:
+      return 0;
     case P_prim_reply:
       b.CreateRet(llvm_value(b, n->rvals[3]));
       break;
@@ -113,34 +100,23 @@ int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
   return 1;
 }
 
-void write_llvm_send(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
-}
+void write_llvm_send(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {}
 
-void do_phy_nodes(PNode *n, int isucc) {
-}
+void do_phy_nodes(PNode *n, int isucc) {}
 
-void do_phi_nodes(PNode *n, int isucc) {
-}
+void do_phi_nodes(PNode *n, int isucc) {}
 
-void build_llvm_pnode(Fun *f, PNode *n,
-                             LLVMContext &c, IRBuilder<> &b, Module &m,
-                             Vec<PNode*> &done) {
+void build_llvm_pnode(Fun *f, PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m, Vec<PNode *> &done) {
   auto theFunction = b.GetInsertBlock()->getParent();
 #ifdef DEBUG_INFO
-  b.SetCurrentDebugLocation(
-    DebugLoc::getFromDILocation(
-      di_factory->CreateLocation(
-        (unsigned int)n->code->ast->line(),
-        (unsigned int)n->code->ast->column(),
-        *get_di_subprogram(f))));
+  b.SetCurrentDebugLocation(DebugLoc::getFromDILocation(di_factory->CreateLocation(
+      (unsigned int)n->code->ast->line(), (unsigned int)n->code->ast->column(), *get_di_subprogram(f))));
 #endif
   if (n->live && n->fa_live) {
     if (n->code->kind == Code_MOVE) {
-      for (int i = 0; i < n->lvals.n; i++)
-        simple_move(b, n->lvals[i], n->rvals.v[i]);
+      for (int i = 0; i < n->lvals.n; i++) simple_move(b, n->lvals[i], n->rvals.v[i]);
     } else if (n->code->kind == Code_SEND) {
-      if (!n->prim || !write_llvm_prim(n, c, b, m))
-        write_llvm_send(n, c, b, m);
+      if (!n->prim || !write_llvm_prim(n, c, b, m)) write_llvm_send(n, c, b, m);
     }
   }
   switch (n->code->kind) {
@@ -149,13 +125,11 @@ void build_llvm_pnode(Fun *f, PNode *n,
         if (n->rvals[0]->sym == true_type->v[0]->sym) {
           do_phy_nodes(n, 0);
           do_phi_nodes(n, 0);
-          if (done.set_add(n->cfg_succ[0]))
-            build_llvm_pnode(f, n->cfg_succ[0], c, b, m, done);
+          if (done.set_add(n->cfg_succ[0])) build_llvm_pnode(f, n->cfg_succ[0], c, b, m, done);
         } else if (n->rvals[0]->sym == false_type->v[0]->sym) {
           do_phy_nodes(n, 1);
           do_phi_nodes(n, 1);
-          if (done.set_add(n->cfg_succ[1]))
-            build_llvm_pnode(f, n->cfg_succ[1], c, b, m, done);
+          if (done.set_add(n->cfg_succ[1])) build_llvm_pnode(f, n->cfg_succ[1], c, b, m, done);
         } else {
           auto thenBB = BasicBlock::Create(c, "then", theFunction);
           auto elseBB = BasicBlock::Create(c, "else");
@@ -174,7 +148,7 @@ void build_llvm_pnode(Fun *f, PNode *n,
           if (done.set_add(n->cfg_succ[1]))
             build_llvm_pnode(f, n->cfg_succ[1], c, b, m, done);
           else
-            // "  goto L%d;\n", n->code->label[1]->id
+          // "  goto L%d;\n", n->code->label[1]->id
           // "  }\n"
         }
       } else {
@@ -184,8 +158,7 @@ void build_llvm_pnode(Fun *f, PNode *n,
       break;
     case Code_GOTO:
       do_phi_nodes(n);
-      if (n->live && n->fa_live)
-        fprintf("  goto L%d;\n", n->code->label[0]->id);
+      if (n->live && n->fa_live) fprintf("  goto L%d;\n", n->code->label[0]->id);
       break;
     case Code_SEND:
       if ((!n->live || !n->fa_live) && n->prim && n->prim->index == P_prim_reply)
@@ -204,18 +177,16 @@ void build_llvm_pnode(Fun *f, PNode *n,
 
 void build_llvm_fun(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m) {
   Function *fun = f->llvm;
-  //m.getOrInsertNamedMetadata(f->sym->name);
+  // m.getOrInsertNamedMetadata(f->sym->name);
   BasicBlock *bb = BasicBlock::Create(c, "entry", fun);
   b.SetInsertPoint(bb);
   // local variables
   Vec<Var *> vars, defs;
   f->collect_Vars(vars, 0, FUN_COLLECT_VARS_NO_TVALS);
-  forv_Var(v, vars)
-    if (v->sym->is_local || v->sym->is_fake)
-      assert(!v->llvm_value);
-  forv_Var(v, vars) if (!v->is_internal && !v->sym->is_fake)
-    if (!v->llvm_value && v->live && !v->sym->is_symbol && v->type != sym_continuation)
-      v->llvm_value = b.CreateAlloca(v->type->llvm_type);
+  forv_Var(v, vars) if (v->sym->is_local || v->sym->is_fake) assert(!v->llvm_value);
+  forv_Var(v, vars) if (!v->is_internal && !v->sym->is_fake) if (!v->llvm_value && v->live && !v->sym->is_symbol &&
+                                                                 v->type != sym_continuation) v->llvm_value =
+      b.CreateAlloca(v->type->llvm_type);
   if (!f->entry)
     b.CreateRet(llvm_value(f->sym->ret->var));
   else {
@@ -228,7 +199,7 @@ void build_llvm_fun(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m) {
 }
 
 void build_llvm_prototype(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m, PATypeHolder *h) {
-  std::vector<const Type*> argtype;
+  std::vector<const Type *> argtype;
   MPosition p;
   p.push(1);
   for (int i = 0; i < f->sym->has.n; i++) {
@@ -251,26 +222,35 @@ void build_llvm_prototype(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m, PAT
   m.getOrInsertFunction(f->sym->name, ft);
 }
 
-const Type *
-num_type(Sym *s, LLVMContext &c) {
+const Type *num_type(Sym *s, LLVMContext &c) {
   switch (s->num_kind) {
-    default: assert(!"case");
+    default:
+      assert(!"case");
     case IF1_NUM_KIND_UINT:
     case IF1_NUM_KIND_INT:
       switch (s->num_index) {
-        case IF1_INT_TYPE_1:  return Type::getInt1Ty(c);
-        case IF1_INT_TYPE_8:  return Type::getInt8Ty(c);
-        case IF1_INT_TYPE_16: return Type::getInt16Ty(c);
-        case IF1_INT_TYPE_32: return Type::getInt32Ty(c);
-        case IF1_INT_TYPE_64: return Type::getInt64Ty(c);
-        default: assert(!"case");
+        case IF1_INT_TYPE_1:
+          return Type::getInt1Ty(c);
+        case IF1_INT_TYPE_8:
+          return Type::getInt8Ty(c);
+        case IF1_INT_TYPE_16:
+          return Type::getInt16Ty(c);
+        case IF1_INT_TYPE_32:
+          return Type::getInt32Ty(c);
+        case IF1_INT_TYPE_64:
+          return Type::getInt64Ty(c);
+        default:
+          assert(!"case");
       }
       break;
     case IF1_NUM_KIND_FLOAT:
       switch (s->num_index) {
-        case IF1_FLOAT_TYPE_32:  return Type::getFloatTy(c);
-        case IF1_FLOAT_TYPE_64:  return Type::getDoubleTy(c);
-        default: assert(!"case");
+        case IF1_FLOAT_TYPE_32:
+          return Type::getFloatTy(c);
+        case IF1_FLOAT_TYPE_64:
+          return Type::getDoubleTy(c);
+        default:
+          assert(!"case");
           break;
       }
       break;
@@ -280,17 +260,14 @@ num_type(Sym *s, LLVMContext &c) {
 
 GlobalVariable *create_global_string(LLVMContext &c, Module &m, cchar *s) {
   Constant *str = ConstantArray::get(c, s, true);
-  GlobalVariable *gv = new GlobalVariable(m, str->getType(),
-                                          true, GlobalValue::InternalLinkage,
-                                          str, "", 0, false);
+  GlobalVariable *gv = new GlobalVariable(m, str->getType(), true, GlobalValue::InternalLinkage, str, "", 0, false);
   // gv->setName(name); optionally set name
   return gv;
 }
 
 void build_llvm_globals(LLVMContext &c, IRBuilder<> &b, Module &m, Vec<Var *> &globals) {
   forv_Var(v, globals) {
-    if (!v->live)
-      continue;
+    if (!v->live) continue;
     if (v->sym->is_symbol) {
       v->llvm_type = v->sym->llvm_type;
       v->llvm_value = ConstantInt::get(Type::getInt32Ty(c), v->sym->id);
@@ -305,16 +282,26 @@ void build_llvm_globals(LLVMContext &c, IRBuilder<> &b, Module &m, Vec<Var *> &g
             v->llvm_value = ConstantFP::get(v->llvm_type, v->sym->imm.v_float32);
           else
             v->llvm_value = ConstantFP::get(v->llvm_type, v->sym->imm.v_float64);
-        } else if (v->sym->imm.const_kind == IF1_NUM_KIND_UINT ||
-                   v->sym->imm.const_kind == IF1_NUM_KIND_INT) {
+        } else if (v->sym->imm.const_kind == IF1_NUM_KIND_UINT || v->sym->imm.const_kind == IF1_NUM_KIND_INT) {
           v->llvm_type = v->sym->type->llvm_type;
           switch (v->sym->imm.num_index) {
-            case IF1_INT_TYPE_1:  ConstantInt::get(v->llvm_type, v->sym->imm.v_bool); break;
-            case IF1_INT_TYPE_8:  ConstantInt::get(v->llvm_type, v->sym->imm.v_uint8); break;
-            case IF1_INT_TYPE_16: ConstantInt::get(v->llvm_type, v->sym->imm.v_uint16); break;
-            case IF1_INT_TYPE_32: ConstantInt::get(v->llvm_type, v->sym->imm.v_uint32); break;
-            case IF1_INT_TYPE_64: ConstantInt::get(v->llvm_type, v->sym->imm.v_uint64); break;
-            default: assert(!"case");
+            case IF1_INT_TYPE_1:
+              ConstantInt::get(v->llvm_type, v->sym->imm.v_bool);
+              break;
+            case IF1_INT_TYPE_8:
+              ConstantInt::get(v->llvm_type, v->sym->imm.v_uint8);
+              break;
+            case IF1_INT_TYPE_16:
+              ConstantInt::get(v->llvm_type, v->sym->imm.v_uint16);
+              break;
+            case IF1_INT_TYPE_32:
+              ConstantInt::get(v->llvm_type, v->sym->imm.v_uint32);
+              break;
+            case IF1_INT_TYPE_64:
+              ConstantInt::get(v->llvm_type, v->sym->imm.v_uint64);
+              break;
+            default:
+              assert(!"case");
           }
         } else if (v->sym->imm.const_kind == IF1_CONST_KIND_STRING) {
           v->llvm_value = create_global_string(c, m, v->sym->imm.v_string);
@@ -325,8 +312,7 @@ void build_llvm_globals(LLVMContext &c, IRBuilder<> &b, Module &m, Vec<Var *> &g
       }
     } else if (!v->sym->is_symbol && !v->sym->is_fun) {
       v->llvm_type = v->sym->llvm_type;
-      v->llvm_value = new GlobalVariable(m, v->llvm_type, false, GlobalValue::ExternalLinkage,
-                                         NULL, v->sym->name);
+      v->llvm_value = new GlobalVariable(m, v->llvm_type, false, GlobalValue::ExternalLinkage, NULL, v->sym->name);
     }
   }
 }
@@ -348,7 +334,8 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
       s->llvm_type = Type::getInt32Ty(c);
     else if (!s->llvm_type)
       switch (s->type_kind) {
-        default: b.getInt8PtrTy();
+        default:
+          b.getInt8PtrTy();
         case Type_FUN:
         case Type_RECORD: {
           h[s->id] = OpaqueType::get(c);
@@ -356,14 +343,12 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
         }
       }
   }
-  forv_Fun(f, fa->funs)
-    if (f->live && !h[f->sym->id])
-      h[f->sym->id] = OpaqueType::get(c);
+  forv_Fun(f, fa->funs) if (f->live && !h[f->sym->id]) h[f->sym->id] = OpaqueType::get(c);
   // build record types
   forv_Sym(s, typesyms) {
     if (!s->llvm_type && (s->type_kind == Type_RECORD || (s->type_kind == Type_FUN && !s->fun))) {
       if (s->has.n) {
-        std::vector<const Type*> elements;
+        std::vector<const Type *> elements;
         forv_Sym(e, s->has) {
           const Type *t = e->llvm_type;
           if (!t) t = PointerType::getUnqual(h[e->id]);
@@ -377,9 +362,7 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
     }
   }
   // build function prototypes
-  forv_Fun(f, fa->funs)
-    if (f->live)
-      build_llvm_prototype(f, c, b, m, h);
+  forv_Fun(f, fa->funs) if (f->live) build_llvm_prototype(f, c, b, m, h);
   // resolve record types
   forv_Sym(s, typesyms) {
     if (!s->llvm_type && (s->type_kind == Type_RECORD || (s->type_kind == Type_FUN && !s->fun))) {
@@ -391,9 +374,7 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
     }
   }
   // resolve function types
-  forv_Fun(f, fa->funs)
-    if (f->live)
-      f->sym->llvm_type = cast<FunctionType>(h[f->sym->id]);
+  forv_Fun(f, fa->funs) if (f->live) f->sym->llvm_type = cast<FunctionType>(h[f->sym->id]);
   delete[] h;
   // build forward function declarations
   forv_Fun(f, fa->funs) if (f->live) {
@@ -407,30 +388,27 @@ void build_llvm_ir(LLVMContext &c, Module &m, Fun *main) {
   IRBuilder<> b(c);
 
   build_llvm_types_and_globals(c, b, m);
-  forv_Fun(f, fa->funs) if (!f->is_external && f->live)
-    build_llvm_fun(f, c, b, m);
+  forv_Fun(f, fa->funs) if (!f->is_external && f->live) build_llvm_fun(f, c, b, m);
   build_main_function(c, m);
 }
 
 void llvm_codegen(FA *fa_unused, Fun *main, cchar *fn) {
-  InitializeNativeTarget(); 
-  InitializeNativeTargetAsmPrinter(); 
-  InitializeNativeTargetAsmParser(); 
+  InitializeNativeTarget();
+  InitializeNativeTargetAsmPrinter();
+  InitializeNativeTargetAsmParser();
   main_fn = fn;
   LLVMContext &c = getGlobalContext();
   Module m("pyc", c);
   char ver[64] = "pyc ";
   get_version(ver + strlen(ver));
   di_factory = new DIFactory(m);
-  di_compile_unit = new DICompileUnit(di_factory->CreateCompileUnit(
-                                        DW_LANG_Python,
-                                        fn,
-                                        "", // directory
-                                        ver, // producer
-                                        true, // main
-                                        false, // optimized
-                                        "" // flags
-                                        ));
+  di_compile_unit = new DICompileUnit(di_factory->CreateCompileUnit(DW_LANG_Python, fn,
+                                                                    "",     // directory
+                                                                    ver,    // producer
+                                                                    true,   // main
+                                                                    false,  // optimized
+                                                                    ""      // flags
+                                                                    ));
   build_llvm_ir(c, m, main);
   if (codegen_jit) {
     InitializeNativeTarget();
@@ -455,8 +433,7 @@ int llvm_codegen_compile(cchar *filename) {
   char target[512], s[1024];
   strcpy(target, filename);
   *strrchr(target, '.') = 0;
-  sprintf(s, "make --no-print-directory -f %s/Makefile.llvm_cg CG_ROOT=%s CG_TARGET=%s CG_FILES=%s.o %s %s",
-          system_dir, system_dir, target, target, codegen_optimize ? "OPTIMIZE=1" : "", codegen_debug ? "DEBUG=1" : "");
+  sprintf(s, "make --no-print-directory -f %s/Makefile.llvm_cg CG_ROOT=%s CG_TARGET=%s CG_FILES=%s.o %s %s", system_dir,
+          system_dir, target, target, codegen_optimize ? "OPTIMIZE=1" : "", codegen_debug ? "DEBUG=1" : "");
   return system(s);
 }
-

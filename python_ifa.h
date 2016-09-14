@@ -14,12 +14,12 @@ struct PycContext;
 typedef PySTEntryObject Symbol;
 
 class PycCallbacks : public IFACallbacks {
-public:
+ public:
   PycContext *ctx;
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
-  bool reanalyze(Vec<ATypeViolation*> &type_violations);
+  bool reanalyze(Vec<ATypeViolation *> &type_violations);
   bool c_codegen_pre_file(FILE *);
 };
 
@@ -48,8 +48,8 @@ class PycAST : public IFAAST {
   int source_line();
   Sym *symbol();
   void html(FILE *fp, Fun *f);
-  IFAAST *copy_tree(ASTCopyContext* context);
-  IFAAST *copy_node(ASTCopyContext* context);
+  IFAAST *copy_tree(ASTCopyContext *context);
+  IFAAST *copy_node(ASTCopyContext *context);
   Vec<Fun *> *visible_functions(Sym *arg0);
 
   stmt_ty xstmt;
@@ -59,13 +59,13 @@ class PycAST : public IFAAST {
   Vec<PycAST *> pre_scope_children;
   Vec<PycAST *> children;
 
-  Code *code;           // IF1 Code (including children)
-  Label *label[2];      // before and after for loops (continue,break)
-  Sym *sym, *rval;      // IF1 Syms
+  Code *code;       // IF1 Code (including children)
+  Label *label[2];  // before and after for loops (continue,break)
+  Sym *sym, *rval;  // IF1 Syms
 
-  uint32 is_builtin:1;
-  uint32 is_member:1;
-  uint32 is_object_index:1;
+  uint32 is_builtin : 1;
+  uint32 is_member : 1;
+  uint32 is_object_index : 1;
 
   bool is_call() { return xexpr && xexpr->kind == Call_kind; }
   bool is_assign() { return xstmt && (xstmt->kind == Assign_kind || xstmt->kind == AugAssign_kind); }
@@ -75,7 +75,8 @@ class PycAST : public IFAAST {
 
 cchar *mod_name_from_filename(cchar *);
 
-class PycModule : public gc { public:
+class PycModule : public gc {
+ public:
   mod_ty mod;
   cchar *filename;
   cchar *name;
@@ -85,7 +86,7 @@ class PycModule : public gc { public:
   bool is_builtin;
   bool built_if1;
   PycModule(mod_ty amod, cchar *afilename, bool ais_builtin = false)
-    : mod(amod), filename(afilename), name_sym(0), file_sym(0), ctx(0), is_builtin(ais_builtin), built_if1(false) {
+      : mod(amod), filename(afilename), name_sym(0), file_sym(0), ctx(0), is_builtin(ais_builtin), built_if1(false) {
     name = mod_name_from_filename(filename);
   }
 };
