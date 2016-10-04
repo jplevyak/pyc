@@ -3,6 +3,7 @@
 */
 #include "defs.h"
 #include "dirent.h"
+#include <unordered_map>
 
 /* TODO
    move static variables into an object
@@ -41,6 +42,7 @@ struct PycContext : public gc {
   Vec<PycScope *> scope_stack;
   Vec<cchar *> c_code;
   Map<void *, PycScope *> saved_scopes;
+  Map<int, Sym*> tuple_types;
   Vec<PycScope *> imports;
   bool is_builtin() { return mod->is_builtin; }
   Sym *fun() { return scope_stack.last()->fun; }
@@ -1225,6 +1227,54 @@ static int build_syms(stmt_ty s, PycContext &ctx) {
   return 0;
 }
 
+static Sym *make_num(int64 i) {
+  Immediate imm;
+  imm.v_int64 = i;
+  char s[80];
+  sprintf(s, "%ld", i);
+  return if1_const(if1, sym_int64, s, &imm);
+}
+
+static Sym *make_tuple_type(expr_ty e, PycContext &ctx, PycAST *ast,
+                            asdl_seq *elts) {
+#if 0
+  int n = asdl_seq_LEN(elts);
+  printf("make_tuple_type # %d\n", n);
+  Sym *parent = ctx.tuple_types.get(n);
+  if (!parent) {
+    parent = new_sym(ast);
+    parent->type_kind = Type_RECORD;
+    parent->inherits_add(sym_tuple);
+    for (int i = 0; i < n; i++)
+      parent->has.add(getAST((expr_ty)asdl_seq_GET(elts, i), ctx)->sym);
+    ctx.tuple_types.put(n, parent);
+    Sym *fn = def_fun(e, ast, ctx);
+    printf("make_tuple_type # %d id %d\n", n, fn->id);
+    fn->self = new_sym(ast);
+    fn->self->must_implement_and_specialize(parent);
+    fn->self->in = fn;
+    Code *body = nullptr;
+    for (int64 i = 0; i < n; i++) {
+      Sym *t = new_sym(ast);
+      if1_send(if1, &body, 3, 1, sym___getitem__, fn->self, make_num(i), t)
+          ->ast = ast;
+      if1_send(if1, &body, 2, 0, sym___str__, t)->ast = ast;
+      if1_move(if1, &body, t, fn->ret);
+    }
+    Vec<Sym *> as;
+    as.add(new_sym(ast, "__str__"));
+    as[0]->must_implement_and_specialize(sym___str__);
+    as.add(fn->self);
+    if1_closure(if1, fn, body, as.n, as.v);
+  }
+  auto sym = new_sym(ast);
+  sym->type_kind = Type_RECORD;
+  sym->inherits_add(parent);
+  return sym;
+#endif
+  return sym_tuple;
+}
+
 static void build_syms_comprehension(PycContext &ctx, asdl_seq *generators, expr_ty elt, expr_ty value) {}
 
 static int build_syms(expr_ty e, PycContext &ctx) {
@@ -1283,13 +1333,7 @@ static int build_syms(expr_ty e, PycContext &ctx) {
       bool def = true;
       for (int i = 0; i < asdl_seq_LEN(e->v.Tuple.elts); i++)
         def = !!getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i), ctx)->sym && def;
-      if (def) {
-        ast->sym = new_sym(ast);
-        ast->sym->type_kind = Type_RECORD;
-        ast->sym->inherits_add(sym_tuple);
-        for (int i = 0; i < asdl_seq_LEN(e->v.Tuple.elts); i++)
-          ast->sym->has.add(getAST((expr_ty)asdl_seq_GET(e->v.Tuple.elts, i), ctx)->sym);
-      }
+      if (def) ast->sym = make_tuple_type(e, ctx, ast, e->v.Tuple.elts);
       break;
     }
   }
@@ -2152,7 +2196,7 @@ static int build_if1(expr_ty e, PycContext &ctx) {
     case ListComp_kind: {  // expr elt, comprehension* generators
       // elt is the expression describing the result
       ast->rval = new_sym(ast);
-      if1_send(if1, &ast->code, 2, 1, sym_primitive, sym_make_list, ast->rval)->ast = ast;
+      if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_make, sym_list, ast->rval)->ast = ast;
       build_list_comp(e->v.ListComp.generators, 0, e->v.ListComp.elt, ast, &ast->code, ctx);
       break;
     }
@@ -2321,7 +2365,8 @@ static int build_if1(expr_ty e, PycContext &ctx) {
       {
         Code *send = if1_send1(if1, &ast->code, ast);
         if1_add_send_arg(if1, send, sym_primitive);
-        if1_add_send_arg(if1, send, e->kind == List_kind ? sym_make_list : sym_make_tuple);
+        if1_add_send_arg(if1, send, sym_make);
+        if1_add_send_arg(if1, send, e->kind == List_kind ? sym_list : sym_tuple);
         for (int i = 0; i < asdl_seq_LEN(e->v.List.elts); i++) {
           expr_ty arg = (expr_ty)asdl_seq_GET(e->v.List.elts, i);
           if1_add_send_arg(if1, send, getAST(arg, ctx)->rval);

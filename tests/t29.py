@@ -1,5 +1,5 @@
 class A:
-  i = 3 
+  i = 3
   x = lambda y: y.i
 
 a = A()
