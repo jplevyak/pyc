@@ -42,7 +42,7 @@ struct PycContext : public gc {
   Vec<PycScope *> scope_stack;
   Vec<cchar *> c_code;
   Map<void *, PycScope *> saved_scopes;
-  Map<int, Sym*> tuple_types;
+  Map<int, Sym *> tuple_types;
   Vec<PycScope *> imports;
   bool is_builtin() { return mod->is_builtin; }
   Sym *fun() { return scope_stack.last()->fun; }
@@ -457,6 +457,7 @@ static inline Sym *gen_or_default(expr_ty e, Sym *def, PycAST *ast, PycContext &
     return def;
 }
 
+#if 0
 static inline PycAST *getAST(stmt_ty s, PycAST *a) {
   PycAST *ast = stmtmap.get(s);
   if (ast) return ast;
@@ -467,6 +468,7 @@ static inline PycAST *getAST(stmt_ty s, PycAST *a) {
   stmtmap.put(s, ast);
   return ast;
 }
+#endif
 
 static inline PycAST *getAST(expr_ty e, PycAST *a) {
   PycAST *ast = exprmap.get(e);
@@ -890,7 +892,7 @@ static int needs_scope(expr_ty x) {
 #if PY_MAJOR_VERSION == 3
                   x->kind == SetComp_kind
 #endif
-          );
+  );
 }
 
 static void enter_scope(expr_ty x, PycAST *ast, PycContext &ctx) {
@@ -1227,6 +1229,7 @@ static int build_syms(stmt_ty s, PycContext &ctx) {
   return 0;
 }
 
+#if 0
 static Sym *make_num(int64 i) {
   Immediate imm;
   imm.v_int64 = i;
@@ -1234,9 +1237,9 @@ static Sym *make_num(int64 i) {
   sprintf(s, "%ld", i);
   return if1_const(if1, sym_int64, s, &imm);
 }
+#endif
 
-static Sym *make_tuple_type(expr_ty e, PycContext &ctx, PycAST *ast,
-                            asdl_seq *elts) {
+static Sym *make_tuple_type(expr_ty e, PycContext &ctx, PycAST *ast, asdl_seq *elts) {
 #if 0
   int n = asdl_seq_LEN(elts);
   printf("make_tuple_type # %d\n", n);

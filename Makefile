@@ -17,19 +17,26 @@ PYTHON=python2.7
 MAJOR=0
 MINOR=0
 
+CXX ?= clang++
+AR ?= llvm-ar
+
 include ../plib/Makefile
 
 ifeq ($(OS_TYPE),Darwin)
 PYTHON=python2.6
 endif
 
-CFLAGS += -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON) -Ilib -Ilib/os
+LLVM_VERSION=6.0
+
+CFLAGS += -std=c++2a -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON) -Ilib -Ilib/os
+# for use of 'register' in python2.7
+CFLAGS += -Wno-register
 # LLVM flags
-CFLAGS += -I/home/jplevyak/src/llvm-build/include -I/home/jplevyak/src/llvm/include -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
+CFLAGS += -I/usr/include/llvm-$(LLVM_VERSION) -I/usr/include/llvm-c-$(LLVM_VERSION) -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
 LIBS += -lpcre 
 ifdef USE_LLVM
 # LLVM libs
-LIBS += -L/home/jplevyak/src/llvm-build/lib -lLLVMMSIL -lLLVMMSILInfo -lLLVMLinker -lLLVMipo -lLLVMInterpreter -lLLVMInstrumentation -lLLVMJIT -lLLVMExecutionEngine -lLLVMCppBackend -lLLVMCppBackendInfo -lLLVMCBackend -lLLVMCBackendInfo -lLLVMBitWriter -lLLVMX86Disassembler -lLLVMX86AsmParser -lLLVMX86AsmPrinter -lLLVMX86CodeGen -lLLVMX86Info -lLLVMAsmParser -lLLVMArchive -lLLVMBitReader -lLLVMMCParser -lLLVMSelectionDAG -lLLVMCodeGen -lLLVMScalarOpts -lLLVMInstCombine -lLLVMTransformUtils -lLLVMipa -lLLVMTarget -lLLVMMC -lLLVMCore -lLLVMAlphaInfo -lLLVMSupport -lLLVMSystem -lLLVMAsmPrinter -lLLVMAnalysis -ldl
+LIBS += -L/usr/lib/llvm-$(LLVM_VERSION)/lib -lLLVM-$(LLVM_VERSION)
 CFLAGS += -DUSE_LLVM=1
 endif
 ifdef USE_GC
@@ -49,6 +56,8 @@ ifeq ($(OS_TYPE),CYGWIN)
 else
   LIBS += -l$(PYTHON) -lutil
 endif
+
+CFLAGS += -Wno-deprecated-register
 
 AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODULE)/pyc.1 $(MODULE)/pyc.cat
 
