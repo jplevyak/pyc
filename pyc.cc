@@ -15,7 +15,7 @@ static void help(ArgumentState *arg_state, char *arg_unused) {
   fprintf(stderr, "PYC Version %s ", ver);
   fprintf(stderr,
 #include "COPYRIGHT.i"
-          );
+  );
   usage(arg_state, arg_unused);
 }
 
@@ -25,14 +25,14 @@ static void version(ArgumentState *arg_state, char *arg_unused) {
   fprintf(stderr, "PYC Version %s ", ver);
   fprintf(stderr,
 #include "COPYRIGHT.i"
-          );
+  );
   exit(0);
 }
 
 static void license(ArgumentState *arg_state, char *arg_unused) {
   fprintf(stderr,
 #include "LICENSE.i"
-          );
+  );
   exit(0);
 }
 

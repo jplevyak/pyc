@@ -3,7 +3,6 @@
 */
 #include "defs.h"
 #include "dirent.h"
-#include <unordered_map>
 
 /* TODO
    move static variables into an object

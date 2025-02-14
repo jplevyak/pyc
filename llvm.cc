@@ -12,7 +12,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/DebugInfo/DIContext.h"
-#include <llvm/ExecutionEngine/GenericValue.h> 
+#include <llvm/ExecutionEngine/GenericValue.h>
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -98,8 +98,7 @@ DIFile *get_di_file(cchar *fn) {
 DISubprogram *n = new DISubprogram(di_factory->CreateSubprogram(*di_compile_unit, fn, fn, fn /* linkage name */,
                                                                 false /* internal linkage */
                                                                 1,    /* */
-                                                                DIType(),
-                                                                false, true));
+                                                                DIType(), false, true));
 
 #endif
 
@@ -116,7 +115,7 @@ int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
       return 0;
     case P_prim_mult:
       n->lvals[0]->llvm_value = b.CreateMul(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_div:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFDiv(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
@@ -124,25 +123,25 @@ int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
         n->lvals[0]->llvm_value = b.CreateUDiv(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateSDiv(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_mod:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_UINT)
         n->lvals[0]->llvm_value = b.CreateURem(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateSRem(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_add:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFAdd(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateAdd(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_subtract:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFSub(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateSub(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_lsh:
       n->lvals[0]->llvm_value = b.CreateShl(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       return 1;
@@ -159,7 +158,7 @@ int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
         n->lvals[0]->llvm_value = b.CreateICmpULT(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateICmpSLT(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_lessorequal:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFCmpOLE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
@@ -167,7 +166,7 @@ int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
         n->lvals[0]->llvm_value = b.CreateICmpULE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateICmpSLE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_greater:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFCmpOGT(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
@@ -175,7 +174,7 @@ int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
         n->lvals[0]->llvm_value = b.CreateICmpUGT(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateICmpSGT(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_greaterorequal:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFCmpOGE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
@@ -183,33 +182,33 @@ int write_llvm_prim(PNode *n, LLVMContext &c, IRBuilder<> &b, Module &m) {
         n->lvals[0]->llvm_value = b.CreateICmpUGE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateICmpSGE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_equal:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFCmpOEQ(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateICmpEQ(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_notequal:
       if (n->lvals[0]->type->num_kind == IF1_NUM_KIND_FLOAT)
         n->lvals[0]->llvm_value = b.CreateFCmpONE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
       else
         n->lvals[0]->llvm_value = b.CreateICmpNE(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_and:
       n->lvals[0]->llvm_value = b.CreateAnd(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_xor:
       n->lvals[0]->llvm_value = b.CreateXor(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_or:
       n->lvals[0]->llvm_value = b.CreateOr(llvm_value(b, n->rvals[3]), llvm_value(b, n->rvals[4]));
-      return 1; 
+      return 1;
     case P_prim_land: {
       auto v1 = b.CreateICmpEQ(llvm_value(b, n->rvals[3]), ConstantInt::get(n->rvals[3]->llvm_type, 0));
       auto v2 = b.CreateICmpEQ(llvm_value(b, n->rvals[4]), ConstantInt::get(n->rvals[4]->llvm_type, 0));
       n->lvals[0]->llvm_value = b.CreateAnd(v1, v2);
-      return 1; 
+      return 1;
     }
     case P_prim_lor:
     case P_prim_assign:
@@ -239,7 +238,7 @@ void build_llvm_pnode(Fun *f, PNode *n, LLVMContext &c, IRBuilder<> &b, Module &
   auto theFunction = b.GetInsertBlock()->getParent();
 #ifdef DEBUG_INFO
   b.SetCurrentDebugLocation(DebugLoc::getFromDILocation(di_factory->CreateLocation(
-          (unsigned int)n->code->ast->line(), (unsigned int)n->code->ast->column(), *get_di_subprogram(f))));
+      (unsigned int)n->code->ast->line(), (unsigned int)n->code->ast->column(), *get_di_subprogram(f))));
 #endif
   if (n->live && n->fa_live) {
     if (n->code->kind == Code_MOVE) {
@@ -262,7 +261,7 @@ void build_llvm_pnode(Fun *f, PNode *n, LLVMContext &c, IRBuilder<> &b, Module &
         } else {
           auto thenBB = BasicBlock::Create(c, "then", theFunction);
           auto elseBB = BasicBlock::Create(c, "else");
-          //auto mergeBB = BasicBlock::Create(c, "merge");
+          // auto mergeBB = BasicBlock::Create(c, "merge");
           b.CreateCondBr(llvm_value(b, n->rvals[0]), thenBB, elseBB);
           do_phy_nodes(n, 0);
           do_phi_nodes(n, 0);
@@ -276,7 +275,8 @@ void build_llvm_pnode(Fun *f, PNode *n, LLVMContext &c, IRBuilder<> &b, Module &
           do_phi_nodes(n, 1);
           if (done.set_add(n->cfg_succ[1]))
             build_llvm_pnode(f, n->cfg_succ[1], c, b, m, done);
-          else {}
+          else {
+          }
           // "  goto L%d;\n", n->code->label[1]->id
           // "  }\n"
         }
@@ -288,13 +288,13 @@ void build_llvm_pnode(Fun *f, PNode *n, LLVMContext &c, IRBuilder<> &b, Module &
     case Code_GOTO:
       do_phi_nodes(n, 0);
       if (n->live && n->fa_live)
-        //fprintf("  goto L%d;\n", n->code->label[0]->id)
-          ;
+        // fprintf("  goto L%d;\n", n->code->label[0]->id)
+        ;
       break;
     case Code_SEND:
       if ((!n->live || !n->fa_live) && n->prim && n->prim->index == P_prim_reply)
-        //fprintf("  return 0;\n")
-          ;
+        // fprintf("  return 0;\n")
+        ;
       else
         do_phi_nodes(n, 0);
       break;
@@ -315,13 +315,10 @@ void build_llvm_fun(Fun *f, LLVMContext &c, IRBuilder<> &b, Module &m) {
   // local variables
   Vec<Var *> vars, defs;
   f->collect_Vars(vars, 0, FUN_COLLECT_VARS_NO_TVALS);
-  forv_Var(v, vars)
-    if (v->sym->is_local || v->sym->is_fake)
-      assert(!v->llvm_value);
-  forv_Var(v, vars)
-    if (!v->is_internal && !v->sym->is_fake)
-      if (!v->llvm_value && v->live && !v->sym->is_symbol && v->type != sym_continuation)
-        v->llvm_value = b.CreateAlloca(v->type->llvm_type);
+  forv_Var(v, vars) if (v->sym->is_local || v->sym->is_fake) assert(!v->llvm_value);
+  forv_Var(v, vars) if (!v->is_internal && !v->sym->is_fake) if (!v->llvm_value && v->live && !v->sym->is_symbol &&
+                                                                 v->type != sym_continuation) v->llvm_value =
+      b.CreateAlloca(v->type->llvm_type);
   if (!f->entry)
     b.CreateRet(llvm_value(b, f->sym->ret->var));
   else {
@@ -456,7 +453,7 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
 
   collect_types_and_globals(fa, typesyms, globals);
   sym_void->type->llvm_type = Type::getVoidTy(c);
-  Type **h = new (Type*);
+  Type **h = new (Type *);
   // setup opaque types
   forv_Sym(s, typesyms) {
     if (s->type == sym_string)
@@ -476,10 +473,9 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
         }
       }
   }
-  forv_Fun(f, fa->funs)
-    if (f->live && !h[f->sym->id])
+  forv_Fun(f, fa->funs) if (f->live && !h[f->sym->id])
       // h[f->sym->id] = OpaqueType::get(c)
-        ;
+      ;
   // build record types
   forv_Sym(s, typesyms) {
     if (!s->llvm_type && (s->type_kind == Type_RECORD || (s->type_kind == Type_FUN && !s->fun))) {
@@ -492,7 +488,7 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
           elements.push_back(t);
         }
         h[s->id] = StructType::get(c, elements);
-        //cast<OpaqueType>(h[s->id].get())->refineAbstractTypeTo(new_type);
+        // cast<OpaqueType>(h[s->id].get())->refineAbstractTypeTo(new_type);
       } else
         s->llvm_type = Type::getVoidTy(c);
     }
@@ -519,9 +515,9 @@ void build_llvm_types_and_globals(LLVMContext &c, IRBuilder<> &b, Module &m) {
 }
 
 void build_llvm_ir(LLVMContext &c, Module &m, Fun *main) {
-  Function *main_func = cast<Function>(
-      m.getOrInsertFunction("main", IntegerType::getInt32Ty(c), IntegerType::getInt32Ty(c),
-                            PointerType::getUnqual(PointerType::getUnqual(IntegerType::getInt8Ty(c)))));
+  Function *main_func =
+      cast<Function>(m.getOrInsertFunction("main", IntegerType::getInt32Ty(c), IntegerType::getInt32Ty(c),
+                                           PointerType::getUnqual(PointerType::getUnqual(IntegerType::getInt8Ty(c)))));
 
   BasicBlock *bb = BasicBlock::Create(c, "main.0", main_func);
   IRBuilder<> b(bb);
@@ -540,14 +536,12 @@ void llvm_codegen(FA *fa_unused, Fun *main, cchar *fn) {
   char ver[64] = "pyc ";
   get_version(ver + strlen(ver));
   auto di = new DIBuilder(*m);
-  auto di_compile_unit = di->createCompileUnit(
-        DW_LANG_Python,
-        di->createFile(fn, "."),
-        ver,    // producer
-        false,  // optimized
-        "",     // flags
-        0       // runtime version
-        );
+  auto di_compile_unit = di->createCompileUnit(DW_LANG_Python, di->createFile(fn, "."),
+                                               ver,    // producer
+                                               false,  // optimized
+                                               "",     // flags
+                                               0       // runtime version
+  );
   build_llvm_ir(c, *m, main);
   if (codegen_jit) {
     InitializeNativeTarget();

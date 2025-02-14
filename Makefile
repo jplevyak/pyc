@@ -26,16 +26,19 @@ ifeq ($(OS_TYPE),Darwin)
 PYTHON=python2.6
 endif
 
-LLVM_VERSION=6.0
 
-CFLAGS += -std=c++2a -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON) -Ilib -Ilib/os
+CFLAGS += -std=c++2a -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON)
+ifdef USE_SS
+CFLAGS += -Ilib -Ilib/os
+endif
 # for use of 'register' in python2.7
 CFLAGS += -Wno-register
-# LLVM flags
-CFLAGS += -I/usr/include/llvm-$(LLVM_VERSION) -I/usr/include/llvm-c-$(LLVM_VERSION) -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
 LIBS += -lpcre 
 ifdef USE_LLVM
 # LLVM libs
+LLVM_VERSION=6.0
+# LLVM flags
+CFLAGS += -I/usr/include/llvm-$(LLVM_VERSION) -I/usr/include/llvm-c-$(LLVM_VERSION) -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
 LIBS += -L/usr/lib/llvm-$(LLVM_VERSION)/lib -lLLVM-$(LLVM_VERSION)
 CFLAGS += -DUSE_LLVM=1
 endif

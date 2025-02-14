@@ -1,5 +1,7 @@
 #!/bin/tcsh 
 
+setenv PYTHON python2
+
 #setenv VALGRIND 'valgrind -q'
 setenv VALGRIND ' '
 
@@ -37,7 +39,7 @@ foreach g (*.py)
     else
       echo $g "COMPILE PASSED"
       if (-e $g.exec.check) then
-        $VALGRIND  $g:r >&! $g.exec.out
+        $VALGRIND ./$g:r >&! $g.exec.out
         diff $g.exec.out $g.exec.check
         if ($?) then
           echo $g "******** EXECUTE FAILED ********"
@@ -45,7 +47,7 @@ foreach g (*.py)
         else
           echo $g "EXECUTE PASSED"
         endif
-        python $g >&! $g.python.out
+        $PYTHON $g >&! $g.python.out
         diff $g.exec.out $g.python.out > /dev/null
         if ($?) then
           if (-e $g.python.expect_fail) then
