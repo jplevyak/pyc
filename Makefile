@@ -10,7 +10,7 @@ DEBUG=1
 USE_GC=1  # required
 #LEAK_DETECT=1
 #VALGRIND=1
-#USE_LLVM=1  # incomplete
+USE_LLVM=1  # incomplete
 #USE_SS=1  # incomplete
 PYTHON=python2.7
 
@@ -27,7 +27,7 @@ PYTHON=python2.6
 endif
 
 
-CFLAGS += -std=c++2a -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON)
+CFLAGS += -std=c++23 -D__PYC__=1 -I../plib -I../ifa -I/usr/include/$(PYTHON)
 ifdef USE_SS
 CFLAGS += -Ilib -Ilib/os
 endif
@@ -35,15 +35,15 @@ endif
 CFLAGS += -Wno-register
 LIBS += -lpcre 
 ifdef USE_LLVM
-# LLVM libs
-LLVM_VERSION=6.0
-# LLVM flags
-CFLAGS += -I/usr/include/llvm-$(LLVM_VERSION) -I/usr/include/llvm-c-$(LLVM_VERSION) -D_GNU_SOURCE -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fno-exceptions -fno-rtti -fPIC -Woverloaded-virtual -Wcast-qual
-LIBS += -L/usr/lib/llvm-$(LLVM_VERSION)/lib -lLLVM-$(LLVM_VERSION)
+LLVM_INCLUDE_DIR=$(shell llvm-config --includedir)
+CFLAGS += -I$(LLVM_INCLUDE_DIR) -fno-exceptions -funwind-tables -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+LLVM_LIBDIR=$(shell llvm-config --libdir)
+LLVM_LIBS=$(shell llvm-config --libs)
+LIBS += -L$(LLVM_LIBDIR) $(LLVM_LIBS)
 CFLAGS += -DUSE_LLVM=1
 endif
 ifdef USE_GC
-LIBS += -L../ifa -lifa_gc -L../plib -lplib_gc -lgc -ldparse_gc
+LIBS += -L../ifa -lifa_gc -L../plib -lplib_gc -lgc -lgccpp -ldparse_gc
 IFALIB = ../ifa/libifa_gc.a
 else
 LIBS += -L../ifa -lifa -L../plib -lplib -ldparse
