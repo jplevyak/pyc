@@ -10,7 +10,7 @@ DEBUG=1
 USE_GC=1  # required
 #LEAK_DETECT=1
 #VALGRIND=1
-USE_LLVM=1  # incomplete
+#USE_LLVM=1  # incomplete
 #USE_SS=1  # incomplete
 PYTHON=python2.7
 

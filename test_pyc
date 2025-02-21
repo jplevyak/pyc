@@ -60,6 +60,7 @@ foreach g (*.py)
           endif
         endif
       endif
+      rm -f $g:r
     endif
   endif
 end
@@ -69,4 +70,5 @@ if (! $failed) then
 else
   echo "********" $failed "test(s) FAILED (not including $expected_failed expected fails) *********"
 endif
+rm -rf *.o *.c *.out pyc_compat.py
 cd ..
