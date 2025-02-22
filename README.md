@@ -16,29 +16,28 @@ BUILD
      gc garbage collector (it's an option in the Makefile, or provide as
      an option to make:
 
-        git clone git://github.com/jplevyak/dparser.git
+        git clone https://github.com/jplevyak/dparser.git
         (cd dparser; sudo make install D_USE_GC=1)
 
   3. plib
 
      This is expected to exist in ../plib.
 
-        git clone git://github.com/jplevyak/plib.git
+        git clone https://github.com/jplevyak/plib.git
         (cd plib; make USE_GC=1)
 
   4. ifa
 
      This is expected to exist in ../ifa.
 
-        git clone git://github.com/jplevyak/ifa.git
+        git clone https://github.com/jplevyak/ifa.git
         (cd ifa; make)
 
   5. pyc
 
-        git clone git://ifa.git.sourceforge.net/gitroot/ifa/ifa
+        git clone https://github.com/jplevyak/pyc.git
         cd pyc
         make
         make tests
 
 Take a look at the test in tests/*.py
-
