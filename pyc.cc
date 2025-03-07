@@ -10,7 +10,7 @@ int do_unit_tests = 0;
 static char pyc_ifa_log[256];
 
 static void help(ArgumentState *arg_state, char *arg_unused) {
-  char ver[30];
+  char ver[1000];
   get_version(ver);
   fprintf(stderr, "PYC Version %s ", ver);
   fprintf(stderr,
