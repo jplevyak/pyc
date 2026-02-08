@@ -24,7 +24,7 @@ AR ?= llvm-ar
 
 include ../plib/Makefile
 
-CFLAGS += -std=c++23 -D__PYC__=1 -I../plib -I../ifa -I./Python-2.7.18 -I./Python-2.7.18/Include -I./Python-2.7.18/Include/internal
+CFLAGS += -std=c++23 -D__PYC__=1 -I../plib -I../ifa -I/usr/local/python2.7/include/python2.7
 ifdef USE_SS
 CFLAGS += -Ilib -Ilib/os
 endif
