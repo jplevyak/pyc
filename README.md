@@ -41,3 +41,6 @@ BUILD
         make tests
 
 Take a look at the test in tests/*.py
+
+  6. install python2
+     wget --no-check-certificate https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
