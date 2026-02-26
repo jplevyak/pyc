@@ -21,16 +21,82 @@ MINOR=0
 
 CXX ?= clang++
 AR ?= llvm-ar
+PREFIX ?= /usr/local
 
-include ../plib/Makefile
+.PHONY: all install
 
-CFLAGS += -std=c++23 -D__PYC__=1 -I../plib -I../ifa -I/usr/local/python2.7/include/python2.7
+OS_TYPE = $(shell uname -s | \
+  awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
+OS_VERSION = $(shell uname -r | \
+  awk '{ split($$1,a,"."); sub("V","",a[1]); \
+  printf("%d%d%d",a[1],a[2],a[3]); }')
+ARCH = $(shell uname -m)
+ifeq ($(ARCH),i386)
+  ARCH = x86
+endif
+ifeq ($(ARCH),i486)
+  ARCH = x86
+endif
+ifeq ($(ARCH),i586)
+  ARCH = x86
+endif
+ifeq ($(ARCH),i686)
+  ARCH = x86
+endif
+
+ifeq ($(OS_TYPE),Darwin)
+  AR_FLAGS = crvs
+else
+  AR_FLAGS = crv
+endif
+
+ifeq ($(OS_TYPE),CYGWIN)
+else
+ifeq ($(OS_TYPE),Darwin)
+GC_CFLAGS += -I/usr/local/include
+else
+GC_CFLAGS += -I/usr/local/include
+LIBS += -lrt -lpthread
+endif
+endif
+
+ifdef USE_GC
+CFLAGS += -DUSE_GC ${GC_CFLAGS}
+endif
+
+CFLAGS += -Wall -std=c++23
+ifdef DEBUG
+CFLAGS += -g -DDEBUG=1
+endif
+ifdef OPTIMIZE
+CFLAGS += -O3 -march=native
+endif
+ifdef PROFILE
+CFLAGS += -pg
+endif
+ifdef VALGRIND
+CFLAGS += -DVALGRIND_TEST
+endif
+
+CPPFLAGS += $(CFLAGS)
+LIBS += -lm
+
+BUILD_VERSION = $(shell git show-ref 2> /dev/null | head -1 | cut -d ' ' -f 1)
+ifeq ($(BUILD_VERSION),)
+  BUILD_VERSION = $(shell cat BUILD_VERSION)
+endif
+VERSIONCFLAGS += -DMAJOR_VERSION=$(MAJOR) -DMINOR_VERSION=$(MINOR) -DBUILD_VERSION=\"$(BUILD_VERSION)\"
+
+IFA_DIR=../ifa
+PLIB_DIR=../ifa/plib
+
+CFLAGS += -std=c++23 -D__PYC__=1 -I$(PLIB_DIR) -I$(IFA_DIR) -I/usr/local/python2.7/include/python2.7
 ifdef USE_SS
 CFLAGS += -Ilib -Ilib/os
 endif
 # for use of 'register' in python2.7
 CFLAGS += -Wno-register
-LIBS += -lpcre 
+LIBS += -lpcre
 ifdef USE_LLVM
 LLVM_INCLUDE_DIR=$(shell llvm-config --includedir)
 CFLAGS += -I$(LLVM_INCLUDE_DIR) -fno-exceptions -funwind-tables -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
@@ -40,11 +106,11 @@ LIBS += -L$(LLVM_LIBDIR) $(LLVM_LIBS)
 CFLAGS += -DUSE_LLVM=1
 endif
 ifdef USE_GC
-LIBS += -L../ifa -lifa_gc -L../plib -lplib_gc -lgc -lgccpp -ldparse_gc
-IFALIB = ../ifa/libifa_gc.a
+LIBS += -L$(IFA_DIR) -lifa_gc -lgc -lgccpp -ldparse_gc
+IFALIB = $(IFA_DIR)/libifa_gc.a
 else
-LIBS += -L../ifa -lifa -L../plib -lplib -ldparse
-IFALIB = ../ifa/libifa.a
+LIBS += -L$(IFA_DIR) -lifa -L../plib -lplib -ldparse
+IFALIB = $(IFA_DIR)/libifa.a
 endif
 
 ifdef USE_SS
@@ -118,12 +184,32 @@ $(PYC): $(PYC_OBJS) $(IFALIB)
 
 pyc.cat: pyc.1
 	rm -f pyc.cat
-	nroff -man pyc.1 | sed -e 's/.//g' > pyc.cat
+	nroff -man pyc.1 | sed -e 's/.//g' > pyc.cat
+
+LICENSE.i: LICENSE
+	rm -f LICENSE.i
+	cat $< | sed s/\"/\\\\\"/g | sed s/\^/\"/g | sed s/$$/\\\\n\"/g | sed 's/%/%%/g' > $@
+
+COPYRIGHT.i: LICENSE
+	rm -f COPYRIGHT.i
+	head -1 LICENSE | sed s/\"/\\\\\"/g | sed s/\^/\"/g | sed s/$$/\\\\n\"/g > $@
 
 pyc.o: LICENSE.i COPYRIGHT.i
 
-version.o: Makefile
+version.o: version.cc Makefile
+	$(CXX) $(CFLAGS) $(VERSIONCFLAGS) -c version.cc
 
+test: test_pyc
+	./test_pyc
+
+clean:
+	\rm -f *.o core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
+
+realclean: clean
+	\rm -f *.a *.orig *.rej
+
+depend:
+	./mkdep $(CFLAGS) $(DEPEND_SRCS)
 
 -include .depend
 # DO NOT DELETE THIS LINE -- mkdep uses it.

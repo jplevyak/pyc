@@ -17,6 +17,22 @@
 #define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin()))
 #define EXPR_CONTEXT_SYM ((expr_context_ty)100)
 
+static inline char *read_file_to_string(cchar *fn, uint64 n = 0, int *pfd = 0) {
+  int fd = open(fn, O_RDONLY | O_NOATIME, 00660);
+  if (fd < 0) fprintf(stderr, "unable to open: %s\n", fn);
+  assert(fd > 0);
+  if (!n) {
+    n = (uint64)::lseek(fd, 0, SEEK_END);
+    ::lseek(fd, 0, SEEK_SET);
+  }
+  char *m = (char *)MALLOC(n + 1);
+  m[n] = 0;
+  ssize_t nn = ::read(fd, m, n);
+  if (nn != (ssize_t)n) perror("read");
+  if (pfd) *pfd = fd;
+  return m;
+}
+
 typedef MapElem<cchar *, PycSymbol *> MapCharPycSymbolElem;
 
 static int scope_id = 0;
@@ -297,7 +313,7 @@ static void ast_html(PycAST *a, FILE *fp, Fun *f, int indent) {
       Vec<Sym *> consts;
       if (constant_info(a, consts, a->rval)) {
         fprintf(fp, ":constants {");
-        forv_Sym(s, consts) {
+        for (auto s : consts.values()) {
           fprintf(fp, " ");
           fprint_imm(fp, s->imm);
         }
@@ -509,7 +525,7 @@ static void finalize_function(Fun *f) {
   }
 }
 
-void PycCallbacks::finalize_functions() { forv_Fun(fun, pdb->funs) finalize_function(fun); }
+void PycCallbacks::finalize_functions() { for (auto fun : pdb->funs.values()) finalize_function(fun); }
 
 static Sym *new_fun(PycAST *ast, Sym *fun = 0) {
   if (!fun)
@@ -556,12 +572,12 @@ Fun *PycCallbacks::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
 bool PycCallbacks::reanalyze(Vec<ATypeViolation *> &type_violations) {
   if (!type_violations.n) return false;
   bool again = false;
-  forv_Vec(ATypeViolation, v, type_violations) if (v) {
+  for (auto v : type_violations.values()) if (v) {
     if (v->kind == ATypeViolation_NOTYPE) {
       if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
-      forv_CreationSet(cs, av->out->sorted) {
-        forv_Vec(cchar *, i, cs->unknown_vars) {
+      for (auto cs : av->out->sorted.values()) {
+        for (auto i : cs->unknown_vars.values()) {
           if (cs->var_map.get(i)) continue;
           again = true;
           Sym *s = new_PycSymbol(i)->sym;
@@ -1014,7 +1030,7 @@ static int build_syms(PycModule *x, PycContext &ctx);
   {                                       \
     Vec<PycAST *> asts;                   \
     get_pre_scope_next(_ast, asts, _ctx); \
-    forv_Vec(PycAST, x, asts) {           \
+    for (auto x : asts.values()) {        \
       x->parent = ast;                    \
       ast->pre_scope_children.add(x);     \
       if (x->xstmt)                       \
@@ -1028,9 +1044,9 @@ static int build_syms(PycModule *x, PycContext &ctx);
   {                                       \
     Vec<PycAST *> asts;                   \
     get_next(_ast, asts, _ctx);           \
-    forv_Vec(PycAST, x, asts) {           \
+    for (auto x : asts.values()) {        \
       x->parent = ast;                    \
-      ast->children.add(x);               \
+      ast->children.add(x);              \
       if (x->xstmt)                       \
         _fn(x->xstmt, _ctx);              \
       else                                \
@@ -1092,7 +1108,7 @@ static void import_file(cchar *name, cchar *p, PycContext &ctx) {
 }
 
 PycModule *get_module(cchar *name, PycContext &ctx) {
-  forv_Vec(PycModule, m, *ctx.modules) {
+  for (auto m : ctx.modules->values()) {
     if (!strcmp(name, m->name)) return m;
   }
   return 0;
@@ -1107,7 +1123,7 @@ static void build_import_syms(char *sym, char *as, char *from, PycContext &ctx) 
   if (!strcmp(mod, "pyc_compat")) return;
   PycModule *m = get_module(mod, ctx);
   if (!m) {
-    forv_Vec(cchar, p, *ctx.search_path) {
+    for (auto p : ctx.search_path->values()) {
       if (file_exists(p, "/__init__.py")) continue;  // package
       if (!is_regular_file(p, "/", mod, ".py")) continue;
       import_file(mod, p, ctx);
@@ -1815,14 +1831,14 @@ static Code *find_send(Code *c) {
 
 #define RECURSE(_ast, _fn, _ctx)                 \
   PycAST *ast = getAST(_ast, ctx);               \
-  forv_Vec(PycAST, x, ast->pre_scope_children) { \
+  for (auto x : ast->pre_scope_children.values()) { \
     if (x->xstmt)                                \
       _fn(x->xstmt, ctx);                        \
     else if (x->xexpr)                           \
       _fn(x->xexpr, ctx);                        \
   }                                              \
   enter_scope(_ast, ast, ctx);                   \
-  forv_Vec(PycAST, x, ast->children) {           \
+  for (auto x : ast->children.values()) {         \
     if (x->xstmt)                                \
       _fn(x->xstmt, ctx);                        \
     else if (x->xexpr)                           \
@@ -2639,14 +2655,14 @@ int ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
   ctx->arena = arena;
   ctx->modules = &mods;
   Code *code = 0;
-  forv_Vec(PycModule, x, mods) x->filename = cannonicalize_string(x->filename);
+  for (auto x : mods.values()) x->filename = cannonicalize_string(x->filename);
   ctx->filename = mods[0]->filename;
   build_search_path(*ctx);
   build_environment(mods[0], *ctx);
   Vec<PycModule *> base_mods(mods);
-  forv_Vec(PycModule, x, base_mods) if (build_syms(x, *ctx) < 0) return -1;
+  for (auto x : base_mods.values()) if (build_syms(x, *ctx) < 0) return -1;
   finalize_types(if1);
-  forv_Vec(PycModule, x, base_mods) {
+  for (auto x : base_mods.values()) {
     ctx->mod = x;
     build_module_attributes_if1(x, *ctx, &code);
     if (build_if1(x->mod, *ctx, &code) < 0) return -1;

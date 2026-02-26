@@ -1,39 +1,39 @@
-[4mpyc[24m(1)                              Manual                              [4mpyc[24m(1)
-
-[1mNAME[0m
-       pyc - Python Compiler
-
-[1mSYNOPSIS[0m
-       [1mpyc [22m[[4moptions[24m]
-
-[1mDESCRIPTION[0m
-       Pyc is program for associative machine interaction.
-
-[1mOPTIONS[0m
-       -v     Increase verbosity.
-
-       -d     Increase debugging.
-
-       -h     Display help.
-
-[1mFEATURES[0m
-       The features are covered in the documentation.  See the README file.
-
-[1mFILES[0m
-       None.
-
-[1mNO WARRANTIES[0m
-       This  program  is  distributed  in the hope that it will be useful, but
-       WITHOUT ANY  WARRANTY;  without  even  the  implied  warranty  of  MER‐
-       CHANTABILITY  or  FITNESS  FOR A PARTICULAR PURPOSE.  See the COPYRIGHT
-       for more details.
-
-       Pyc Home Page: http://pyc.sourceforge.net/
-
-       The BSD General Public License.
-
-[1mAUTHOR[0m
-       John Plevyak.  Use <jplevyak at users.sourceforge.net> to contact.
 
 
-PYC                                Aug 2008                             [4mpyc[24m(1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

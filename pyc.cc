@@ -117,7 +117,7 @@ cchar *mod_name_from_filename(cchar *n) {
 
 int main(int argc, char *argv[]) {
   MEM_INIT();
-  INIT_RAND64(0x1234567);
+  // INIT_RAND64(0x1234567);
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
