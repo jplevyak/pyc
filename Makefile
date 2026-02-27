@@ -23,7 +23,7 @@ CXX ?= clang++
 AR ?= llvm-ar
 PREFIX ?= /usr/local
 
-.PHONY: all install
+.PHONY: all install $(IFALIB)
 
 OS_TYPE = $(shell uname -s | \
   awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
@@ -87,8 +87,8 @@ ifeq ($(BUILD_VERSION),)
 endif
 VERSIONCFLAGS += -DMAJOR_VERSION=$(MAJOR) -DMINOR_VERSION=$(MINOR) -DBUILD_VERSION=\"$(BUILD_VERSION)\"
 
-IFA_DIR=../ifa
-PLIB_DIR=../ifa/plib
+IFA_DIR=ifa
+PLIB_DIR=$(IFA_DIR)/plib
 
 CFLAGS += -std=c++23 -D__PYC__=1 -I$(PLIB_DIR) -I$(IFA_DIR) -I/usr/local/python2.7/include/python2.7
 ifdef USE_SS
@@ -106,11 +106,12 @@ LIBS += -L$(LLVM_LIBDIR) $(LLVM_LIBS)
 CFLAGS += -DUSE_LLVM=1
 endif
 ifdef USE_GC
-LIBS += -L$(IFA_DIR) -lifa_gc -lgc -lgccpp -ldparse_gc
-IFALIB = $(IFA_DIR)/libifa_gc.a
+IFA_LIB_DIR=ifa
+LIBS += -L$(IFA_LIB_DIR) -lifa_gc -lgc -lgccpp -ldparse_gc
+IFALIB = $(IFA_LIB_DIR)/libifa_gc.a
 else
-LIBS += -L$(IFA_DIR) -lifa -L../plib -lplib -ldparse
-IFALIB = $(IFA_DIR)/libifa.a
+LIBS += -L$(IFA_LIB_DIR) -lifa -L../plib -lplib -ldparse
+IFALIB = $(IFA_LIB_DIR)/libifa.a
 endif
 
 ifdef USE_SS
@@ -179,6 +180,9 @@ deinstall:
 %.g.d_parser.cc: %.g
 	make_dparser -v -Xcc -I $<
 
+$(IFALIB):
+	$(MAKE) -C $(IFA_DIR)
+
 $(PYC): $(PYC_OBJS) $(IFALIB)
 	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
@@ -204,9 +208,11 @@ test: test_pyc
 
 clean:
 	\rm -f *.o core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
+	$(MAKE) -C $(IFA_DIR) clean
 
 realclean: clean
 	\rm -f *.a *.orig *.rej
+	$(MAKE) -C $(IFA_DIR) realclean
 
 depend:
 	./mkdep $(CFLAGS) $(DEPEND_SRCS)
