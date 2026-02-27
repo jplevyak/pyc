@@ -88,7 +88,7 @@ endif
 VERSIONCFLAGS += -DMAJOR_VERSION=$(MAJOR) -DMINOR_VERSION=$(MINOR) -DBUILD_VERSION=\"$(BUILD_VERSION)\"
 
 IFA_DIR=ifa
-PLIB_DIR=$(IFA_DIR)/plib
+PLIB_DIR=$(IFA_DIR)/common
 
 CFLAGS += -std=c++23 -D__PYC__=1 -I$(PLIB_DIR) -I$(IFA_DIR) -I/usr/local/python2.7/include/python2.7
 ifdef USE_SS

@@ -53,7 +53,7 @@ extern "C" {
 #undef Module
 #endif
 
-#include "plib.h"
+#include "common.h"
 #include "ifa.h"
 #include "fa.h"
 #include "prim.h"
