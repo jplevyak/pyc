@@ -90,7 +90,7 @@ VERSIONCFLAGS += -DMAJOR_VERSION=$(MAJOR) -DMINOR_VERSION=$(MINOR) -DBUILD_VERSI
 IFA_DIR=ifa
 PLIB_DIR=$(IFA_DIR)/common
 
-CFLAGS += -std=c++23 -D__PYC__=1 -I$(PLIB_DIR) -I$(IFA_DIR) -I/usr/local/python2.7/include/python2.7
+CFLAGS += -std=c++23 -D__PYC__=1 -I$(PLIB_DIR) -I$(IFA_DIR) -I$(IFA_DIR)/if1 -I$(IFA_DIR)/frontend -I$(IFA_DIR)/analysis -I$(IFA_DIR)/codegen -I$(IFA_DIR)/optimize -I/usr/local/python2.7/include/python2.7
 ifdef USE_SS
 CFLAGS += -Ilib -Ilib/os
 endif
