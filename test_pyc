@@ -1,74 +1,75 @@
-#!/bin/tcsh 
+#!/bin/bash
 
-setenv PYTHON python2
+PYTHON=python2
 
-#setenv VALGRIND 'valgrind -q'
-setenv VALGRIND ' '
+#VALGRIND='valgrind -q'
+VALGRIND=' '
 
 cd tests
-set failed = 0
-set expected_failed = 0
+failed=0
+expected_failed=0
 cp ../pyc_compat.py .
-foreach g (*.py)
-  if (-e $g.ignore) continue
-  if (-e $g.flags) then
-    set flags = `cat $g.flags`
+for g in *.py; do
+  if [ -e "$g.ignore" ]; then continue; fi
+  if [ -e "$g.flags" ]; then
+    flags=$(cat "$g.flags")
   else
-    set flags =
-  endif
-  $VALGRIND ../pyc -D.. $flags $g >&! $g.out
-  if ($?) then
-    if (-e $g.expect_fail) then
-      echo $g "COMPILE EXPECTED FAIL"
-      set expected_failed = `expr $expected_failed + 1`
-    else if (-e $g.check_fail) then
-      echo $g "COMPILE PASSED"
-    else 
-      echo $g "******** COMPILE FAILED ********"
-      set failed = `expr $failed + 1`
-    endif
+    flags=
+  fi
+  $VALGRIND ../pyc -D.. $flags "$g" >&"$g.out"
+  if [ $? -ne 0 ]; then
+    if [ -e "$g.expect_fail" ]; then
+      echo "$g COMPILE EXPECTED FAIL"
+      expected_failed=$((expected_failed + 1))
+    elif [ -e "$g.check_fail" ]; then
+      echo "$g COMPILE PASSED"
+    else
+      echo "$g ******** COMPILE FAILED ********"
+      failed=$((failed + 1))
+    fi
   else
-    if (-e $g.check) then
-      diff $g.out $g.check
+    if [ -e "$g.check" ]; then
+      diff "$g.out" "$g.check"
     else
-      diff $g.out empty
-    endif
-    if ($?) then
-      echo $g "******** COMPILE FAILED ********"
-      set failed = `expr $failed + 1`
+      diff "$g.out" empty
+    fi
+    if [ $? -ne 0 ]; then
+      echo "$g ******** COMPILE FAILED ********"
+      failed=$((failed + 1))
     else
-      echo $g "COMPILE PASSED"
-      if (-e $g.exec.check) then
-        $VALGRIND ./$g:r >&! $g.exec.out
-        diff $g.exec.out $g.exec.check
-        if ($?) then
-          echo $g "******** EXECUTE FAILED ********"
-          set failed = `expr $failed + 1`
+      echo "$g COMPILE PASSED"
+      if [ -e "$g.exec.check" ]; then
+        base="${g%.py}"
+        $VALGRIND ./"$base" >&"$g.exec.out"
+        diff "$g.exec.out" "$g.exec.check"
+        if [ $? -ne 0 ]; then
+          echo "$g ******** EXECUTE FAILED ********"
+          failed=$((failed + 1))
         else
-          echo $g "EXECUTE PASSED"
-        endif
-        $PYTHON $g >&! $g.python.out
-        diff $g.exec.out $g.python.out > /dev/null
-        if ($?) then
-          if (-e $g.python.expect_fail) then
-            echo $g "PYTHON EXPECTED FAIL"
-            set expected_failed = `expr $expected_failed + 1`
+          echo "$g EXECUTE PASSED"
+        fi
+        $PYTHON "$g" >&"$g.python.out"
+        diff "$g.exec.out" "$g.python.out" > /dev/null
+        if [ $? -ne 0 ]; then
+          if [ -e "$g.python.expect_fail" ]; then
+            echo "$g PYTHON EXPECTED FAIL"
+            expected_failed=$((expected_failed + 1))
           else
-            echo $g "******** CPYTHON VERIFY FAILED ********"
-            diff $g.exec.out $g.python.out
-            set failed = `expr $failed + 1`
-          endif
-        endif
-      endif
-      rm -f $g:r
-    endif
-  endif
-end
+            echo "$g ******** CPYTHON VERIFY FAILED ********"
+            diff "$g.exec.out" "$g.python.out"
+            failed=$((failed + 1))
+          fi
+        fi
+        rm -f "$base"
+      fi
+    fi
+  fi
+done
 echo "---------------------------------------"
-if (! $failed) then
+if [ "$failed" -eq 0 ]; then
   echo "ALL tests PASSED ($expected_failed expected fails)"
 else
-  echo "********" $failed "test(s) FAILED (not including $expected_failed expected fails) *********"
-endif
-rm -rf *.o *.c *.out pyc_compat.py
+  echo "******** $failed test(s) FAILED (not including $expected_failed expected fails) *********"
+fi
+rm -rf ./*.o ./*.c ./*.out pyc_compat.py
 cd ..
