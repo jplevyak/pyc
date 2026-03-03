@@ -131,7 +131,7 @@ AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODU
 LIB_SRCS = lib/builtin.cpp $(wildcard lib/*.cpp) $(wildcard lib/os/*.cpp)
 LIB_OBJS = $(LIB_SRCS:%.cpp=%.o)
 
-PYC_DEPEND_SRCS = pyc.cc python_ifa.cc version.cc
+PYC_DEPEND_SRCS = pyc.cc python_ifa_util.cc python_ifa_sym.cc python_ifa_build_syms.cc python_ifa_build_if1.cc python_ifa_main.cc version.cc
 PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc
 ifdef USE_SS
 PYC_SRCS += shedskin.cc
