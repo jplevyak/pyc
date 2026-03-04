@@ -3,9 +3,9 @@
 */
 #include "python_ifa_int.h"
 
-static int build_if1(mod_ty mod, PycContext &ctx, Code **code);
+static int build_if1(mod_ty mod, PycCompiler &ctx, Code **code);
 
-static void build_import_if1(char *sym, char *as, char *from, PycContext &ctx) {
+static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) {
   char *mod = from ? from : sym;
   if (!strcmp(mod, "pyc_compat")) return;
   PycModule *m = get_module(mod, ctx);
@@ -48,10 +48,10 @@ static Code *find_send(Code *c) {
   }                                              \
   ASSERT(ast == getAST(_ast, ctx));
 
-static int build_if1(stmt_ty s, PycContext &ctx);
-static int build_if1(expr_ty e, PycContext &ctx);
+static int build_if1(stmt_ty s, PycCompiler &ctx);
+static int build_if1(expr_ty e, PycCompiler &ctx);
 
-static int build_if1(stmt_ty s, PycContext &ctx) {
+static int build_if1(stmt_ty s, PycCompiler &ctx) {
   RECURSE(s, build_if1, ctx);
   switch (s->kind) {
     case FunctionDef_kind:  // identifier name, arguments args, stmt* body, expr* decorator_list
@@ -83,7 +83,7 @@ static int build_if1(stmt_ty s, PycContext &ctx) {
           expr_ty t = a->xexpr;
           for (int i = 0; i < asdl_seq_LEN(t->v.Tuple.elts); i++) {
             expr_ty ret = (expr_ty)asdl_seq_GET(t->v.Tuple.elts, i);
-            call_method(if1, &ast->code, ast, v->rval, sym___getitem__, getAST(ret, ctx)->rval, 1, int64_constant(i));
+            call_method(&ast->code, ast, v->rval, sym___getitem__, getAST(ret, ctx)->rval, 1, int64_constant(i));
           }
         } else {
           if1_gen(if1, &ast->code, a->code);
@@ -131,7 +131,7 @@ static int build_if1(stmt_ty s, PycContext &ctx) {
         if1_gen(if1, &ast->code, a->code);
         if (i) if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, make_string(" "), new_sym(ast))->ast = ast;
         Sym *t = new_sym(ast);
-        call_method(if1, &ast->code, ast, a->rval, sym___str__, t, 0);
+        call_method(&ast->code, ast, a->rval, sym___str__, t, 0);
         if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, t, new_sym(ast))->ast = ast;
       }
       if (s->v.Print.nl) if1_send(if1, &ast->code, 2, 1, sym_primitive, sym_writeln, new_sym(ast))->ast = ast;
@@ -144,8 +144,8 @@ static int build_if1(stmt_ty s, PycContext &ctx) {
       if1_gen(if1, &ast->code, t->code);
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i->rval, iter)->ast = ast;
       Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
-      call_method(if1, &cond, ast, iter, sym___pyc_more__, tmp, 0);
-      call_method(if1, &body, ast, iter, sym_next, tmp2, 0);
+      call_method(&cond, ast, iter, sym___pyc_more__, tmp, 0);
+      call_method(&body, ast, iter, sym_next, tmp2, 0);
       if1_move(if1, &body, tmp2, t->sym, ast);
       get_stmts_code(s->v.For.body, &body, ctx);
       get_stmts_code(s->v.For.orelse, &orelse, ctx);
@@ -208,7 +208,7 @@ static int build_if1(stmt_ty s, PycContext &ctx) {
   return 0;
 }
 
-static Code *splice_primitive(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
+static Code *splice_primitive(PycAST *fun, expr_ty e, PycAST *ast, PycCompiler &ctx) {
   Code *send = if1_send1(if1, &ast->code, ast);
   if1_add_send_arg(if1, send, sym_primitive);
   if1_add_send_arg(if1, send, fun->rval);
@@ -221,7 +221,7 @@ static Code *splice_primitive(PycAST *fun, expr_ty e, PycAST *ast, PycContext &c
   return send;
 }
 
-static int build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &ctx) {
+static int build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycCompiler &ctx) {
   Sym *f = fun->sym;
   if (f && builtin_functions.set_in(f)) {
     if (f == sym_super) {
@@ -314,7 +314,7 @@ static int build_builtin_call(PycAST *fun, expr_ty e, PycAST *ast, PycContext &c
   return 0;
 }
 
-static void build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *ast, Code **code, PycContext &ctx) {
+static void build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *ast, Code **code, PycCompiler &ctx) {
   int n = asdl_seq_LEN(generators);
   if (x < n) {
     comprehension_ty c = (comprehension_ty)asdl_seq_GET(generators, x);
@@ -323,9 +323,9 @@ static void build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *as
     Sym *iter = new_sym(ast), *cond_var = new_sym(ast), *tmp = new_sym(ast);
     if1_gen(if1, &before, i->code);
     if1_send(if1, &before, 2, 1, sym___iter__, i->rval, iter)->ast = ast;
-    call_method(if1, &cond, ast, iter, sym___pyc_more__, cond_var, 0);
+    call_method(&cond, ast, iter, sym___pyc_more__, cond_var, 0);
     if1_gen(if1, &body, t->code);
-    call_method(if1, &body, ast, iter, sym_next, tmp, 0);
+    call_method(&body, ast, iter, sym_next, tmp, 0);
     if1_move(if1, &body, tmp, t->sym, ast);
     if (asdl_seq_LEN(c->ifs)) {
       Label *short_circuit = if1_alloc_label(if1);
@@ -344,11 +344,11 @@ static void build_list_comp(asdl_seq *generators, int x, expr_ty elt, PycAST *as
   } else {
     PycAST *a = getAST(elt, ctx);
     if1_gen(if1, code, a->code);
-    call_method(if1, code, ast, ast->rval, sym_append, new_sym(ast), 1, a->rval);
+    call_method(code, ast, ast->rval, sym_append, new_sym(ast), 1, a->rval);
   }
 }
 
-static int build_if1(expr_ty e, PycContext &ctx) {
+static int build_if1(expr_ty e, PycCompiler &ctx) {
   RECURSE(e, build_if1, ctx);
   switch (e->kind) {
     case BoolOp_kind:  // boolop op, expr* values
@@ -368,7 +368,7 @@ static int build_if1(expr_ty e, PycContext &ctx) {
           if1_gen(if1, &ast->code, v->code);
           if1_move(if1, &ast->code, v->rval, ast->rval);
           Sym *t = new_sym(ast);
-          call_method(if1, &ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
+          call_method(&ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
           Code *ifcode = if1_if_goto(if1, &ast->code, t, ast);
           if (a) {
             if1_if_label_false(if1, ifcode, ast->label[0]);
@@ -521,11 +521,11 @@ static int build_if1(expr_ty e, PycContext &ctx) {
         if1_gen(if1, &ast->code, getAST(e->v.Subscript.slice->v.Index.value, ctx)->code);
         // AugLoad, Load, AugStore, Store, Del, !Param
         if (e->v.Subscript.ctx == Load) {
-          call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getitem__,
+          call_method(&ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getitem__,
                       (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
         } else {
           assert(e->v.Subscript.ctx == Store);
-          call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setitem__,
+          call_method(&ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setitem__,
                       (ast->rval = new_sym(ast)), 1, getAST(e->v.Subscript.slice->v.Index.value, ctx)->rval);
         }
       } else if (e->v.Subscript.slice->kind == Slice_kind) {
@@ -535,17 +535,17 @@ static int build_if1(expr_ty e, PycContext &ctx) {
         (void)s;
         if (e->v.Subscript.ctx == Load) {
           if (!e->v.Subscript.slice->v.Slice.step)
-            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getslice__,
+            call_method(&ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___getslice__,
                         (ast->rval = new_sym(ast)), 2, l, u);
           else
-            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___pyc_getslice__,
+            call_method(&ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___pyc_getslice__,
                         (ast->rval = new_sym(ast)), 3, l, u, s);
         } else {
           if (!e->v.Subscript.slice->v.Slice.step)
-            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setslice__,
+            call_method(&ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___setslice__,
                         (ast->rval = new_sym(ast)), 2, l, u);
           else
-            call_method(if1, &ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___pyc_setslice__,
+            call_method(&ast->code, ast, getAST(e->v.Subscript.value, ctx)->rval, sym___pyc_setslice__,
                         (ast->rval = new_sym(ast)), 3, l, u, s);
         }
       } else
@@ -599,7 +599,7 @@ static int build_if1(expr_ty e, PycContext &ctx) {
   return 0;
 }
 
-static int build_if1_stmts(asdl_seq *stmts, PycContext &ctx, Code **code) {
+static int build_if1_stmts(asdl_seq *stmts, PycCompiler &ctx, Code **code) {
   for (int i = 0; i < asdl_seq_LEN(stmts); i++) {
     if (build_if1((stmt_ty)asdl_seq_GET(stmts, i), ctx)) return -1;
     if1_gen(if1, code, getAST((stmt_ty)asdl_seq_GET(stmts, i), ctx)->code);
@@ -607,7 +607,7 @@ static int build_if1_stmts(asdl_seq *stmts, PycContext &ctx, Code **code) {
   return 0;
 }
 
-static int build_if1(mod_ty mod, PycContext &ctx, Code **code) {
+static int build_if1(mod_ty mod, PycCompiler &ctx, Code **code) {
   int r = 0;
   ctx.node = mod;
   enter_scope(ctx);
@@ -630,4 +630,4 @@ static int build_if1(mod_ty mod, PycContext &ctx, Code **code) {
   return r;
 }
 
-int build_if1_module(mod_ty mod, PycContext &ctx, Code **code) { return build_if1(mod, ctx, code); }
+int build_if1_module(mod_ty mod, PycCompiler &ctx, Code **code) { return build_if1(mod, ctx, code); }

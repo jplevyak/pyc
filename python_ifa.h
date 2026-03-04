@@ -9,18 +9,13 @@ class Label;
 class Code;
 class IFAASTCopyContext;
 class Sym;
-struct PycContext;
+class PycCompiler;
 
 typedef PySTEntryObject Symbol;
 
 class PycCallbacks : public IFACallbacks {
  public:
-  PycContext *ctx;
-  void finalize_functions();
-  Sym *new_Sym(cchar *name = 0);
-  Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
-  bool reanalyze(Vec<ATypeViolation *> &type_violations);
-  bool c_codegen_pre_file(FILE *);
+  virtual ~PycCallbacks();
 };
 
 class PycSymbol : public IFASymbol {
@@ -82,7 +77,7 @@ class PycModule : public gc {
   cchar *name;
   PycSymbol *name_sym;
   PycSymbol *file_sym;
-  PycContext *ctx;
+  PycCompiler *ctx;
   bool is_builtin;
   bool built_if1;
   PycModule(mod_ty amod, cchar *afilename, bool ais_builtin = false)

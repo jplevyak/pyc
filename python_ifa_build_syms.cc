@@ -4,9 +4,9 @@
 #include "python_ifa_int.h"
 
 
-static int build_syms(stmt_ty s, PycContext &ctx);
-static int build_syms(expr_ty e, PycContext &ctx);
-int build_syms(PycModule *x, PycContext &ctx);
+static int build_syms(stmt_ty s, PycCompiler &ctx);
+static int build_syms(expr_ty e, PycCompiler &ctx);
+int build_syms(PycModule *x, PycCompiler &ctx);
 
 #define AST_RECURSE_PRE(_ast, _fn, _ctx)  \
   PycAST *ast = getAST(_ast, _ctx);       \
@@ -42,7 +42,7 @@ int build_syms(PycModule *x, PycContext &ctx);
   enter_scope(_ast, ast, _ctx);      \
   AST_RECURSE_POST(_ast, _fn, _ctx)
 
-void get_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycContext &ctx, asdl_seq *decorators) {
+void get_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycCompiler &ctx, asdl_seq *decorators) {
   for (int i = 0; i < asdl_seq_LEN(args->args); i++) {
 #if PY_MAJOR_VERSION == 3
     assert(!"incomplete");
@@ -61,7 +61,7 @@ void get_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycContext &ct
   }
 }
 
-static Sym *def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycContext &ctx) {
+static Sym *def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   fn->in = ctx.scope_stack.last()->in;
   new_fun(ast, fn);
   enter_scope(s, ast, ctx);
@@ -71,7 +71,7 @@ static Sym *def_fun(stmt_ty s, PycAST *ast, Sym *fn, PycContext &ctx) {
   return fn;
 }
 
-static Sym *def_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
+static Sym *def_fun(expr_ty e, PycAST *ast, PycCompiler &ctx) {
   Sym *fn = new_sym(ast, 1);
   fn->in = ctx.scope_stack.last()->in;
   enter_scope(e, ast, ctx);
@@ -81,25 +81,33 @@ static Sym *def_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
   return fn;
 }
 
-static void import_file(cchar *name, cchar *p, PycContext &ctx) {
+static void import_file(cchar *name, cchar *p, PycCompiler &ctx) {
   cchar *f = dupstrs(p, "/", name, ".py");
   mod_ty mod = file_to_mod(f, ctx.arena);
   PycModule *m = new PycModule(mod, f);
   ctx.modules->add(m);
-  m->ctx = new PycContext(ctx);
-  build_syms(m, *m->ctx);
+  // Save state that build_syms modifies
+  PycModule *saved_mod = ctx.mod;
+  cchar *saved_filename = ctx.filename;
+  int saved_imports_n = ctx.imports.n;
+  Vec<PycScope *> saved_scope_stack;
+  saved_scope_stack.move(ctx.scope_stack);  // hide outer scopes; scope_stack is now empty
+  build_syms(m, ctx);
+  // Restore state (scope_stack is empty: enter/exit are balanced in build_syms)
+  ctx.scope_stack.move(saved_scope_stack);
+  ctx.imports.n = saved_imports_n;
+  ctx.filename = saved_filename;
+  ctx.mod = saved_mod;
 }
 
-PycModule *get_module(cchar *name, PycContext &ctx) {
+PycModule *get_module(cchar *name, PycCompiler &ctx) {
   for (auto m : ctx.modules->values()) {
     if (!strcmp(name, m->name)) return m;
   }
   return 0;
 }
 
-typedef void import_fn(char *sym, char *as, char *from, PycContext &ctx);
-
-static void build_import_syms(char *sym, char *as, char *from, PycContext &ctx) {
+static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx) {
   char *mod = from ? from : sym;
   assert(!strchr(mod, '.'));  // package
   assert(!ctx.package);       // package
@@ -115,14 +123,14 @@ static void build_import_syms(char *sym, char *as, char *from, PycContext &ctx) 
   }
 }
 
-void build_import(stmt_ty s, import_fn fn, PycContext &ctx) {
+void build_import(stmt_ty s, import_fn fn, PycCompiler &ctx) {
   for (int i = 0; i < asdl_seq_LEN(s->v.Import.names); i++) {
     alias_ty a = (alias_ty)asdl_seq_GET(s->v.Import.names, i);
     fn(PyString_AsString(a->name), a->asname ? PyString_AsString(a->asname) : 0, 0, ctx);
   }
 }
 
-void build_import_from(stmt_ty s, import_fn fn, PycContext &ctx) {
+void build_import_from(stmt_ty s, import_fn fn, PycCompiler &ctx) {
   for (int i = 0; i < asdl_seq_LEN(s->v.ImportFrom.names); i++) {
     alias_ty a = (alias_ty)asdl_seq_GET(s->v.ImportFrom.names, i);
     fn(PyString_AsString(a->name), a->asname ? PyString_AsString(a->asname) : 0,
@@ -130,7 +138,7 @@ void build_import_from(stmt_ty s, import_fn fn, PycContext &ctx) {
   }
 }
 
-static int build_syms(stmt_ty s, PycContext &ctx) {
+static int build_syms(stmt_ty s, PycCompiler &ctx) {
   ctx.node = s;
   ctx.lineno = s->lineno;
   AST_RECURSE_PRE(s, build_syms, ctx);
@@ -237,7 +245,7 @@ static Sym *make_num(int64 i) {
 }
 #endif
 
-static Sym *make_tuple_type(expr_ty e, PycContext &ctx, PycAST *ast, asdl_seq *elts) {
+static Sym *make_tuple_type(expr_ty e, PycCompiler &ctx, PycAST *ast, asdl_seq *elts) {
 #if 0
   int n = asdl_seq_LEN(elts);
   printf("make_tuple_type # %d\n", n);
@@ -276,9 +284,9 @@ static Sym *make_tuple_type(expr_ty e, PycContext &ctx, PycAST *ast, asdl_seq *e
   return sym_tuple;
 }
 
-static void build_syms_comprehension(PycContext &ctx, asdl_seq *generators, expr_ty elt, expr_ty value) {}
+static void build_syms_comprehension(PycCompiler &ctx, asdl_seq *generators, expr_ty elt, expr_ty value) {}
 
-static int build_syms(expr_ty e, PycContext &ctx) {
+static int build_syms(expr_ty e, PycCompiler &ctx) {
   PycAST *past = getAST(e, ctx);
   ctx.node = e;
   ctx.lineno = e->lineno;
@@ -342,13 +350,13 @@ static int build_syms(expr_ty e, PycContext &ctx) {
   return 0;
 }
 
-static int build_syms_stmts(asdl_seq *stmts, PycContext &ctx) {
+static int build_syms_stmts(asdl_seq *stmts, PycCompiler &ctx) {
   for (int i = 0; i < asdl_seq_LEN(stmts); i++)
     if (build_syms((stmt_ty)asdl_seq_GET(stmts, i), ctx)) return -1;
   return 0;
 }
 
-static int build_syms(mod_ty mod, PycContext &ctx) {
+static int build_syms(mod_ty mod, PycCompiler &ctx) {
   int r = 0;
   ctx.node = mod;
   enter_scope(ctx);
@@ -369,14 +377,14 @@ static int build_syms(mod_ty mod, PycContext &ctx) {
   return r;
 }
 
-static void import_scope(PycModule *mod, PycContext &ctx) { ctx.imports.add(mod->ctx->saved_scopes.get(mod->mod)); }
+static void import_scope(PycModule *mod, PycCompiler &ctx) { ctx.imports.add(mod->ctx->saved_scopes.get(mod->mod)); }
 
-void scope_sym(PycContext &ctx, Sym *sym, cchar *name) {
+void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name) {
   PycSymbol *s = (PycSymbol *)sym->asymbol;
   ctx.scope_stack.last()->map.put(name ? cannonicalize_string(name) : sym->name, s);
 }
 
-static void build_module_attributes_syms(PycModule *mod, PycContext &ctx) {
+static void build_module_attributes_syms(PycModule *mod, PycCompiler &ctx) {
   ctx.node = mod->mod;
   enter_scope(ctx);
   mod->name_sym = make_PycSymbol(ctx, "__name__", PYC_GLOBAL);
@@ -387,7 +395,7 @@ static void build_module_attributes_syms(PycModule *mod, PycContext &ctx) {
   exit_scope(ctx);
 }
 
-int build_syms(PycModule *x, PycContext &ctx) {
+int build_syms(PycModule *x, PycCompiler &ctx) {
   x->ctx = &ctx;
   ctx.mod = x;
   ctx.filename = x->filename;
@@ -406,7 +414,7 @@ Sym *make_string(cchar *s) {
 
 Sym *make_string(PyObject *o) { return make_string(PyString_AsString(o)); }
 
-void gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
+void gen_fun(stmt_ty s, PycAST *ast, PycCompiler &ctx) {
   Sym *fn = ast->sym;
   Code *body = 0;
   for (int i = 0; i < asdl_seq_LEN(s->v.FunctionDef.args->defaults); i++) {
@@ -435,7 +443,7 @@ void gen_fun(stmt_ty s, PycAST *ast, PycContext &ctx) {
   if1_closure(if1, fn, body, as.n, as.v);
 }
 
-void gen_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
+void gen_fun(expr_ty e, PycAST *ast, PycCompiler &ctx) {
   Sym *fn = ast->rval;
   Code *body = 0;
   for (int i = 0; i < asdl_seq_LEN(e->v.Lambda.args->defaults); i++) {
@@ -456,7 +464,7 @@ void gen_fun(expr_ty e, PycAST *ast, PycContext &ctx) {
   if1_closure(if1, fn, body, as.n, as.v);
 }
 
-void gen_class(stmt_ty s, PycAST *ast, PycContext &ctx) {
+void gen_class(stmt_ty s, PycAST *ast, PycCompiler &ctx) {
   // build base ___init___ (class specific prototype initialization)
   Sym *fn = ast->rval, *cls = ast->sym;
   bool is_record = cls->type_kind == Type_RECORD && cls != sym_object;
@@ -606,12 +614,12 @@ void gen_class(stmt_ty s, PycAST *ast, PycContext &ctx) {
   }
 }
 
-int get_stmts_code(asdl_seq *stmts, Code **code, PycContext &ctx) {
+int get_stmts_code(asdl_seq *stmts, Code **code, PycCompiler &ctx) {
   for (int i = 0; i < asdl_seq_LEN(stmts); i++) if1_gen(if1, code, getAST((stmt_ty)asdl_seq_GET(stmts, i), ctx)->code);
   return 0;
 }
 
-void call_method(IF1 *if1, Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...) {
+void call_method(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...) {
   va_list ap;
   Sym *t = new_sym(ast);
   Code *method = if1_send(if1, code, 4, 1, sym_operator, o, sym_period, m, t);
@@ -629,13 +637,13 @@ void call_method(IF1 *if1, Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int
   }
 }
 
-void gen_if(PycAST *ifcond, asdl_seq *ifif, asdl_seq *ifelse, PycAST *ast, PycContext &ctx) {
+void gen_if(PycAST *ifcond, asdl_seq *ifif, asdl_seq *ifelse, PycAST *ast, PycCompiler &ctx) {
   Code *ifif_code = 0, *ifelse_code = 0;
   Sym *t = new_sym(ast);
   get_stmts_code(ifif, &ifif_code, ctx);
   get_stmts_code(ifelse, &ifelse_code, ctx);
   if1_gen(if1, &ast->code, ifcond->code);
-  call_method(if1, &ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
+  call_method(&ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
   if1_if(if1, &ast->code, 0, t, ifif_code, 0, ifelse_code, 0, 0, ast);
 }
 
@@ -643,12 +651,12 @@ void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast) {
   ast->rval = new_sym(ast);
   if1_gen(if1, &ast->code, ifcond->code);
   Sym *t = new_sym(ast);
-  call_method(if1, &ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
+  call_method(&ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
   if1_if(if1, &ast->code, 0, t, ifif->code, ifif->rval, ifelse ? ifelse->code : 0, ifelse ? ifelse->rval : 0, ast->rval,
          ast);
 }
 
-Sym *make_num(PyObject *o, PycContext &ctx) {
+Sym *make_num(PyObject *o, PycCompiler &ctx) {
   Sym *sym = 0;
   if (PyInt_Check(o)) {
     int64 i = (int64)PyInt_AsLong(o);

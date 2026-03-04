@@ -28,19 +28,17 @@ cchar *cannonical_self = 0;
 int finalized_aspect = 0;
 Vec<Sym *> builtin_functions;
 
+PycCallbacks::~PycCallbacks() {}
+
 PycSymbol::PycSymbol() : symbol(0), filename(0), previous(0) {}
 
-void PycContext::init() {
+void PycCompiler::init() {
   lineno = -1;
   node = 0;
   mod = package = 0;
-}
-
-PycContext::PycContext(PycContext &c) {
-  init();
-  arena = c.arena;
-  modules = c.modules;
-  search_path = c.search_path;
+  modules = 0;
+  search_path = 0;
+  arena = 0;
 }
 
 cchar *cannonicalize_string(cchar *s) { return if1_cannonicalize_string(if1, s); }

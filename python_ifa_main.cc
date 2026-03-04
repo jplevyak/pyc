@@ -3,7 +3,7 @@
 */
 #include "python_ifa_int.h"
 
-static void build_environment(PycModule *mod, PycContext &ctx) {
+static void build_environment(PycModule *mod, PycCompiler &ctx) {
   ctx.mod = mod;
   ctx.node = mod->mod;
   enter_scope(ctx);
@@ -135,7 +135,7 @@ static void fixup_aspect() {
   finalized_aspect = if1->allsyms.n;
 }
 
-void build_module_attributes_if1(PycModule *mod, PycContext &ctx, Code **code) {
+void build_module_attributes_if1(PycModule *mod, PycCompiler &ctx, Code **code) {
   ctx.node = mod->mod;
   enter_scope(ctx);
   if (mod == ctx.modules->v[1])
@@ -173,7 +173,7 @@ static int add_subdirs(cchar *p, Vec<cchar *> &a) {
   return n;
 }
 
-static void build_search_path(PycContext &ctx) {
+static void build_search_path(PycCompiler &ctx) {
   char *path = Py_GetPath();
   char f[PATH_MAX];
   char *here = dupstr(getcwd(f, PATH_MAX));
@@ -220,13 +220,11 @@ void install_new_fun(Sym *f) {
 }
 
 int ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
-  PycCallbacks *callbacks = new PycCallbacks();
-  ifa_init(callbacks);
+  PycCompiler *ctx = new PycCompiler();
+  ifa_init(ctx);
   if1->partial_default = Partial_NEVER;
   build_builtin_symbols();
   add_primitive_transfer_functions();
-  PycContext *ctx = new PycContext();
-  callbacks->ctx = ctx;
   ctx->arena = arena;
   ctx->modules = &mods;
   Code *code = 0;

@@ -11,7 +11,7 @@ PycSymbol *new_PycSymbol(cchar *name) {
   return s;
 }
 
-PycSymbol *new_PycSymbol(cchar *name, PycContext &ctx) {
+PycSymbol *new_PycSymbol(cchar *name, PycCompiler &ctx) {
   PycSymbol *s = new_PycSymbol(name);
   s->filename = ctx.filename;
   return s;
@@ -25,7 +25,7 @@ PycSymbol *PycSymbol::copy() {
   return s;
 }
 
-Sym *PycCallbacks::new_Sym(cchar *name) { return new_PycSymbol(name)->sym; }
+Sym *PycCompiler::new_Sym(cchar *name) { return new_PycSymbol(name)->sym; }
 
 Sym *new_sym(cchar *name, int global) {
   Sym *s = new_PycSymbol(name)->sym;
@@ -143,7 +143,7 @@ static void finalize_function(Fun *f) {
   }
 }
 
-void PycCallbacks::finalize_functions() { for (auto fun : pdb->funs.values()) finalize_function(fun); }
+void PycCompiler::finalize_functions() { for (auto fun : pdb->funs.values()) finalize_function(fun); }
 
 Sym *new_fun(PycAST *ast, Sym *fun) {
   if (!fun)
@@ -157,7 +157,7 @@ Sym *new_fun(PycAST *ast, Sym *fun) {
   return fun;
 }
 
-Fun *PycCallbacks::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
+Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   PycAST *ast = (PycAST *)f->ast;
   Sym *fn = new_fun(ast);
   fn->nesting_depth = f->sym->nesting_depth;
@@ -187,7 +187,7 @@ Fun *PycCallbacks::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   return fn->fun;
 }
 
-bool PycCallbacks::reanalyze(Vec<ATypeViolation *> &type_violations) {
+bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   if (!type_violations.n) return false;
   bool again = false;
   for (auto v : type_violations.values()) if (v) {
@@ -212,20 +212,20 @@ bool PycCallbacks::reanalyze(Vec<ATypeViolation *> &type_violations) {
   return again;
 }
 
-bool PycCallbacks::c_codegen_pre_file(FILE *fp) {
-  for (int i = 0; i < ctx->c_code.n; i++) {
-    fputs(ctx->c_code[i], fp);
+bool PycCompiler::c_codegen_pre_file(FILE *fp) {
+  for (int i = 0; i < c_code.n; i++) {
+    fputs(c_code[i], fp);
     fputs("\n", fp);
   }
   return true;
 }
 
-void add(expr_ty e, Vec<PycAST *> &asts, PycContext &ctx) {
+void add(expr_ty e, Vec<PycAST *> &asts, PycCompiler &ctx) {
   if (e) asts.add(getAST(e, ctx));
 }
-// static void add(stmt_ty s, Vec<PycAST*> &asts, PycContext &ctx) { if (s) stmts.add(getAST(s)); } unused
+// static void add(stmt_ty s, Vec<PycAST*> &asts, PycCompiler &ctx) { if (s) stmts.add(getAST(s)); } unused
 
-void add_comprehension(asdl_seq *comp, Vec<PycAST *> &asts, PycContext &ctx) {
+void add_comprehension(asdl_seq *comp, Vec<PycAST *> &asts, PycCompiler &ctx) {
   int l = asdl_seq_LEN(comp);
   for (int i = 0; i < l; i++) {
     comprehension_ty c = (comprehension_ty)asdl_seq_GET(comp, i);
@@ -235,7 +235,7 @@ void add_comprehension(asdl_seq *comp, Vec<PycAST *> &asts, PycContext &ctx) {
   }
 }
 
-void get_pre_scope_next(stmt_ty s, Vec<PycAST *> &asts, PycContext &ctx) {
+void get_pre_scope_next(stmt_ty s, Vec<PycAST *> &asts, PycCompiler &ctx) {
   switch (s->kind) {
     default:
       break;
@@ -249,7 +249,7 @@ void get_pre_scope_next(stmt_ty s, Vec<PycAST *> &asts, PycContext &ctx) {
   }
 }
 
-void get_next(stmt_ty s, Vec<PycAST *> &asts, PycContext &ctx) {
+void get_next(stmt_ty s, Vec<PycAST *> &asts, PycCompiler &ctx) {
   switch (s->kind) {
     default:
       assert(!"case");
@@ -348,7 +348,7 @@ void get_next(stmt_ty s, Vec<PycAST *> &asts, PycContext &ctx) {
   }
 }
 
-void get_next(slice_ty s, Vec<PycAST *> &asts, PycContext &ctx) {
+void get_next(slice_ty s, Vec<PycAST *> &asts, PycCompiler &ctx) {
   switch (s->kind) {
     default:
       assert(!"case");
@@ -369,7 +369,7 @@ void get_next(slice_ty s, Vec<PycAST *> &asts, PycContext &ctx) {
   }
 }
 
-void get_pre_scope_next(expr_ty e, Vec<PycAST *> &asts, PycContext &ctx) {
+void get_pre_scope_next(expr_ty e, Vec<PycAST *> &asts, PycCompiler &ctx) {
   switch (e->kind) {
     default:
       break;
@@ -395,7 +395,7 @@ void get_pre_scope_next(expr_ty e, Vec<PycAST *> &asts, PycContext &ctx) {
   }
 }
 
-void get_next(expr_ty e, Vec<PycAST *> &asts, PycContext &ctx) {
+void get_next(expr_ty e, Vec<PycAST *> &asts, PycCompiler &ctx) {
   switch (e->kind) {
     default:
       assert(!"case");
@@ -479,7 +479,7 @@ void get_next(expr_ty e, Vec<PycAST *> &asts, PycContext &ctx) {
   }
 }
 
-void enter_scope(PycContext &ctx, Sym *in) {
+void enter_scope(PycCompiler &ctx, Sym *in) {
   PycScope *c = ctx.saved_scopes.get(ctx.node);
   if (!c) {
     c = new PycScope;
@@ -500,12 +500,12 @@ void enter_scope(PycContext &ctx, Sym *in) {
   TEST_SCOPE printf("enter scope level %d\n", ctx.scope_stack.n);
 }
 
-void enter_scope(PycContext &ctx, mod_ty mod) {
+void enter_scope(PycCompiler &ctx, mod_ty mod) {
   ctx.node = mod;
   enter_scope(ctx);
 }
 
-void enter_scope(stmt_ty x, PycAST *ast, PycContext &ctx) {
+void enter_scope(stmt_ty x, PycAST *ast, PycCompiler &ctx) {
   ctx.node = x;
   if (x->kind == FunctionDef_kind)
     enter_scope(ctx, ast->rval);
@@ -523,29 +523,29 @@ int needs_scope(expr_ty x) {
   );
 }
 
-void enter_scope(expr_ty x, PycAST *ast, PycContext &ctx) {
+void enter_scope(expr_ty x, PycAST *ast, PycCompiler &ctx) {
   ctx.node = x;
   if (needs_scope(x)) enter_scope(ctx, ast->rval);
 }
 
-void exit_scope(PycContext &ctx) {
+void exit_scope(PycCompiler &ctx) {
   TEST_SCOPE printf("exit scope level %d\n", ctx.scope_stack.n);
   ctx.scope_stack.pop();
 }
 
-void exit_scope(stmt_ty x, PycContext &ctx) {
+void exit_scope(stmt_ty x, PycCompiler &ctx) {
   ctx.node = x;
   if (x->kind == FunctionDef_kind || x->kind == ClassDef_kind) exit_scope(ctx);
 }
 
-void exit_scope(expr_ty x, PycContext &ctx) {
+void exit_scope(expr_ty x, PycCompiler &ctx) {
   ctx.node = x;
   if (needs_scope(x)) exit_scope(ctx);
 }
 
 static cchar *pyc_scoping_names[] = {"use", "local", "global", "nonlocal"};
 
-PycSymbol *find_PycSymbol(PycContext &ctx, cchar *name, int *level, int *type) {
+PycSymbol *find_PycSymbol(PycCompiler &ctx, cchar *name, int *level, int *type) {
   PycSymbol *l = 0;
   int i = ctx.scope_stack.n - 1, xtype = 0;
   int end = -ctx.imports.n;
@@ -571,11 +571,11 @@ PycSymbol *find_PycSymbol(PycContext &ctx, cchar *name, int *level, int *type) {
   return l;
 }
 
-// static PycSymbol *find_PycSymbol(PycContext &ctx, PyObject *o, int *level = 0, int *type = 0) {
+// static PycSymbol *find_PycSymbol(PycCompiler &ctx, PyObject *o, int *level = 0, int *type = 0) {
 //  return find_PycSymbol(ctx, cannonicalize_string(PyString_AS_STRING(o)), level, type);
 //}
 
-PycSymbol *make_PycSymbol(PycContext &ctx, cchar *n, PYC_SCOPINGS scoping) {
+PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping) {
   cchar *name = cannonicalize_string(n);
   TEST_SCOPE printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
   int level = 0, type = 0;
@@ -622,6 +622,6 @@ PycSymbol *make_PycSymbol(PycContext &ctx, cchar *n, PYC_SCOPINGS scoping) {
   return l;
 }
 
-PycSymbol *make_PycSymbol(PycContext &ctx, PyObject *o, PYC_SCOPINGS type) {
+PycSymbol *make_PycSymbol(PycCompiler &ctx, PyObject *o, PYC_SCOPINGS type) {
   return make_PycSymbol(ctx, PyString_AS_STRING(o), type);
 }
