@@ -10,6 +10,7 @@ class Code;
 class IFAASTCopyContext;
 class Sym;
 class PycCompiler;
+class PyDAST;
 
 typedef PySTEntryObject Symbol;
 
@@ -73,6 +74,7 @@ cchar *mod_name_from_filename(cchar *);
 class PycModule : public gc {
  public:
   mod_ty mod;
+  PyDAST *pymod;  // DParser AST (Phase 3+)
   cchar *filename;
   cchar *name;
   PycSymbol *name_sym;
@@ -81,7 +83,7 @@ class PycModule : public gc {
   bool is_builtin;
   bool built_if1;
   PycModule(mod_ty amod, cchar *afilename, bool ais_builtin = false)
-      : mod(amod), filename(afilename), name_sym(0), file_sym(0), ctx(0), is_builtin(ais_builtin), built_if1(false) {
+      : mod(amod), pymod(nullptr), filename(afilename), name_sym(0), file_sym(0), ctx(0), is_builtin(ais_builtin), built_if1(false) {
     name = mod_name_from_filename(filename);
   }
 };

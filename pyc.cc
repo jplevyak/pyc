@@ -9,6 +9,7 @@
 
 int do_unit_tests = 0;
 static int dparse_only = 0;
+static int dparse_ast = 0;
 static char pyc_ifa_log[256];
 
 static void help(ArgumentState *arg_state, char *arg_unused) {
@@ -50,6 +51,7 @@ static ArgumentDescription arg_desc[] = {
     {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
 #endif
     {"dparse_only", ' ', "Validate DParser parse only (no compilation)", "F", &dparse_only, "PYC_DPARSE_ONLY", NULL},
+    {"dparse_ast", ' ', "Parse with DParser and print AST", "F", &dparse_ast, "PYC_DPARSE_AST", NULL},
 #ifdef USE_SS
     {"ss", 's', "Shedskin Codegen", "F", &codegen_shedskin, "PYC_SS", NULL},
 #endif
@@ -140,6 +142,16 @@ int main(int argc, char *argv[]) {
     Service::stop_all();
     exit(errors ? 1 : 0);
   }
+  if (dparse_ast) {
+    int errors = 0;
+    for (int i = 0; i < arg_state.nfile_arguments; i++) {
+      PyDAST *ast = dparse_python_to_ast(arg_state.file_argument[i]);
+      if (!ast) errors++;
+      else pyast_print(ast, 0);
+    }
+    Service::stop_all();
+    exit(errors ? 1 : 0);
+  }
   Py_Initialize();
   PyEval_InitThreads();
   PyArena *arena = PyArena_New();
@@ -156,7 +168,11 @@ int main(int argc, char *argv[]) {
       filename = arg_state.file_argument[i];
     if (!i) first_filename = filename;
     mod_ty mod = file_to_mod(filename, arena);
-    if (mod) mods.add(new PycModule(mod, filename, i < 0));
+    if (mod) {
+      PycModule *m = new PycModule(mod, filename, i < 0);
+      m->pymod = dparse_python_to_ast(filename);
+      mods.add(m);
+    }
   }
   fruntime_errors = runtime_errors;
   if (mods.n > 1) {

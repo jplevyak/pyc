@@ -2,6 +2,7 @@
   Copyright 2008-2011 John Plevyak, All Rights Reserved
 */
 #include "python_ifa_int.h"
+#include "python_parse.h"
 
 
 static int build_syms(stmt_ty s, PycCompiler &ctx);
@@ -85,6 +86,7 @@ static void import_file(cchar *name, cchar *p, PycCompiler &ctx) {
   cchar *f = dupstrs(p, "/", name, ".py");
   mod_ty mod = file_to_mod(f, ctx.arena);
   PycModule *m = new PycModule(mod, f);
+  m->pymod = dparse_python_to_ast(f);
   ctx.modules->add(m);
   // Save state that build_syms modifies
   PycModule *saved_mod = ctx.mod;
