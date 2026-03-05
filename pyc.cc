@@ -3,10 +3,12 @@
 */
 #define EXTERN
 #include "defs.h"
+#include "python_parse.h"
 #include <signal.h>
 #include <sys/resource.h>
 
 int do_unit_tests = 0;
+static int dparse_only = 0;
 static char pyc_ifa_log[256];
 
 static void help(ArgumentState *arg_state, char *arg_unused) {
@@ -47,6 +49,7 @@ static ArgumentDescription arg_desc[] = {
     {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
     {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
 #endif
+    {"dparse_only", ' ', "Validate DParser parse only (no compilation)", "F", &dparse_only, "PYC_DPARSE_ONLY", NULL},
 #ifdef USE_SS
     {"ss", 's', "Shedskin Codegen", "F", &codegen_shedskin, "PYC_SS", NULL},
 #endif
@@ -129,6 +132,13 @@ int main(int argc, char *argv[]) {
     int r = UnitTest::run_all();
     Service::stop_all();
     _exit(r);
+  }
+  if (dparse_only) {
+    int errors = 0;
+    for (int i = 0; i < arg_state.nfile_arguments; i++)
+      if (dparse_python_file(arg_state.file_argument[i]) < 0) errors++;
+    Service::stop_all();
+    exit(errors ? 1 : 0);
   }
   Py_Initialize();
   PyEval_InitThreads();

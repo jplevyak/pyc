@@ -131,8 +131,8 @@ AUX_FILES = $(MODULE)/index.html $(MODULE)/manual.html $(MODULE)/faq.html $(MODU
 LIB_SRCS = lib/builtin.cpp $(wildcard lib/*.cpp) $(wildcard lib/os/*.cpp)
 LIB_OBJS = $(LIB_SRCS:%.cpp=%.o)
 
-PYC_DEPEND_SRCS = pyc.cc python_ifa_util.cc python_ifa_sym.cc python_ifa_build_syms.cc python_ifa_build_if1.cc python_ifa_main.cc version.cc
-PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc
+PYC_DEPEND_SRCS = pyc.cc python_ifa_util.cc python_ifa_sym.cc python_ifa_build_syms.cc python_ifa_build_if1.cc python_ifa_main.cc python_parse.cc version.cc
+PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc python.g.d_parser.cc
 ifdef USE_SS
 PYC_SRCS += shedskin.cc
 endif
@@ -205,6 +205,24 @@ version.o: version.cc Makefile
 
 test: test_pyc
 	./test_pyc
+
+test_dparse: $(PYC)
+	@echo "--- DParser parse validation ---"; \
+	failed=0; \
+	for f in tests/*.py; do \
+	  if ./$(PYC) --dparse_only "$$f" 2>/dev/null; then \
+	    echo "$$f OK"; \
+	  else \
+	    ./$(PYC) --dparse_only "$$f" 2>&1 | head -3; \
+	    echo "$$f FAILED"; \
+	    failed=$$((failed + 1)); \
+	  fi; \
+	done; \
+	if [ "$$failed" -eq 0 ]; then \
+	  echo "--- ALL DParser tests PASSED ---"; \
+	else \
+	  echo "--- $$failed DParser test(s) FAILED ---"; exit 1; \
+	fi
 
 clean:
 	\rm -f *.o core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
