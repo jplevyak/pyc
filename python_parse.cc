@@ -33,6 +33,10 @@ int dparse_python_file(const char *filename) {
     return -1;
   }
   D_Parser *p = make_python_parser(filename, buf, len);
+  extern int d_verbose_level;
+  d_verbose_level = 2;
+  extern int d_debug_level;
+  // d_debug_level = 2;
   D_ParseNode *pn = dparse(p, buf, len);
   int ok = pn && !p->syntax_errors;
   if (!ok)
@@ -41,6 +45,7 @@ int dparse_python_file(const char *filename) {
   free_D_Parser(p);
   return ok ? 0 : -1;
 }
+
 
 PyDAST *dparse_python_to_ast(const char *filename) {
   char *buf = 0;
