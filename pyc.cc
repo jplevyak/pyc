@@ -170,7 +170,7 @@ int main(int argc, char *argv[]) {
     mod_ty mod = file_to_mod(filename, arena);
     if (mod) {
       PycModule *m = new PycModule(mod, filename, i < 0);
-      m->pymod = dparse_python_to_ast(filename);
+      m->pymod = m->is_builtin ? nullptr : dparse_python_to_ast(filename);
       mods.add(m);
     }
   }
