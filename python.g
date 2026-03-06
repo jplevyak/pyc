@@ -16,6 +16,8 @@ extern D_Symbol d_symbols_python[];
   int python_indent(PythonGlobals **p_globals);
   int python_dedent(PythonGlobals **p_globals);
   void python_whitespace(struct D_Parser *p, d_loc_t *loc, void **p_globals);
+  int py_node_indent(struct D_Parser *p, const char *s);
+  int py_next_indent(struct D_Parser *p);
   int dparser_python_user_size = sizeof(D_ParseNode_User);
   int dparser_python_globals_size = sizeof(D_ParseNode_Globals);
 }
@@ -247,10 +249,17 @@ except_clause: 'except' (test (',' test)?)? {
   dig_collect($$.ast, &$n);
 };
 suite: simple_stmt
-     | NL INDENT stmt+ DEDENT {
+     | NL INDENT suite_cmds DEDENT {
          $$.ast = new_pyast(PY_suite, &$n);
          dig_collect($$.ast, &$n);
        };
+
+suite_cmds: stmt
+          | suite_cmds stmt [
+              if (py_node_indent(${parser}, $n0.start_loc.s) != py_node_indent(${parser}, $n1.start_loc.s))
+                return -1;
+            ]
+          ;
 
 testlist_safe: old_test ((',' old_test)+ ','?)? {
   if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
@@ -733,6 +742,26 @@ Ldone:;
           *pg->current_indent++ = i;
         }
       loc->s = p;
+  }
+
+  int py_node_indent(struct D_Parser *p, const char *s) {
+    if (!s) return -1;
+    const char *x = s - 1;
+    while (*x == ' ' || *x == '\t') x--;
+    if (*x != '\n') return -1;
+    x++;
+    int i = 0;
+    while (x < s) {
+      if (*x == ' ') i++;
+      else if (*x == '\t') i = (i + 7) & ~7;
+      x++;
+    }
+    return i;
+  }
+
+  int py_next_indent(struct D_Parser *p) {
+    if (!p->loc.s) return -1;
+    return py_node_indent(p, p->loc.s);
   }
 
   int python_indent(PythonGlobals **p_globals) {
