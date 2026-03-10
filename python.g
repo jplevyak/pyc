@@ -50,10 +50,10 @@ funcdef: 'def' NAME parameters ':' suite {
 parameters: LP varargslist? RP {
   $$.ast = new_pyast_collect(PY_parameters, &$n);
 };
-varargsarg: fpdef '=' test { $$.ast = new_pyast(PY_arg_default, &$n); $$.ast->add($0.ast); $$.ast->add($2.ast); }
+varargsarg: fpdef '=' test { $$.ast = new_pyast(PY_arg_default, &$n, $0.ast, $2.ast); }
            | fpdef { $$.ast = $0.ast; };
-star_arg: '*' NAME { $$.ast = new_pyast(PY_star_arg, &$n); $$.ast->add($1.ast); };
-dstar_arg: '**' NAME { $$.ast = new_pyast(PY_dstar_arg, &$n); $$.ast->add($1.ast); };
+star_arg: '*' NAME { $$.ast = new_pyast(PY_star_arg, &$n, $1.ast); };
+dstar_arg: '**' NAME { $$.ast = new_pyast(PY_dstar_arg, &$n, $1.ast); };
 varargslist: varargsarg (',' varargsarg)* (',' (star_arg (',' dstar_arg)? | dstar_arg))? ','? {
   $$.ast = new_pyast_collect(PY_varargslist, &$n);
 }
@@ -229,8 +229,7 @@ and_test: not_test ('and' not_test)* {
   $$.ast = pass_or_collect(1, PY_bool_and, &$n, $0.ast);
 };
 not_test: 'not' not_test {
-    $$.ast = new_pyast(PY_bool_not, &$n);
-    $$.ast->add($1.ast);
+    $$.ast = new_pyast(PY_bool_not, &$n, $1.ast);
   }
   | comparison;
 comparison: expr (comp_op expr)* {
@@ -286,8 +285,7 @@ atom:
       $$.ast = inner ? inner : new_pyast(PY_dict, &$n);
     }
   | '`' testlist1 '`' {
-      $$.ast = new_pyast(PY_backquote, &$n);
-      $$.ast->add($1.ast);
+      $$.ast = new_pyast(PY_backquote, &$n, $1.ast);
     }
   | NAME { $$.ast = $0.ast; }
   | NUMBER {
@@ -302,24 +300,19 @@ atom:
     }
   ;
 listmaker: test list_for {
-    $$.ast = new_pyast(PY_listcomp, &$n);
-    $$.ast->add($0.ast);
-    $$.ast->add($1.ast);
+    $$.ast = new_pyast(PY_listcomp, &$n, $0.ast, $1.ast);
   }
   | test (',' test)* ','? {
     if (d_get_number_of_children(d_get_child(&$n, 1)) == 0 &&
         d_get_number_of_children(d_get_child(&$n, 2)) == 0) {
-      $$.ast = new_pyast(PY_list, &$n);
-      $$.ast->add($0.ast);
+      $$.ast = new_pyast(PY_list, &$n, $0.ast);
     } else {
       $$.ast = new_pyast_collect(PY_list, &$n);
     }
   }
   ;
 testlist_comp: test comp_for {
-    $$.ast = new_pyast(PY_genexpr, &$n);
-    $$.ast->add($0.ast);
-    $$.ast->add($1.ast);
+    $$.ast = new_pyast(PY_genexpr, &$n, $0.ast, $1.ast);
   }
   | test (',' test)* ','? {
     $$.ast = pass_or_collect2(1, 2, PY_tuple, &$n, $0.ast);  /* single expr → pass through, else tuple */
@@ -335,8 +328,7 @@ trailer: LP arglist? RP {
     $$.ast = new_pyast_collect(PY_subscript, &$n);
   }
   | '.' NAME {
-    $$.ast = new_pyast(PY_attribute, &$n);
-    $$.ast->add($1.ast);  /* the NAME node */
+    $$.ast = new_pyast(PY_attribute, &$n, $1.ast);  /* the NAME node */
   }
   ;
 subscriptlist: subscript (',' subscript)* ','? {
@@ -369,9 +361,7 @@ dictorsetmaker:
       $$.ast = new_pyast_collect(PY_dict, &$n);
     }
   | test comp_for {
-      $$.ast = new_pyast(PY_set, &$n);
-      $$.ast->add($0.ast);
-      $$.ast->add($1.ast);
+      $$.ast = new_pyast(PY_set, &$n, $0.ast, $1.ast);
     }
   | test (',' test)* ','? {
       $$.ast = new_pyast_collect(PY_set, &$n);
@@ -392,9 +382,7 @@ argument: test comp_for? {
     $$.ast = pass_or_collect(1, PY_genexpr, &$n, $0.ast);
   }
   | test '=' test {
-    $$.ast = new_pyast(PY_keyword_arg, &$n);
-    $$.ast->add($0.ast);
-    $$.ast->add($2.ast);
+    $$.ast = new_pyast(PY_keyword_arg, &$n, $0.ast, $2.ast);
   }
   ;
 
@@ -570,11 +558,13 @@ Ldone:;
     return r;
   }
 
-  static PyDAST *new_pyast(PyASTKind kind, D_ParseNode *pn) {
+  template <typename... Args>
+  static PyDAST *new_pyast(PyASTKind kind, D_ParseNode *pn, Args... children) {
     PyDAST *n = new PyDAST();
     n->kind = kind;
     n->filename = pn->start_loc.pathname;
     n->line = pn->start_loc.line;
+    (n->add(children), ...);
     return n;
   }
 
