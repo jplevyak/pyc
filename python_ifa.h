@@ -50,6 +50,7 @@ class PycAST : public IFAAST {
 
   stmt_ty xstmt;
   expr_ty xexpr;
+  PyDAST *xpyd;  // DParser AST node (Phase 4+)
   cchar *filename;
   PycAST *parent;
   Vec<PycAST *> pre_scope_children;

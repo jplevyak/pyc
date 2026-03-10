@@ -547,6 +547,10 @@ subscript: '.' '.' '.' { $$.ast = new_pyast(PY_slice, &$n); }
          | test
          | test? ':' test? sliceop? {
              $$.ast = new_pyast(PY_slice, &$n);
+             int has_lower = (d_get_number_of_children(d_get_child(&$n, 0)) > 0);
+             int has_upper = (d_get_number_of_children(d_get_child(&$n, 2)) > 0);
+             $$.ast->is_int = 1;
+             $$.ast->int_val = has_lower | (has_upper << 1);
              dig_collect($$.ast, &$n);
            }
          ;

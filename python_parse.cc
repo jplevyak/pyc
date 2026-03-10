@@ -16,7 +16,7 @@ static D_Parser *make_python_parser(const char *filename, const char *buf, int l
   p->loc.pathname = (char *)filename;
   p->loc.line = 1;
   p->loc.col = 0;
-  p->save_parse_tree = 0;
+  p->save_parse_tree = 1;
   p->initial_white_space_fn = (D_WhiteSpaceFn)python_whitespace;
   PythonGlobals *pg = (PythonGlobals *)MALLOC(dparser_python_globals_size);
   memset(pg, 0, dparser_python_globals_size);

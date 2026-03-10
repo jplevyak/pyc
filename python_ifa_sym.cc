@@ -118,6 +118,33 @@ static void finalize_function(Fun *f) {
   Sym *fn = f->sym;
   if (!f->ast) return;  // __main__
   PycAST *a = (PycAST *)f->ast;
+  // Handle pyda path
+  if (a->xpyd) {
+    PyDAST *funcnode = a->xpyd;
+    if (funcnode->kind == PY_classdef || funcnode->kind == PY_decorated) return;
+    PyDAST *varargslist = nullptr;
+    if (funcnode->kind == PY_funcdef && funcnode->children.n >= 2) {
+      PyDAST *params = funcnode->children[1];  // PY_parameters
+      if (params->children.n > 0) varargslist = params->children[0];
+    } else if (funcnode->kind == PY_lambda) {
+      if (funcnode->children.n > 0 && funcnode->children[0]->kind == PY_varargslist)
+        varargslist = funcnode->children[0];
+    }
+    if (!varargslist) return;
+    Vec<PycAST *> defaults;
+    for (auto c : varargslist->children.values())
+      if (c->kind == PY_arg_default) defaults.add(getAST(c->children[1], a));
+    if (!defaults.n) return;
+    int skip = fn->has.n - defaults.n;
+    assert(skip >= 0);
+    MPosition p;
+    p.push(skip + 1);
+    for (int i = 0; i < defaults.n; i++) {
+      fn->fun->default_args.put(cannonicalize_mposition(p), defaults[i]);
+      p.inc();
+    }
+    return;
+  }
   arguments_ty args = 0;
   if (a->xstmt) {
     stmt_ty s = a->xstmt;
@@ -541,6 +568,12 @@ void exit_scope(stmt_ty x, PycCompiler &ctx) {
 void exit_scope(expr_ty x, PycCompiler &ctx) {
   ctx.node = x;
   if (needs_scope(x)) exit_scope(ctx);
+}
+
+// PyDAST scope helpers
+void enter_scope(PyDAST *n, PycCompiler &ctx, Sym *in) {
+  ctx.node = n;
+  enter_scope(ctx, in);
 }
 
 static cchar *pyc_scoping_names[] = {"use", "local", "global", "nonlocal"};

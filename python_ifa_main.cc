@@ -136,7 +136,10 @@ static void fixup_aspect() {
 }
 
 void build_module_attributes_if1(PycModule *mod, PycCompiler &ctx, Code **code) {
-  ctx.node = mod->mod;
+  if (mod->pymod && !mod->is_builtin)
+    ctx.node = mod->pymod;
+  else
+    ctx.node = mod->mod;
   enter_scope(ctx);
   if (mod == ctx.modules->v[1])
     if1_move(if1, code, make_string("__main__"), mod->name_sym->sym);
@@ -238,7 +241,10 @@ int ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
   for (auto x : base_mods.values()) {
     ctx->mod = x;
     build_module_attributes_if1(x, *ctx, &code);
-    if (build_if1_module(x->mod, *ctx, &code) < 0) return -1;
+    if (x->pymod && !x->is_builtin)
+      build_if1_module_pyda(x->pymod, *ctx, &code);
+    else if (build_if1_module(x->mod, *ctx, &code) < 0)
+      return -1;
   }
   finalize_types(if1);
   if (test_scoping) exit(0);

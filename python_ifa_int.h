@@ -6,6 +6,7 @@
 #pragma once
 #include "defs.h"
 #include "dirent.h"
+#include "python_ast.h"
 
 #define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin()))
 #define EXPR_CONTEXT_SYM ((expr_context_ty)100)
@@ -26,6 +27,7 @@ struct PycScope : public gc {
 // -- Globals defined in python_ifa_util.cc --
 extern Map<stmt_ty, PycAST *> stmtmap;
 extern Map<expr_ty, PycAST *> exprmap;
+extern Map<PyDAST *, PycAST *> pydmap;
 extern Sym *sym_long, *sym_ellipsis, *sym_ellipsis_type, *sym_unicode, *sym_buffer, *sym_xrange, *sym_declare;
 #define S(_x) extern Sym *sym_##_x;
 #include "pyc_symbols.h"
@@ -126,6 +128,28 @@ static inline PycAST *getAST(expr_ty e, PycAST *a) {
   return ast;
 }
 
+static inline PycAST *getAST(PyDAST *n, PycCompiler &ctx) {
+  PycAST *ast = pydmap.get(n);
+  if (ast) return ast;
+  ast = new PycAST;
+  ast->filename = n->filename ? n->filename : ctx.filename;
+  ast->is_builtin = ctx.is_builtin();
+  ast->xpyd = n;
+  pydmap.put(n, ast);
+  return ast;
+}
+
+static inline PycAST *getAST(PyDAST *n, PycAST *a) {
+  PycAST *ast = pydmap.get(n);
+  if (ast) return ast;
+  ast = new PycAST;
+  ast->filename = a->filename;
+  ast->is_builtin = a->is_builtin;
+  ast->xpyd = n;
+  pydmap.put(n, ast);
+  return ast;
+}
+
 static inline Sym *gen_or_default(expr_ty e, Sym *def, PycAST *ast, PycCompiler &ctx) {
   if (e) {
     PycAST *east = getAST(e, ctx);
@@ -174,6 +198,7 @@ void enter_scope(PycCompiler &ctx, Sym *in = 0);
 void enter_scope(PycCompiler &ctx, mod_ty mod);
 void enter_scope(stmt_ty x, PycAST *ast, PycCompiler &ctx);
 void enter_scope(expr_ty x, PycAST *ast, PycCompiler &ctx);
+void enter_scope(PyDAST *n, PycCompiler &ctx, Sym *in = 0);
 void exit_scope(PycCompiler &ctx);
 void exit_scope(stmt_ty x, PycCompiler &ctx);
 void exit_scope(expr_ty x, PycCompiler &ctx);
@@ -211,9 +236,16 @@ Sym *map_operator(operator_ty op);
 Sym *map_ioperator(operator_ty op);
 Sym *map_unary_operator(unaryop_ty op);
 Sym *map_cmp_operator(cmpop_ty op);
+// pyda path (from python_ifa_build_syms.cc):
+void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCompiler &ctx);
+void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
+void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
+void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 
 // From python_ifa_build_if1.cc:
 int build_if1_module(mod_ty mod, PycCompiler &ctx, Code **code);
+// pyda path:
+int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code);
 
 // From python_ifa_main.cc:
 void build_module_attributes_if1(PycModule *mod, PycCompiler &ctx, Code **code);

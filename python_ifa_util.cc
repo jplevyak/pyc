@@ -18,6 +18,7 @@ int scope_id = 0;
 // -- Globals --
 Map<stmt_ty, PycAST *> stmtmap;
 Map<expr_ty, PycAST *> exprmap;
+Map<PyDAST *, PycAST *> pydmap;
 Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0, *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0,
     *sym_declare = 0;
 
@@ -56,6 +57,7 @@ int PycSymbol::column() {
   if (!a) return 0;
   if (a->xstmt) return a->xstmt->lineno;
   if (a->xexpr) return a->xexpr->lineno;
+  if (a->xpyd) return a->xpyd->line;
   return 0;
 }
 
@@ -64,6 +66,7 @@ int PycSymbol::line() {
   if (!a) return 0;
   if (a->xstmt) return a->xstmt->lineno;
   if (a->xexpr) return a->xexpr->lineno;
+  if (a->xpyd) return a->xpyd->line;
   return 0;
 }
 
@@ -79,6 +82,7 @@ int PycSymbol::ast_id() { return 0; }
 PycAST::PycAST()
     : xstmt(0),
       xexpr(0),
+      xpyd(0),
       filename(0),
       parent(0),
       code(0),
@@ -92,15 +96,23 @@ PycAST::PycAST()
 
 cchar *PycAST::pathname() { return filename; }
 
-int PycAST::column() { return xstmt ? xstmt->col_offset : xexpr->col_offset; }
+int PycAST::column() {
+  if (xstmt) return xstmt->col_offset;
+  if (xexpr) return xexpr->col_offset;
+  if (xpyd) return 0;
+  return 0;
+}
 
-int PycAST::line() { return xstmt ? xstmt->lineno : xexpr->lineno; }
+int PycAST::line() {
+  if (xstmt) return xstmt->lineno;
+  if (xexpr) return xexpr->lineno;
+  if (xpyd) return xpyd->line;
+  return 0;
+}
 
 int PycAST::source_line() {
-  if (is_builtin)
-    return 0;
-  else
-    return line();
+  if (is_builtin) return 0;
+  return line();
 }
 
 Sym *PycAST::symbol() {
