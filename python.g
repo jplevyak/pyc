@@ -28,8 +28,7 @@ ${declare subparser eval_input}
 ${declare whitespace python_whitespace}
 
 file_input: (NL | stmt)* {
-  $$.ast = new_pyast(PY_module, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_module, &$n);
   ((PythonGlobals *)$g)->root_ast = $$.ast;
 };
 
@@ -37,90 +36,72 @@ single_input: NL | simple_stmt | compound_stmt NL;
 eval_input: testlist NL*;
 
 decorator: '@' dotted_name ( LP arglist? RP )? NL {
-  $$.ast = new_pyast(PY_decorator, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_decorator, &$n);
 };
 decorators: decorator+ {
-  $$.ast = new_pyast(PY_suite, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_suite, &$n);
 };
 decorated: decorators (classdef | funcdef) {
-  $$.ast = new_pyast(PY_decorated, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_decorated, &$n);
 };
 funcdef: 'def' NAME parameters ':' suite {
-  $$.ast = new_pyast(PY_funcdef, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_funcdef, &$n);
 };
 parameters: LP varargslist? RP {
-  $$.ast = new_pyast(PY_parameters, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_parameters, &$n);
 };
 varargsarg: fpdef '=' test { $$.ast = new_pyast(PY_arg_default, &$n); $$.ast->add($0.ast); $$.ast->add($2.ast); }
            | fpdef { $$.ast = $0.ast; };
 star_arg: '*' NAME { $$.ast = new_pyast(PY_star_arg, &$n); $$.ast->add($1.ast); };
 dstar_arg: '**' NAME { $$.ast = new_pyast(PY_dstar_arg, &$n); $$.ast->add($1.ast); };
 varargslist: varargsarg (',' varargsarg)* (',' (star_arg (',' dstar_arg)? | dstar_arg))? ','? {
-  $$.ast = new_pyast(PY_varargslist, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_varargslist, &$n);
 }
 | star_arg (',' dstar_arg)? ','? {
-  $$.ast = new_pyast(PY_varargslist, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_varargslist, &$n);
 }
 | dstar_arg ','? {
-  $$.ast = new_pyast(PY_varargslist, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_varargslist, &$n);
 };
 fpdef: NAME | LP fplist RP {
-  $$.ast = new_pyast(PY_fpdef, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_fpdef, &$n);
 };
 fplist: fpdef (',' fpdef)* ','? {
-  $$.ast = new_pyast(PY_fplist, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_fplist, &$n);
 };
 
 stmt: simple_stmt | compound_stmt;
 simple_stmt: small_stmt (';' small_stmt)* ';'? NL {
-  /* If only one small_stmt (ebnf_nc == 0), pass through; else wrap in suite */
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_suite, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  /* If only one small_stmt, pass through; else wrap in suite */
+  $$.ast = pass_or_collect(1, PY_suite, &$n, $0.ast);
 };
 small_stmt: expr_stmt | print_stmt | del_stmt | pass_stmt | flow_stmt | import_stmt | global_stmt | exec_stmt | assert_stmt;
 
 expr_stmt: testlist (augassign testlist | ('=' testlist)*) {
-  $$.ast = new_pyast(PY_expr_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_expr_stmt, &$n);
   if ($$.ast->children.n >= 2 && $$.ast->children.v[1]->kind == PY_augassign)
     $$.ast->kind = PY_augassign;
   else if ($$.ast->children.n >= 2)
     $$.ast->kind = PY_assign;
 };
-augassign: '+=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_ADD; }
-         | '-=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_SUB; }
-         | '*=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_MUL; }
-         | '/=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_DIV; }
-         | '%=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_MOD; }
-         | '&=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_BITAND; }
-         | '|=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_BITOR; }
-         | '^=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_BITXOR; }
-         | '<<=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_LSHIFT; }
-         | '>>=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_RSHIFT; }
-         | '**=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_POW; }
-         | '//=' { $$.ast = new_pyast(PY_augassign, &$n); $$.ast->op = PY_OP_FLOORDIV; }
+augassign: '+='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_ADD); }
+         | '-='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_SUB); }
+         | '*='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_MUL); }
+         | '/='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_DIV); }
+         | '%='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_MOD); }
+         | '&='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_BITAND); }
+         | '|='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_BITOR); }
+         | '^='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_BITXOR); }
+         | '<<=' { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_LSHIFT); }
+         | '>>=' { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_RSHIFT); }
+         | '**=' { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_POW); }
+         | '//=' { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_FLOORDIV); }
          ;
 print_stmt: 'print' ( ( test (',' test)* ','? )? | '>>' test ( (',' test)+ ','? )? ) {
-  $$.ast = new_pyast(PY_print_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_print_stmt, &$n);
 };
 del_stmt: 'del' exprlist {
-  $$.ast = new_pyast(PY_del_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_del_stmt, &$n);
 };
 pass_stmt: 'pass' {
   $$.ast = new_pyast(PY_pass_stmt, &$n);
@@ -133,50 +114,33 @@ continue_stmt: 'continue' {
   $$.ast = new_pyast(PY_continue_stmt, &$n);
 };
 return_stmt: 'return' testlist? {
-  $$.ast = new_pyast(PY_return_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_return_stmt, &$n);
 };
 raise_stmt: 'raise' (test (',' test (',' test)?)?)? {
-  $$.ast = new_pyast(PY_raise_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_raise_stmt, &$n);
 };
 yield_stmt: 'yield' testlist {
-  $$.ast = new_pyast(PY_yield_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_yield_stmt, &$n);
 };
 import_stmt: import_name | import_from;
 import_name: 'import' dotted_as_names {
-  $$.ast = new_pyast(PY_import_name, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_import_name, &$n);
 };
 import_from: ('from' ('.'* dotted_name | '.'+)
               'import' ('*' | '(' import_as_names ')' | import_as_names)) {
-  $$.ast = new_pyast(PY_import_from, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_import_from, &$n);
 };
 import_as_name: NAME ('as' NAME)? {
-  $$.ast = new_pyast(PY_import_as_name, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_import_as_name, &$n);
 };
 dotted_as_name: dotted_name ('as' NAME)? {
-  $$.ast = new_pyast(PY_dotted_as_name, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_dotted_as_name, &$n);
 };
 import_as_names: import_as_name (',' import_as_name)* ','? {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_testlist, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_testlist, &$n, $0.ast);
 };
 dotted_as_names: dotted_as_name (',' dotted_as_name)* {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_testlist, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_testlist, &$n, $0.ast);
 };
 dotted_name: NAME ('.' NAME)* {
   $$.ast = new_pyast(PY_dotted_name, &$n);
@@ -184,74 +148,59 @@ dotted_name: NAME ('.' NAME)* {
   $$.ast->str_val = pyast_dupstr($n.start_loc.s, len);
 };
 global_stmt: 'global' NAME (',' NAME)* {
-  $$.ast = new_pyast(PY_global_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_global_stmt, &$n);
 };
 exec_stmt: 'exec' expr ('in' test (',' test)?)? {
-  $$.ast = new_pyast(PY_exec_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_exec_stmt, &$n);
 };
 assert_stmt: 'assert' test (',' test)? {
-  $$.ast = new_pyast(PY_assert_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_assert_stmt, &$n);
 };
 
 compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated;
 
 /* Named clause sub-rules for cleaner AST */
 elif_clause: 'elif' test ':' suite {
-  $$.ast = new_pyast(PY_elif_clause, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_elif_clause, &$n);
 };
 else_clause: 'else' ':' suite {
-  $$.ast = new_pyast(PY_else_clause, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_else_clause, &$n);
 };
 except_handler: except_clause ':' suite {
-  $$.ast = new_pyast(PY_except_handler, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_except_handler, &$n);
 };
 finally_clause: 'finally' ':' suite {
-  $$.ast = new_pyast(PY_finally_clause, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_finally_clause, &$n);
 };
 
 if_stmt: 'if' test ':' suite elif_clause* else_clause? {
-  $$.ast = new_pyast(PY_if_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_if_stmt, &$n);
 };
 while_stmt: 'while' test ':' suite else_clause? {
-  $$.ast = new_pyast(PY_while_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_while_stmt, &$n);
 };
 for_stmt: 'for' exprlist 'in' testlist ':' suite else_clause? {
-  $$.ast = new_pyast(PY_for_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_for_stmt, &$n);
 };
 try_stmt: ('try' ':' suite
            ((except_handler)+
             else_clause?
             finally_clause? |
             finally_clause)) {
-  $$.ast = new_pyast(PY_try_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_try_stmt, &$n);
 };
 with_stmt: 'with' with_item (',' with_item)*  ':' suite {
-  $$.ast = new_pyast(PY_with_stmt, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_with_stmt, &$n);
 };
 with_item: test ('as' expr)? {
-  $$.ast = new_pyast(PY_with_item, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_with_item, &$n);
 };
 except_clause: 'except' (test (',' test)?)? {
-  $$.ast = new_pyast(PY_except_clause, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_except_clause, &$n);
 };
 suite: simple_stmt
      | NL INDENT suite_cmds DEDENT {
-         $$.ast = new_pyast(PY_suite, &$n);
-         dig_collect($$.ast, &$n);
+         $$.ast = new_pyast_collect(PY_suite, &$n);
        };
 
 suite_cmds: stmt
@@ -262,44 +211,22 @@ suite_cmds: stmt
           ;
 
 testlist_safe: old_test ((',' old_test)+ ','?)? {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_testlist, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_testlist, &$n, $0.ast);
 };
 old_test: or_test | old_lambdef;
 old_lambdef: 'lambda' varargslist? ':' old_test {
-  $$.ast = new_pyast(PY_lambda, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_lambda, &$n);
 };
 
 test: or_test ('if' or_test 'else' test)? {
-    /* $# == 2 when ternary matches, $# == 1 for plain or_test */
-    if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-      $$.ast = $0.ast;
-    } else {
-      $$.ast = new_pyast(PY_ternary, &$n);
-      dig_collect($$.ast, &$n);
-    }
+    $$.ast = pass_or_collect(1, PY_ternary, &$n, $0.ast);
   }
   | lambdef;
 or_test: and_test ('or' and_test)* {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_bool_or, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_bool_or, &$n, $0.ast);
 };
 and_test: not_test ('and' not_test)* {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_bool_and, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_bool_and, &$n, $0.ast);
 };
 not_test: 'not' not_test {
     $$.ast = new_pyast(PY_bool_not, &$n);
@@ -307,133 +234,26 @@ not_test: 'not' not_test {
   }
   | comparison;
 comparison: expr (comp_op expr)* {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_compare, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_compare, &$n, $0.ast);
 };
-comp_op: '<'      { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_LT; }
-       | '>'      { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_GT; }
-       | '=='     { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_EQ; }
-       | '>='     { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_GE; }
-       | '<='     { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_LE; }
-       | '<>'     { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_LTGT; }
-       | '!='     { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_NE; }
-       | 'in'     { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_IN; }
-       | 'not' 'in' { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_NOT_IN; }
-       | 'is'     { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_IS; }
-       | 'is' 'not' { $$.ast = new_pyast(PY_cmp_op, &$n); $$.ast->op = PY_CMP_IS_NOT; }
+comp_op: '<'       { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_LT); }
+       | '>'       { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_GT); }
+       | '=='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_EQ); }
+       | '>='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_GE); }
+       | '<='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_LE); }
+       | '<>'      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_LTGT); }
+       | '!='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_NE); }
+       | 'in'      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_IN); }
+       | 'not' 'in'  { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_NOT_IN); }
+       | 'is'      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_IS); }
+       | 'is' 'not' { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_IS_NOT); }
        ;
-expr: xor_expr ('|' xor_expr)* {
-  D_ParseNode *list = d_get_child(&$n, 1);
-  int nc = d_get_number_of_children(list);
-  if (nc == 0) { $$.ast = $0.ast; }
-  else {
-    PyDAST *result = $0.ast;
-    for (int i = 0; i < nc; i++) {
-      D_ParseNode *iter = d_get_child(list, i);
-      PyDAST *right = dig_pyast(iter);
-      PyDAST *b = new_pyast(PY_binop, iter);
-      b->op = PY_OP_BITOR;
-      b->add(result); b->add(right);
-      result = b;
-    }
-    $$.ast = result;
-  }
-};
-xor_expr: and_expr ('^' and_expr)* {
-  D_ParseNode *list = d_get_child(&$n, 1);
-  int nc = d_get_number_of_children(list);
-  if (nc == 0) { $$.ast = $0.ast; }
-  else {
-    PyDAST *result = $0.ast;
-    for (int i = 0; i < nc; i++) {
-      D_ParseNode *iter = d_get_child(list, i);
-      PyDAST *right = dig_pyast(iter);
-      PyDAST *b = new_pyast(PY_binop, iter);
-      b->op = PY_OP_BITXOR;
-      b->add(result); b->add(right);
-      result = b;
-    }
-    $$.ast = result;
-  }
-};
-and_expr: shift_expr ('&' shift_expr)* {
-  D_ParseNode *list = d_get_child(&$n, 1);
-  int nc = d_get_number_of_children(list);
-  if (nc == 0) { $$.ast = $0.ast; }
-  else {
-    PyDAST *result = $0.ast;
-    for (int i = 0; i < nc; i++) {
-      D_ParseNode *iter = d_get_child(list, i);
-      PyDAST *right = dig_pyast(iter);
-      PyDAST *b = new_pyast(PY_binop, iter);
-      b->op = PY_OP_BITAND;
-      b->add(result); b->add(right);
-      result = b;
-    }
-    $$.ast = result;
-  }
-};
-shift_expr: arith_expr (('<<'|'>>') arith_expr)* {
-  D_ParseNode *list = d_get_child(&$n, 1);
-  int nc = d_get_number_of_children(list);
-  if (nc == 0) { $$.ast = $0.ast; }
-  else {
-    PyDAST *result = $0.ast;
-    for (int i = 0; i < nc; i++) {
-      D_ParseNode *iter = d_get_child(list, i);
-      char opch = iter->start_loc.s[0];
-      PyDAST *right = dig_pyast(iter);
-      PyDAST *b = new_pyast(PY_binop, iter);
-      b->op = (opch == '<') ? PY_OP_LSHIFT : PY_OP_RSHIFT;
-      b->add(result); b->add(right);
-      result = b;
-    }
-    $$.ast = result;
-  }
-};
-arith_expr: term (('+'|'-') term)* {
-  D_ParseNode *list = d_get_child(&$n, 1);
-  int nc = d_get_number_of_children(list);
-  if (nc == 0) { $$.ast = $0.ast; }
-  else {
-    PyDAST *result = $0.ast;
-    for (int i = 0; i < nc; i++) {
-      D_ParseNode *iter = d_get_child(list, i);
-      char opch = iter->start_loc.s[0];
-      PyDAST *right = dig_pyast(iter);
-      PyDAST *b = new_pyast(PY_binop, iter);
-      b->op = (opch == '+') ? PY_OP_ADD : PY_OP_SUB;
-      b->add(result); b->add(right);
-      result = b;
-    }
-    $$.ast = result;
-  }
-};
-term: factor (('*'|'/'|'%'|'//') factor)* {
-  D_ParseNode *list = d_get_child(&$n, 1);
-  int nc = d_get_number_of_children(list);
-  if (nc == 0) { $$.ast = $0.ast; }
-  else {
-    PyDAST *result = $0.ast;
-    for (int i = 0; i < nc; i++) {
-      D_ParseNode *iter = d_get_child(list, i);
-      const char *op = iter->start_loc.s;
-      PyDAST *right = dig_pyast(iter);
-      PyDAST *b = new_pyast(PY_binop, iter);
-      if (op[0] == '*') b->op = PY_OP_MUL;
-      else if (op[0] == '/' && op[1] == '/') b->op = PY_OP_FLOORDIV;
-      else if (op[0] == '/') b->op = PY_OP_DIV;
-      else b->op = PY_OP_MOD;
-      b->add(result); b->add(right);
-      result = b;
-    }
-    $$.ast = result;
-  }
-};
+expr:       xor_expr ('|'              xor_expr)* { $$.ast = build_binop_list($0.ast, &$n, op_bitor);  };
+xor_expr:  and_expr ('^'              and_expr)* { $$.ast = build_binop_list($0.ast, &$n, op_bitxor); };
+and_expr: shift_expr ('&'            shift_expr)* { $$.ast = build_binop_list($0.ast, &$n, op_bitand); };
+shift_expr: arith_expr (('<<'|'>>') arith_expr)* { $$.ast = build_binop_list($0.ast, &$n, op_shift);  };
+arith_expr:    term (('+'|'-')           term)* { $$.ast = build_binop_list($0.ast, &$n, op_arith);  };
+term:        factor (('*'|'/'|'%'|'//') factor)* { $$.ast = build_binop_list($0.ast, &$n, op_term);   };
 factor: ('+'|'-'|'~') factor {
     $$.ast = new_pyast(PY_unaryop, &$n);
     char opch = $n.start_loc.s[0];
@@ -443,13 +263,7 @@ factor: ('+'|'-'|'~') factor {
   | power;
 power: atom trailer* ('**' factor)* {
   /* Pass through if just an atom with no trailers and no ** */
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0 &&
-      d_get_number_of_children(d_get_child(&$n, 2)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_power, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect2(1, 2, PY_power, &$n, $0.ast);
 };
 atom:
     LP (yield_expr|testlist_comp)? RP {
@@ -498,8 +312,7 @@ listmaker: test list_for {
       $$.ast = new_pyast(PY_list, &$n);
       $$.ast->add($0.ast);
     } else {
-      $$.ast = new_pyast(PY_list, &$n);
-      dig_collect($$.ast, &$n);
+      $$.ast = new_pyast_collect(PY_list, &$n);
     }
   }
   ;
@@ -509,26 +322,17 @@ testlist_comp: test comp_for {
     $$.ast->add($1.ast);
   }
   | test (',' test)* ','? {
-    if (d_get_number_of_children(d_get_child(&$n, 1)) == 0 &&
-        d_get_number_of_children(d_get_child(&$n, 2)) == 0) {
-      $$.ast = $0.ast;  /* single expr, no tuple */
-    } else {
-      $$.ast = new_pyast(PY_tuple, &$n);
-      dig_collect($$.ast, &$n);
-    }
+    $$.ast = pass_or_collect2(1, 2, PY_tuple, &$n, $0.ast);  /* single expr → pass through, else tuple */
   }
   ;
 lambdef: 'lambda' varargslist? ':' test {
-  $$.ast = new_pyast(PY_lambda, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_lambda, &$n);
 };
 trailer: LP arglist? RP {
-    $$.ast = new_pyast(PY_call, &$n);
-    dig_collect($$.ast, &$n);
+    $$.ast = new_pyast_collect(PY_call, &$n);
   }
   | LB subscriptlist RB {
-    $$.ast = new_pyast(PY_subscript, &$n);
-    dig_collect($$.ast, &$n);
+    $$.ast = new_pyast_collect(PY_subscript, &$n);
   }
   | '.' NAME {
     $$.ast = new_pyast(PY_attribute, &$n);
@@ -536,53 +340,33 @@ trailer: LP arglist? RP {
   }
   ;
 subscriptlist: subscript (',' subscript)* ','? {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_subscriptlist, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_subscriptlist, &$n, $0.ast);
 };
 subscript: '.' '.' '.' { $$.ast = new_pyast(PY_slice, &$n); }
          | test
          | test? ':' test? sliceop? {
-             $$.ast = new_pyast(PY_slice, &$n);
              int has_lower = (d_get_number_of_children(d_get_child(&$n, 0)) > 0);
              int has_upper = (d_get_number_of_children(d_get_child(&$n, 2)) > 0);
+             $$.ast = new_pyast_collect(PY_slice, &$n);
              $$.ast->is_int = 1;
              $$.ast->int_val = has_lower | (has_upper << 1);
-             dig_collect($$.ast, &$n);
            }
          ;
 sliceop: ':' test? {
-  $$.ast = new_pyast(PY_slice, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_slice, &$n);
 };
 exprlist: expr (',' expr)* ','? {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_exprlist, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_exprlist, &$n, $0.ast);
 };
 testlist: test (',' test)* ','? {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0 &&
-      d_get_number_of_children(d_get_child(&$n, 2)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_tuple, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect2(1, 2, PY_tuple, &$n, $0.ast);
 };
 dictorsetmaker:
     test ':' test comp_for {
-      $$.ast = new_pyast(PY_dict, &$n);
-      dig_collect($$.ast, &$n);
+      $$.ast = new_pyast_collect(PY_dict, &$n);
     }
   | test ':' test (',' test ':' test)* ','? {
-      $$.ast = new_pyast(PY_dict, &$n);
-      dig_collect($$.ast, &$n);
+      $$.ast = new_pyast_collect(PY_dict, &$n);
     }
   | test comp_for {
       $$.ast = new_pyast(PY_set, &$n);
@@ -590,30 +374,22 @@ dictorsetmaker:
       $$.ast->add($1.ast);
     }
   | test (',' test)* ','? {
-      $$.ast = new_pyast(PY_set, &$n);
-      dig_collect($$.ast, &$n);
+      $$.ast = new_pyast_collect(PY_set, &$n);
     }
   ;
 
 classdef: 'class' NAME (LP testlist? RP)? ':' suite {
-  $$.ast = new_pyast(PY_classdef, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_classdef, &$n);
 };
 
 arglist: (argument ',')* (argument ','?
              | '*' test (',' argument)* (',' '**' test)?
              | '**' test) {
-  $$.ast = new_pyast(PY_arglist, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_arglist, &$n);
 };
 argument: test comp_for? {
     /* positional or with comp_for (generator in call) */
-    if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-      $$.ast = $0.ast;
-    } else {
-      $$.ast = new_pyast(PY_genexpr, &$n);
-      dig_collect($$.ast, &$n);
-    }
+    $$.ast = pass_or_collect(1, PY_genexpr, &$n, $0.ast);
   }
   | test '=' test {
     $$.ast = new_pyast(PY_keyword_arg, &$n);
@@ -624,36 +400,26 @@ argument: test comp_for? {
 
 list_iter: list_for | list_if;
 list_for: 'for' exprlist 'in' testlist_safe list_iter? {
-  $$.ast = new_pyast(PY_list_for, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_list_for, &$n);
 };
 list_if: 'if' test list_iter? {
-  $$.ast = new_pyast(PY_list_if, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_list_if, &$n);
 };
 
 comp_iter: comp_for | comp_if;
 comp_for: 'for' exprlist 'in' or_test comp_iter? {
-  $$.ast = new_pyast(PY_comp_for, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_comp_for, &$n);
 };
 comp_if: 'if' old_test comp_iter? {
-  $$.ast = new_pyast(PY_comp_if, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_comp_if, &$n);
 };
 
 testlist1: test (',' test)* {
-  if (d_get_number_of_children(d_get_child(&$n, 1)) == 0) {
-    $$.ast = $0.ast;
-  } else {
-    $$.ast = new_pyast(PY_testlist1, &$n);
-    dig_collect($$.ast, &$n);
-  }
+  $$.ast = pass_or_collect(1, PY_testlist1, &$n, $0.ast);
 };
 encoding_decl: NAME;
 yield_expr: 'yield' testlist? {
-  $$.ast = new_pyast(PY_yield_expr, &$n);
-  dig_collect($$.ast, &$n);
+  $$.ast = new_pyast_collect(PY_yield_expr, &$n);
 };
 
 
@@ -823,6 +589,30 @@ Ldone:;
     }
   }
 
+  static PyDAST *new_pyast_collect(PyASTKind kind, D_ParseNode *pn) {
+    PyDAST *n = new_pyast(kind, pn);
+    dig_collect(n, pn);
+    return n;
+  }
+
+  // Pass through 'pass' if list-child at child_idx is empty, else collect into kind
+  static PyDAST *pass_or_collect(int child_idx, PyASTKind kind, D_ParseNode *pn, PyDAST *pass) {
+    return (d_get_number_of_children(d_get_child(pn, child_idx)) == 0)
+      ? pass : new_pyast_collect(kind, pn);
+  }
+  // Same but both list-children at ci1 and ci2 must be empty to pass through
+  static PyDAST *pass_or_collect2(int ci1, int ci2, PyASTKind kind, D_ParseNode *pn, PyDAST *pass) {
+    return (d_get_number_of_children(d_get_child(pn, ci1)) == 0 &&
+            d_get_number_of_children(d_get_child(pn, ci2)) == 0)
+      ? pass : new_pyast_collect(kind, pn);
+  }
+  // Create an op-bearing leaf node (augassign or cmp_op)
+  static PyDAST *new_op_ast(PyASTKind kind, D_ParseNode *pn, PyOp op) {
+    PyDAST *n = new_pyast(kind, pn);
+    n->op = op;
+    return n;
+  }
+
   /* Find the first non-null user.ast in pn or its descendants (depth-first) */
   static PyDAST *dig_pyast(D_ParseNode *pn) {
     if (pn->user.ast) return pn->user.ast;
@@ -831,6 +621,40 @@ Ldone:;
       if (a) return a;
     }
     return nullptr;
+  }
+
+  // Left-fold binary operator list into a tree of PY_binop nodes
+  // op_fn selects the operator from each iteration child node
+  static PyDAST *build_binop_list(PyDAST *left, D_ParseNode *pn, PyOp(*op_fn)(D_ParseNode *)) {
+    D_ParseNode *list = d_get_child(pn, 1);
+    int nc = d_get_number_of_children(list);
+    if (nc == 0) return left;
+    PyDAST *result = left;
+    for (int i = 0; i < nc; i++) {
+      D_ParseNode *iter = d_get_child(list, i);
+      PyDAST *right = dig_pyast(iter);
+      PyDAST *b = new_pyast(PY_binop, iter);
+      b->op = op_fn(iter);
+      b->add(result); b->add(right);
+      result = b;
+    }
+    return result;
+  }
+  static PyOp op_bitor(D_ParseNode *)   { return PY_OP_BITOR; }
+  static PyOp op_bitxor(D_ParseNode *)  { return PY_OP_BITXOR; }
+  static PyOp op_bitand(D_ParseNode *)  { return PY_OP_BITAND; }
+  static PyOp op_shift(D_ParseNode *iter) {
+    return (iter->start_loc.s[0] == '<') ? PY_OP_LSHIFT : PY_OP_RSHIFT;
+  }
+  static PyOp op_arith(D_ParseNode *iter) {
+    return (iter->start_loc.s[0] == '+') ? PY_OP_ADD : PY_OP_SUB;
+  }
+  static PyOp op_term(D_ParseNode *iter) {
+    const char *op = iter->start_loc.s;
+    if (op[0] == '*') return PY_OP_MUL;
+    if (op[0] == '/' && op[1] == '/') return PY_OP_FLOORDIV;
+    if (op[0] == '/') return PY_OP_DIV;
+    return PY_OP_MOD;
   }
 
   /* Print PyDAST for debugging */
