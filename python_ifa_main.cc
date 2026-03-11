@@ -5,7 +5,7 @@
 
 static void build_environment(PycModule *mod, PycCompiler &ctx) {
   ctx.mod = mod;
-  ctx.node = mod->mod;
+  ctx.node = mod->pymod;
   enter_scope(ctx);
   scope_sym(ctx, sym_int);
   scope_sym(ctx, sym_long);
@@ -136,10 +136,7 @@ static void fixup_aspect() {
 }
 
 void build_module_attributes_if1(PycModule *mod, PycCompiler &ctx, Code **code) {
-  if (mod->pymod && !mod->is_builtin)
-    ctx.node = mod->pymod;
-  else
-    ctx.node = mod->mod;
+  ctx.node = mod->pymod;
   enter_scope(ctx);
   if (mod == ctx.modules->v[1])
     if1_move(if1, code, make_string("__main__"), mod->name_sym->sym);
@@ -177,11 +174,13 @@ static int add_subdirs(cchar *p, Vec<cchar *> &a) {
 }
 
 static void build_search_path(PycCompiler &ctx) {
-  char *path = Py_GetPath();
   char f[PATH_MAX];
   char *here = dupstr(getcwd(f, PATH_MAX));
   ctx.search_path = new Vec<cchar *>;
   ctx.search_path->add(here);
+  const char *pythonpath_env = getenv("PYTHONPATH");
+  if (!pythonpath_env) return;
+  char *path = (char *)pythonpath_env;
   while (1) {
     char *p = path;
     char *e = strchr(p, ':'), *ee = e;
@@ -191,26 +190,11 @@ static void build_search_path(PycCompiler &ctx) {
       ctx.search_path->add(p);
       add_subdirs(p, *ctx.search_path);
     }
-    if (!e) break;
+    if (!ee) break;
     path = ee + 1;
   }
 }
 
-mod_ty file_to_mod(cchar *filename, PyArena *arena) {
-  FILE *fp = fopen(filename, "r");
-  if (!fp) fail("unable to read file '%s'", filename);
-  mod_ty mod = PyParser_ASTFromFile(fp, filename, Py_file_input, 0, 0, 0, 0, arena);
-  if (!mod)
-    error("unable to parse file '%s'", filename);
-  else {
-    PyFutureFeatures *pyc_future = PyFuture_FromAST(mod, filename);
-    if (!pyc_future)
-      error("unable to parse futures for file '%s'", filename);
-    else
-      return mod;
-  }
-  return 0;
-}
 
 void install_new_fun(Sym *f) {
   if1_finalize_closure(if1, f);
@@ -222,13 +206,12 @@ void install_new_fun(Sym *f) {
   if1_write_log();
 }
 
-int ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
+int ast_to_if1(Vec<PycModule *> &mods) {
   PycCompiler *ctx = new PycCompiler();
   ifa_init(ctx);
   if1->partial_default = Partial_NEVER;
   build_builtin_symbols();
   add_primitive_transfer_functions();
-  ctx->arena = arena;
   ctx->modules = &mods;
   Code *code = 0;
   for (auto x : mods.values()) x->filename = cannonicalize_string(x->filename);
@@ -241,14 +224,11 @@ int ast_to_if1(Vec<PycModule *> &mods, PyArena *arena) {
   for (auto x : base_mods.values()) {
     ctx->mod = x;
     build_module_attributes_if1(x, *ctx, &code);
-    if (x->pymod && !x->is_builtin)
-      build_if1_module_pyda(x->pymod, *ctx, &code);
-    else if (build_if1_module(x->mod, *ctx, &code) < 0)
-      return -1;
+    build_if1_module_pyda(x->pymod, *ctx, &code);
   }
   finalize_types(if1);
   if (test_scoping) exit(0);
-  enter_scope(*ctx, mods[0]->mod);
+  enter_scope(mods[0]->pymod, *ctx);
   build_init(code);
   exit_scope(*ctx);
   build_type_hierarchy();

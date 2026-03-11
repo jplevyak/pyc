@@ -9,7 +9,6 @@
 #include "python_ast.h"
 
 #define TEST_SCOPE if (debug_level && (!test_scoping || !ctx.is_builtin()))
-#define EXPR_CONTEXT_SYM ((expr_context_ty)100)
 
 typedef MapElem<cchar *, PycSymbol *> MapCharPycSymbolElem;
 
@@ -25,8 +24,6 @@ struct PycScope : public gc {
 };
 
 // -- Globals defined in python_ifa_util.cc --
-extern Map<stmt_ty, PycAST *> stmtmap;
-extern Map<expr_ty, PycAST *> exprmap;
 extern Map<PyDAST *, PycAST *> pydmap;
 extern Sym *sym_long, *sym_ellipsis, *sym_ellipsis_type, *sym_unicode, *sym_buffer, *sym_xrange, *sym_declare;
 #define S(_x) extern Sym *sym_##_x;
@@ -43,7 +40,6 @@ class PycCompiler : public PycCallbacks {
   cchar *filename;
   int lineno;
   void *node;
-  PyArena *arena;
   PycModule *mod, *package;
   Vec<PycModule *> *modules;
   Vec<cchar *> *search_path;
@@ -74,7 +70,7 @@ class PycCompiler : public PycCallbacks {
   bool c_codegen_pre_file(FILE *);
 
   // --- Entry point ---
-  int run(Vec<PycModule *> &mods, PyArena *arena_param);
+  int run(Vec<PycModule *> &mods);
 };
 
 // -- Inline helpers (each TU gets its own copy) --
@@ -93,39 +89,6 @@ static inline char *read_file_to_string(cchar *fn, uint64 n = 0, int *pfd = 0) {
   if (nn != (ssize_t)n) perror("read");
   if (pfd) *pfd = fd;
   return m;
-}
-
-static inline PycAST *getAST(stmt_ty s, PycCompiler &ctx) {
-  PycAST *ast = stmtmap.get(s);
-  if (ast) return ast;
-  ast = new PycAST;
-  ast->filename = ctx.filename;
-  ast->is_builtin = ctx.is_builtin();
-  ast->xstmt = s;
-  stmtmap.put(s, ast);
-  return ast;
-}
-
-static inline PycAST *getAST(expr_ty e, PycCompiler &ctx) {
-  PycAST *ast = exprmap.get(e);
-  if (ast) return ast;
-  ast = new PycAST;
-  ast->filename = ctx.filename;
-  ast->is_builtin = ctx.is_builtin();
-  ast->xexpr = e;
-  exprmap.put(e, ast);
-  return ast;
-}
-
-static inline PycAST *getAST(expr_ty e, PycAST *a) {
-  PycAST *ast = exprmap.get(e);
-  if (ast) return ast;
-  ast = new PycAST;
-  ast->filename = a->filename;
-  ast->is_builtin = a->is_builtin;
-  ast->xexpr = e;
-  exprmap.put(e, ast);
-  return ast;
 }
 
 static inline PycAST *getAST(PyDAST *n, PycCompiler &ctx) {
@@ -150,19 +113,6 @@ static inline PycAST *getAST(PyDAST *n, PycAST *a) {
   return ast;
 }
 
-static inline Sym *gen_or_default(expr_ty e, Sym *def, PycAST *ast, PycCompiler &ctx) {
-  if (e) {
-    PycAST *east = getAST(e, ctx);
-    if1_gen(if1, &ast->code, east->code);
-    return east->rval;
-  } else
-    return def;
-}
-
-template <class C>
-static void add(asdl_seq *seq, Vec<PycAST *> &asts, PycCompiler &ctx) {
-  for (int i = 0; i < asdl_seq_LEN(seq); i++) asts.add(getAST((C)asdl_seq_GET(seq, i), ctx));
-}
 
 // Scope classification
 enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
@@ -175,9 +125,6 @@ enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 #define GLOBAL_DEF ((PycSymbol *)(intptr_t)3)
 #define NONLOCAL_DEF ((PycSymbol *)(intptr_t)4)
 #define MARKED(_x) (((uintptr_t)(_x)) < 5)
-
-// import_fn typedef (used in build_syms and build_if1)
-typedef void import_fn(char *sym, char *as, char *from, PycCompiler &ctx);
 
 // -- Cross-file function declarations --
 
@@ -195,56 +142,26 @@ Sym *new_sym(PycAST *ast, cchar *name, int global = 0);
 Sym *new_global(PycAST *ast, cchar *name = 0);
 Sym *new_fun(PycAST *ast, Sym *fun = 0);
 void enter_scope(PycCompiler &ctx, Sym *in = 0);
-void enter_scope(PycCompiler &ctx, mod_ty mod);
-void enter_scope(stmt_ty x, PycAST *ast, PycCompiler &ctx);
-void enter_scope(expr_ty x, PycAST *ast, PycCompiler &ctx);
 void enter_scope(PyDAST *n, PycCompiler &ctx, Sym *in = 0);
 void exit_scope(PycCompiler &ctx);
-void exit_scope(stmt_ty x, PycCompiler &ctx);
-void exit_scope(expr_ty x, PycCompiler &ctx);
-int needs_scope(expr_ty x);
 PycSymbol *find_PycSymbol(PycCompiler &ctx, cchar *name, int *level = 0, int *type = 0);
 PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping);
-PycSymbol *make_PycSymbol(PycCompiler &ctx, PyObject *o, PYC_SCOPINGS type);
-void add(expr_ty e, Vec<PycAST *> &asts, PycCompiler &ctx);
-void add_comprehension(asdl_seq *comp, Vec<PycAST *> &asts, PycCompiler &ctx);
-void get_pre_scope_next(stmt_ty s, Vec<PycAST *> &asts, PycCompiler &ctx);
-void get_next(stmt_ty s, Vec<PycAST *> &asts, PycCompiler &ctx);
-void get_next(slice_ty s, Vec<PycAST *> &asts, PycCompiler &ctx);
-void get_pre_scope_next(expr_ty e, Vec<PycAST *> &asts, PycCompiler &ctx);
-void get_next(expr_ty e, Vec<PycAST *> &asts, PycCompiler &ctx);
 
 // From python_ifa_build_syms.cc:
 PycModule *get_module(cchar *name, PycCompiler &ctx);
 int build_syms(PycModule *x, PycCompiler &ctx);
 void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name = 0);
 Sym *make_string(cchar *s);
-Sym *make_string(PyObject *o);
-void get_syms_args(PycAST *a, arguments_ty args, Vec<Sym *> &has, PycCompiler &ctx, asdl_seq *decorators = 0);
-void build_import(stmt_ty s, import_fn fn, PycCompiler &ctx);
-void build_import_from(stmt_ty s, import_fn fn, PycCompiler &ctx);
-void gen_fun(stmt_ty s, PycAST *ast, PycCompiler &ctx);
-void gen_fun(expr_ty e, PycAST *ast, PycCompiler &ctx);
-void gen_class(stmt_ty s, PycAST *ast, PycCompiler &ctx);
-void gen_if(PycAST *ifcond, asdl_seq *ifif, asdl_seq *ifelse, PycAST *ast, PycCompiler &ctx);
 void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast);
-int get_stmts_code(asdl_seq *stmts, Code **code, PycCompiler &ctx);
 void call_method(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...);
-Sym *make_num(PyObject *o, PycCompiler &ctx);
 Sym *make_symbol(cchar *name);
-Sym *map_operator(operator_ty op);
-Sym *map_ioperator(operator_ty op);
-Sym *map_unary_operator(unaryop_ty op);
-Sym *map_cmp_operator(cmpop_ty op);
 // pyda path (from python_ifa_build_syms.cc):
 void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCompiler &ctx);
 void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
-void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
+void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx, char *vector_size = nullptr);
 
 // From python_ifa_build_if1.cc:
-int build_if1_module(mod_ty mod, PycCompiler &ctx, Code **code);
-// pyda path:
 int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code);
 
 // From python_ifa_main.cc:

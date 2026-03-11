@@ -152,9 +152,6 @@ int main(int argc, char *argv[]) {
     Service::stop_all();
     exit(errors ? 1 : 0);
   }
-  Py_Initialize();
-  PyEval_InitThreads();
-  PyArena *arena = PyArena_New();
   cchar *first_filename = 0;
   Vec<PycModule *> mods;
   for (int i = -1; i < arg_state.nfile_arguments; i++) {
@@ -167,20 +164,18 @@ int main(int argc, char *argv[]) {
     } else
       filename = arg_state.file_argument[i];
     if (!i) first_filename = filename;
-    mod_ty mod = file_to_mod(filename, arena);
-    if (mod) {
-      PycModule *m = new PycModule(mod, filename, i < 0);
-      m->pymod = m->is_builtin ? nullptr : dparse_python_to_ast(filename);
+    PyDAST *pymod = dparse_python_to_ast(filename);
+    if (pymod) {
+      PycModule *m = new PycModule(filename, i < 0);
+      m->pymod = pymod;
       mods.add(m);
     }
   }
   fruntime_errors = runtime_errors;
   if (mods.n > 1) {
-    ast_to_if1(mods, arena);
+    ast_to_if1(mods);
     compile(first_filename);
   }
-  PyArena_Free(arena);
-  Py_Finalize();
   Service::stop_all();
   exit(0);
   return 0;

@@ -29,3 +29,39 @@ ofor x in range(n):
 
 
 change __pyc_declare__ to use sym_unknown?
+
+Current State
+
+  - All user-submitted .py files go through the pyda path (DParser AST)
+  - __pyc__.py (the builtin module, 539 lines) still uses the CPython path because DParser is too slow
+  on it
+  - The guard in pyc.cc: m->pymod = m->is_builtin ? nullptr : dparse_python_to_ast(filename)
+
+  Next Phases
+
+  Phase 6: Fix DParser Performance on __pyc__.py
+
+  The 45,257-state grammar causes super-linear GLR complexity on larger files. Options:
+  - Profile what's causing slowness (ambiguity in grammar rules?)
+  - Reduce state count by simplifying/disambiguating grammar rules
+  - Once fast enough, remove the is_builtin guard so __pyc__.py also goes through pyda
+
+  Phase 7: Remove the CPython AST Path
+
+  Once __pyc__.py goes through pyda:
+  - Remove the CPython build_syms(mod_ty) / build_if1(stmt_ty/expr_ty) codepaths
+  - Remove CPython parser dependency (Python-2.7.18/ bundled copy)
+  - This is the major payoff — the codebase becomes much simpler
+
+  Phase 8: Extend Language Coverage
+
+  Fill in any Python 2.7 features not yet handled in the pyda path (e.g., exec, with, generator
+  expressions as standalone statements, etc.)
+
+  ---
+  The most impactful next step is Phase 6 — profiling and fixing DParser's slowness on __pyc__.py.
+  Would you like to start there? I can profile it with callgrind or add timing instrumentation to
+  identify the bottleneck.
+
+
+

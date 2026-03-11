@@ -8,51 +8,6 @@
 #define __STDC_LIMIT_MACROS 1
 #endif
 
-extern "C" {
-#include <Python.h>
-#include <Python-ast.h>
-#include <symtable.h>
-}
-
-// namespace contamination from python headers
-#if FREE != 4
-#error fixme
-#endif
-#ifdef FREE
-#undef FREE
-#endif
-#ifdef List
-#undef List
-#endif
-#define PYTHON_FREE 4
-#ifdef HAVE_MMAP
-#undef HAVE_MMAP
-#endif
-#ifdef Name
-#undef Name
-#endif
-#ifdef alias
-#undef alias
-#endif
-#ifdef Pass
-#undef Pass
-#endif
-#ifdef Set
-#undef Set
-#endif
-#ifdef Attribute
-#undef Attribute
-#endif
-#ifdef Index
-#undef Index
-#endif
-#ifdef Str
-#undef Str
-#endif
-#ifdef Module
-#undef Module
-#endif
-
 #include "common.h"
 #include "ifa.h"
 #include "fa.h"
