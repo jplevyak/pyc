@@ -1,10 +1,7 @@
-/*
-  Copyright 2011 John Plevyak, All Rights Reserved
-
-  S is a builtin symbol.
-  P is for "public" (scoped) symbols a subset of S.
-  B is for builtin function (implemented in the compiler frontend) a subset of P.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// S is a builtin symbol.
+// P is for "public" (scoped) symbols a subset of S.
+// B is for builtin function (implemented in the compiler frontend) a subset of P.
 #ifndef S
 #define S(_x)
 #endif

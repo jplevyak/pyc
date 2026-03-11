@@ -240,4 +240,4 @@ within the supported subset and rely on static type structure compile and run co
 
 BSD 3-Clause — see [LICENSE](LICENSE).
 
-Copyright © 1994–2011 John Bradley Plevyak, All Rights Reserved.
+Copyright (c) John Bradley Plevyak.

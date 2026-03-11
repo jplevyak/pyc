@@ -1,6 +1,4 @@
-/*
-  Copyright 2011 John Plevyak, All Rights Reserved
-*/
+// SPDX-License-Identifier: BSD-3-Clause
 #include "defs.h"
 
 int shedskin_codegen(FA *fa, Fun *fun, cchar *fn) {

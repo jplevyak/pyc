@@ -1,6 +1,4 @@
-/*
-  Copyright 2003-2008 John Plevyak, All Rights Reserved
-*/
+// SPDX-License-Identifier: BSD-3-Clause
 #ifndef _defs_H_
 #define _defs_H_
 

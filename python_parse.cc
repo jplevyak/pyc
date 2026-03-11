@@ -1,7 +1,5 @@
-/*
-  Copyright 2008-2025 John Plevyak, All Rights Reserved
-  Python DParser integration: parse Python source files using python.g tables.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Python DParser integration: parse Python source files using python.g tables.
 #include "defs.h"
 #include "python_parse.h"
 #include "dparse.h"

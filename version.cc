@@ -1,6 +1,4 @@
-/*
- Copyright 2002-2008 John Plevyak, All Rights Reserved
-*/
+// SPDX-License-Identifier: BSD-3-Clause
 #include "defs.h"
 
 void get_version(char *v) {

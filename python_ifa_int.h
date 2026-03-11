@@ -1,8 +1,6 @@
-/*
-  Copyright 2008-2011 John Plevyak, All Rights Reserved
-  Internal header shared between python_ifa_util.cc, python_ifa_sym.cc,
-  python_ifa_build_syms.cc, python_ifa_build_if1.cc, and python_ifa_main.cc.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Internal header shared between python_ifa_util.cc, python_ifa_sym.cc,
+// python_ifa_build_syms.cc, python_ifa_build_if1.cc, and python_ifa_main.cc.
 #pragma once
 #include "defs.h"
 #include "dirent.h"

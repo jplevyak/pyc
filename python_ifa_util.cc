@@ -1,6 +1,4 @@
-/*
-  Copyright 2008-2011 John Plevyak, All Rights Reserved
-*/
+// SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 
 /* TODO

@@ -1,6 +1,4 @@
-/*
-  Copyright 2010 John Plevyak, All Rights Reserved
-*/
+// SPDX-License-Identifier: BSD-3-Clause
 #include "defs.h"
 
 // Fixup namespace contamination.

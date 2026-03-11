@@ -1,8 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Python DParser AST node definitions.
 #pragma once
-/*
-  Copyright 2008-2025 John Plevyak, All Rights Reserved
-  Python DParser AST node definitions.
-*/
 #include "common.h"
 
 // Forward declarations for IFA annotations (Phase 3+)

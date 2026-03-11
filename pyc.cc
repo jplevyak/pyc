@@ -1,6 +1,4 @@
-/*
-  Copyright 2003-2009 John Plevyak, All Rights Reserved
-*/
+// SPDX-License-Identifier: BSD-3-Clause
 #define EXTERN
 #include "defs.h"
 #include "python_parse.h"

@@ -1,8 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Python DParser integration: shared types and parse API.
 #pragma once
-/*
-  Copyright 2008-2025 John Plevyak, All Rights Reserved
-  Python DParser integration: shared types and parse API.
-*/
 #include "parse_structs.h"  // defines D_ParseNode_User=ParseNode, Globals
 
 #include "python_ast.h"     // defines PyDAST (includes common.h)
