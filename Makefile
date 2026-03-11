@@ -61,7 +61,7 @@ ifdef USE_GC
 CFLAGS += -DUSE_GC ${GC_CFLAGS}
 endif
 
-CFLAGS += -Wall -std=c++23
+CFLAGS += -MMD -MP -Wall -std=c++23
 ifdef DEBUG
 CFLAGS += -g -DDEBUG=1
 endif
@@ -132,7 +132,7 @@ INSTALL_LIBRARIES =
 #INCLUDES =
 MANPAGES = pyc.1
 
-CLEAN_FILES += *.cat
+CLEAN_FILES += *.cat $(LIB_OBJS:.o=.d) $(PYC_OBJS:.o=.d)
 
 ifeq ($(OS_TYPE),CYGWIN)
 EXECUTABLES = $(EXECUTABLE_FILES:%=%.exe)
@@ -213,11 +213,4 @@ realclean: clean
 	\rm -f *.a *.orig *.rej
 	$(MAKE) -C $(IFA_DIR) realclean
 
-depend:
-	./mkdep $(CFLAGS) $(DEPEND_SRCS)
-
--include .depend
-# DO NOT DELETE THIS LINE -- mkdep uses it.
-# DO NOT PUT ANYTHING AFTER THIS LINE, IT WILL GO AWAY.
-
-# IF YOU PUT ANYTHING HERE IT WILL GO AWAY
+-include $(LIB_OBJS:.o=.d) $(PYC_OBJS:.o=.d)
