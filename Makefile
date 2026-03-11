@@ -20,7 +20,7 @@ CXX ?= clang++
 AR ?= llvm-ar
 PREFIX ?= /usr/local
 
-.PHONY: all install $(IFALIB)
+.PHONY: all install $(IFALIB) pull pushifa
 
 OS_TYPE = $(shell uname -s | \
   awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
@@ -204,6 +204,16 @@ test_dparse: $(PYC)
 	else \
 	  echo "--- $$failed DParser test(s) FAILED ---"; exit 1; \
 	fi
+
+
+pullifa:
+	git subtree pull --prefix=ifa ifa-remote main --squash
+
+pushifa:
+	./pushifa.sh
+
+diffifa:
+	git diff ifa-remote/main HEAD:ifa
 
 clean:
 	\rm -f *.o core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
