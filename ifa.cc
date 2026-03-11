@@ -2,15 +2,15 @@
 #include "ast.h"
 #include "cg.h"
 #include "clone.h"
-#include "dead.h"
-#include "dom.h"
+#include "optimize/dead.h"
+#include "optimize/dom.h"
 #include "fa.h"
 #include "fun.h"
 #include "graph.h"
 #include "html.h"
 #include "if1.h"
 #include "ifadefs.h"
-#include "inline.h"
+#include "optimize/inline.h"
 #include "log.h"
 #include "pdb.h"
 
@@ -36,7 +36,7 @@ int ifa_analyze(cchar *fn) {
   for (Fun *f : fa->funs) build_cfg_dominators(f);
   if (mark_live_code(fa) < 0) return -1;
   if (get_int_config("alog.test.fa") > 0) log_test_fa(fa);
-  // frequency_estimation(fa);
+  frequency_estimation(fa);
   return 0;
 }
 
