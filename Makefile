@@ -20,7 +20,7 @@ CXX ?= clang++
 AR ?= llvm-ar
 PREFIX ?= /usr/local
 
-.PHONY: all install $(IFALIB) pull pushifa
+.PHONY: all install $(IFALIB) pullifa pushifa diffifa
 
 OS_TYPE = $(shell uname -s | \
   awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
