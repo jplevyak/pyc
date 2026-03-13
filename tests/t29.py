@@ -5,4 +5,4 @@ class A:
 a = A()
 z = a.x
 a.i = 4
-print z()
+print(z())

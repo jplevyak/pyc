@@ -1,6 +1,6 @@
 # pyc — Python Compiler
 
-**pyc** is a whole-program, statically-typed compiler for a substantial subset of Python 2.7. It uses
+**pyc** is a whole-program, statically-typed compiler for a substantial subset of Python 3. It uses
 interprocedural flow analysis (IFA) to infer types throughout the entire program and then emits C
 code that is compiled by the host C compiler.  The result is a stand-alone native binary with no
 Python runtime dependency.
@@ -13,17 +13,17 @@ Python runtime dependency.
 - **Native code generation** — emits readable C, compiled with the system C compiler (`cc`).
   An experimental LLVM backend is also included.
 - **Boehm GC** — uses the Boehm garbage collector so Python-style memory semantics are preserved.
-- **Python 2.7 syntax** — parsed by a custom DParser-based parser (no CPython runtime required at
+- **Python 3 syntax** — parsed by a custom DParser-based parser (no CPython runtime required at
   compile time or at run time).
 - **Object-oriented Python** — classes, single inheritance, `super()`, `__init__`, operator
   overloading (`__add__`, `__getitem__`, etc.), descriptors.
 - **First-class functions** — closures, lambdas, default arguments, mutable default arguments.
 - **Built-in types** — `int`, `float`, `complex`, `str`, `bool`, `list`, `tuple`, `dict`
-  (structural), `bytearray`, `xrange`, plus the usual numeric operators.
+  (structural), `bytearray`, `range`, plus the usual numeric operators.
 - **Control flow** — `if`/`elif`/`else`, `for`/`while`/`break`/`continue`/`else`, list
   comprehensions, generator expressions.
-- **Scoping** — full Python scoping rules including `global`, implicit capture, class scopes, nested
-  functions.
+- **Scoping** — full Python scoping rules including `global`, `nonlocal`, implicit capture, class
+  scopes, nested functions.
 - **Imports** — module imports resolved at compile time; imported module code is inlined.
 - **`pyc_compat`** — a small compatibility shim (`from pyc_compat import __pyc_declare__`) that lets
   you declare polymorphic record fields while keeping the file runnable under standard Python.
@@ -139,7 +139,7 @@ make test_dparse   # run DParser parse-only validation on all test files
 
 ```python
 # hello.py
-print "Hello, world!"
+print("Hello, world!")
 ```
 
 ```sh
@@ -155,7 +155,7 @@ def fib(x):
     else:
         return fib(x-2) + fib(x-1)
 
-print fib(33)
+print(fib(33))
 ```
 
 ### Classes and inheritance
@@ -164,14 +164,14 @@ print fib(33)
 class A(object):
     n = 2
     def __init__(self, a):
-        print a + 10
+        print(a + 10)
     def method(self):
         return self.n
 
 class B(A):
     def __init__(self, a):
         super(B, self).__init__(a)
-        print self.n
+        print(self.n)
 
 y = B(3)
 ```
@@ -182,7 +182,7 @@ y = B(3)
 x = [1, 2, 3]
 y = [5, 6, 7]
 z = [i + j + 1 for i in x for j in y]
-print z
+print(z)
 ```
 
 ### Closures and default arguments
@@ -192,9 +192,9 @@ def f(a, L=[]):
     L.append(a)
     return L
 
-print f(1)   # [1]
-print f(2)   # [1, 2]
-print f(3)   # [1, 2, 3]
+print(f(1))   # [1]
+print(f(2))   # [1, 2]
+print(f(3))   # [1, 2, 3]
 ```
 
 ### Polymorphic fields with `__pyc_declare__`
@@ -207,9 +207,9 @@ class C:
     def __init__(self, val):
         self.value = val
 
-print C(1).value
-print C("hello").value
-print C(3.14).value
+print(C(1).value)
+print(C("hello").value)
+print(C(3.14).value)
 ```
 
 ## Architecture
@@ -231,10 +231,27 @@ representation where every value is typed by the set of concrete types that can 
 
 ## Limitations
 
-pyc targets a substantial but not complete subset of Python 2.7.  Known unsupported features
+pyc targets a substantial but not complete subset of Python 3.  Known unsupported features
 include exceptions (`try`/`except`/`raise`), generators (`yield`), dictionaries as first-class
 values, starred assignment, `exec`, `eval`, and most of the standard library.  Programs that stay
 within the supported subset and rely on static type structure compile and run correctly.
+
+### Runtime class attribute mutation through inheritance (t18)
+
+Assigning to a class attribute at runtime (e.g., `A.n = 4`) does not propagate to subclasses
+that inherited the attribute (e.g., `B.n` still returns the original value).  pyc compiles class
+attribute access as direct C struct field access, with inheritance resolved entirely at compile
+time.  Propagating runtime attribute mutations across an inheritance hierarchy would require a
+dynamic dispatch mechanism incompatible with the static struct layout used throughout the
+generated code.
+
+### Cross-type method assignment (t30)
+
+Assigning a method from one class instance to another (e.g., `a.x = b.x` where `a` and `b` are
+instances of different classes) produces a compile error.  pyc's type inference creates
+distinct, incompatible closure struct types for methods of different classes.  Unifying these
+types at runtime would require a dynamic typing layer that is fundamentally at odds with the
+whole-program static type analysis that makes pyc's output efficient.
 
 ## License
 

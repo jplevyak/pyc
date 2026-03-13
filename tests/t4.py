@@ -1,12 +1,12 @@
 def hi(a, b, c):
   if a < b < c: 
-    print '< true'
+    print('< true')
   else:
-    print '< false'
+    print('< false')
   if a > b > c: 
-    print '> true'
+    print('> true')
   else:
-    print '> false'
+    print('> false')
 hi(1, 2, 3)
 hi(3, 2, 1)
 hi(1, 2, 1)

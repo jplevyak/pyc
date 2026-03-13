@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PYTHON=python2
+PYTHON=python3
 
 #VALGRIND='valgrind -q'
 VALGRIND=' '

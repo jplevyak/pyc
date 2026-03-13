@@ -18,12 +18,12 @@ enum PyASTKind {
   PY_suite,
   // Statements
   PY_expr_stmt, PY_assign, PY_augassign,
-  PY_print_stmt, PY_del_stmt, PY_pass_stmt,
+  PY_del_stmt, PY_pass_stmt,
   PY_return_stmt, PY_break_stmt, PY_continue_stmt,
   PY_raise_stmt, PY_yield_stmt,
   PY_import_name, PY_import_from,
   PY_import_as_name, PY_dotted_as_name, PY_dotted_name,
-  PY_global_stmt, PY_exec_stmt, PY_assert_stmt,
+  PY_global_stmt, PY_nonlocal_stmt, PY_assert_stmt,
   // Compound statement parts
   PY_if_stmt, PY_elif_clause, PY_else_clause,
   PY_while_stmt, PY_for_stmt,
@@ -37,7 +37,7 @@ enum PyASTKind {
   PY_call, PY_attribute, PY_subscript, PY_power,
   PY_lambda, PY_yield_expr,
   // Atoms
-  PY_name, PY_number, PY_string, PY_backquote,
+  PY_name, PY_number, PY_string,
   PY_tuple, PY_list, PY_dict, PY_set,
   PY_listcomp, PY_genexpr,
   PY_slice,
@@ -45,7 +45,7 @@ enum PyASTKind {
   PY_parameters, PY_varargslist, PY_fpdef, PY_fplist,
   PY_arglist, PY_keyword_arg, PY_star_arg, PY_dstar_arg, PY_arg_default,
   // Collections / iteration
-  PY_testlist, PY_exprlist, PY_testlist1,
+  PY_testlist, PY_exprlist,
   PY_comp_for, PY_comp_if,
   PY_list_for, PY_list_if,
   PY_subscriptlist,
@@ -61,7 +61,6 @@ enum PyOp {
   PY_CMP_EQ, PY_CMP_NE, PY_CMP_LT, PY_CMP_LE,
   PY_CMP_GT, PY_CMP_GE,
   PY_CMP_IS, PY_CMP_IS_NOT, PY_CMP_IN, PY_CMP_NOT_IN,
-  PY_CMP_LTGT,
   PY_OP_MAX
 };
 

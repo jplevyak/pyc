@@ -2,10 +2,10 @@
 
 class a:
   global z
-  print z
+  print(z)
 
 a();
 
 z = 1
 
-print z
+print(z)

@@ -7,8 +7,6 @@ class __pyc_any_type__:
     return __pyc_primitive__(__pyc_symbol__("make_tuple"), self)
   def __pyc_getslice__(self, i, j, s):
     return self.__getitem__(slice(i,j,s))
-  def __getslice__(self, i, j):
-    return self.__getitem__(slice(i,j,1))
   def __repr__(self):
     return self.__str__()
 
@@ -19,17 +17,17 @@ class object:
     return False
   def __str__(self):
     return "<object>"
-  def __nonzero__(self):
+  def __bool__(self):
     return True
   def __len__(self):
     return 1
   def __pyc_to_bool__(self):
-    return __pyc_operator__(__pyc_operator__(__pyc_symbol__("!"), self.__nonzero__().__pyc_to_bool__()),
+    return __pyc_operator__(__pyc_operator__(__pyc_symbol__("!"), self.__bool__().__pyc_to_bool__()),
                             __pyc_symbol__("&&"),
                             self.__len__() != 0)
 
 class __pyc_None_type__:
-  def __nonzero__(self):
+  def __bool__(self):
     return False
   def __null__(self):
     return True
@@ -62,9 +60,6 @@ class bool:
   def __pyc_to_bool__(self):
     return __pyc_clone_constants__(self)
 
-class basestring:
-  pass
-
 class __base_iter__:
   thestr = None
   position = 0
@@ -74,11 +69,11 @@ class __base_iter__:
     self.slen = len(s)
   def __pyc_more__(self):
     return self.position < self.slen
-  def next(self):
+  def __next__(self):
     self.position += 1
     return self.thestr.__getitem__(self.position-1)
 
-class str(basestring):
+class str:
   def __add__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __iadd__(self, x):
@@ -110,7 +105,7 @@ class int:
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
   def __mul__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
-  def __div__(self, x):
+  def __truediv__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
   def __mod__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
@@ -134,7 +129,7 @@ class int:
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
   def __imul__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
-  def __idiv__(self, x):
+  def __itruediv__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
   def __imod__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
@@ -174,15 +169,7 @@ class int:
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">="), __pyc_clone_constants__(x))
   def __hash__(self):
     return self
-  def __cmp__(self, x):
-    if (__pyc_clone_constants__(self) < __pyc_clone_constants__(x)):
-      return -1
-    else:
-      if (self > x):
-        return 1
-      else:
-        return 0
-  def __nonzero__(self):
+  def __bool__(self):
      return __pyc_clone_constants__(self) != 0
   def __null__(self):
      return False
@@ -198,7 +185,7 @@ class float:
     return __pyc_operator__(self, __pyc_symbol__("-"), x)
   def __mul__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("*"), x)
-  def __div__(self, x):
+  def __truediv__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __mod__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("%"), x)
@@ -212,7 +199,7 @@ class float:
     return __pyc_operator__(self, __pyc_symbol__("-"), x)
   def __imul__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("*"), x)
-  def __idiv__(self, x):
+  def __itruediv__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __imod__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("%"), x)
@@ -240,15 +227,7 @@ class float:
     return __pyc_operator__(self, __pyc_symbol__(">"), x)
   def __ge__(self, x):
     return __pyc_operator__(self, __pyc_symbol__(">="), x)
-  def __cmp__(self, x):
-    if (self < x):
-      return -1
-    else:
-      if (self > x):
-        return 1
-      else:
-        return 0
-  def __nonzero__(self):
+  def __bool__(self):
     return self != 0.0
   def __null__(self):
     return False
@@ -264,7 +243,7 @@ class __slice_iter__:
     self.theslice = s
   def __pyc_more__(self):
     return self.position < self.theslice.upper
-  def next(self):
+  def __next__(self):
     self.position += self.step
     return self.position - 1
 
@@ -286,7 +265,7 @@ class __list_iter__:
     self.thelist = l
   def __pyc_more__(self):
     return self.position < len(self.thelist)
-  def next(self):
+  def __next__(self):
     self.position += 1
     return self.thelist.__getitem__(self.position-1)
 
@@ -295,14 +274,6 @@ class list:
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
-  def __getslice__(self, i, j):
-    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
-                          "_CG_list_getslice",
-                          list, self,
-                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
-                          int, i,
-                          int, j,
-                          int, 1)
   def __pyc_getslice__(self, i, j, s):
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
                           "_CG_list_getslice",
@@ -311,17 +282,17 @@ class list:
                           int, i,
                           int, j,
                           int, s)
-  def __setitem__(self, key, value):
-    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
-                             __pyc_clone_constants__(key), value)
-  def __setslice__(self, i, j, s):
-    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, s),
+  def __pyc_setslice__(self, i, j, s, v):
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, v),
                           "_CG_list_setslice",
                           list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
                           int, j,
-                          list, s)
+                          list, v)
+  def __setitem__(self, key, value):
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
+                             __pyc_clone_constants__(key), value)
   def __delitem__(self, key):
     pass
   def __iter__(self):
@@ -361,7 +332,7 @@ class list:
     else:
       if ll == 0:
         return False
-      for i in xrange(lself):
+      for i in range(lself):
         if l[i] != self[i]:
            return False
       return True
@@ -382,7 +353,7 @@ class list:
     pass
   def __str__(self):
     x = "["
-    for k in xrange(0,len(self)):
+    for k in range(0,len(self)):
       if (k):
         x += ", "
       x += self[k].__repr__()
@@ -398,7 +369,7 @@ class __tuple_iter__:
     self.thetuple = t
   def __pyc_more__(self):
     return self.position < len(self.thetuple)
-  def next(self):
+  def __next__(self):
     self.position += 1
     return self.thetuple.__getitem__(self.position-1)
 
@@ -453,20 +424,7 @@ def bin(x): # return integer as string in binary
 def exit(status = 0):
     __pyc_c_call__(int, "::exit", int, status)
 
-# TODO: allow specialization to detect single argument
-def range(start, end = 0, delta = 1):
-  if end == 0:
-    end = start
-    start = 0
-  result = [0] * (end - start)
-  i = 0
-  while (start < end):
-    result[i] = start
-    start += delta
-    i += 1
-  return result
-
-class xrange:
+class range:
   i = 0
   j = 0
   s = 1
@@ -485,7 +443,7 @@ class xrange:
       return self.i > self.j
   def __iter__(this):
     return this
-  def next(self):
+  def __next__(self):
     x = self.i
     self.i += self.s
     return x
@@ -510,6 +468,11 @@ def __hex(x):
 def hex(x):
   return "0x" + __hex(x)
 
+def __byte_hex2(x):
+  if x < 16:
+    return "0" + __hex(x)
+  return __hex(x)
+
 def isinstance(obj, ci):
   return __pyc_primitive__(__pyc_symbol__("isinstance"), obj, __pyc_clone_constants__(ci))
 
@@ -533,7 +496,22 @@ class bytearray:
   def __iter__(self):
     return __base_iter__(self)
   def __str__(self):
-    x = ""
-    for k in xrange(0,len(self)):
-      x += chr(self[k])
+    x = "bytearray(b'"
+    for k in range(0, len(self)):
+      c = self[k]
+      if c == 9:
+        x += "\\t"
+      elif c == 10:
+        x += "\\n"
+      elif c == 13:
+        x += "\\r"
+      elif c == 92:
+        x += "\\\\"
+      elif c == 39:
+        x += "\\'"
+      elif c >= 32 and c < 127:
+        x += chr(c)
+      else:
+        x += "\\x" + __byte_hex2(c)
+    x += "')"
     return x

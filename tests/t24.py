@@ -1,7 +1,7 @@
 y = 2
 class b:
   def g(self):
-    print y
+    print(y)
 a = b()
 x = a.g
 x()

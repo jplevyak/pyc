@@ -1,3 +1,3 @@
-print "a".__repr__()
+print("a".__repr__())
 x = [' '] * 3
-print x
+print(x)

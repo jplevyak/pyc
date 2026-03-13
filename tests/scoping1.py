@@ -8,12 +8,12 @@ def set_z():
   z = 3
 
 class a:
-  print z
+  print(z)
   if y == 2:
     set_z()
-  print z
+  print(z)
   if y == 2:
     z = 2
-  print z
+  print(z)
 
-print z
+print(z)

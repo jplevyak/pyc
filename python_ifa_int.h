@@ -23,7 +23,7 @@ struct PycScope : public gc {
 
 // -- Globals defined in python_ifa_util.cc --
 extern Map<PyDAST *, PycAST *> pydmap;
-extern Sym *sym_long, *sym_ellipsis, *sym_ellipsis_type, *sym_unicode, *sym_buffer, *sym_xrange, *sym_declare;
+extern Sym *sym_ellipsis, *sym_ellipsis_type, *sym_declare;
 #define S(_x) extern Sym *sym_##_x;
 #include "pyc_symbols.h"
 extern cchar *cannonical_self;

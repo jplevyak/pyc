@@ -1,1 +1,1 @@
-print len("abcde")
+print(len("abcde"))

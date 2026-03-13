@@ -2,11 +2,11 @@
 
 def f():
   z = 1;
-  print z
+  print(z)
   def g():
     x = 2
-    print x
+    print(x)
   g()
-  print z
+  print(z)
 f()
 

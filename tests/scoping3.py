@@ -12,11 +12,11 @@ class a:
     global z
     z = 5
   
-  print z
+  print(z)
   if y == 2:
     set_z()
-  print z
+  print(z)
   g();
-  print z
+  print(z)
 
-print z
+print(z)

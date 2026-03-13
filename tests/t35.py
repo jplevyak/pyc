@@ -1,1 +1,1 @@
-print 1 . __add__(2)
+print(1 . __add__(2))

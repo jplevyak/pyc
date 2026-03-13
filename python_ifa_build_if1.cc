@@ -51,7 +51,7 @@ static Sym *map_pyop_to_operator(int op) {
     case PY_OP_ADD: return make_symbol("__add__");
     case PY_OP_SUB: return make_symbol("__sub__");
     case PY_OP_MUL: return make_symbol("__mul__");
-    case PY_OP_DIV: return make_symbol("__div__");
+    case PY_OP_DIV: return make_symbol("__truediv__");
     case PY_OP_MOD: return make_symbol("__mod__");
     case PY_OP_POW: return make_symbol("__pow__");
     case PY_OP_LSHIFT: return make_symbol("__lshift__");
@@ -69,7 +69,7 @@ static Sym *map_pyop_to_ioperator(int op) {
     case PY_OP_ADD: return make_symbol("__iadd__");
     case PY_OP_SUB: return make_symbol("__isub__");
     case PY_OP_MUL: return make_symbol("__imul__");
-    case PY_OP_DIV: return make_symbol("__idiv__");
+    case PY_OP_DIV: return make_symbol("__itruediv__");
     case PY_OP_MOD: return make_symbol("__imod__");
     case PY_OP_POW: return make_symbol("__ipow__");
     case PY_OP_LSHIFT: return make_symbol("__ilshift__");
@@ -103,7 +103,6 @@ static Sym *map_pyop_to_cmp(int op) {
     case PY_CMP_IS_NOT: return make_symbol("__nis__");
     case PY_CMP_IN: return make_symbol("__contains__");
     case PY_CMP_NOT_IN: return make_symbol("__ncontains__");
-    case PY_CMP_LTGT: return make_symbol("__ne__");
     default: assert(!"unhandled cmpop"); return nullptr;
   }
 }
@@ -118,7 +117,6 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
   for (const char *p = s; *p; p++) {
     if (*p == '.' || *p == 'e' || *p == 'E') { is_float = true; break; }
     if (*p == 'j' || *p == 'J') { is_float = true; break; }
-    if (*p == 'l' || *p == 'L') break;  // long suffix, skip
   }
   if (n->is_int) {
     Immediate imm;
@@ -345,6 +343,17 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       pclose(fp);
       sprintf(cmd, "#include \"%s\"\n", pathname);
     }
+  } else if (f == sym_print) {
+    // Python 3 print() function: write each arg (space-separated) then writeln
+    for (int i = 0; i < pos_args.n; i++) {
+      PycAST *a = getAST(pos_args[i], ctx);
+      if (i) if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, make_string(" "), new_sym(ast))->ast = ast;
+      Sym *t = new_sym(ast);
+      call_method(&ast->code, ast, a->rval, sym___str__, t, 0);
+      if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, t, new_sym(ast))->ast = ast;
+    }
+    if1_send(if1, &ast->code, 2, 1, sym_primitive, sym_writeln, new_sym(ast))->ast = ast;
+    ast->rval = sym_nil;
   } else
     fail("unimplemented builtin '%s'", f->name);
   return 1;
@@ -394,7 +403,7 @@ static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Cod
   if1_send(if1, &before, 2, 1, sym___iter__, i_ast->rval, iter)->ast = ast;
   call_method(&cond, ast, iter, sym___pyc_more__, cond_var, 0);
   if (t->code) if1_gen(if1, &body, t->code);
-  call_method(&body, ast, iter, sym_next, tmp, 0);
+  call_method(&body, ast, iter, sym___next__, tmp, 0);
   if1_move(if1, &body, tmp, t->sym, ast);
   build_list_comp_inner_pyda(next_iter, elt, ast, &body, ctx);
   if1_loop(if1, code, if1_alloc_label(if1), if1_alloc_label(if1), cond_var, before, cond, next, body, ast);
@@ -427,7 +436,35 @@ static void reenter_scope_pyda(PyDAST *n, PycCompiler &ctx) {
 // Helper: build if-else chain for PY_if_stmt
 static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // n is PY_if_stmt: children = [cond, suite, elif1, elif2, ..., else?]
-  // or PY_elif_clause: children = [cond, suite]
+  // Build elif/else chain inside-out: process from innermost (last) to outermost.
+  // This ensures each elif's internal goto jumps past the entire remaining chain.
+
+  // Find else_clause (last child if it's PY_else_clause)
+  int last = n->children.n - 1;
+  Code *chain = 0;  // the accumulated else chain (starts with innermost else)
+  if (last >= 2 && n->children[last]->kind == PY_else_clause) {
+    build_if1_suite_pyda(n->children[last]->children[0], &chain, ctx);
+    last--;
+  }
+  // Wrap elifs around chain from innermost to outermost
+  for (int i = last; i >= 2; i--) {
+    PyDAST *child = n->children[i];
+    if (child->kind != PY_elif_clause) continue;
+    PycAST *elif_ast = getAST(child, ctx);
+    PyDAST *elif_cond = child->children[0];
+    PyDAST *elif_suite = child->children[1];
+    build_if1_pyda(elif_cond, ctx);
+    PycAST *elif_cond_ast = getAST(elif_cond, ctx);
+    Sym *elif_t = new_sym(elif_ast);
+    Code *elif_chain = 0;
+    if1_gen(if1, &elif_chain, elif_cond_ast->code);
+    call_method(&elif_chain, elif_ast, elif_cond_ast->rval, sym___pyc_to_bool__, elif_t, 0);
+    Code *elif_then = 0;
+    build_if1_suite_pyda(elif_suite, &elif_then, ctx);
+    if1_if(if1, &elif_chain, 0, elif_t, elif_then, 0, chain, 0, 0, elif_ast);
+    chain = elif_chain;
+  }
+  // Build outer if
   PyDAST *cond = n->children[0];
   PyDAST *suite = n->children[1];
   build_if1_pyda(cond, ctx);
@@ -435,23 +472,9 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_gen(if1, &ast->code, cond_ast->code);
   Sym *t = new_sym(ast);
   call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, t, 0);
-  // Build "then" code — suite may be PY_suite or direct statement
   Code *then_code = 0;
   build_if1_suite_pyda(suite, &then_code, ctx);
-  // Build "else" code (elif chain or else clause)
-  Code *else_code = 0;
-  for (int i = 2; i < n->children.n; i++) {
-    PyDAST *child = n->children[i];
-    if (child->kind == PY_elif_clause) {
-      PycAST *elif_ast = getAST(child, ctx);
-      build_if_pyda(child, elif_ast, ctx);
-      if1_gen(if1, &else_code, elif_ast->code);
-    } else if (child->kind == PY_else_clause) {
-      // else_clause child[0] is the suite
-      build_if1_suite_pyda(child->children[0], &else_code, ctx);
-    }
-  }
-  if1_if(if1, &ast->code, 0, t, then_code, 0, else_code, 0, 0, ast);
+  if1_if(if1, &ast->code, 0, t, then_code, 0, chain, 0, 0, ast);
 }
 
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
@@ -672,21 +695,6 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
-    case PY_print_stmt: {
-      for (int i = 0; i < n->children.n; i++) {
-        PyDAST *child = n->children[i];
-        build_if1_pyda(child, ctx);
-        PycAST *a = getAST(child, ctx);
-        if1_gen(if1, &ast->code, a->code);
-        if (i) if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, make_string(" "), new_sym(ast))->ast = ast;
-        Sym *t = new_sym(ast);
-        call_method(&ast->code, ast, a->rval, sym___str__, t, 0);
-        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, t, new_sym(ast))->ast = ast;
-      }
-      if1_send(if1, &ast->code, 2, 1, sym_primitive, sym_writeln, new_sym(ast))->ast = ast;
-      return 0;
-    }
-
     case PY_for_stmt: {
       // children: [target, iter, PY_suite, PY_else_clause?]
       build_if1_pyda(n->children[1], ctx);  // iter
@@ -699,7 +707,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i_ast->rval, iter)->ast = ast;
       Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
       call_method(&cond, ast, iter, sym___pyc_more__, tmp, 0);
-      call_method(&body, ast, iter, sym_next, tmp2, 0);
+      call_method(&body, ast, iter, sym___next__, tmp2, 0);
       if1_move(if1, &body, tmp2, t->sym, ast);
       build_if1_suite_pyda(n->children[2], &body, ctx);
       if (n->children.n > 3 && n->children[3]->kind == PY_else_clause)
@@ -1016,17 +1024,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             }
             ast->is_object_index = 1;
             bool store = (n->ctx == PY_STORE && i == n->children.n - 1);
-            if (has_step) {
-              if (store)
-                call_method(&ast->code, ast, cur_val, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
-              else
-                call_method(&ast->code, ast, cur_val, sym___pyc_getslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
-            } else {
-              if (store)
-                call_method(&ast->code, ast, cur_val, sym___setslice__, (ast->rval = new_sym(ast)), 2, l, u);
-              else
-                call_method(&ast->code, ast, cur_val, sym___getslice__, (ast->rval = new_sym(ast)), 2, l, u);
-            }
+            if (!has_step) s = int64_constant(1);
+            if (store)
+              call_method(&ast->code, ast, cur_val, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
+            else
+              call_method(&ast->code, ast, cur_val, sym___pyc_getslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
             cur_val = ast->rval;
           } else {
             build_if1_pyda(sub_node, ctx);
@@ -1155,8 +1157,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_testlist:
-    case PY_exprlist:
-    case PY_testlist1: {
+    case PY_exprlist: {
       // Single child: pass through; multiple: treat as tuple
       if (n->children.n == 1) {
         build_if1_pyda(n->children[0], ctx);
@@ -1198,10 +1199,6 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       fail("error line %d, 'assert' not yet supported", ctx.lineno);
       return -1;
 
-    case PY_exec_stmt:
-      fail("error line %d, 'exec' not yet supported", ctx.lineno);
-      return -1;
-
     // Nodes that are handled by their parent
     case PY_list_for:
     case PY_list_if:
@@ -1218,7 +1215,6 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_arglist:
     case PY_keyword_arg:
     case PY_decorator:
-    case PY_backquote:
     case PY_cmp_op:
     case PY_set:
     case PY_dict:

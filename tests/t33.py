@@ -15,4 +15,4 @@ def xbin(x): # return integer as string in binary
       x = x >> 1
     return s
 
-print xbin(23)
+print(xbin(23))

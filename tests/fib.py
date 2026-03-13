@@ -4,4 +4,4 @@ def fib(x):
     else:
         return fib(x-2)+fib(x-1)
 
-print fib(33)
+print(fib(33))

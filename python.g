@@ -1,4 +1,4 @@
-/* Grammar from Python 2.7 Grammar/Grammar, converted to dparser */
+/* Grammar from Python 3 Grammar/Grammar, converted to dparser */
 
 {
 #include "python_parse.h"
@@ -75,7 +75,7 @@ simple_stmt: small_stmt (';' small_stmt)* ';'? NL {
   /* If only one small_stmt, pass through; else wrap in suite */
   $$.ast = pass_or_collect(1, PY_suite, &$n, $0.ast);
 };
-small_stmt: expr_stmt | print_stmt | del_stmt | pass_stmt | flow_stmt | import_stmt | global_stmt | exec_stmt | assert_stmt;
+small_stmt: expr_stmt | del_stmt | pass_stmt | flow_stmt | import_stmt | global_stmt | nonlocal_stmt | assert_stmt;
 
 expr_stmt: testlist (augassign testlist | ('=' testlist)*) {
   $$.ast = new_pyast_collect(PY_expr_stmt, &$n);
@@ -97,9 +97,6 @@ augassign: '+='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_ADD); }
          | '**=' { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_POW); }
          | '//=' { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_FLOORDIV); }
          ;
-print_stmt: 'print' ( ( test (',' test)* ','? )? | '>>' test ( (',' test)+ ','? )? ) {
-  $$.ast = new_pyast_collect(PY_print_stmt, &$n);
-};
 del_stmt: 'del' exprlist {
   $$.ast = new_pyast_collect(PY_del_stmt, &$n);
 };
@@ -116,7 +113,7 @@ continue_stmt: 'continue' {
 return_stmt: 'return' testlist? {
   $$.ast = new_pyast_collect(PY_return_stmt, &$n);
 };
-raise_stmt: 'raise' (test (',' test (',' test)?)?)? {
+raise_stmt: 'raise' (test ('from' test)?)? {
   $$.ast = new_pyast_collect(PY_raise_stmt, &$n);
 };
 yield_stmt: 'yield' testlist {
@@ -150,8 +147,8 @@ dotted_name: NAME ('.' NAME)* {
 global_stmt: 'global' NAME (',' NAME)* {
   $$.ast = new_pyast_collect(PY_global_stmt, &$n);
 };
-exec_stmt: 'exec' expr ('in' test (',' test)?)? {
-  $$.ast = new_pyast_collect(PY_exec_stmt, &$n);
+nonlocal_stmt: 'nonlocal' NAME (',' NAME)* {
+  $$.ast = new_pyast_collect(PY_nonlocal_stmt, &$n);
 };
 assert_stmt: 'assert' test (',' test)? {
   $$.ast = new_pyast_collect(PY_assert_stmt, &$n);
@@ -195,7 +192,7 @@ with_stmt: 'with' with_item (',' with_item)*  ':' suite {
 with_item: test ('as' expr)? {
   $$.ast = new_pyast_collect(PY_with_item, &$n);
 };
-except_clause: 'except' (test (',' test)?)? {
+except_clause: 'except' (test ('as' NAME)?)? {
   $$.ast = new_pyast_collect(PY_except_clause, &$n);
 };
 suite: simple_stmt
@@ -209,14 +206,6 @@ suite_cmds: stmt
                 return -1;
             ]
           ;
-
-testlist_safe: old_test ((',' old_test)+ ','?)? {
-  $$.ast = pass_or_collect(1, PY_testlist, &$n, $0.ast);
-};
-old_test: or_test | old_lambdef;
-old_lambdef: 'lambda' varargslist? ':' old_test {
-  $$.ast = new_pyast_collect(PY_lambda, &$n);
-};
 
 test: or_test ('if' or_test 'else' test)? {
     $$.ast = pass_or_collect(1, PY_ternary, &$n, $0.ast);
@@ -240,7 +229,6 @@ comp_op: '<'       { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_LT); }
        | '=='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_EQ); }
        | '>='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_GE); }
        | '<='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_LE); }
-       | '<>'      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_LTGT); }
        | '!='      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_NE); }
        | 'in'      { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_IN); }
        | 'not' 'in'  { $$.ast = new_op_ast(PY_cmp_op, &$n, PY_CMP_NOT_IN); }
@@ -283,9 +271,6 @@ atom:
       D_ParseNode *q = d_get_child(&$n, 1);
       PyDAST *inner = dig_pyast(q);
       $$.ast = inner ? inner : new_pyast(PY_dict, &$n);
-    }
-  | '`' testlist1 '`' {
-      $$.ast = new_pyast(PY_backquote, &$n, $1.ast);
     }
   | NAME { $$.ast = $0.ast; }
   | NUMBER {
@@ -387,7 +372,7 @@ argument: test comp_for? {
   ;
 
 list_iter: list_for | list_if;
-list_for: 'for' exprlist 'in' testlist_safe list_iter? {
+list_for: 'for' exprlist 'in' testlist list_iter? {
   $$.ast = new_pyast_collect(PY_list_for, &$n);
 };
 list_if: 'if' test list_iter? {
@@ -398,13 +383,10 @@ comp_iter: comp_for | comp_if;
 comp_for: 'for' exprlist 'in' or_test comp_iter? {
   $$.ast = new_pyast_collect(PY_comp_for, &$n);
 };
-comp_if: 'if' old_test comp_iter? {
+comp_if: 'if' or_test comp_iter? {
   $$.ast = new_pyast_collect(PY_comp_if, &$n);
 };
 
-testlist1: test (',' test)* {
-  $$.ast = pass_or_collect(1, PY_testlist1, &$n, $0.ast);
-};
 encoding_decl: NAME;
 yield_expr: 'yield' testlist? {
   $$.ast = new_pyast_collect(PY_yield_expr, &$n);
@@ -432,13 +414,16 @@ longstringitem ::= longstringchar | escapeseq;
 shortstringsinglechar ::= "[^\\\n\']";
 shortstringdoublechar ::= "[^\\\n\"]";
 longstringchar ::= "[^\\]";
-stringprefix ::= 'r' | 'u' | 'ur' | 'R' | 'U' | 'UR' | 'Ur' | 'uR';
+stringprefix ::= 'r' | 'R' | 'u' | 'U'
+               | 'b' | 'B' | 'br' | 'bR' | 'Br' | 'BR' | 'rb' | 'rB' | 'Rb' | 'RB'
+               | 'f' | 'F' | 'fr' | 'fR' | 'Fr' | 'FR' | 'rf' | 'rF' | 'Rf' | 'RF';
 escapeseq ::= "\\[^]";
-NUMBER ::= integer | longinteger | floatnumber | imagnumber;
-integer ::= decimalinteger | octinteger | hexinteger;
+NUMBER ::= integer | floatnumber | imagnumber;
+integer ::= decimalinteger | octinteger | hexinteger | bininteger;
 decimalinteger ::= nonzerodigit digit* | '0';
-octinteger ::= '0' octdigit+;
+octinteger ::= '0' ('o' | 'O') octdigit+;
 hexinteger ::= '0' ('x' | 'X') hexdigit+;
+bininteger ::= '0' ('b' | 'B') bindigit+;
 floatnumber ::= pointfloat | exponentfloat;
 pointfloat ::= intpart? fraction | intpart '.';
 exponentfloat ::= (intpart | pointfloat) exponent;
@@ -446,11 +431,11 @@ intpart ::= digit+;
 fraction ::= "." digit+;
 exponent ::= ("e" | "E") ("+" | "-")? digit+;
 imagnumber ::= (floatnumber | intpart) ("j" | "J");
-longinteger ::= integer ("l" | "L");
 nonzerodigit ::= "[1-9]";
 digit ::= "[0-9]";
 octdigit ::= "[0-7]";
 hexdigit ::= digit | "[a-fA-F]";
+bindigit ::= "[01]";
 
 LP ::= '(' [ $g->implicit_line_joining++; ];
 RP ::= ')' [ $g->implicit_line_joining--; ];
@@ -654,12 +639,12 @@ Ldone:;
       "funcdef", "classdef", "decorated", "decorator",
       "suite",
       "expr_stmt", "assign", "augassign",
-      "print_stmt", "del_stmt", "pass_stmt",
+      "del_stmt", "pass_stmt",
       "return_stmt", "break_stmt", "continue_stmt",
       "raise_stmt", "yield_stmt",
       "import_name", "import_from",
       "import_as_name", "dotted_as_name", "dotted_name",
-      "global_stmt", "exec_stmt", "assert_stmt",
+      "global_stmt", "nonlocal_stmt", "assert_stmt",
       "if_stmt", "elif_clause", "else_clause",
       "while_stmt", "for_stmt",
       "try_stmt", "except_clause", "except_handler", "finally_clause",
@@ -668,13 +653,13 @@ Ldone:;
       "compare", "cmp_op", "binop", "unaryop",
       "call", "attribute", "subscript", "power",
       "lambda", "yield_expr",
-      "name", "number", "string", "backquote",
+      "name", "number", "string",
       "tuple", "list", "dict", "set",
       "listcomp", "genexpr",
       "slice",
       "parameters", "varargslist", "fpdef", "fplist",
       "arglist", "keyword_arg", "star_arg", "dstar_arg", "arg_default",
-      "testlist", "exprlist", "testlist1",
+      "testlist", "exprlist",
       "comp_for", "comp_if", "list_for", "list_if",
       "subscriptlist",
     };

@@ -1,1 +1,1 @@
-print "asdf", "sdfg", 1.2
+print("asdf", "sdfg", 1.2)

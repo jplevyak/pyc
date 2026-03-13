@@ -1,3 +1,3 @@
 def hi():
-  print 'hi'
+  print('hi')
 hi()

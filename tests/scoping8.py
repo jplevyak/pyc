@@ -3,4 +3,4 @@ def y():
     global z 
     z = 2
 y()
-print z
+print(z)

@@ -7,12 +7,12 @@ def f():
     
     def g():
         global x
-        print x
+        print(x)
         x = 4
     
-    print x
+    print(x)
     g()
 
 f()
-print x
+print(x)
 

@@ -95,13 +95,9 @@ void build_builtin_symbols() {
   sym_any->name = cannonicalize_string("__pyc_any_type__");
 
   // new types and objects
-  new_builtin_primitive_type(sym_unicode, "unicode");
   new_builtin_primitive_type(sym_list, "list");
   new_builtin_primitive_type(sym_tuple, "tuple");
-  new_builtin_primitive_type(sym_buffer, "buffer");
-  new_builtin_primitive_type(sym_xrange, "xrange");
   new_builtin_primitive_type(sym_ellipsis_type, "Ellipsis_type");
-  new_builtin_alias_type(sym_long, "long", sym_int64);  // standin for GNU gmp
   new_builtin_unique_object(sym_ellipsis, "Ellipsis", sym_ellipsis_type);
   sym_ellipsis_type->is_unique_type = 1;
 

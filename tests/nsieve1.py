@@ -8,14 +8,14 @@
 def nsieve(m, c=0):
     a = [True] * (m + 1)
     n1 = m + 1
-    for i in xrange(2, n1):
+    for i in range(2, n1):
         if a[i]:
             c += 1
             k = i << 1
             while k < n1:
                 if a[k]: a[k] = False
                 k += i
-    print 'Primes up to', m, c;
+    print('Primes up to', m, c)
 
 for k in 0, 1, 2:
     nsieve(100000, 0)

@@ -1,4 +1,4 @@
 def hi():
-  print 'hi'
+  print('hi')
   return 'ho'
-print hi()
+print(hi())

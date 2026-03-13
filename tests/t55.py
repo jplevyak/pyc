@@ -1,1 +1,1 @@
-print "abcde"[3]
+print("abcde"[3])

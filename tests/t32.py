@@ -8,9 +8,9 @@ class A:
 
 x = 1
 x += 2
-print x
+print(x)
 a = A(1)
-print a.n
+print(a.n)
 a += 2
-print a.n
+print(a.n)
 

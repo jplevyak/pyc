@@ -6,4 +6,4 @@ class A:
     return self.n + x.n
 
 a = A(3)
-print a + a
+print(a + a)

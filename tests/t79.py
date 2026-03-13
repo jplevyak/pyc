@@ -4,4 +4,4 @@ class C:
 
 a = C()
 a.x = 1
-print a.foo(1)
+print(a.foo(1))

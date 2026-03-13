@@ -1,7 +1,7 @@
 def hi(a):
   if a: 
-    print 'hi'
+    print('hi')
   else:
-    print 'hello'
+    print('hello')
 hi(True)
 hi(False)

@@ -319,6 +319,10 @@ static int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       for (auto c : n->children.values()) make_PycSymbol(ctx, c->str_val, PYC_GLOBAL);
       return 0;
 
+    case PY_nonlocal_stmt:
+      for (auto c : n->children.values()) make_PycSymbol(ctx, c->str_val, PYC_NONLOCAL);
+      return 0;
+
     case PY_for_stmt:
       ctx.lcontinue() = ast->label[0] = if1_alloc_label(if1);
       ctx.lbreak() = ast->label[1] = if1_alloc_label(if1);
@@ -381,8 +385,6 @@ static int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_raise_stmt:
     case PY_yield_stmt:
     case PY_assert_stmt:
-    case PY_exec_stmt:
-    case PY_print_stmt:
     case PY_if_stmt:
     case PY_elif_clause:
     case PY_else_clause:
@@ -419,7 +421,6 @@ static int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
 
     case PY_number:
     case PY_string:
-    case PY_backquote:
     case PY_list:
     case PY_dict:
     case PY_set:
@@ -434,7 +435,6 @@ static int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_star_arg:
     case PY_dstar_arg:
     case PY_arg_default:
-    case PY_testlist1:
     case PY_list_if:
     case PY_comp_if:
     case PY_decorator:

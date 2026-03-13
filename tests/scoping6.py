@@ -3,12 +3,12 @@
 z = 3
 def y():
   z = 1;
-  print z
+  print(z)
   def g():
     x = 2
-    print x
+    print(x)
   global z
   g()
 y()
-print z
+print(z)
 

@@ -6,7 +6,6 @@ static void build_environment(PycModule *mod, PycCompiler &ctx) {
   ctx.node = mod->pymod;
   enter_scope(ctx);
   scope_sym(ctx, sym_int);
-  scope_sym(ctx, sym_long);
   scope_sym(ctx, sym_float);
   scope_sym(ctx, sym_complex);
   scope_sym(ctx, sym_string);
@@ -90,7 +89,7 @@ static void format_string_codegen(FILE *fp, PNode *n, Fun *f) {
 static void to_str_codegen(FILE *fp, PNode *n, Fun *f) {
   Var *v = n->rvals[2];
   if (v->type->is_meta_type && v->type->name) {
-    fputs("_CG_String(\"<type '", fp);
+    fputs("_CG_String(\"<class '", fp);
     fputs(v->type->name, fp);
     fputs("'>\");", fp);
   } else

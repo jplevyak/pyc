@@ -8,6 +8,6 @@ def y():
     else:
       z = 2
     i = i + 1
-  print z
+  print(z)
 y()
-print z
+print(z)

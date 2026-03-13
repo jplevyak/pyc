@@ -1,3 +1,3 @@
-for k in xrange(1,10):
-    print k
+for k in range(1,10):
+    print(k)
 

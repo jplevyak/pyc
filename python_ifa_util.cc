@@ -15,8 +15,7 @@ int scope_id = 0;
 
 // -- Globals --
 Map<PyDAST *, PycAST *> pydmap;
-Sym *sym_long = 0, *sym_ellipsis = 0, *sym_ellipsis_type = 0, *sym_unicode = 0, *sym_buffer = 0, *sym_xrange = 0,
-    *sym_declare = 0;
+Sym *sym_ellipsis = 0, *sym_ellipsis_type = 0, *sym_declare = 0;
 
 #define S(_x) Sym *sym_##_x = 0;
 #include "pyc_symbols.h"
