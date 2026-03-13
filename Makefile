@@ -132,7 +132,7 @@ INSTALL_LIBRARIES =
 #INCLUDES =
 MANPAGES = pyc.1
 
-CLEAN_FILES += *.cat $(LIB_OBJS:.o=.d) $(PYC_OBJS:.o=.d)
+CLEAN_FILES += *.cat $(PYC_OBJS:.o=.d)
 
 ifeq ($(OS_TYPE),CYGWIN)
 EXECUTABLES = $(EXECUTABLE_FILES:%=%.exe)
@@ -141,8 +141,6 @@ else
 EXECUTABLES = $(EXECUTABLE_FILES)
 PYC = pyc
 endif
-
-DEPEND_SRCS = $(PYC_DEPEND_SRCS)
 
 defaulttarget: $(EXECUTABLES) pyc.cat
 
@@ -223,4 +221,4 @@ realclean: clean
 	\rm -f *.a *.orig *.rej
 	$(MAKE) -C $(IFA_DIR) realclean
 
--include $(LIB_OBJS:.o=.d) $(PYC_OBJS:.o=.d)
+-include $(PYC_OBJS:.o=.d)
