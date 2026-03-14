@@ -1,0 +1,26 @@
+A
+65
+0x5a7d
+1
+True
+False
+True
+False
+True
+False
+True
+True
+True
+True
+<class 'str'>
+-0b1
+0b1010
+True
+False
+3
+3.0
+bytearray(b'\x00ab\x00\x00\x00\x00\x00\x00\x00')
+aaaaaaaaaa
+[' ', ' ', ' ', ' ', ' ', ' ']
+10
+bytearray(b'\x00,\x00\x00\x00\x00\x00\x00\x00\x00')
