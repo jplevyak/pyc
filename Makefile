@@ -133,8 +133,9 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d)
 
 # Targets ---------------------------------------------------------------------
 
-.PHONY: all defaulttarget install deinstall clean realclean \
-        test test_dparse $(IFALIB) pullifa pushifa diffifa
+.PHONY: all defaulttarget install deinstall clean realclean clean-tests \
+        test test-e2e test-unit test-dparse test_dparse \
+        $(IFALIB) pullifa pushifa diffifa
 
 all: defaulttarget
 
@@ -182,11 +183,28 @@ deinstall:
 	rm -f $(MANPAGES:%=$(PREFIX)/man/man1/%)
 
 # Tests -----------------------------------------------------------------------
+#
+# `make test`         — everything (unit + e2e). Fails on first category that fails.
+# `make test-unit`    — IFA unit tests via the UnitTest framework (`ifa --test`).
+# `make test-e2e`     — end-to-end pyc tests (parse, compile, execute, CPython diff).
+# `make test-dparse`  — parse-only validation of every tests/*.py.
+# `make clean-tests`  — remove tests/build/ and any in-tree leftovers.
+#
+# See tests/README.md for adding / debugging tests.
 
-test: test_pyc
+test: test-unit test-e2e
+
+test-e2e: $(PYC)
 	./test_pyc
 
-test_dparse: $(PYC)
+test-unit: $(IFALIB)
+	@if [ -x $(IFA_DIR)/ifa ]; then \
+	  $(IFA_DIR)/ifa --test; \
+	else \
+	  echo "skipping unit tests: $(IFA_DIR)/ifa not built"; \
+	fi
+
+test-dparse test_dparse: $(PYC)
 	@echo "--- DParser parse validation ---"; \
 	failed=0; \
 	for f in tests/*.py; do \
@@ -204,6 +222,14 @@ test_dparse: $(PYC)
 	  echo "--- $$failed DParser test(s) FAILED ---"; exit 1; \
 	fi
 
+clean-tests:
+	rm -rf tests/build tests/__pycache__ tests/pyc_compat.py
+	rm -f  tests/*.out tests/*.py.c tests/*.py.s
+	@# Stale binaries from old in-place test runs: any executable with a .py twin.
+	@for f in tests/*; do \
+	  if [ -f "$$f" ] && [ -x "$$f" ] && [ -e "$$f.py" ]; then rm -f "$$f"; fi; \
+	done
+
 # IFA subtree management ------------------------------------------------------
 
 pullifa:
@@ -217,7 +243,7 @@ diffifa:
 
 # Clean -----------------------------------------------------------------------
 
-clean:
+clean: clean-tests
 	rm -f *.o *.d core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
 	$(MAKE) -C $(IFA_DIR) clean
 

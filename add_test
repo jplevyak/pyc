@@ -1,17 +1,37 @@
-#!/bin/tcsh
+#!/bin/bash
+# Add a new pyc end-to-end test from a local .py file.
+#
+# Usage: ./add_test <local.py> [test_name.py]
+#
+#   local.py        the source file to use as the test
+#   test_name.py    optional name under tests/ (default: same basename)
+#
+# Compiles the source with pyc, captures the resulting binary's stdout as the
+# baseline (tests/<name>.py.exec.check), and `git add`s both files.
 
-if ($1 == "") then
-  echo "add_test localname.py [testname.py]"
-  exit 1
-endif
-set f = $1
-if ($2 == "") then
-  set t = $f
-else
-  set t = $2
-endif
-cp $f tests/$t
-pyc $f
-$f:r > tests/$t.exec.check
-git add tests/$t
-git add tests/$t.exec.check
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+  exit 2
+fi
+
+src="$1"
+name="${2:-$(basename "$src")}"
+
+if [ ! -e "$src" ]; then
+  echo "$src: no such file" >&2; exit 1
+fi
+
+if [ ! -x ./pyc ]; then
+  echo "./pyc not found; run 'make' first" >&2; exit 1
+fi
+
+cp "$src" "tests/$name"
+./pyc "$src"
+base="${src%.py}"
+./"$base" > "tests/${name}.exec.check"
+rm -f "$base" "${base}.py.c"
+
+git add "tests/$name" "tests/${name}.exec.check"
+echo "added: tests/$name + tests/${name}.exec.check"

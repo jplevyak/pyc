@@ -1,75 +1,213 @@
 #!/bin/bash
+# End-to-end test suite for pyc.
+#
+# Usage: ./test_pyc [options] [pattern]
+#
+#   -v, --verbose       show all test results (default: only failures + summary)
+#   -k, --keep          keep tests/build/ after run
+#   -b, --bail          stop at first failure
+#       --no-cpython    skip CPython cross-verify
+#   -t, --timeout N     per-step timeout in seconds (default: 60)
+#   -h, --help          this help
+#
+#   pattern             only run tests whose name matches *pattern*
+#
+# Env:
+#   PYC        path to pyc binary             (default: ./pyc)
+#   PYTHON     CPython interpreter            (default: python3)
+#   VALGRIND   wrapper for compile + execute  (e.g. 'valgrind -q')
+#   TIMEOUT    per-step timeout in seconds    (default: 60)
+#
+# Sidecar conventions per test foo.py:
+#   foo.py.flags                extra pyc CLI flags
+#   foo.py.check                expected compile-time stdout
+#   foo.py.exec.check           expected runtime stdout
+#   foo.py.python.expect_fail   CPython produces different output (OK)
+#   foo.py.expect_fail          pyc is expected to fail compilation
+#   foo.py.check_fail           pyc may fail; counted as pass either way
+#   foo.py.ignore               skip this test
 
-PYTHON=python3
+set -o pipefail
 
-#VALGRIND='valgrind -q'
-VALGRIND=' '
+PYC="${PYC:-./pyc}"
+PYTHON="${PYTHON:-python3}"
+VALGRIND="${VALGRIND:-}"
+TIMEOUT="${TIMEOUT:-60}"
+BUILD=tests/build
+TESTS_DIR=tests
 
-cd tests
+verbose=0
+keep=0
+bail=0
+do_cpython=1
+pattern=""
+
+usage() {
+  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -v|--verbose)    verbose=1 ;;
+    -k|--keep)       keep=1 ;;
+    -b|--bail)       bail=1 ;;
+       --no-cpython) do_cpython=0 ;;
+    -t|--timeout)    TIMEOUT="$2"; shift ;;
+    -h|--help)       usage; exit 0 ;;
+    --) shift; break ;;
+    -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *)  pattern="$1" ;;
+  esac
+  shift
+done
+
+if [ ! -x "$PYC" ]; then
+  echo "$PYC: not found or not executable. Run 'make' first." >&2
+  exit 1
+fi
+
+cleanup() {
+  if [ "$keep" = "0" ]; then rm -rf "$BUILD"; fi
+}
+trap cleanup EXIT
+
+mkdir -p "$BUILD"
+cp pyc_compat.py "$BUILD/"
+# Stage all .py files as symlinks so cross-test imports resolve from inside
+# the build dir without polluting the source tree.
+for f in "$TESTS_DIR"/*.py; do ln -sf "../$(basename "$f")" "$BUILD/$(basename "$f")"; done
+
+# Color output when stdout is a terminal.
+if [ -t 1 ]; then
+  R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; B=$'\033[1m'; N=$'\033[0m'
+else
+  R=; G=; Y=; B=; N=
+fi
+
+passed=0
 failed=0
 expected_failed=0
-cp ../pyc_compat.py .
-for g in *.py; do
-  if [ -e "$g.ignore" ]; then continue; fi
-  if [ -e "$g.flags" ]; then
-    flags=$(cat "$g.flags")
-  else
-    flags=
+skipped=0
+failures=()
+
+print_summary() {
+  printf '\n%s---- summary ----%s\n' "$B" "$N"
+  printf '  %spassed%s          %d\n' "$G" "$N" "$passed"
+  printf '  %sexpected fails%s  %d\n' "$Y" "$N" "$expected_failed"
+  printf '  %sfailed%s          %d\n' "$R" "$N" "$failed"
+  printf '  skipped         %d\n' "$skipped"
+  printf '  time            %ds\n' "$elapsed"
+  if [ ${#failures[@]} -gt 0 ]; then
+    printf '\n%sfailures:%s\n' "$R" "$N"
+    for f in "${failures[@]}"; do printf '  %s\n' "$f"; done
   fi
-  $VALGRIND ../pyc -D.. $flags "$g" >&"$g.out"
-  if [ $? -ne 0 ]; then
+}
+
+note_failure() {
+  failures+=("$1")
+  failed=$((failed + 1))
+  if [ "$bail" = "1" ]; then
+    elapsed=$(( $(date +%s) - start ))
+    print_summary
+    exit 1
+  fi
+}
+
+pass_log()    { [ "$verbose" = "1" ] && printf '  %s%s%s %s\n' "$G" "PASS" "$N" "$1"; }
+skip_log()    { [ "$verbose" = "1" ] && printf '  %s%s%s %s\n' "$Y" "SKIP" "$N" "$1"; }
+xfail_log()   { [ "$verbose" = "1" ] && printf '  %s%s%s %s (%s)\n' "$Y" "XFAIL" "$N" "$1" "$2"; }
+fail_log()    { printf '  %s%s%s %s (%s)\n' "$R" "FAIL" "$N" "$1" "$2" >&2; }
+
+start=$(date +%s)
+
+for g in "$TESTS_DIR"/*.py; do
+  name=$(basename "$g")
+  base="${name%.py}"
+
+  if [ -n "$pattern" ] && [[ "$name" != *"$pattern"* ]]; then continue; fi
+
+  if [ -e "$g.ignore" ]; then
+    skipped=$((skipped + 1)); skip_log "$name"; continue
+  fi
+
+  flags=
+  [ -e "$g.flags" ] && flags=$(cat "$g.flags")
+
+  # Compile.
+  ( cd "$BUILD" && timeout "$TIMEOUT" $VALGRIND "../../$PYC" -D../.. $flags "$name" ) \
+    > "$BUILD/$name.out" 2>&1
+  rc=$?
+  if [ $rc -eq 124 ]; then
+    fail_log "$name" "COMPILE-TIMEOUT (${TIMEOUT}s)"
+    note_failure "$name COMPILE-TIMEOUT  log: $BUILD/$name.out"
+    continue
+  fi
+
+  if [ $rc -ne 0 ]; then
     if [ -e "$g.expect_fail" ]; then
-      echo "$g COMPILE EXPECTED FAIL"
-      expected_failed=$((expected_failed + 1))
-    elif [ -e "$g.check_fail" ]; then
-      echo "$g COMPILE PASSED"
-    else
-      echo "$g ******** COMPILE FAILED ********"
-      failed=$((failed + 1))
+      expected_failed=$((expected_failed + 1)); xfail_log "$name" "compile"; continue
     fi
-  else
-    if [ -e "$g.check" ]; then
-      diff "$g.out" "$g.check"
-    else
-      diff "$g.out" empty
+    if [ -e "$g.check_fail" ]; then
+      passed=$((passed + 1)); pass_log "$name (compile-fail-ok)"; continue
     fi
-    if [ $? -ne 0 ]; then
-      echo "$g ******** COMPILE FAILED ********"
-      failed=$((failed + 1))
-    else
-      echo "$g COMPILE PASSED"
-      if [ -e "$g.exec.check" ]; then
-        base="${g%.py}"
-        $VALGRIND ./"$base" >&"$g.exec.out"
-        diff "$g.exec.out" "$g.exec.check"
-        if [ $? -ne 0 ]; then
-          echo "$g ******** EXECUTE FAILED ********"
-          failed=$((failed + 1))
-        else
-          echo "$g EXECUTE PASSED"
-        fi
-        $PYTHON "$g" >&"$g.python.out"
-        diff "$g.exec.out" "$g.python.out" > /dev/null
-        if [ $? -ne 0 ]; then
-          if [ -e "$g.python.expect_fail" ]; then
-            echo "$g PYTHON EXPECTED FAIL"
-            expected_failed=$((expected_failed + 1))
-          else
-            echo "$g ******** CPYTHON VERIFY FAILED ********"
-            diff "$g.exec.out" "$g.python.out"
-            failed=$((failed + 1))
-          fi
-        fi
-        rm -f "$base"
+    fail_log "$name" "COMPILE"
+    note_failure "$name COMPILE  log: $BUILD/$name.out"
+    continue
+  fi
+
+  # Check compile-time stdout.
+  check="$g.check"
+  [ -e "$check" ] || check="$TESTS_DIR/empty"
+  if ! diff -q "$BUILD/$name.out" "$check" > /dev/null 2>&1; then
+    fail_log "$name" "COMPILE-OUT"
+    diff "$BUILD/$name.out" "$check" | head -20 >&2
+    note_failure "$name COMPILE-OUT  diff $BUILD/$name.out $check"
+    continue
+  fi
+
+  # Execute, if exec.check exists.
+  if [ ! -e "$g.exec.check" ]; then
+    passed=$((passed + 1)); pass_log "$name (compile-only)"; continue
+  fi
+
+  ( cd "$BUILD" && timeout "$TIMEOUT" $VALGRIND ./"$base" ) \
+    > "$BUILD/$name.exec.out" 2>&1
+  rc=$?
+  if [ $rc -eq 124 ]; then
+    fail_log "$name" "EXEC-TIMEOUT (${TIMEOUT}s)"
+    note_failure "$name EXEC-TIMEOUT  log: $BUILD/$name.exec.out"
+    continue
+  fi
+  if [ $rc -ne 0 ] || ! diff -q "$BUILD/$name.exec.out" "$g.exec.check" > /dev/null 2>&1; then
+    fail_log "$name" "EXEC"
+    diff "$BUILD/$name.exec.out" "$g.exec.check" | head -20 >&2
+    note_failure "$name EXEC  diff $BUILD/$name.exec.out $g.exec.check"
+    continue
+  fi
+
+  # CPython cross-verify.
+  if [ "$do_cpython" = "1" ]; then
+    # PYTHONPATH=. so CPython finds pyc_compat.py in the build dir even
+    # when the script is a symlink (Python resolves sys.path[0] from the
+    # symlink target, not from cwd).
+    ( cd "$BUILD" && PYTHONPATH=. timeout "$TIMEOUT" "$PYTHON" "$name" ) \
+      > "$BUILD/$name.python.out" 2>&1
+    if ! diff -q "$BUILD/$name.exec.out" "$BUILD/$name.python.out" > /dev/null 2>&1; then
+      if [ -e "$g.python.expect_fail" ]; then
+        expected_failed=$((expected_failed + 1)); xfail_log "$name" "cpython"; continue
       fi
+      fail_log "$name" "CPYTHON"
+      diff "$BUILD/$name.exec.out" "$BUILD/$name.python.out" | head -20 >&2
+      note_failure "$name CPYTHON  diff $BUILD/$name.exec.out $BUILD/$name.python.out"
+      continue
     fi
   fi
+
+  passed=$((passed + 1)); pass_log "$name"
 done
-echo "---------------------------------------"
-if [ "$failed" -eq 0 ]; then
-  echo "ALL tests PASSED ($expected_failed expected fails)"
-else
-  echo "******** $failed test(s) FAILED (not including $expected_failed expected fails) *********"
-fi
-rm -rf ./*.o ./*.c ./*.out pyc_compat.py
-cd ..
+
+elapsed=$(( $(date +%s) - start ))
+print_summary
+
+if [ "$failed" -ne 0 ]; then exit 1; fi
+exit 0
