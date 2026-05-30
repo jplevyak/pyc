@@ -5,6 +5,8 @@
 #include <signal.h>
 #include <sys/resource.h>
 
+extern int write_code_exit;
+
 int do_unit_tests = 0;
 static int dparse_only = 0;
 static int dparse_ast = 0;
@@ -57,6 +59,7 @@ static ArgumentDescription arg_desc[] = {
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
     {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
     {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
+    {"write_code_exit", 'x', "Write Code and Exit Pass", "I", &write_code_exit, "PYC_WRITE_CODE_EXIT", NULL},
     {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
     {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
     {"license", ' ', "Show License", NULL, NULL, NULL, license},
@@ -154,15 +157,27 @@ int main(int argc, char *argv[]) {
   Vec<PycModule *> mods;
   for (int i = -1; i < arg_state.nfile_arguments; i++) {
     cchar *filename = 0;
+    PyDAST *pymod = nullptr;
     if (i < 0) {
-      char fn[256];
+      char fn[256], fn2[256];
       strcpy(fn, system_dir);
-      strcat(fn, "/__pyc__.py");
-      filename = dupstr(fn);
-    } else
+      strcat(fn, "/__pyc__");
+      if (is_directory(fn)) {
+        // Load as one concatenated module; use the .py name for path resolution
+        strcpy(fn2, system_dir);
+        strcat(fn2, "/__pyc__.py");
+        filename = dupstr(fn2);
+        pymod = dparse_builtin_dir(fn);
+      } else {
+        strcat(fn, ".py");
+        filename = dupstr(fn);
+        pymod = dparse_python_to_ast(filename);
+      }
+    } else {
       filename = arg_state.file_argument[i];
+      pymod = dparse_python_to_ast(filename);
+    }
     if (!i) first_filename = filename;
-    PyDAST *pymod = dparse_python_to_ast(filename);
     if (pymod) {
       PycModule *m = new PycModule(filename, i < 0);
       m->pymod = pymod;

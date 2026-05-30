@@ -1216,8 +1216,33 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_keyword_arg:
     case PY_decorator:
     case PY_cmp_op:
+      for (auto c : n->children.values()) build_if1_pyda(c, ctx);
+      return 0;
+
+    case PY_dict: {
+      for (int i = 0; i + 1 < n->children.n; i += 2) {
+        build_if1_pyda(n->children[i], ctx);
+        build_if1_pyda(n->children[i + 1], ctx);
+        if1_gen(if1, &ast->code, getAST(n->children[i], ctx)->code);
+        if1_gen(if1, &ast->code, getAST(n->children[i + 1], ctx)->code);
+      }
+      // Create dict instance by calling dict() constructor
+      if (!ast->sym) fail("error line %d, 'dict' type not found (is __pyc__/07_dict.py loaded?)", n->line);
+      Code *ctor = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, ctor, ast->sym);  // dict class sym (set by build_syms_pyda)
+      Sym *dict_inst = new_sym(ast);
+      ast->rval = dict_inst;
+      if1_add_send_result(if1, ctor, dict_inst);
+      // Call __setitem__ for each k-v pair
+      for (int i = 0; i + 1 < n->children.n; i += 2) {
+        call_method(&ast->code, ast, dict_inst, sym___setitem__, new_sym(ast), 2,
+                    getAST(n->children[i], ctx)->rval,
+                    getAST(n->children[i + 1], ctx)->rval);
+      }
+      return 0;
+    }
+
     case PY_set:
-    case PY_dict:
     case PY_genexpr:
     case PY_yield_expr:
     case PY_slice:

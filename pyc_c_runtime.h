@@ -382,6 +382,12 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
 #define _CG_prim_greaterorequal(_a, _op, _b) ((_a) >= (_b))
 #define _CG_prim_equal(_a, _op, _b) ((_a) == (_b))
 #define _CG_prim_notequal(_a, _op, _b) ((_a) != (_b))
+static inline _CG_bool _CG_str_eq(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) == 0); }
+static inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) != 0); }
+static inline _CG_bool _CG_str_lt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) < 0); }
+static inline _CG_bool _CG_str_le(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) <= 0); }
+static inline _CG_bool _CG_str_gt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) > 0); }
+static inline _CG_bool _CG_str_ge(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) >= 0); }
 #define _CG_prim_paren(_f, _a) ((*(_f))((_f), (_a)))
 #define _CG_prim_set(_a, _b) (_a) = (_b)
 #define _CG_prim_minus(_op, _a) (-(_a))

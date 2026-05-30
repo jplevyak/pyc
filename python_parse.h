@@ -26,5 +26,8 @@ int dparse_python_file(const char *filename);
 // Parse a Python source file and return the root PyDAST*, or null on error.
 PyDAST *dparse_python_to_ast(const char *filename);
 
+// Parse all *.py files from a directory (sorted order) as one concatenated module.
+PyDAST *dparse_builtin_dir(const char *dirname);
+
 // Print a PyDAST tree for debugging.
 void pyast_print(PyDAST *ast, int depth);

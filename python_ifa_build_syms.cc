@@ -419,10 +419,18 @@ static int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
+    case PY_dict: {
+      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      PycSymbol *ds = make_PycSymbol(ctx, "dict", PYC_USE);
+      if (ds) ast->sym = ds->sym;
+      else fprintf(stderr, "PY_dict: 'dict' not found in scope (line %d, imports.n=%d)\n", n->line, ctx.imports.n);
+      ast->rval = new_sym(ast);
+      return 0;
+    }
+
     case PY_number:
     case PY_string:
     case PY_list:
-    case PY_dict:
     case PY_set:
     case PY_slice:
     case PY_subscriptlist:
