@@ -134,7 +134,7 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d)
 # Targets ---------------------------------------------------------------------
 
 .PHONY: all defaulttarget install deinstall clean realclean clean-tests \
-        test test-e2e test-unit test-dparse test_dparse \
+        test test-e2e test-unit test-ir test-dparse test_dparse \
         $(IFALIB) pullifa pushifa diffifa
 
 all: defaulttarget
@@ -184,15 +184,16 @@ deinstall:
 
 # Tests -----------------------------------------------------------------------
 #
-# `make test`         — everything (unit + e2e). Fails on first category that fails.
+# `make test`         — everything (unit + ir + e2e). Fails on first category that fails.
 # `make test-unit`    — IFA unit tests via the UnitTest framework (`ifa --test`).
+# `make test-ir`      — IF1-level golden-file phase tests (`ifa-test`).
 # `make test-e2e`     — end-to-end pyc tests (parse, compile, execute, CPython diff).
 # `make test-dparse`  — parse-only validation of every tests/*.py.
 # `make clean-tests`  — remove tests/build/ and any in-tree leftovers.
 #
-# See tests/README.md for adding / debugging tests.
+# See tests/README.md and ifa/testing/TEST_RUNNER.md for adding / debugging tests.
 
-test: test-unit test-e2e
+test: test-unit test-ir test-e2e
 
 test-e2e: $(PYC)
 	./test_pyc
@@ -203,6 +204,9 @@ test-unit: $(IFALIB)
 	else \
 	  echo "skipping unit tests: $(IFA_DIR)/ifa not built"; \
 	fi
+
+test-ir:
+	$(MAKE) -C $(IFA_DIR) test-ir
 
 test-dparse test_dparse: $(PYC)
 	@echo "--- DParser parse validation ---"; \
