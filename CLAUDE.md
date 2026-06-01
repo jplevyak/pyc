@@ -12,3 +12,12 @@
 See [ifa/INDEX.md](ifa/INDEX.md) for the full per-subsystem index
 (ARCHITECTURE, IR, IFA, CLONE, DISPATCH, PRIMITIVES, CFG_SSU,
 OPTIMIZE, CODEGEN_C, CODEGEN_LLVM, CAST, FRONTEND, COMMON).
+
+## Issue tracking
+
+Deferred work worth a trail lives in [ifa/issues/](ifa/issues/) as
+numbered markdown files (`NNN-short-slug.md`) — each documents
+symptom, root cause, proposed fix, verification plan, and what
+fixing it would unblock. See
+[ifa/issues/README.md](ifa/issues/README.md) for conventions and
+when to file vs. fix-now.
