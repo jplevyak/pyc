@@ -217,7 +217,7 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   if (!type_violations.n) return false;
   bool again = false;
   for (auto v : type_violations.values()) if (v) {
-    if (v->kind == ATypeViolation_NOTYPE) {
+    if (v->kind == ATypeViolation_kind::NOTYPE) {
       if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
       for (auto cs : av->out->sorted.values()) {
