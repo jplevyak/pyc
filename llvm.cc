@@ -306,14 +306,14 @@ void build_llvm_pnode(Fun *f, PNode *n, LLVMContext &c, IRBuilder<> &b, Module &
   switch (n->code->kind) {
     case Code_IF:
       if (n->live && n->fa_live) {
-        if (n->rvals[0]->sym == true_type->v[0]->sym) {
+        if (n->rvals[0]->sym == fa->type_world.true_type->v[0]->sym) {
           do_phy_nodes(n, 0, b);
           do_phi_nodes(n, 0, b);
           if (done.set_add(n->cfg_succ[0]))
             build_llvm_pnode(f, n->cfg_succ[0], c, b, m, done);
           else
             b.CreateBr(n->code->label[0]->bb);
-        } else if (n->rvals[0]->sym == false_type->v[0]->sym) {
+        } else if (n->rvals[0]->sym == fa->type_world.false_type->v[0]->sym) {
           do_phy_nodes(n, 1, b);
           do_phi_nodes(n, 1, b);
           if (done.set_add(n->cfg_succ[1]))
