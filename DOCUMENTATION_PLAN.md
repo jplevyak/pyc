@@ -127,7 +127,7 @@ references. ~300-500 lines each.
 
 - [ ] **`RUNTIME.md`** (root, ~120 lines) — the pyc runtime layer.
   Scope:
-  - `pyc_c_runtime.h` / `pyc_c_runtime_plib.h` — generated C runtime helpers
+  - `pyc_c_runtime.h` — generated C runtime helpers
     (boxing, type tags, GC integration).
   - `__pyc__/` directory (`00_runtime.py` … `06_bytearray.py`) — the
     builtin module; how concatenation works; ordering constraints (forward

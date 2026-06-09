@@ -40,7 +40,6 @@ python_ifa_main.cc           ← ast_to_if1 entry, primitive registration, build
 defs.h                       ← top-level includes
 pyc_symbols.h                ← S(name)/P(name)/B(name) macro list of pyc-specific syms
 pyc_c_runtime.h              ← runtime C helpers emitted alongside generated code
-pyc_c_runtime_plib.h         ← plib variant
 pyc_compat.py                ← runnable-under-CPython shim for __pyc_declare__ etc.
 __pyc__/                     ← builtin Python module (str, int, list, ...) as 7 ordered files
 __pyc__.py                   ← legacy single-file builtin (fallback if __pyc__/ absent)

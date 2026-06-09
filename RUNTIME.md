@@ -34,7 +34,6 @@ programs can reference. The shim `pyc_compat.py` lets user programs
 ```
 pyc/
 ├── pyc_c_runtime.h          (413 lines) Self-contained C header, all macros / inlines / typedefs.
-├── pyc_c_runtime_plib.h     (368 lines) Plib-flavoured variant; pulls in common.h.
 ├── pyc_compat.py            One line: __pyc_declare__ = None.
 ├── pyc_symbols.h            Macro list S/P/B of frontend-known names.
 ├── __pyc__/                 Python builtin module (loaded as one concatenated module).
@@ -238,21 +237,7 @@ a matching `_CG_*` macro added here.
 
 ---
 
-## 4. The plib variant (`pyc_c_runtime_plib.h`)
-
-Same content as `pyc_c_runtime.h` but starts with `#include
-"common.h"` instead of redefining types. Used when the emitted code
-is linked into the plib-using IFA library itself (e.g., for
-test programs that embed both).
-
-In practice, normal pyc compilations use `pyc_c_runtime.h`
-(simpler, no dependencies). The choice is hard-coded in pyc's
-`PycCompiler::c_codegen_pre_file` — it always emits the
-`pyc_c_runtime.h` include.
-
----
-
-## 5. The Python builtin module (`__pyc__/`)
+## 4. The Python builtin module (`__pyc__/`)
 
 Loaded by `pyc.cc:main` at startup, *before* user files. The
 directory is found at `$IFA_SYSTEM_DIRECTORY/__pyc__/` or
@@ -359,7 +344,7 @@ discrepancy, the directory wins.
 
 ---
 
-## 6. The compat shim (`pyc_compat.py`)
+## 5. The compat shim (`pyc_compat.py`)
 
 ```python
 __pyc_declare__ = None
@@ -392,7 +377,7 @@ users to access via standard Python `import` syntax:
 
 ---
 
-## 7. The `pyc_symbols.h` macro table
+## 6. The `pyc_symbols.h` macro table
 
 (See [PYTHON_FRONTEND.md](PYTHON_FRONTEND.md) §9 for the full
 treatment.)
@@ -404,7 +389,7 @@ need an entry here.
 
 ---
 
-## 8. The build → link pipeline
+## 7. The build → link pipeline
 
 When pyc compiles `hello.py`:
 
@@ -432,7 +417,7 @@ dynamically linked.
 
 ---
 
-## 9. Adding new runtime support
+## 8. Adding new runtime support
 
 Concrete recipes for common changes:
 
@@ -486,7 +471,7 @@ If the helper is large or has dependencies:
 
 ---
 
-## 10. Gotchas
+## 9. Gotchas
 
 ### 10.1 `__pyc__/` is concatenated, not imported per-file
 A name defined in `01_str.py` is visible throughout `02_numeric.py`
@@ -552,7 +537,7 @@ so error messages reference a consistent path.
 
 ---
 
-## 11. Symptom → start-here
+## 10. Symptom → start-here
 
 | Symptom | Start here |
 |---|---|
@@ -569,10 +554,9 @@ so error messages reference a consistent path.
 
 ---
 
-## 12. References
+## 11. References
 
 - `pyc_c_runtime.h` — the runtime header.
-- `pyc_c_runtime_plib.h` — the plib-flavoured alternative.
 - `pyc_compat.py` — the import shim.
 - `pyc_symbols.h` — the macro table for frontend-known Sym names.
 - `__pyc__/*.py` — the Python builtin module.

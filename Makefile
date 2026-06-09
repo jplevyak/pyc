@@ -2,10 +2,10 @@
 
 # Build configuration ---------------------------------------------------------
 #
-# USE_GC is required — the runtime and IFA library both assume Boehm GC.
-# The other flags are optional; uncomment to enable.
+# Boehm GC is a hard dependency of the runtime and IFA library; the
+# build no longer carries a non-GC branch. The flags below are
+# optional; uncomment to enable.
 
-USE_GC=1          # required
 DEBUG=1
 #OPTIMIZE=1
 #PROFILE=1
@@ -64,20 +64,17 @@ endif
 
 IFA_DIR      = ifa
 IFA_LIB_DIR  = $(IFA_DIR)
+# "plib" lives vendored under ifa/common/; the top-level /plib/
+# directory that older configurations linked against is gone.
 PLIB_DIR     = $(IFA_DIR)/common
 
 CFLAGS += -I$(PLIB_DIR) -I$(IFA_DIR) -I$(IFA_DIR)/if1 -I$(IFA_DIR)/frontend \
           -I$(IFA_DIR)/analysis -I$(IFA_DIR)/codegen -I$(IFA_DIR)/optimize \
           -I/usr/local/include
 
-ifdef USE_GC
-  CFLAGS += -DUSE_GC
-  LIBS   += -L$(IFA_LIB_DIR) -lifa_gc -lgc -lgccpp -ldparse_gc
-  IFALIB  = $(IFA_LIB_DIR)/libifa_gc.a
-else
-  LIBS   += -L$(IFA_LIB_DIR) -lifa -L../plib -lplib -ldparse
-  IFALIB  = $(IFA_LIB_DIR)/libifa.a
-endif
+CFLAGS += -DUSE_GC
+LIBS   += -L$(IFA_LIB_DIR) -lifa_gc -lgc -lgccpp -ldparse_gc
+IFALIB  = $(IFA_LIB_DIR)/libifa_gc.a
 
 # Optional backends -----------------------------------------------------------
 

@@ -3,7 +3,7 @@ OS_TYPE = $(shell uname -s | \
 
 CFLAGS += -DUSE_GC=1 -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I$(CG_ROOT)/ifa/common -I/usr/local/include/gc -g -Wno-deprecated
 
-LIBS = $(CG_ROOT)/../plib/libplib_gc.a -lm -lgc -lpcre
+LIBS = -lm -lgc -lpcre
 
 ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt
