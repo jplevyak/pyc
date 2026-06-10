@@ -1,0 +1,6 @@
+cross_type_method.py:10: illegal call argument type expression illegal: int64 
+cross_type_method.py:10: illegal call argument type expression illegal: closure 
+cross_type_method.py:10: illegal call argument type expression illegal: 
+cross_type_method.py:10: expression has no type
+cross_type_method.py:10: expression has no type
+cross_type_method.py:10: expression has no type
