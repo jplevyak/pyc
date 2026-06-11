@@ -1,0 +1,86 @@
+# Phase 6.1 of ifa/codegen/CODEGEN_PLAN.md — CI gates.
+#
+# Runs on every push and pull request: build pyc, run the unit
+# tests, the IR fixtures, the end-to-end pyc test suite (both C and
+# LLVM backends), and the DParser grammar validation pass.
+#
+# `make test_llvm` (the V-language LLVM backend test, distinct from
+# `IFA_LLVM=1 ./test_pyc`) is intentionally skipped — it has a
+# pre-existing missing-GC-link bug tracked in
+# ifa/issues/012-test-llvm-gc-link.md. Re-enable this step once
+# issue 012 is fixed.
+
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: build + test
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout pyc
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          # Both Makefiles discover LLVM via `llvm-config`. The `llvm`
+          # meta-package installs the `/usr/bin/llvm-config` symlink
+          # that points at the distro's default LLVM version; `llvm-dev`
+          # ships the headers and `libLLVM*` archives. `clang` is used
+          # both to compile pyc and to compile pyc's emitted code.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            clang \
+            llvm \
+            llvm-dev \
+            libgc-dev \
+            libpcre3-dev \
+            python3 \
+            make
+
+      - name: Build and install DParser (libdparse_gc + make_dparser)
+        run: |
+          # pyc and ifa link against -ldparse_gc and invoke
+          # `make_dparser` for grammar codegen. DParser isn't
+          # packaged; build from source with D_USE_GC=1 so it plays
+          # nicely with Boehm GC.
+          git clone --depth 1 https://github.com/jplevyak/dparser.git /tmp/dparser
+          make -C /tmp/dparser D_USE_GC=1
+          sudo make -C /tmp/dparser D_USE_GC=1 install
+          sudo ldconfig
+
+      - name: Print toolchain versions
+        run: |
+          clang++ --version
+          llvm-config --version
+          make --version | head -1
+          python3 --version
+          make_dparser --help 2>&1 | head -1 || true
+
+      - name: Build pyc + ifa
+        # Top-level `make` builds both the ifa library and the pyc
+        # binary in one shot. Verbose so failures surface in logs.
+        run: make
+
+      - name: Unit tests + IR fixtures + e2e (make test)
+        # `make test` chains test-unit (./ifa --test), test-ir, and
+        # test-e2e (./test_pyc). All three were in the phase-6.1
+        # checklist; running them via the umbrella target keeps the
+        # workflow short.
+        run: make test
+
+      - name: LLVM backend e2e (IFA_LLVM=1 ./test_pyc)
+        # The pyc test suite with the LLVM backend selected. Tests
+        # the LLVM primitive emission paths landed in phase 3 of
+        # CODEGEN_PLAN. Distinct from `make test_llvm` (V-language)
+        # which is skipped — see header comment.
+        run: IFA_LLVM=1 ./test_pyc
+
+      - name: DParser grammar validation (make test_dparse)
+        run: make test_dparse
