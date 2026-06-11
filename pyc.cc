@@ -98,7 +98,7 @@ void compile(cchar *fn) {
 #endif
 #ifdef USE_LLVM
         if (codegen_llvm) {
-      llvm_codegen(pdb->fa, if1->top->fun, fn);
+      llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
       if (!codegen_jit && llvm_codegen_compile(fn)) fail("compilation failure");
     } else
 #endif

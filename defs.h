@@ -25,7 +25,7 @@ EXTERN int test_scoping EXTERN_INIT(0);
 EXTERN int debug_level EXTERN_INIT(0);
 EXTERN int verbose_level EXTERN_INIT(0);
 
-void llvm_codegen(FA *fa, Fun *main, cchar *fn);
+void llvm_codegen_write_ir(FA *fa, Fun *main, cchar *fn);
 int llvm_codegen_compile(cchar *fn);
 int shedskin_codegen(FA *fa, Fun *main, cchar *fn);
 

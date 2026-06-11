@@ -1,14 +1,12 @@
 # Phase 6.1 of ifa/codegen/CODEGEN_PLAN.md — CI gates.
 #
-# Runs on every push and pull request: build pyc, run the unit
-# tests, the IR fixtures, the end-to-end pyc test suite (both C and
-# LLVM backends), and the DParser grammar validation pass.
-#
-# `make test_llvm` (the V-language LLVM backend test, distinct from
-# `IFA_LLVM=1 ./test_pyc`) is intentionally skipped — it has a
-# pre-existing missing-GC-link bug tracked in
-# ifa/issues/012-test-llvm-gc-link.md. Re-enable this step once
-# issue 012 is fixed.
+# Runs on every push and pull request:
+# - Build pyc with USE_LLVM=1 so both backends are compiled in.
+# - Standard test suite (make test → ./ifa --test + IR fixtures + ./test_pyc).
+# - `make test_llvm` — the V-language LLVM backend smoke test.
+# - LLVM-backend pyc e2e via the PYC_FLAGS hook: floors the pass
+#   count at the current baseline (see step comment).
+# - DParser grammar validation.
 
 name: ci
 
@@ -21,6 +19,14 @@ jobs:
   build-and-test:
     name: build + test
     runs-on: ubuntu-24.04
+
+    env:
+      # Build pyc with the LLVM code path compiled in for the whole
+      # job. The Makefile reads this from the environment via
+      # `ifdef USE_LLVM` — every `make` invocation in steps below
+      # picks it up automatically. The C backend remains the
+      # default at runtime.
+      USE_LLVM: 1
 
     steps:
       - name: Checkout pyc
@@ -64,23 +70,50 @@ jobs:
           make_dparser --help 2>&1 | head -1 || true
 
       - name: Build pyc + ifa
-        # Top-level `make` builds both the ifa library and the pyc
-        # binary in one shot. Verbose so failures surface in logs.
+        # `USE_LLVM=1` is exported job-wide (see jobs.env above) so
+        # the LLVM code path is compiled into pyc here. Verifies
+        # the `#ifdef USE_LLVM` branches in pyc.cc stay compilable
+        # — a regression there would otherwise go undetected.
         run: make
 
       - name: Unit tests + IR fixtures + e2e (make test)
         # `make test` chains test-unit (./ifa --test), test-ir, and
-        # test-e2e (./test_pyc). All three were in the phase-6.1
-        # checklist; running them via the umbrella target keeps the
-        # workflow short.
+        # test-e2e (./test_pyc). The C backend is the default and
+        # the production path; this step is the primary gate.
         run: make test
 
-      - name: LLVM backend e2e (IFA_LLVM=1 ./test_pyc)
-        # The pyc test suite with the LLVM backend selected. Tests
-        # the LLVM primitive emission paths landed in phase 3 of
-        # CODEGEN_PLAN. Distinct from `make test_llvm` (V-language)
-        # which is skipped — see header comment.
-        run: IFA_LLVM=1 ./test_pyc
+      - name: V-language LLVM backend smoke (make test_llvm)
+        # Builds and runs a small V program through the LLVM
+        # backend end-to-end. Issue 012 (missing -lgc) was fixed
+        # in the same commit that wired this step up; if this step
+        # starts failing again, that's the first place to look.
+        run: make -C ifa test_llvm
+
+      - name: LLVM-backend pyc e2e (PYC_FLAGS=-b ./test_pyc)
+        # PYC_FLAGS=-b prepends `-b` (the LLVM backend selector) to
+        # every pyc invocation inside test_pyc. The LLVM backend
+        # doesn't yet handle method dispatch through closures
+        # (phase 3.5 of ifa/codegen/CODEGEN_PLAN.md), so most pyc
+        # tests fail to compile. Rather than gate CI on parity that
+        # isn't achievable yet, we floor the pass count at the
+        # current baseline — CI fails if any *previously passing*
+        # LLVM test regresses.
+        #
+        # Update LLVM_BASELINE_PASS when a PR brings the count up.
+        run: |
+          LLVM_BASELINE_PASS=8
+          set -o pipefail
+          PYC_FLAGS=-b ./test_pyc 2>&1 | tee /tmp/llvm_e2e.log | tail -20 || true
+          passed=$(grep -E '^  passed' /tmp/llvm_e2e.log | awk '{print $2}')
+          echo "LLVM-backend pyc e2e: passed=${passed} (baseline=${LLVM_BASELINE_PASS})"
+          if [ -z "$passed" ]; then
+            echo "ERROR: could not parse pass count from test_pyc output" >&2
+            exit 1
+          fi
+          if [ "$passed" -lt "$LLVM_BASELINE_PASS" ]; then
+            echo "ERROR: LLVM pass count dropped below baseline (${passed} < ${LLVM_BASELINE_PASS})" >&2
+            exit 1
+          fi
 
       - name: DParser grammar validation (make test_dparse)
         run: make test_dparse

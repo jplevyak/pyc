@@ -14,6 +14,7 @@
 #
 # Env:
 #   PYC        path to pyc binary             (default: ./pyc)
+#   PYC_FLAGS  flags prepended to every pyc call (e.g. -b for LLVM)
 #   PYTHON     CPython interpreter            (default: python3)
 #   VALGRIND   wrapper for compile + execute  (e.g. 'valgrind -q')
 #   TIMEOUT    per-step timeout in seconds    (default: 60)
@@ -33,6 +34,12 @@ PYC="${PYC:-./pyc}"
 PYTHON="${PYTHON:-python3}"
 VALGRIND="${VALGRIND:-}"
 TIMEOUT="${TIMEOUT:-60}"
+# PYC_FLAGS is prepended to every pyc invocation. Use it to drive
+# a non-default backend / option across the whole suite without
+# editing per-test sidecars, e.g. `PYC_FLAGS=-b ./test_pyc`
+# to run with the LLVM backend (requires pyc built with USE_LLVM=1).
+# See ifa/issues/013-pyc-llvm-default-off.md.
+PYC_FLAGS="${PYC_FLAGS:-}"
 BUILD=tests/build
 TESTS_DIR=tests
 
@@ -134,7 +141,7 @@ for g in "$TESTS_DIR"/*.py; do
   [ -e "$g.flags" ] && flags=$(cat "$g.flags")
 
   # Compile.
-  ( cd "$BUILD" && timeout "$TIMEOUT" $VALGRIND "../../$PYC" -D../.. $flags "$name" ) \
+  ( cd "$BUILD" && timeout "$TIMEOUT" $VALGRIND "../../$PYC" $PYC_FLAGS -D../.. $flags "$name" ) \
     > "$BUILD/$name.out" 2>&1
   rc=$?
   if [ $rc -eq 124 ]; then

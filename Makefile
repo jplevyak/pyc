@@ -11,7 +11,12 @@ DEBUG=1
 #PROFILE=1
 #LEAK_DETECT=1
 #VALGRIND=1
-#USE_LLVM=1       # LLVM backend (work in progress; see ifa/CODEGEN_LLVM.md)
+#USE_LLVM=1       # LLVM backend; uncomment, or invoke as `make USE_LLVM=1`, to
+                  # compile the LLVM code path into pyc. The C backend is the
+                  # default + production path. `pyc -b` (PYC_LLVM=1, or
+                  # `PYC_FLAGS=-b ./test_pyc`) selects LLVM at runtime once
+                  # USE_LLVM=1 is built. The LLVM backend doesn't yet pass
+                  # most pyc tests — see CODEGEN_PLAN §3.5 and CODEGEN_LLVM.md.
 #USE_SS=1         # Shedskin backend (vestigial)
 
 MAJOR=0
@@ -110,9 +115,10 @@ PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc python.g.d_parser.cc
 ifdef USE_SS
   PYC_SRCS += shedskin.cc
 endif
-ifdef USE_LLVM
-  PYC_SRCS += llvm.cc
-endif
+# Note: under USE_LLVM, the LLVM codegen sources (codegen/llvm.cc,
+# codegen/llvm_codegen.cc, codegen/llvm_primitives.cc) are already
+# compiled into ifa/libifa_gc.a — no top-level source to add. The
+# ifdef on the link side (above) still applies for the LLVM libs.
 PYC_OBJS = $(PYC_SRCS:%.cc=%.o)
 
 # Output / install ------------------------------------------------------------
