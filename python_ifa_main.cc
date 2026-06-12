@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 
+#ifdef USE_LLVM
+#include "codegen/llvm.h"
+#endif
+
 static void build_environment(PycModule *mod, PycCompiler &ctx) {
   ctx.mod = mod;
   ctx.node = mod->pymod;
@@ -108,8 +112,18 @@ static void writeln_codegen(FILE *fp, PNode *n, Fun *f) {
 }
 
 static void add_primitive_transfer_functions() {
+#ifdef USE_LLVM
+  // Phase 3.2 of CODEGEN_PLAN: route `write`/`writeln` through the
+  // LLVM backend's printf-based emitters when the LLVM backend is
+  // active. The third arg of prim_reg (the llvm_cgfn) is plumbed all
+  // the way to RegisteredPrim::llvm_cgfn and consulted by the LLVM
+  // P_prim_primitive dispatcher.
+  prim_reg(sym_write->name, return_nil_transfer_function, write_codegen, pyc_llvm_write_cgfn)->is_visible = 1;
+  prim_reg(sym_writeln->name, return_nil_transfer_function, writeln_codegen, pyc_llvm_writeln_cgfn)->is_visible = 1;
+#else
   prim_reg(sym_write->name, return_nil_transfer_function, write_codegen)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function, writeln_codegen)->is_visible = 1;
+#endif
   prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen)->is_visible = 1;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(sym___pyc_to_str__->name, to_str_transfer_function, to_str_codegen)->is_visible = 1;

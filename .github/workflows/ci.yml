@@ -101,7 +101,7 @@ jobs:
         #
         # Update LLVM_BASELINE_PASS when a PR brings the count up.
         run: |
-          LLVM_BASELINE_PASS=10
+          LLVM_BASELINE_PASS=14
           set -o pipefail
           PYC_FLAGS=-b ./test_pyc 2>&1 | tee /tmp/llvm_e2e.log | tail -20 || true
           passed=$(grep -E '^  passed' /tmp/llvm_e2e.log | awk '{print $2}')
