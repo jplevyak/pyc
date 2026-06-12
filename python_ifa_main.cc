@@ -127,7 +127,17 @@ static void add_primitive_transfer_functions() {
   prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen)->is_visible = 1;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(sym___pyc_to_str__->name, to_str_transfer_function, to_str_codegen)->is_visible = 1;
+#ifdef USE_LLVM
+  // to_string has no C cgfn — the C backend falls through to
+  // `_CG_prim_primitive_to_string(arg)` via cg.cc's default branch.
+  // The LLVM backend can't link the runtime helper, so we provide
+  // an inline cgfn that emits snprintf into a GC-managed buffer.
+  prim_reg(cannonicalize_string("to_string"), return_string_transfer_function, 0,
+           pyc_llvm_to_string_cgfn)
+      ->is_visible = 1;
+#else
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
+#endif
 }
 
 /*
