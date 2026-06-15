@@ -79,6 +79,28 @@ char *_CG_str_from_int(int64 x) {
   return s;
 }
 
+char *_CG_str_from_float(double d) {
+  char tmp[64];
+  int n = snprintf(tmp, sizeof(tmp), "%.17g", d);
+  if (n < 0) n = 0;
+  if ((size_t)n >= (int)sizeof(tmp)) n = sizeof(tmp) - 1;
+  int has_dot_or_exp = 0;
+  for (int i = 0; i < n; i++) {
+    char c = tmp[i];
+    if (c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'i') {
+      has_dot_or_exp = 1;
+      break;
+    }
+  }
+  if (!has_dot_or_exp && n + 2 < (int)sizeof(tmp)) {
+    tmp[n++] = '.';
+    tmp[n++] = '0';
+  }
+  char *s = _CG_string_alloc(n);
+  memcpy(s, tmp, n);
+  return s;
+}
+
 char *_CG_string_mult(char *str, int64 n) {
   size_t l = _CG_string_len(str);
   char *ret = _CG_string_alloc(l * n);

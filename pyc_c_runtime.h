@@ -135,6 +135,35 @@ static inline char *_CG_str_from_int(int64 x) {
   return s;
 }
 
+// D.5: float → str with the Python ".0" suffix for whole numbers.
+// %.17g preserves round-trip precision but strips trailing zeros;
+// CPython's `str(0.0)` is "0.0" and `str(2.0)` is "2.0", so we
+// scan the formatted output and append ".0" if it has no decimal
+// point or exponent. Mirrors the existing C++-only overload
+// _CG_prim_primitive_to_string(double) in this header but with a
+// unique C-callable name so libpyc_runtime.a can export it.
+static inline char *_CG_str_from_float(double d) {
+  char tmp[64];
+  int n = snprintf(tmp, sizeof(tmp), "%.17g", d);
+  if (n < 0) n = 0;
+  if ((size_t)n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+  int has_dot_or_exp = 0;
+  for (int i = 0; i < n; i++) {
+    char c = tmp[i];
+    if (c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'i') {
+      has_dot_or_exp = 1;
+      break;
+    }
+  }
+  if (!has_dot_or_exp && n + 2 < (int)sizeof(tmp)) {
+    tmp[n++] = '.';
+    tmp[n++] = '0';
+  }
+  char *s = _CG_string_alloc(n);
+  memcpy(s, tmp, n);
+  return s;
+}
+
 static inline char *_CG_string_mult(char *str, int64 n) {
   size_t l = _CG_string_len(str);
   char *ret = _CG_string_alloc(l * n);
