@@ -36,6 +36,14 @@ typedef unsigned char _CG_bool;
 #define _CG_string_len(_s) ((_s) ? (size_t) * (int64 *)(((char *)(_s)) - 8) : 0)
 #define _CG_string_set_len(_s, _v) (*(int64 *)(((char *)(_s)) - 8)) = (int64)(_v)
 
+/* Pyc list header (mirrors pyc_c_runtime.h). The header sits at
+ * `ptr - 16` on x86-64: total_len (uint32) at -16, len (uint32)
+ * at -12, and the data pointer at -8. */
+#define _CG_SIZEOF_LIST_HDR (sizeof(void *) + 8)
+#define _CG_LIST_HDR_LEN(_l) (*(unsigned int *)(((char *)(_l)) - sizeof(void *) - 4))
+#define _CG_LIST_HDR_TOTAL(_l) (*(unsigned int *)(((char *)(_l)) - sizeof(void *) - 8))
+#define _CG_LIST_HDR_PTR(_l) (*(void **)(((char *)(_l)) - sizeof(void *)))
+
 char *_CG_string_alloc(size_t s) {
   char *str = (char *)GC_MALLOC(s + 8 + 1);
   str += 8;
@@ -131,6 +139,25 @@ char *_CG_chr(int x) {
 int _CG_ord(char *x) {
   if (x) return *(unsigned char *)x;
   return 0;
+}
+
+/* E.1 (issue 019): generic struct->list conversion. Used by
+ * the v2 LLVM struct-shape list-literal lowering, which
+ * over-allocates a struct then hands it to this helper to get
+ * the runtime-contract-shaped list (16-byte header, correct
+ * header.len). Definition mirrors the static-inline copy in
+ * pyc_c_runtime.h verbatim. */
+void *_CG_to_list_runtime(void *struct_ptr,
+                          unsigned int struct_size,
+                          unsigned int semantic_n) {
+  char *base = (char *)GC_MALLOC(_CG_SIZEOF_LIST_HDR + (size_t)struct_size);
+  void *result = base + _CG_SIZEOF_LIST_HDR;
+  _CG_LIST_HDR_LEN(result) = semantic_n;
+  _CG_LIST_HDR_TOTAL(result) = semantic_n;
+  _CG_LIST_HDR_PTR(result) = result;
+  if (struct_ptr && struct_size > 0)
+    memcpy(result, struct_ptr, struct_size);
+  return result;
 }
 
 _CG_bool _CG_str_eq(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) == 0); }

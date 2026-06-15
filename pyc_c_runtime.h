@@ -277,6 +277,31 @@ struct _CG_list_struct {
 #define _CG_ptr_to_list(_l) ((_CG_list)(((char *)(_l)) + SIZEOF_LIST_HEADER))
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
 
+// E.1 (issue 019): generic struct->list conversion. Same body as
+// the _CG_TUPLE_TO_LIST_FUN(_s, _n) macro, but takes the struct
+// size and semantic count as runtime arguments so the v2 LLVM
+// backend can call it without per-struct macro instantiation.
+// Allocates a fresh list with a correct 16-byte header
+// (header.len = semantic_n) and memcpys the struct's payload
+// into the data area. The returned pointer is a pyc list,
+// usable by _CG_list_add and friends without further
+// conversion. C backend doesn't call this (it continues to use
+// the macro-generated per-struct _CG_to_list overload) but the
+// definition stays available so any v2 emission that picks up
+// the same name links cleanly under g++ as well.
+static inline void *_CG_to_list_runtime(void *struct_ptr,
+                                         unsigned int struct_size,
+                                         unsigned int semantic_n) {
+  char *base = (char *)GC_MALLOC(SIZEOF_LIST_HEADER + (size_t)struct_size);
+  void *result = base + SIZEOF_LIST_HEADER;
+  _CG_list_len(result) = semantic_n;
+  _CG_list_total_len(0, result) = semantic_n;
+  _CG_list_ptr(result) = result;
+  if (struct_ptr && struct_size > 0)
+    memcpy(result, struct_ptr, struct_size);
+  return result;
+}
+
 static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 size1, uint32 size2) {
   uint32 s1 = _CG_prim_len(0, l1), s2 = _CG_prim_len(0, l2);
   uint32 size = size1 ? size1 : size2;
