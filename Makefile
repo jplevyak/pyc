@@ -132,7 +132,7 @@ else
 endif
 
 MANPAGES    = pyc.1
-CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d)
+CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime.a
 
 # Targets ---------------------------------------------------------------------
 
@@ -142,10 +142,22 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d)
 
 all: defaulttarget
 
-defaulttarget: $(EXECUTABLES) pyc.cat
+defaulttarget: $(EXECUTABLES) libpyc_runtime.a pyc.cat
 
 $(PYC): $(PYC_OBJS) $(IFALIB)
 	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
+
+# Phase D.3.5: runtime library for the v2 LLVM backend's link
+# step. The C backend continues to get inline-derived helpers via
+# the static-inline copies in pyc_c_runtime.h. The LLVM backend
+# produces a single .o that references runtime helpers as plain
+# external symbols; libpyc_runtime.a satisfies them.
+CC     ?= clang
+pyc_runtime.o: pyc_runtime.c pyc_c_runtime.h
+	$(CC) -O2 -g -Wall -fPIC -I/usr/local/include -c -o $@ $<
+
+libpyc_runtime.a: pyc_runtime.o
+	$(AR) crs $@ $<
 
 # Per-target override (uses CPPFLAGS because that's what the implicit rule
 # sees); keeps -MMD -MP dependency generation active.
@@ -177,12 +189,14 @@ COPYRIGHT.i: LICENSE
 	rm -f COPYRIGHT.i
 	head -1 LICENSE | sed -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
 
-install: $(EXECUTABLES)
+install: $(EXECUTABLES) libpyc_runtime.a
 	cp $(EXECUTABLES) $(PREFIX)/bin
+	cp libpyc_runtime.a $(PREFIX)/lib
 	cp $(MANPAGES) $(PREFIX)/man/man1
 
 deinstall:
 	rm -f $(EXECUTABLES:%=$(PREFIX)/bin/%)
+	rm -f $(PREFIX)/lib/libpyc_runtime.a
 	rm -f $(MANPAGES:%=$(PREFIX)/man/man1/%)
 
 # Tests -----------------------------------------------------------------------
