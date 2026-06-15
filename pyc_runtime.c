@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "gc.h"
 
@@ -173,6 +174,131 @@ void *_CG_to_list_runtime(void *struct_ptr,
   if (struct_ptr && struct_size > 0)
     memcpy(result, struct_ptr, struct_size);
   return result;
+}
+
+/* Issue 020: pyc list runtime helpers exported by name. The C
+ * backend uses these via the `_CG_list_add` / `_CG_list_mult`
+ * / etc. macros in pyc_c_runtime.h. The v2 LLVM backend's
+ * c_call emits an external reference to the macro name (what
+ * pyc-Python source writes), and the LLVM declaration's arg
+ * types come from the SEND rvals' CGv2Types — `sizeof_element`
+ * returns int64, so the IR call passes i64 size args. To match
+ * that the helpers here take int64 (vs the C runtime's uint32
+ * counterparts in pyc_c_runtime.h:_CG_list_add_internal etc.).
+ * Bodies mirror those helpers using our layout macros above. */
+
+static inline unsigned int _PYC_list_len(void *l) {
+  return l ? _CG_LIST_HDR_LEN(l) : 0;
+}
+
+void *_CG_list_add(void *l1, void *l2, int64 size1, int64 size2) {
+  unsigned int s1 = _PYC_list_len(l1);
+  unsigned int s2 = _PYC_list_len(l2);
+  size_t size = (size_t)(size1 ? size1 : size2);
+  void *x = GC_MALLOC(size * (s1 + s2));
+  if (s1) memcpy(x, _CG_LIST_HDR_PTR(l1), (size_t)s1 * size);
+  if (s2)
+    memcpy(((char *)x) + (size_t)s1 * size,
+           _CG_LIST_HDR_PTR(l2), (size_t)s2 * size);
+  _CG_LIST_HDR_LEN(l1) = s1 + s2;
+  _CG_LIST_HDR_TOTAL(l1) = s1 + s2;
+  _CG_LIST_HDR_PTR(l1) = x;
+  return l1;
+}
+
+void *_CG_list_resize(void *l1, int64 size1, int64 new_len) {
+  unsigned int s1 = _PYC_list_len(l1);
+  size_t sz = (size_t)size1;
+  void *x = new_len ? GC_MALLOC(sz * (size_t)new_len) : (void *)0;
+  unsigned int y = s1 < (unsigned int)new_len ? s1 : (unsigned int)new_len;
+  if (y && x) memcpy(x, _CG_LIST_HDR_PTR(l1), (size_t)s1 * sz);
+  if (x && (unsigned int)new_len > s1)
+    memset(((char *)x) + (size_t)s1 * sz, 0,
+           (size_t)((unsigned int)new_len - s1) * sz);
+  _CG_LIST_HDR_LEN(l1) = (unsigned int)new_len;
+  _CG_LIST_HDR_TOTAL(l1) = (unsigned int)new_len;
+  _CG_LIST_HDR_PTR(l1) = x;
+  return l1;
+}
+
+void *_CG_list_mult(void *l1, int64 k, int64 size) {
+  if (!k) return (void *)0;
+  unsigned int s1 = _PYC_list_len(l1);
+  size_t sz = (size_t)size;
+  char *base = (char *)GC_MALLOC(sz * s1 * (size_t)k + _CG_SIZEOF_LIST_HDR);
+  void *x = base + _CG_SIZEOF_LIST_HDR;
+  _CG_LIST_HDR_LEN(x) = (unsigned int)(s1 * k);
+  _CG_LIST_HDR_TOTAL(x) = (unsigned int)(s1 * k);
+  _CG_LIST_HDR_PTR(x) = x;
+  for (int64 i = 0; i < k; i++) {
+    memcpy(((char *)x) + ((size_t)i * sz * s1),
+           _CG_LIST_HDR_PTR(l1), (size_t)s1 * sz);
+  }
+  return x;
+}
+
+void *_CG_list_getslice(void *v, int64 size, int64 l_in, int64 h_in,
+                         int64 s) {
+  int l = (int)l_in, h = (int)h_in;
+  unsigned int len = _PYC_list_len(v);
+  if (l > (int)len) l = (int)len;
+  if (l < 0) { l = (int)len + l; if (l < 0) l = 0; }
+  if (h > (int)len) h = (int)len;
+  if (h < 0) { h = (int)len + h; if (h < 0) h = 0; }
+  if (l > h) h = l;
+  int span = h - l;
+  int sv = (int)s;
+  if (sv == 0) sv = 1;
+  int n = span / sv;
+  size_t sz = (size_t)size;
+  char *base = (char *)GC_MALLOC(sz * (n > 0 ? n : 0) + _CG_SIZEOF_LIST_HDR);
+  void *x = base + _CG_SIZEOF_LIST_HDR;
+  _CG_LIST_HDR_LEN(x) = (n > 0) ? (unsigned int)n : 0;
+  _CG_LIST_HDR_TOTAL(x) = _CG_LIST_HDR_LEN(x);
+  _CG_LIST_HDR_PTR(x) = x;
+  if (n > 0) {
+    if (sv == 1) {
+      memcpy(x, ((char *)_CG_LIST_HDR_PTR(v)) + (size_t)l * sz,
+             (size_t)n * sz);
+    } else {
+      for (int i = 0; i < n; i++) {
+        memcpy(((char *)x) + (size_t)i * sz,
+               ((char *)_CG_LIST_HDR_PTR(v)) + (size_t)(l + i * sv) * sz,
+               sz);
+      }
+    }
+  }
+  return x;
+}
+
+void *_CG_list_setslice(void *l1, int64 size, int64 l_in, int64 h_in,
+                         void *l2) {
+  int l = (int)l_in, h = (int)h_in;
+  unsigned int len1 = _PYC_list_len(l1);
+  unsigned int len2 = _PYC_list_len(l2);
+  if (l > (int)len1) l = (int)len1;
+  if (l < 0) { l = (int)len1 + l; if (l < 0) l = 0; }
+  if (h > (int)len1) h = (int)len1;
+  if (h < 0) { h = (int)len1 + h; if (h < 0) h = 0; }
+  if (l > h) h = l;
+  int s_del = h - l;
+  int s = (int)len1 - s_del;
+  int new_s = s + (int)len2;
+  size_t sz = (size_t)size;
+  void *p1 = _CG_LIST_HDR_PTR(l1);
+  void *x = GC_MALLOC(sz * (size_t)new_s);
+  _CG_LIST_HDR_LEN(l1) = (unsigned int)new_s;
+  _CG_LIST_HDR_TOTAL(l1) = (unsigned int)new_s;
+  _CG_LIST_HDR_PTR(l1) = x;
+  char *p = (char *)x;
+  if (l) { memcpy(p, p1, (size_t)l * sz); p += (size_t)l * sz; }
+  if (len2) {
+    memcpy(p, _CG_LIST_HDR_PTR(l2), (size_t)len2 * sz);
+    p += (size_t)len2 * sz;
+  }
+  int sh = (int)len1 - h;
+  if (sh > 0) memcpy(p, ((char *)p1) + (size_t)h * sz, (size_t)sh * sz);
+  return l1;
 }
 
 _CG_bool _CG_str_eq(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) == 0); }
