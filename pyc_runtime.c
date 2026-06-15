@@ -141,6 +141,21 @@ int _CG_ord(char *x) {
   return 0;
 }
 
+/* E.2 (issue 019): out-of-line copy of pyc's list-allocator
+ * (header + payload). Inline definition lives in pyc_c_runtime.h
+ * (`_CG_prim_tuple_list_internal`); the v2 LLVM backend's
+ * flat-shape list-literal lowering routes here via CG2_C_CALL,
+ * so libpyc_runtime.a needs to export the symbol. */
+void *_CG_prim_tuple_list_internal(unsigned int element_size,
+                                    unsigned int n) {
+  char *base = (char *)GC_MALLOC((size_t)element_size * n + _CG_SIZEOF_LIST_HDR);
+  void *result = base + _CG_SIZEOF_LIST_HDR;
+  _CG_LIST_HDR_LEN(result) = n;
+  _CG_LIST_HDR_TOTAL(result) = n;
+  _CG_LIST_HDR_PTR(result) = result;
+  return result;
+}
+
 /* E.1 (issue 019): generic struct->list conversion. Used by
  * the v2 LLVM struct-shape list-literal lowering, which
  * over-allocates a struct then hands it to this helper to get
