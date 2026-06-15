@@ -69,6 +69,16 @@ char *_CG_format_string(char *str, ...) {
   return s;
 }
 
+char *_CG_str_from_int(int64 x) {
+  char tmp[32];
+  int n = snprintf(tmp, sizeof(tmp), "%lld", (long long)x);
+  if (n < 0) n = 0;
+  if ((size_t)n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+  char *s = _CG_string_alloc(n);
+  memcpy(s, tmp, n);
+  return s;
+}
+
 char *_CG_string_mult(char *str, int64 n) {
   size_t l = _CG_string_len(str);
   char *ret = _CG_string_alloc(l * n);

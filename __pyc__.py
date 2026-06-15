@@ -174,7 +174,15 @@ class int:
   def __null__(self):
      return False
   def __str__(self):
-    return __pyc_primitive__(__pyc_symbol__("to_string"), __pyc_clone_constants__(self))
+    # D.4: library implementation of int → str via libc snprintf,
+    # replacing the C++ emit_prim_to_string path. _CG_str_from_int
+    # is a typed runtime helper that allocates a pyc str buffer
+    # and formats self into it. Both backends resolve the symbol
+    # against the same definition: static-inline copy in
+    # pyc_c_runtime.h for the C backend, libpyc_runtime.a for the
+    # LLVM backend (Phase D.3.5).
+    return __pyc_c_call__(str, "_CG_str_from_int",
+                          int, __pyc_clone_constants__(self))
   def __pyc_to_bool__(self):
     return __pyc_clone_constants__(self) != 0
 
