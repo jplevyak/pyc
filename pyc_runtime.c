@@ -157,6 +157,21 @@ void *_CG_prim_tuple_list_internal(unsigned int element_size,
   return result;
 }
 
+/* F.4.5 (bytearray @vector layout): exported clone-for-vector
+ * helper.  Mirrors the static-inline `_CG_prim_primitive_clone_
+ * vector` in pyc_c_runtime.h.  v2 LLVM's lower_send_clone routes
+ * `P_prim_clone_vector` here so `@vector("s")` classes get a
+ * `struct_size + extra` allocation with the trailing data area
+ * zero-init'd. */
+void *_CG_prim_clone_vector_runtime(void *proto,
+                                     unsigned long struct_size,
+                                     unsigned long extra) {
+  char *base = (char *)GC_MALLOC((size_t)struct_size + (size_t)extra);
+  memcpy(base, proto, (size_t)struct_size);
+  memset(base + (size_t)struct_size, 0, (size_t)extra);
+  return base;
+}
+
 /* E.1 (issue 019): generic struct->list conversion. Used by
  * the v2 LLVM struct-shape list-literal lowering, which
  * over-allocates a struct then hands it to this helper to get
