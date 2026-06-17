@@ -15,9 +15,15 @@ OPTIMIZE, CODEGEN_C, CODEGEN_LLVM, CAST, FRONTEND, COMMON).
 
 ## Issue tracking
 
-Deferred work worth a trail lives in [ifa/issues/](ifa/issues/) as
-numbered markdown files (`NNN-short-slug.md`) — each documents
-symptom, root cause, proposed fix, verification plan, and what
-fixing it would unblock. See
+Deferred work worth a trail lives in two parallel directories:
+
+- [issues/](issues/) — pyc frontend / project-wide concerns
+  (Python lowering, grammar, builtin module, runtime, harness).
+- [ifa/issues/](ifa/issues/) — ifa library concerns (FA,
+  codegen, ifa-level IR).
+
+Both use numbered markdown files (`NNN-short-slug.md`); each
+documents symptom, root cause, proposed fix, verification plan,
+and what fixing it would unblock. See
 [ifa/issues/README.md](ifa/issues/README.md) for conventions and
 when to file vs. fix-now.
