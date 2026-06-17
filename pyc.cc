@@ -10,6 +10,7 @@ extern int write_code_exit;
 int do_unit_tests = 0;
 static int dparse_only = 0;
 static int dparse_ast = 0;
+static int codegen_strict_verify = 0;       // --strict-verify
 static char pyc_ifa_log[256];
 
 static void help(ArgumentState *arg_state, char *arg_unused) {
@@ -45,6 +46,8 @@ static ArgumentDescription arg_desc[] = {
 #ifdef USE_LLVM
     {"llvm", 'b', "LLVM Codegen", "F", &codegen_llvm, "PYC_LLVM", NULL},
     {"jit", 'j', "JIT", "F", &codegen_jit, "PYC_JIT", NULL},
+    {"strict_verify", ' ', "Strict LLVM verifier (per-fn + emit .ll on failure)", "F",
+     &codegen_strict_verify, "PYC_STRICT_VERIFY", NULL},
 #endif
 #ifdef DEBUG
     {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
@@ -126,6 +129,11 @@ int main(int argc, char *argv[]) {
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
+  // Propagate the --strict-verify flag down to the ifa lib's
+  // llvm.cc, which reads PYC_STRICT_VERIFY (the lib doesn't see
+  // pyc's defs.h globals).  Setting it from either the CLI flag
+  // or PYC_STRICT_VERIFY=1 is now equivalent.
+  if (codegen_strict_verify) setenv("PYC_STRICT_VERIFY", "1", 1);
   if (arg_state.nfile_arguments < 1) usage(&arg_state, 0);
   init_system();
   init_config();
