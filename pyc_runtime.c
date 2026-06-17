@@ -157,6 +157,22 @@ void *_CG_prim_tuple_list_internal(unsigned int element_size,
   return result;
 }
 
+/* `print(arg)` lowers (python_ifa_build_if1.cc:346) to:
+ *   __str__(arg) → s
+ *   write(s)
+ *   writeln()
+ * so write always receives a string and writeln takes no args.
+ * The C backend uses macros in pyc_c_runtime.h; the v2 LLVM
+ * backend links these externs from libpyc_runtime.a (replaces
+ * the old emit_prim_write/writeln type-dispatch in
+ * cg_ir_v2_emit_llvm.cc). */
+void _CG_write(const char *s) {
+  if (s) fwrite(s, _CG_string_len(s), 1, stdout);
+}
+void _CG_writeln(void) {
+  fwrite("\n", 1, 1, stdout);
+}
+
 /* F.4.5 (bytearray @vector layout): exported clone-for-vector
  * helper.  Mirrors the static-inline `_CG_prim_primitive_clone_
  * vector` in pyc_c_runtime.h.  v2 LLVM's lower_send_clone routes
