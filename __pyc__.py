@@ -478,6 +478,11 @@ def __hex(x):
     return __hex(x / 16) + __hex(x % 16)
 
 def hex(x):
+  # Mirror bin()'s sign handling (lines 419-422).  Without this,
+  # hex(-1) reduces in __hex's `x < 10` branch to
+  # chr(ord('0') + -1) = '/', producing "0x/".
+  if x < 0:
+    return "-0x" + __hex(-x)
   return "0x" + __hex(x)
 
 def __byte_hex2(x):
