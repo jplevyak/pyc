@@ -3,6 +3,25 @@
 #include "python_parse.h"
 
 
+// Comparator for sorting PycSymbol* by sym->name (the visible
+// attribute name).  Used to deterministically order class
+// attributes before adding them to `cls_sym->has`.  Without
+// this sort, struct field order is non-deterministic across
+// runs — the underlying `Map<cchar*, PycSymbol*>` hashes on
+// key-string POINTER values, which vary with GC/heap layout
+// between processes (see issue 016 follow-up).  Each compile
+// stays internally consistent, but pyc's generated .c / .ll
+// differs across runs of byte-identical input, breaking build
+// reproducibility and any future golden-file diff on emitted
+// code.
+static int compar_pycsymbol_by_name(const void *ai, const void *aj) {
+  const Sym *a = (*(PycSymbol *const *)ai)->sym;
+  const Sym *b = (*(PycSymbol *const *)aj)->sym;
+  if (a->name && b->name) return strcmp(a->name, b->name);
+  if (!a->name && !b->name) return (a->id > b->id) - (a->id < b->id);
+  return a->name ? 1 : -1;       // unnamed sorts first
+}
+
 // ---- Shared utility functions ----
 
 static void import_file(cchar *name, cchar *p, PycCompiler &ctx) {
@@ -277,11 +296,25 @@ static int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
         if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
         cdef_ast->sym->inherits_add(base);
       }
-      form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
-        if (!MARKED(x->value) && !x->value->sym->is_fun) {
-          cdef_ast->sym->has.add(x->value->sym);
-          x->value->sym->in = cdef_ast->sym;
+      // Collect class fields into a temporary Vec, sort by
+      // name, then commit to `has` in sorted order.  Direct
+      // iteration over the scope map would walk the
+      // pointer-hashed bucket layout, producing non-
+      // deterministic field order across runs.
+      {
+        Vec<PycSymbol *> fields;
+        form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
+          if (!MARKED(x->value) && !x->value->sym->is_fun) {
+            fields.add(x->value);
+          }
+        if (fields.n > 1)
+          qsort(fields.v, fields.n, sizeof(fields.v[0]),
+                compar_pycsymbol_by_name);
+        for (PycSymbol *ps : fields) {
+          cdef_ast->sym->has.add(ps->sym);
+          ps->sym->in = cdef_ast->sym;
         }
+      }
       exit_scope(ctx);
       return 0;
     }
