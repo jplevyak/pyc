@@ -156,8 +156,14 @@ CC     ?= clang
 pyc_runtime.o: pyc_runtime.c pyc_c_runtime.h
 	$(CC) -O2 -g -Wall -fPIC -I/usr/local/include -c -o $@ $<
 
-libpyc_runtime.a: pyc_runtime.o
-	$(AR) crs $@ $<
+# Rebuild the archive from scratch each time so stale members
+# (from sources removed from the build) don't linger.  `ar crs`
+# is additive — it never removes members on its own.  Single-
+# source archive today but the hygiene matters as soon as the
+# archive grows.  Mirrors ifa/Makefile's $(LIBRARY) rule.
+libpyc_runtime.a: pyc_runtime.o Makefile
+	$(RM) $@
+	$(AR) crs $@ pyc_runtime.o
 
 # Per-target override (uses CPPFLAGS because that's what the implicit rule
 # sees); keeps -MMD -MP dependency generation active.
