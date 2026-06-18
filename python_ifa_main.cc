@@ -112,32 +112,16 @@ static void writeln_codegen(FILE *fp, PNode *n, Fun *f) {
 }
 
 static void add_primitive_transfer_functions() {
-#ifdef USE_LLVM
-  // Phase 3.2 of CODEGEN_PLAN: route `write`/`writeln` through the
-  // LLVM backend's printf-based emitters when the LLVM backend is
-  // active. The third arg of prim_reg (the llvm_cgfn) is plumbed all
-  // the way to RegisteredPrim::llvm_cgfn and consulted by the LLVM
-  // P_prim_primitive dispatcher.
-  prim_reg(sym_write->name, return_nil_transfer_function, write_codegen, pyc_llvm_write_cgfn)->is_visible = 1;
-  prim_reg(sym_writeln->name, return_nil_transfer_function, writeln_codegen, pyc_llvm_writeln_cgfn)->is_visible = 1;
-#else
+  // The 4th arg to prim_reg (llvm_cgfn) and the special-case
+  // `to_string` LLVM cgfn retired with v1 LLVM (issue 014).
+  // v2 LLVM doesn't consult RegisteredPrim::llvm_cgfn — it
+  // dispatches via the lower_send_prim chain in cg_normalize_v2.
   prim_reg(sym_write->name, return_nil_transfer_function, write_codegen)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function, writeln_codegen)->is_visible = 1;
-#endif
   prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen)->is_visible = 1;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(sym___pyc_to_str__->name, to_str_transfer_function, to_str_codegen)->is_visible = 1;
-#ifdef USE_LLVM
-  // to_string has no C cgfn — the C backend falls through to
-  // `_CG_prim_primitive_to_string(arg)` via cg.cc's default branch.
-  // The LLVM backend can't link the runtime helper, so we provide
-  // an inline cgfn that emits snprintf into a GC-managed buffer.
-  prim_reg(cannonicalize_string("to_string"), return_string_transfer_function, 0,
-           pyc_llvm_to_string_cgfn)
-      ->is_visible = 1;
-#else
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
-#endif
 }
 
 /*
