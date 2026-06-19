@@ -36,3 +36,13 @@ conventions are the same; the only difference is location.
   errors ("struct has no member 'e0'"). Same root cause as the
   existing `class_attr_mutation.py` xfail. Blocks inheritance-
   driven polymorphism in lists.
+
+## Closed (archive)
+
+Closed issues live in [`closed/`](closed/) with the closing
+commit ref recorded in each file's status line.
+
+- [015](closed/015-pyc-pod-records-no-frontend-hook.md) —
+  `@pyc_struct` decorator wired (originally
+  `ifa/issues/015`; moved here because the gap was in the pyc
+  frontend, not the ifa library).

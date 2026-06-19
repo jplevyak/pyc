@@ -1,10 +1,32 @@
 # Issue 015: pyc has no frontend opt-in for `is_value_type` POD records
 
-**Status:** open (feature gap, not a bug).
-**Affects:** the pyc Python frontend
-(`python_ifa_build_syms.cc:gen_class_pyda`,
-`python_ifa_main.cc`), `Sym::is_value_type`,
-`ifa/codegen/llvm.cc:getLLVMVarType`.
+**Status:** **closed June 2026** — frontend opt-in landed.
+`@pyc_struct` is a recognised decorator in
+`python_ifa_build_if1.cc`'s PY_decorated path; the IFA's
+existing `set_value_for_value_classes` pass propagates the
+flag through `implements` to subclasses. `pyc_compat.py`
+ships an identity `pyc_struct` so CPython cross-verify works.
+Test: `tests/pyc_struct_basic.py`. Pyc suite 81/0 on both
+backends.
+
+**Caveat / follow-on:** the v1 LLVM `getLLVMVarType` seam this
+issue originally pointed at was retired alongside v1 LLVM
+(issue 014, June 2026). v2 LLVM's equivalent seam — making
+`Type_RECORD && is_value_type` skip the CG2T_PTR wrap in
+`cg_normalize_v2.cc:build_type` and propagating the cascade
+through `lower_send_alloc` / `lower_send_period` / field
+load/store — is the natural next stage and is tracked as a
+new ifa-side issue. The frontend opt-in this issue called for
+is done; turning the bit into observably-different codegen is
+a separate scope.
+
+**Originally numbered:** `ifa/issues/015`.  Moved to
+top-level `issues/` because the gap is in the pyc frontend,
+not the ifa library.
+
+**Affects (resolved seam):** the pyc Python frontend
+(`python_ifa_build_if1.cc`'s PY_decorated case),
+`pyc_compat.py`, `Sym::is_value_type`.
 **Surfaced while:** reviewing the getLLVMVarType migration
 (`ifa/codegen/CODEGEN_PLAN.md` references commit 06bec4a) and
 considering whether `is_value_type` should be the mechanism for

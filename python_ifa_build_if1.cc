@@ -537,25 +537,31 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         ast->code = def_ast->code;
       } else if (def->kind == PY_classdef) {
         PycAST *def_ast = getAST(def, ctx);
-        // Detect @vector("s") decorator for builtin classes
+        // Scan decorators.  @vector("s") is builtin-only (it sets
+        // up the trailing-array layout used by `bytearray`).
+        // @pyc_struct works for any class (issue 015) — it sets
+        // is_value_type on the class Sym, which the IFA's
+        // set_value_for_value_classes pass then lifts through
+        // `implements` to subclasses.
         char *vector_size = nullptr;
-        if (ctx.is_builtin()) {
-          for (int i = 0; i < n->children.n - 1; i++) {
-            PyDAST *child = n->children[i];
-            // Decorators may be wrapped in a PY_suite or be direct PY_decorator nodes
-            Vec<PyDAST *> decs;
-            if (child->kind == PY_suite) {
-              for (auto c : child->children.values()) decs.add(c);
-            } else {
-              decs.add(child);
-            }
-            for (auto dec : decs.values()) {
-              if (dec->kind != PY_decorator || dec->children.n < 2) continue;
-              PyDAST *fname_node = dec->children[0];
-              cchar *fname = (fname_node->kind == PY_dotted_name || fname_node->kind == PY_name)
-                              ? fname_node->str_val : nullptr;
-              if (!fname || strcmp(fname, "vector") != 0) continue;
-              // Found @vector — extract string arg from arglist
+        for (int i = 0; i < n->children.n - 1; i++) {
+          PyDAST *child = n->children[i];
+          // Decorators may be wrapped in a PY_suite or be direct PY_decorator nodes
+          Vec<PyDAST *> decs;
+          if (child->kind == PY_suite) {
+            for (auto c : child->children.values()) decs.add(c);
+          } else {
+            decs.add(child);
+          }
+          for (auto dec : decs.values()) {
+            if (dec->kind != PY_decorator || dec->children.n < 1) continue;
+            PyDAST *fname_node = dec->children[0];
+            cchar *fname = (fname_node->kind == PY_dotted_name || fname_node->kind == PY_name)
+                            ? fname_node->str_val : nullptr;
+            if (!fname) continue;
+            if (ctx.is_builtin() && strcmp(fname, "vector") == 0 &&
+                dec->children.n >= 2) {
+              // @vector("s") — extract string arg from arglist
               PyDAST *arglist = dec->children[1];
               if (arglist->kind == PY_arglist && arglist->children.n > 0) {
                 PyDAST *arg = arglist->children[0];
@@ -574,6 +580,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
                   if (!def_ast->sym->element) def_ast->sym->element = new_sym(def_ast);
                 }
               }
+            } else if (strcmp(fname, "pyc_struct") == 0) {
+              // @pyc_struct — POD/value-type record opt-in
+              // (issue 015).  No args required; an empty
+              // arglist `@pyc_struct()` is also accepted.
+              // set_value_for_value_classes (ifa/if1/ast.cc)
+              // then lifts the bit transitively through
+              // `implements` so subclasses inherit.
+              def_ast->sym->is_value_type = 1;
             }
           }
         }
