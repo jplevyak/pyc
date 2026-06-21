@@ -177,6 +177,24 @@ static inline void *_CG_prim_primitive_clone(void *p, size_t s) {
   return x;
 }
 
+// Issue 026 fix: clone with destination-driven allocation.
+// When pyc's per-CreationSet struct synthesis produces a
+// different (typically smaller) layout for the prototype
+// vs the actual instance — happens when the class has >1
+// self-typed field, where the proto's CS never receives
+// field writes — the destination size must drive the
+// GC_MALLOC so subsequent __init__ writes have room.  The
+// source's data is copied within min(src, dst) bytes;
+// fields not present in the source remain GC-zeroed and
+// will be written by __init__.
+static inline void *_CG_prim_primitive_clone_dst(void *p, size_t dst_sz,
+                                                 size_t src_sz) {
+  void *x = GC_MALLOC(dst_sz);
+  size_t n = src_sz < dst_sz ? src_sz : dst_sz;
+  if (p && n) memcpy(x, p, n);
+  return x;
+}
+
 static inline void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v) {
   void *x = GC_MALLOC(s + v);
   memcpy(x, p, s);
@@ -429,6 +447,11 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
 #define _CG_prim_vector(_c, _n) (void *)GC_MALLOC(sizeof(_c *) * _n)
 #define _CG_prim_new(_c) (_c) GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_clone(_c) _CG_prim_primitive_clone(_c, sizeof(*(_c)))
+// Issue 026: dst-sized clone macro — _dt is the destination
+// type, _src is the source pointer.  See
+// _CG_prim_primitive_clone_dst above for rationale.
+#define _CG_prim_clone_dst(_dt, _src) \
+  _CG_prim_primitive_clone_dst((_src), sizeof(*((_dt)0)), sizeof(*(_src)))
 #define _CG_prim_clone_vector(_c, _v) _CG_prim_primitive_clone_vector(_c, sizeof(*(_c)), _v)
 #define _CG_prim_reply(_s, _c, _r) return _r
 #define _CG_prim_primitive(_p, _x) printf("%d\n", (unsigned int)(uintptr_t)_x);
