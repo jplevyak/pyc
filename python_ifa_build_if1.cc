@@ -878,7 +878,45 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         PycAST *rv = getAST(n->children[2], ctx);
         if1_gen(if1, &ast->code, rv->code);
         ast->rval = new_sym(ast);
-        if1_send(if1, &ast->code, 3, 1, map_pyop_to_cmp(n->children[1]->op), lv->rval, rv->rval, ast->rval)->ast = ast;
+        int op = n->children[1]->op;
+        // Issue 024 / 025: lower `x is None` and `None is x`
+        // directly to prim_isinstance(operand, sym_nil_type)
+        // instead of the __is__ method dispatch.  The method
+        // dispatch fails on union receivers (pyc IFA doesn't
+        // split functions per receiver type for method-only
+        // bodies), but prim_isinstance is a true primitive
+        // that IFA's splitter already handles correctly and
+        // narrows the operand at the conditional branch (see
+        // issue 025 Code_IF narrowing infrastructure).
+        bool lv_is_none = (lv->rval == sym_nil);
+        bool rv_is_none = (rv->rval == sym_nil);
+        if ((op == PY_CMP_IS || op == PY_CMP_IS_NOT) &&
+            (lv_is_none || rv_is_none) &&
+            !(lv_is_none && rv_is_none)) {
+          Sym *operand = lv_is_none ? rv->rval : lv->rval;
+          Sym *iso = make_symbol("isinstance");
+          if (op == PY_CMP_IS) {
+            // x is None  →  isinstance(x, __pyc_None_type__)
+            if1_send(if1, &ast->code, 4, 1, sym_primitive,
+                     iso, operand, sym_nil_type, ast->rval)->ast = ast;
+          } else {
+            // x is not None  →  not isinstance(x, __pyc_None_type__)
+            Sym *tmp = new_sym(ast);
+            if1_send(if1, &ast->code, 4, 1, sym_primitive,
+                     iso, operand, sym_nil_type, tmp)->ast = ast;
+            if1_send(if1, &ast->code, 2, 1,
+                     make_symbol("__not__"), tmp, ast->rval)->ast = ast;
+          }
+        } else if ((op == PY_CMP_IS || op == PY_CMP_IS_NOT) &&
+                   lv_is_none && rv_is_none) {
+          // None is None  →  True; None is not None  →  False
+          if1_move(if1, &ast->code,
+                   op == PY_CMP_IS ? sym_true : sym_false,
+                   ast->rval, ast);
+        } else {
+          if1_send(if1, &ast->code, 3, 1, map_pyop_to_cmp(op),
+                   lv->rval, rv->rval, ast->rval)->ast = ast;
+        }
       } else {
         ast->label[0] = if1_alloc_label(if1);
         ast->label[1] = if1_alloc_label(if1);

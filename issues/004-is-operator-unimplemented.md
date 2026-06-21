@@ -1,11 +1,16 @@
 # Issue 004: `is` operator is unimplemented; blocks recursive-type `None`-narrowing
 
-**Status:** **partial fix landed June 2026.**  Basic
-`is None` / `is not None` patterns work when the LHS or RHS
-appears as a single-type-context constant.  Cross-type
-polymorphic dispatch (e.g. `None` used as `is`-LHS with two
-different RHS types in the same module) and recursive-type
-narrowing still fail — see "What's still broken" below.
+**Status:** **fully fixed June 2026.**  The frontend now
+rewrites `x is None` and `None is x` directly to
+`prim_isinstance(x, sym_nil_type)`, bypassing the
+`__is__` method dispatch entirely.  Codegen (both C and
+v2 LLVM) emits a NULL pointer check.  The recursive
+linked-list pattern (`tests/recursive_list_is_none.py`)
+that originally motivated this issue now compiles and
+runs on both backends.
+
+See [ifa/issues/024](../ifa/issues/024-is-comparison-narrowing.md)
+for the IFA-level fix details.
 
 **Affects:** pyc Python frontend (`python_ifa_build_if1.cc:102`
 maps `PY_CMP_IS` to a `__is__` symbol dispatch) + the
