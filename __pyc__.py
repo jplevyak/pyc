@@ -1,6 +1,8 @@
 __pyc_insert_c_header__('pyc_c_runtime.h')
 
 class __pyc_any_type__:
+  def __null__(self):
+    return False
   def __str__(self):
     return __pyc_primitive__(__pyc_symbol__("__pyc_to_str__"), self)
   def __pyc_tuplify__(self):
@@ -9,6 +11,16 @@ class __pyc_any_type__:
     return self.__getitem__(slice(i,j,s))
   def __repr__(self):
     return self.__str__()
+  # Issue 004: `is` / `is not` dispatched here so the common
+  # `x is None` pattern resolves.  See __pyc__/00_runtime.py
+  # for the full doc.  Scoped to None-comparison patterns;
+  # general identity for two non-None class instances is
+  # NOT supported (returns False) — that needs a real
+  # identity primitive (filed as a follow-on issue).
+  def __is__(self, x):
+    return False
+  def __nis__(self, x):
+    return True
 
 class object:
   def __null__(self):
@@ -35,6 +47,15 @@ class __pyc_None_type__:
     return "None"
   def __pyc_to_bool__(self):
     return False
+  # Issue 004: None.__is__(x) is True iff x is also None.
+  # Overrides __pyc_any_type__'s default-False so `is None`
+  # patterns work whichever side has the None constant.
+  def __is__(self, x):
+    return x.__null__()
+  def __nis__(self, x):
+    if x.__null__():
+      return False
+    return True
 
 class bool:
   def __and__(self, x):

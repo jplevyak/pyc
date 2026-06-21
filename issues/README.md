@@ -36,6 +36,11 @@ conventions are the same; the only difference is location.
   errors ("struct has no member 'e0'"). Same root cause as the
   existing `class_attr_mutation.py` xfail. Blocks inheritance-
   driven polymorphism in lists.
+- [004-is-operator-unimplemented.md](004-is-operator-unimplemented.md)
+  — `is` and `is not` operators are unimplemented (frontend
+  generates `__is__` dispatch but no class defines the method).
+  Blocks `x is None`-style narrowing required for recursive
+  data structures.
 
 ## Closed (archive)
 
