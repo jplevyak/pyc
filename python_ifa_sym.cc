@@ -224,21 +224,40 @@ static bool promote_field_one(CreationSet *cs, Sym *field_sym, cchar *name) {
   add_var_constraint(iv);
   cs->vars.add(iv);
   cs->var_map.put(name, iv);
+  // Issue 026 layer 2: existing prim_period / prim_setter
+  // PNodes that operate on receivers whose `out` contains
+  // this CS need to re-run their constraint setup
+  // (`add_send_constraints`) so that the new iv gets
+  // connected via flow_vars(iv, result).  Without this,
+  // result.backward never gains the new iv → mark_live
+  // can't propagate → field stays dead at codegen.
+  //
+  // The send_worklist only re-runs `add_send_edges_pnode`
+  // (dispatch edges), not the constraint setup.  To re-run
+  // constraints we enqueue the EntrySets containing the
+  // affected receiver AVars; `add_es_constraints` walks
+  // their PNodes and calls `add_send_constraints`.
+  for (AVar *def_av : cs->defs) if (def_av) {
+    if (def_av->contour_is_entry_set) {
+      EntrySet *es = (EntrySet *)def_av->contour;
+      if (es && !es->in_es_worklist) {
+        es->in_es_worklist = 1;
+        fa->es_worklist.enqueue(es);
+      }
+    }
+  }
   return true;
 }
 
-// Promote `name` on `cs`, AND on every sibling CS that
-// shares the same class sym.  This keeps all CSs of a
-// class structurally equivalent (same `vars.n`, same
-// fields) so that `determine_basic_clones` collapses them
-// into one struct type at codegen.  Without this, two CSs
-// of the same Node class could end up with different
-// var_map sizes (e.g. CS_outer has value/next from
-// __init__'s writes via NOTYPE-driven promotion, CS_inner
-// only writes through `node.next = Node(v)` so its
-// unknown_vars looks different) — leading to two
-// separate struct typedefs and codegen-side type errors
-// when one struct lacks a field the other has.
+// Promote `name` on `cs` only.  Reuses an existing field
+// Sym from `cs->sym->has` if one already exists for this
+// name so two CSs of the same class don't create
+// duplicate has entries.  Sibling CSs of the same class
+// are intentionally NOT touched — they may legitimately
+// have different field sets (writes that landed on this
+// CS but not others), and `determine_basic_clones`
+// correctly marks CSs with different `vars.n` as
+// not_equiv so they get distinct struct types and clones.
 static bool promote_field(CreationSet *cs, cchar *name) {
   if (cs->var_map.get(name)) return false;
   Sym *field_sym = nullptr;
@@ -253,16 +272,7 @@ static bool promote_field(CreationSet *cs, cchar *name) {
     field_sym->var = new Var(field_sym);
     cs->sym->has.add(field_sym);
   }
-  bool any = promote_field_one(cs, field_sym, name);
-  // Propagate to sibling CSs of the same class sym.  This
-  // is the key to keeping CS equivalence intact across
-  // call-site-specific creation points.
-  for (CreationSet *sib : cs->sym->creators) {
-    if (sib && sib != cs) {
-      if (promote_field_one(sib, field_sym, name)) any = true;
-    }
-  }
-  return any;
+  return promote_field_one(cs, field_sym, name);
 }
 
 bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
