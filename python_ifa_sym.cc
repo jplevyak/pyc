@@ -213,26 +213,92 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   return fn->fun;
 }
 
+// Issue 026 third bug: promote a single (cs, field_name)
+// from unknown_vars to var_map.  Reuses an existing field
+// Sym from cs->sym->has if one already exists for this
+// name (so two CSs of the same class don't create
+// duplicate has entries for the same field).
+static bool promote_field_one(CreationSet *cs, Sym *field_sym, cchar *name) {
+  if (cs->var_map.get(name)) return false;
+  AVar *iv = unique_AVar(field_sym->var, cs);
+  add_var_constraint(iv);
+  cs->vars.add(iv);
+  cs->var_map.put(name, iv);
+  return true;
+}
+
+// Promote `name` on `cs`, AND on every sibling CS that
+// shares the same class sym.  This keeps all CSs of a
+// class structurally equivalent (same `vars.n`, same
+// fields) so that `determine_basic_clones` collapses them
+// into one struct type at codegen.  Without this, two CSs
+// of the same Node class could end up with different
+// var_map sizes (e.g. CS_outer has value/next from
+// __init__'s writes via NOTYPE-driven promotion, CS_inner
+// only writes through `node.next = Node(v)` so its
+// unknown_vars looks different) — leading to two
+// separate struct typedefs and codegen-side type errors
+// when one struct lacks a field the other has.
+static bool promote_field(CreationSet *cs, cchar *name) {
+  if (cs->var_map.get(name)) return false;
+  Sym *field_sym = nullptr;
+  for (Sym *h : cs->sym->has) {
+    if (h && h->name && !strcmp(h->name, name)) {
+      field_sym = h;
+      break;
+    }
+  }
+  if (!field_sym) {
+    field_sym = new_PycSymbol(name)->sym;
+    field_sym->var = new Var(field_sym);
+    cs->sym->has.add(field_sym);
+  }
+  bool any = promote_field_one(cs, field_sym, name);
+  // Propagate to sibling CSs of the same class sym.  This
+  // is the key to keeping CS equivalence intact across
+  // call-site-specific creation points.
+  for (CreationSet *sib : cs->sym->creators) {
+    if (sib && sib != cs) {
+      if (promote_field_one(sib, field_sym, name)) any = true;
+    }
+  }
+  return any;
+}
+
 bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
-  if (!type_violations.n) return false;
   bool again = false;
+  // (1) NOTYPE-violation-driven promotion (legacy path).
+  // Some reads through union receivers don't bubble up
+  // a NOTYPE (the union has SOME types even if specific
+  // CSs are missing the field), so this path alone misses
+  // CSs that received writes from inside-function Node
+  // creation patterns — issue 026's third bug.
   for (auto v : type_violations.values()) if (v) {
     if (v->kind == ATypeViolation_kind::NOTYPE) {
       if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
       for (auto cs : av->out->sorted.values()) {
         for (auto i : cs->unknown_vars.values()) {
-          if (cs->var_map.get(i)) continue;
-          again = true;
-          Sym *s = new_PycSymbol(i)->sym;
-          s->var = new Var(s);
-          cs->sym->has.add(s);
-          AVar *iv = unique_AVar(s->var, cs);
-          add_var_constraint(iv);
-          cs->vars.add(iv);
-          cs->var_map.put(i, iv);
+          if (promote_field(cs, i)) again = true;
         }
       }
+    }
+  }
+  // (2) Eagerly walk every CreationSet and promote any
+  // pending unknown_vars regardless of read context.  A
+  // write that lands in `cs->unknown_vars` is enough
+  // evidence on its own that the field exists on this CS;
+  // we shouldn't wait for a downstream read to notice it.
+  // Without this, the value-iv on a Node created inside a
+  // function and stored into another Node's field (e.g.
+  // `set_next(node, v): node.next = Node(v)`) never makes
+  // it into var_map, so the dispatch over union receivers
+  // at the read site sees only the outer-scope Node's
+  // value contribution and constant-folds.
+  for (CreationSet *cs : fa->css) {
+    if (!cs) continue;
+    for (auto i : cs->unknown_vars.values()) {
+      if (promote_field(cs, i)) again = true;
     }
   }
   return again;
