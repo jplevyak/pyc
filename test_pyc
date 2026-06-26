@@ -34,6 +34,23 @@ PYC="${PYC:-./pyc}"
 PYTHON="${PYTHON:-python3}"
 VALGRIND="${VALGRIND:-}"
 TIMEOUT="${TIMEOUT:-60}"
+run_with_timeout() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$@"
+  else
+    local t=$1
+    shift
+    python3 -c '
+import sys, subprocess
+try:
+    sys.exit(subprocess.run(sys.argv[2:], timeout=float(sys.argv[1])).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+' "$t" "$@"
+  fi
+}
 # PYC_FLAGS is prepended to every pyc invocation. Use it to drive
 # a non-default backend / option across the whole suite without
 # editing per-test sidecars, e.g. `PYC_FLAGS=-b ./test_pyc`
@@ -148,7 +165,7 @@ for g in "$TESTS_DIR"/*.py; do
   [ -e "$g.flags" ] && flags=$(cat "$g.flags")
 
   # Compile.
-  ( cd "$BUILD" && timeout "$TIMEOUT" $VALGRIND "../../$PYC" $PYC_FLAGS -D../.. $flags "$name" ) \
+  ( cd "$BUILD" && run_with_timeout "$TIMEOUT" $VALGRIND "../../$PYC" $PYC_FLAGS -D../.. $flags "$name" ) \
     > "$BUILD/$name.out" 2>&1
   rc=$?
   if [ $rc -eq 124 ]; then
@@ -184,7 +201,7 @@ for g in "$TESTS_DIR"/*.py; do
     passed=$((passed + 1)); pass_log "$name (compile-only)"; continue
   fi
 
-  ( cd "$BUILD" && timeout "$TIMEOUT" $VALGRIND ./"$base" ) \
+  ( cd "$BUILD" && run_with_timeout "$TIMEOUT" $VALGRIND ./"$base" ) \
     > "$BUILD/$name.exec.out" 2>&1
   rc=$?
   if [ $rc -eq 124 ]; then
@@ -204,7 +221,7 @@ for g in "$TESTS_DIR"/*.py; do
     # PYTHONPATH=. so CPython finds pyc_compat.py in the build dir even
     # when the script is a symlink (Python resolves sys.path[0] from the
     # symlink target, not from cwd).
-    ( cd "$BUILD" && PYTHONPATH=. timeout "$TIMEOUT" "$PYTHON" "$name" ) \
+    ( cd "$BUILD" && PYTHONPATH=. run_with_timeout "$TIMEOUT" "$PYTHON" "$name" ) \
       > "$BUILD/$name.python.out" 2>&1
     if ! diff -q "$BUILD/$name.exec.out" "$BUILD/$name.python.out" > /dev/null 2>&1; then
       if [ -e "$g.python.expect_fail" ]; then

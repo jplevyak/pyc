@@ -38,7 +38,7 @@ endif
 
 # Compiler flags --------------------------------------------------------------
 
-CFLAGS += -std=c++23 -Wall -MMD -MP -D__PYC__=1
+CFLAGS += -std=c++23 -Wall -MMD -MP -D__PYC__=1 -Wno-register
 
 ifdef DEBUG
   CFLAGS += -g -DDEBUG=1
@@ -75,10 +75,12 @@ PLIB_DIR     = $(IFA_DIR)/common
 
 CFLAGS += -I$(PLIB_DIR) -I$(IFA_DIR) -I$(IFA_DIR)/if1 -I$(IFA_DIR)/frontend \
           -I$(IFA_DIR)/analysis -I$(IFA_DIR)/codegen -I$(IFA_DIR)/optimize \
-          -I/usr/local/include
+          -I/usr/local/include -I/opt/homebrew/include
+
+CFLAGS += -I./Python-2.7.18/Include -I./Python-2.7.18/PC
 
 CFLAGS += -DUSE_GC
-LIBS   += -L$(IFA_LIB_DIR) -lifa_gc -lgc -lgccpp -ldparse_gc
+LIBS   += -L/opt/homebrew/lib -L/usr/local/lib -L$(IFA_LIB_DIR) -lifa_gc -lgc -lgccpp -ldparse_gc
 IFALIB  = $(IFA_LIB_DIR)/libifa_gc.a
 
 # Optional backends -----------------------------------------------------------
