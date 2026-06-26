@@ -85,10 +85,12 @@ IFALIB  = $(IFA_LIB_DIR)/libifa_gc.a
 
 # Optional backends -----------------------------------------------------------
 
+USE_LLVM = 1
 ifdef USE_LLVM
-  LLVM_INCLUDE_DIR = $(shell llvm-config --includedir)
-  LLVM_LIBDIR      = $(shell llvm-config --libdir)
-  LLVM_LIBS        = $(shell llvm-config --libs)
+  LLVM_CONFIG ?= $(shell command -v llvm-config 2>/dev/null || echo /opt/homebrew/opt/llvm/bin/llvm-config)
+  LLVM_INCLUDE_DIR = $(shell $(LLVM_CONFIG) --includedir)
+  LLVM_LIBDIR      = $(shell $(LLVM_CONFIG) --libdir)
+  LLVM_LIBS        = $(shell $(LLVM_CONFIG) --libs)
   CFLAGS += -I$(LLVM_INCLUDE_DIR) -DUSE_LLVM=1 -fno-exceptions -funwind-tables \
             -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS \
             -D__STDC_LIMIT_MACROS
