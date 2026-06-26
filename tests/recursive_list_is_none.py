@@ -50,8 +50,7 @@ while i <= 10:
   i = i + 1
 print(sum_list(head))   # 1+2+...+10 = 55
 
-# Empty list (just None — pyc needs a Node to type-check
-# the call site, so call with the only-None pattern
-# separately to avoid mixed-type dispatch at the call site).
-empty_head = Node(0)
-print(sum_list(empty_head))   # 0
+# Empty list — `sum_list(None)` direct call now works.
+# Earlier this needed `Node(0)` indirection to avoid a
+# call-site dispatch failure on the bare-None argument.
+print(sum_list(None))   # 0

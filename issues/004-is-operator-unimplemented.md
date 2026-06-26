@@ -1,16 +1,29 @@
 # Issue 004: `is` operator is unimplemented; blocks recursive-type `None`-narrowing
 
-**Status:** **fully fixed June 2026.**  The frontend now
-rewrites `x is None` and `None is x` directly to
-`prim_isinstance(x, sym_nil_type)`, bypassing the
-`__is__` method dispatch entirely.  Codegen (both C and
-v2 LLVM) emits a NULL pointer check.  The recursive
-linked-list pattern (`tests/recursive_list_is_none.py`)
-that originally motivated this issue now compiles and
-runs on both backends.
+**Status:** **fully fixed June 2026.**
+
+- `x is None` / `None is x` lower to
+  `prim_isinstance(x, sym_nil_type)` (frontend); codegen
+  emits a NULL pointer check.
+- `x is y` (non-None operands) lowers to `prim_is(x, y)`
+  (new primitive, id 56); codegen emits pointer equality
+  `(void*)x == (void*)y` in C and `CG2_BINOP EQ` in v2
+  LLVM.  Added during issue 028 step 4 — the earlier
+  `__pyc_any_type__::__is__` always-False fallback
+  silently broke ring-detection idioms like
+  `z.next is z`.
+- `None is None` / `None is not None` fold to True/False
+  constants at the frontend.
+
+`is`/`is not` no longer dispatch through any method.  The
+`__is__` / `__nis__` stubs on `__pyc_any_type__` and
+`__pyc_None_type__` remain only for explicit
+`x.__is__(y)` calls.
 
 See [ifa/issues/024](../ifa/issues/024-is-comparison-narrowing.md)
-for the IFA-level fix details.
+for the narrowing-side fix and
+[ifa/issues/028](../ifa/issues/028-fibheap-blockers.md)
+for step 4's identity primitive.
 
 **Affects:** pyc Python frontend (`python_ifa_build_if1.cc:102`
 maps `PY_CMP_IS` to a `__is__` symbol dispatch) + the

@@ -913,6 +913,28 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           if1_move(if1, &ast->code,
                    op == PY_CMP_IS ? sym_true : sym_false,
                    ast->rval, ast);
+        } else if (op == PY_CMP_IS || op == PY_CMP_IS_NOT) {
+          // Issue 028 step 4: real identity comparison for
+          // non-None operands.  Previously routed to the
+          // `__is__` method (inherited from
+          // `__pyc_any_type__`) which always returned False
+          // — broke `z is z.next`-style single-node-ring
+          // checks.  prim_is is a pointer-equality primitive
+          // at codegen, matching CPython's identity
+          // semantics for non-None operands.  The `is not`
+          // form negates via __not__ (mirrors the
+          // `is not None` lowering above).
+          Sym *iso = make_symbol("is");
+          if (op == PY_CMP_IS) {
+            if1_send(if1, &ast->code, 4, 1, sym_primitive,
+                     iso, lv->rval, rv->rval, ast->rval)->ast = ast;
+          } else {
+            Sym *tmp = new_sym(ast);
+            if1_send(if1, &ast->code, 4, 1, sym_primitive,
+                     iso, lv->rval, rv->rval, tmp)->ast = ast;
+            if1_send(if1, &ast->code, 2, 1,
+                     make_symbol("__not__"), tmp, ast->rval)->ast = ast;
+          }
         } else {
           if1_send(if1, &ast->code, 3, 1, map_pyop_to_cmp(op),
                    lv->rval, rv->rval, ast->rval)->ast = ast;

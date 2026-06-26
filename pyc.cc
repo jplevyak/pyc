@@ -44,7 +44,8 @@ static ArgumentDescription arg_desc[] = {
     {"debug_info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
     {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
 #ifdef USE_LLVM
-    {"llvm", 'b', "LLVM Codegen", "F", &codegen_llvm, "PYC_LLVM", NULL},
+    {"llvm", 'b', "LLVM Codegen (the only LLVM backend — internally v2 via cg_normalize_v2 + cg_v2_emit_llvm_module)",
+     "F", &codegen_llvm, "PYC_LLVM", NULL},
     {"jit", 'j', "JIT", "F", &codegen_jit, "PYC_JIT", NULL},
     {"strict_verify", ' ', "Strict LLVM verifier (per-fn + emit .ll on failure)", "F",
      &codegen_strict_verify, "PYC_STRICT_VERIFY", NULL},
@@ -60,6 +61,10 @@ static ArgumentDescription arg_desc[] = {
 #endif
     {"escape_in_fa", ' ', "Integrate escape analysis into IFA (Phase 1+, see ESCAPE_PLAN.md)", "F",
      &ifa_escape_in_fa, "IFA_ESCAPE_IN_FA", NULL},
+    {"fa_inline", ' ', "Run simple_inlining between FA passes (0/1, default 0)", "I",
+     &ifa_fa_inline, "IFA_FA_INLINE", NULL},
+    {"narrow", ' ', "Enable issue-025 per-branch type narrowing recognizer (0/1, default 1)", "I",
+     &ifa_narrow, "IFA_NARROW", NULL},
     {"runtime_errors", 'r', "Use runtime type checks", "f", &runtime_errors, "PYC_RUNTIME_ERRORS", NULL},
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
     {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
@@ -103,6 +108,10 @@ void compile(cchar *fn) {
 #endif
 #ifdef USE_LLVM
         if (codegen_llvm) {
+      // The only LLVM path.  Despite the name `llvm.cc`, the
+      // emission internally routes through cg_normalize_v2 +
+      // cg_v2_emit_llvm_module (see llvm.cc:155 — old direct
+      // emitter was retired in issue 014).
       llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
       if (!codegen_jit && llvm_codegen_compile(fn)) fail("compilation failure");
     } else
