@@ -122,6 +122,7 @@ skipped=0
 failures=()
 
 print_summary() {
+  if [ "$verbose" != "1" ]; then printf '\n'; fi
   printf '\n%s---- summary ----%s\n' "$B" "$N"
   printf '  %spassed%s          %d\n' "$G" "$N" "$passed"
   printf '  %sexpected fails%s  %d\n' "$Y" "$N" "$expected_failed"
@@ -144,10 +145,22 @@ note_failure() {
   fi
 }
 
-pass_log()    { [ "$verbose" = "1" ] && printf '  %s%s%s %s\n' "$G" "PASS" "$N" "$1"; }
-skip_log()    { [ "$verbose" = "1" ] && printf '  %s%s%s %s\n' "$Y" "SKIP" "$N" "$1"; }
-xfail_log()   { [ "$verbose" = "1" ] && printf '  %s%s%s %s (%s)\n' "$Y" "XFAIL" "$N" "$1" "$2"; }
-fail_log()    { printf '  %s%s%s %s (%s)\n' "$R" "FAIL" "$N" "$1" "$2" >&2; }
+pass_log()    {
+  if [ "$verbose" = "1" ]; then printf '  %s%s%s %s\n' "$G" "PASS" "$N" "$1"; else printf '%s.%s' "$G" "$N"; fi
+}
+skip_log()    {
+  if [ "$verbose" = "1" ]; then printf '  %s%s%s %s\n' "$Y" "SKIP" "$N" "$1"; else printf '%ss%s' "$Y" "$N"; fi
+}
+xfail_log()   {
+  if [ "$verbose" = "1" ]; then printf '  %s%s%s %s (%s)\n' "$Y" "XFAIL" "$N" "$1" "$2"; else printf '%sx%s' "$Y" "$N"; fi
+}
+fail_log()    {
+  if [ "$verbose" = "1" ]; then
+    printf '  %s%s%s %s (%s)\n' "$R" "FAIL" "$N" "$1" "$2" >&2
+  else
+    printf '\n  %s%s%s %s (%s)\n' "$R" "FAIL" "$N" "$1" "$2" >&2
+  fi
+}
 
 start=$(date +%s)
 

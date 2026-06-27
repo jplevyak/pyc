@@ -74,6 +74,9 @@ class PycCompiler : public PycCallbacks {
 // -- Inline helpers (each TU gets its own copy) --
 
 static inline char *read_file_to_string(cchar *fn, uint64 n = 0, int *pfd = 0) {
+#ifndef O_NOATIME
+#define O_NOATIME 0
+#endif
   int fd = open(fn, O_RDONLY | O_NOATIME, 00660);
   if (fd < 0) fprintf(stderr, "unable to open: %s\n", fn);
   assert(fd > 0);

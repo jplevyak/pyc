@@ -158,7 +158,7 @@ $(PYC): $(PYC_OBJS) $(IFALIB)
 # external symbols; libpyc_runtime.a satisfies them.
 CC     ?= clang
 pyc_runtime.o: pyc_runtime.c pyc_c_runtime.h
-	$(CC) -O2 -g -Wall -fPIC -I/usr/local/include -c -o $@ $<
+	$(CC) -O2 -g -Wall -fPIC -I/usr/local/include -I/opt/homebrew/include -c -o $@ $<
 
 # Rebuild the archive from scratch each time so stale members
 # (from sources removed from the build) don't linger.  `ar crs`

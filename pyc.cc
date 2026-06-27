@@ -4,6 +4,8 @@
 #include "python_parse.h"
 #include <signal.h>
 #include <sys/resource.h>
+#include <math.h>
+#include <limits.h>
 
 extern int write_code_exit;
 
