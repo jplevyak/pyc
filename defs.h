@@ -30,6 +30,14 @@ EXTERN int verbose_level EXTERN_INIT(0);
 
 void llvm_codegen_write_ir(FA *fa, Fun *main, cchar *fn);
 int llvm_codegen_compile(cchar *fn);
+int llvm_jit_execute();
+// Stage-2 REPL bitcode cache (jit.cc): set cache_path before calling
+// llvm_jit_execute() on a miss; call read_cache() to load on a hit.
+extern char llvm_jit_cache_path[512];
+bool llvm_jit_read_cache(const char *path);
 int shedskin_codegen(FA *fa, Fun *main, cchar *fn);
+
+void compile(cchar *fn);   // in pyc.cc: FA → codegen → JIT/AOT
+void pyc_repl();           // in repl.cc: interactive REPL loop
 
 #endif
