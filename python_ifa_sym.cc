@@ -224,26 +224,23 @@ static bool promote_field_one(CreationSet *cs, Sym *field_sym, cchar *name) {
   add_var_constraint(iv);
   cs->vars.add(iv);
   cs->var_map.put(name, iv);
-  // Issue 026 layer 2: existing prim_period / prim_setter
-  // PNodes that operate on receivers whose `out` contains
-  // this CS need to re-run their constraint setup
-  // (`add_send_constraints`) so that the new iv gets
-  // connected via flow_vars(iv, result).  Without this,
-  // result.backward never gains the new iv → mark_live
-  // can't propagate → field stays dead at codegen.
-  //
-  // The send_worklist only re-runs `add_send_edges_pnode`
-  // (dispatch edges), not the constraint setup.  To re-run
-  // constraints we enqueue the EntrySets containing the
-  // affected receiver AVars; `add_es_constraints` walks
-  // their PNodes and calls `add_send_constraints`.
-  for (AVar *def_av : cs->defs) if (def_av) {
-    if (def_av->contour_is_entry_set) {
-      EntrySet *es = (EntrySet *)def_av->contour;
-      if (es && !es->in_es_worklist) {
-        es->in_es_worklist = 1;
-        fa->es_worklist.enqueue(es);
+  // Issue 026 layer 2 (COMPLETE): Enqueue ALL EntrySets that contain
+  // an AVar whose `out` type includes this CreationSet.
+  // This ensures that `prim_period` consumers in different functions
+  // re-run their constraint setup and form backwards liveness links.
+  for (EntrySet *es : fa->ess) {
+    if (!es || es->in_es_worklist) continue;
+    bool found = false;
+    for (Var *v : es->fun->fa_Vars) {
+      AVar *av = make_AVar(v, es);
+      if (av->out && av->out->sorted.set_in(cs)) {
+        found = true;
+        break;
       }
+    }
+    if (found) {
+      es->in_es_worklist = 1;
+      fa->es_worklist.enqueue(es);
     }
   }
   return true;
