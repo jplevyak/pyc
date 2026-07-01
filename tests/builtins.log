@@ -1,0 +1,33 @@
+
+  FAIL builtins.py (COMPILE-OUT)
+1,2132d0
+< put_result var 229
+< emit_send_call 0x10a15d800 put_result for 229
+< put_result var 231
+< put_result var 231
+< put_result var 236
+< put_result var 251
+< put_result var 252
+< put_result var 351
+< put_result var 359
+< put_result var 360
+< put_result var 361
+< put_result var 393
+< put_result var 394
+< put_result var 681
+< put_result var 682
+< put_result var 702
+< put_result var 703
+< put_result var 884
+< put_result var 885
+
+
+---- summary ----
+  passed          0
+  expected fails  0
+  failed          1
+  skipped         0
+  time            2s
+
+failures:
+  builtins.py COMPILE-OUT  diff tests/build/builtins.py.out tests/empty
