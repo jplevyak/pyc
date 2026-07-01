@@ -81,4 +81,22 @@ class PycModule : public gc {
 
 int ast_to_if1(Vec<PycModule *> &mods);
 
+// Stage-3 REPL: split ast_to_if1 into a one-time baseline (builtin module
+// only) and a per-iteration extend (user module).  The REPL parent calls
+// ast_to_if1_baseline once; each fork child inherits the IF1 state via CoW
+// and calls ast_to_if1_extend instead of ast_to_if1.
+struct BaselineIF1State {
+  PycCompiler *ctx;   // GC-allocated; persists across fork children
+  Code *code;         // code chain tail after processing the builtin module
+};
+
+// One-time setup: initialise if1/pdb/ctx and build IF1 for the builtin module.
+// builtin_mods must remain live for the process lifetime (use a static Vec).
+BaselineIF1State ast_to_if1_baseline(Vec<PycModule *> &builtin_mods);
+
+// Per-REPL-iteration (called in fork child): extend the inherited IF1 state
+// with the user module(s) in all_mods[1..] and finalise the program.
+// all_mods[0] must be the same builtin module passed to ast_to_if1_baseline.
+int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl);
+
 #endif

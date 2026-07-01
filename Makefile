@@ -91,10 +91,15 @@ ifdef USE_LLVM
   LLVM_INCLUDE_DIR = $(shell $(LLVM_CONFIG) --includedir)
   LLVM_LIBDIR      = $(shell $(LLVM_CONFIG) --libdir)
   LLVM_LIBS        = $(shell $(LLVM_CONFIG) --libs)
-  CFLAGS += -I$(LLVM_INCLUDE_DIR) -DUSE_LLVM=1 -fno-exceptions -funwind-tables \
-            -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS \
-            -D__STDC_LIMIT_MACROS
-  LIBS   += -L$(LLVM_LIBDIR) $(LLVM_LIBS)
+  CFLAGS  += -I$(LLVM_INCLUDE_DIR) -DUSE_LLVM=1 -fno-exceptions -funwind-tables \
+             -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS \
+             -D__STDC_LIMIT_MACROS
+  LIBS    += -L$(LLVM_LIBDIR) $(LLVM_LIBS)
+  # JIT path: pyc_runtime.o must be in the pyc binary so that
+  # DynamicLibrarySearchGenerator::GetForCurrentProcess finds _CG_string_alloc
+  # and friends.  -rdynamic exports the main binary's symbols to dlsym/dlopen.
+  LDFLAGS += -rdynamic
+  JIT_RUNTIME_OBJ = pyc_runtime.o
 endif
 
 ifdef USE_SS
@@ -112,7 +117,7 @@ VERSIONCFLAGS = -DMAJOR_VERSION=$(MAJOR) -DMINOR_VERSION=$(MINOR) \
 
 # Sources / objects -----------------------------------------------------------
 
-PYC_DEPEND_SRCS = pyc.cc python_ifa_util.cc python_ifa_sym.cc \
+PYC_DEPEND_SRCS = pyc.cc repl.cc python_ifa_util.cc python_ifa_sym.cc \
                   python_ifa_build_syms.cc python_ifa_build_if1.cc \
                   python_ifa_main.cc python_parse.cc version.cc
 PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc python.g.d_parser.cc
@@ -148,7 +153,7 @@ all: defaulttarget
 
 defaulttarget: $(EXECUTABLES) libpyc_runtime.a pyc.cat
 
-$(PYC): $(PYC_OBJS) $(IFALIB)
+$(PYC): $(PYC_OBJS) $(IFALIB) $(JIT_RUNTIME_OBJ)
 	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 # Phase D.3.5: runtime library for the v2 LLVM backend's link

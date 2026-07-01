@@ -10,6 +10,7 @@
 extern int write_code_exit;
 
 int do_unit_tests = 0;
+int do_repl = 0;
 static int dparse_only = 0;
 static int dparse_ast = 0;
 static int codegen_strict_verify = 0;       // --strict-verify
@@ -43,6 +44,7 @@ static void license(ArgumentState *arg_state, char *arg_unused) {
 }
 
 static ArgumentDescription arg_desc[] = {
+    {"repl", ' ', "Interactive REPL (requires -b; implies -b -j)", "F", &do_repl, "PYC_REPL", NULL},
     {"debug_info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
     {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
 #ifdef USE_LLVM
@@ -115,7 +117,11 @@ void compile(cchar *fn) {
       // cg_v2_emit_llvm_module (see llvm.cc:155 — old direct
       // emitter was retired in issue 014).
       llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
-      if (!codegen_jit && llvm_codegen_compile(fn)) fail("compilation failure");
+      if (codegen_jit) {
+        if (llvm_jit_execute()) fail("JIT execution failed");
+      } else {
+        if (llvm_codegen_compile(fn)) fail("compilation failure");
+      }
     } else
 #endif
     {
@@ -147,6 +153,15 @@ int main(int argc, char *argv[]) {
   // pyc's defs.h globals).  Setting it from either the CLI flag
   // or PYC_STRICT_VERIFY=1 is now equivalent.
   if (codegen_strict_verify) setenv("PYC_STRICT_VERIFY", "1", 1);
+  if (do_repl) {
+    init_system();
+    init_config();
+    if (pyc_ifa_log[0]) init_logs();
+    Service::start_all();
+    pyc_repl();
+    Service::stop_all();
+    exit(0);
+  }
   if (arg_state.nfile_arguments < 1) usage(&arg_state, 0);
   init_system();
   init_config();

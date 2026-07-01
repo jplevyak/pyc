@@ -211,32 +211,69 @@ void install_new_fun(Sym *f) {
   if1_write_log();
 }
 
-int ast_to_if1(Vec<PycModule *> &mods) {
+// Stage-3 REPL: one-time baseline.  Initialises the global if1/pdb/ctx and
+// processes the builtin module through build_syms + build_if1.  Does NOT call
+// build_init or build_type_hierarchy — those require the user module.
+// builtin_mods must outlive all fork children (use a static Vec in the caller).
+BaselineIF1State ast_to_if1_baseline(Vec<PycModule *> &builtin_mods) {
   PycCompiler *ctx = new PycCompiler();
   ifa_init(ctx);
   if1->partial_default = Partial_NEVER;
   build_builtin_symbols();
   add_primitive_transfer_functions();
-  ctx->modules = &mods;
+  ctx->modules = &builtin_mods;
   Code *code = 0;
-  for (auto x : mods.values()) x->filename = cannonicalize_string(x->filename);
-  ctx->filename = mods[0]->filename;
+  builtin_mods[0]->filename = cannonicalize_string(builtin_mods[0]->filename);
+  ctx->filename = builtin_mods[0]->filename;
   build_search_path(*ctx);
-  build_environment(mods[0], *ctx);
-  Vec<PycModule *> base_mods(mods);
-  for (auto x : base_mods.values()) if (build_syms(x, *ctx) < 0) return -1;
+  build_environment(builtin_mods[0], *ctx);
+  if (build_syms(builtin_mods[0], *ctx) < 0) fail("baseline: builtin build_syms failed");
   finalize_types(if1);
-  for (auto x : base_mods.values()) {
+  ctx->mod = builtin_mods[0];
+  build_module_attributes_if1(builtin_mods[0], *ctx, &code);
+  build_if1_module_pyda(builtin_mods[0]->pymod, *ctx, &code);
+  finalize_types(if1);
+  return {ctx, code};
+}
+
+// Stage-3 REPL: per-iteration extend (called in a fork child).
+// The fork child inherits baseline's if1/ctx via CoW.  This function updates
+// ctx->modules to all_mods, processes user modules (all_mods[1..]), then
+// finalises with build_init + build_type_hierarchy.
+int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
+  PycCompiler *ctx = bl.ctx;
+  Code *code = bl.code;
+  ctx->modules = &all_mods;
+  // Snapshot n: build_syms may add imported modules to all_mods via import_file.
+  // Those are processed lazily by build_import_if1; we must not double-process them.
+  int n_user = all_mods.n;
+  for (int i = 1; i < n_user; i++) {
+    PycModule *x = all_mods[i];
+    x->filename = cannonicalize_string(x->filename);
+    if (build_syms(x, *ctx) < 0) return -1;
+  }
+  finalize_types(if1);
+  for (int i = 1; i < n_user; i++) {
+    PycModule *x = all_mods[i];
     ctx->mod = x;
     build_module_attributes_if1(x, *ctx, &code);
     build_if1_module_pyda(x->pymod, *ctx, &code);
   }
   finalize_types(if1);
   if (test_scoping) exit(0);
-  enter_scope(mods[0]->pymod, *ctx);
+  enter_scope(all_mods[0]->pymod, *ctx);
   build_init(code);
   exit_scope(*ctx);
   build_type_hierarchy();
   fixup_aspect();
   return 0;
+}
+
+int ast_to_if1(Vec<PycModule *> &mods) {
+  // For the non-REPL path: build baseline for mods[0] (builtin), then extend.
+  // The builtin_mods Vec is local; ctx->modules is updated to &mods by extend.
+  Vec<PycModule *> builtin_mods;
+  builtin_mods.add(mods[0]);
+  BaselineIF1State bl = ast_to_if1_baseline(builtin_mods);
+  return ast_to_if1_extend(mods, bl);
 }

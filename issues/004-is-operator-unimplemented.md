@@ -20,7 +20,7 @@
 `__pyc_None_type__` remain only for explicit
 `x.__is__(y)` calls.
 
-See [ifa/issues/024](../ifa/issues/024-is-comparison-narrowing.md)
+See [ifa/issues/024](../ifa/issues/closed/024-is-comparison-narrowing.md)
 for the narrowing-side fix and
 [ifa/issues/028](../ifa/issues/028-fibheap-blockers.md)
 for step 4's identity primitive.
@@ -185,7 +185,7 @@ outcomes**, and it doesn't decompose union types for the
 inner method dispatch.
 
 These need IFA-level work, not __pyc__ changes.  Filed as
-[ifa/issues/024](../ifa/issues/024-is-comparison-narrowing.md).
+[ifa/issues/024](../ifa/issues/closed/024-is-comparison-narrowing.md).
 
 ## Verification plan
 

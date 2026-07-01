@@ -87,7 +87,7 @@ typedef void *_CG_nil_type;
 #define _CG_string_len(_s) ((_s) ? (size_t) * (int64 *)(((char *)(_s)) - 8) : 0)
 #define _CG_string_set_len(_s, _v) (*(int64 *)(((char *)(_s)) - 8)) = (int64)(_v)
 
-static inline char *_CG_string_alloc(size_t s) {
+inline char *_CG_string_alloc(size_t s) {
   char *str = (char *)GC_MALLOC(s + 8 + 1);
   str += 8;
   str[s] = 0;
@@ -95,14 +95,14 @@ static inline char *_CG_string_alloc(size_t s) {
   return str;
 }
 
-static inline char *_CG_String(const void *x) {
+inline char *_CG_String(const void *x) {
   size_t len = strlen((char *)x);
   char *str = _CG_string_alloc(len);
   memcpy(str, x, len);
   return str;
 }
 
-static inline char *_CG_format_string(char *str, ...) {
+inline char *_CG_format_string(char *str, ...) {
   int l = _CG_string_len(str) + 24;
   char *s = 0;
   va_list ap;
@@ -125,7 +125,7 @@ static inline char *_CG_format_string(char *str, ...) {
 // out-of-line definition (pyc_c_runtime.h gives the C backend
 // its static-inline copy; pyc_runtime.c gives the LLVM backend
 // a linkable extern).
-static inline char *_CG_str_from_int(int64 x) {
+inline char *_CG_str_from_int(int64 x) {
   char tmp[32];
   int n = snprintf(tmp, sizeof(tmp), "%lld", (long long)x);
   if (n < 0) n = 0;
@@ -142,7 +142,7 @@ static inline char *_CG_str_from_int(int64 x) {
 // point or exponent. Mirrors the existing C++-only overload
 // _CG_prim_primitive_to_string(double) in this header but with a
 // unique C-callable name so libpyc_runtime.a can export it.
-static inline char *_CG_str_from_float(double d) {
+inline char *_CG_str_from_float(double d) {
   char tmp[64];
   int n = snprintf(tmp, sizeof(tmp), "%.17g", d);
   if (n < 0) n = 0;
@@ -164,14 +164,14 @@ static inline char *_CG_str_from_float(double d) {
   return s;
 }
 
-static inline char *_CG_string_mult(char *str, int64 n) {
+inline char *_CG_string_mult(char *str, int64 n) {
   size_t l = _CG_string_len(str);
   char *ret = _CG_string_alloc(l * n);
   for (int64 i = 0; i < n; i++) memcpy(ret + l * i, str, l);
   return ret;
 }
 
-static inline void *_CG_prim_primitive_clone(void *p, size_t s) {
+inline void *_CG_prim_primitive_clone(void *p, size_t s) {
   void *x = GC_MALLOC(s);
   memcpy(x, p, s);
   return x;
@@ -187,7 +187,7 @@ static inline void *_CG_prim_primitive_clone(void *p, size_t s) {
 // source's data is copied within min(src, dst) bytes;
 // fields not present in the source remain GC-zeroed and
 // will be written by __init__.
-static inline void *_CG_prim_primitive_clone_dst(void *p, size_t dst_sz,
+inline void *_CG_prim_primitive_clone_dst(void *p, size_t dst_sz,
                                                  size_t src_sz) {
   void *x = GC_MALLOC(dst_sz);
   size_t n = src_sz < dst_sz ? src_sz : dst_sz;
@@ -195,14 +195,14 @@ static inline void *_CG_prim_primitive_clone_dst(void *p, size_t dst_sz,
   return x;
 }
 
-static inline void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v) {
+inline void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v) {
   void *x = GC_MALLOC(s + v);
   memcpy(x, p, s);
   memset(((char *)x) + s, 0, v);
   return x;
 }
 
-static inline char *_CG_strcat(const char *a, const char *b) {
+inline char *_CG_strcat(const char *a, const char *b) {
   size_t la = _CG_string_len(a), lb = _CG_string_len(b);
   char *x = _CG_string_alloc(la + lb);
   memcpy(x, a, la);
@@ -210,12 +210,13 @@ static inline char *_CG_strcat(const char *a, const char *b) {
   return x;
 }
 
-static inline char *_CG_char_from_string(void *s, int i) {
+inline char *_CG_char_from_string(void *s, int i) {
   char *x = _CG_string_alloc(1);
   x[0] = ((char *)s)[i];
   return x;
 }
 
+#ifdef __cplusplus
 static inline char *_CG_prim_primitive_to_string(double d) {
   char s[100], *p = s;
   snprintf(s, 100, "%.17g", d);
@@ -252,6 +253,7 @@ static inline int _CG_float_printf(double d, bool ln) {
   if (ln) fputs("\n", stdout);
   return 0;
 }
+#endif  /* __cplusplus */
 
 /*
   Lists and Tuples
@@ -267,12 +269,12 @@ static inline int _CG_float_printf(double d, bool ln) {
   the list information.
 */
 
-struct _CG_list_struct {
+typedef struct _CG_list_struct {
   uint32 total_len;
   uint32 len;
   void *ptr;
   char data[4];  // preallocated space
-};
+} _CG_list_struct;
 
 #define SIZEOF_LIST_HEADER (sizeof(void *) + 8)
 
@@ -295,30 +297,6 @@ struct _CG_list_struct {
 #define _CG_ptr_to_list(_l) ((_CG_list)(((char *)(_l)) + SIZEOF_LIST_HEADER))
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
 
-// E.1 (issue 019): generic struct->list conversion. Same body as
-// the _CG_TUPLE_TO_LIST_FUN(_s, _n) macro, but takes the struct
-// size and semantic count as runtime arguments so the v2 LLVM
-// backend can call it without per-struct macro instantiation.
-// Allocates a fresh list with a correct 16-byte header
-// (header.len = semantic_n) and memcpys the struct's payload
-// into the data area. The returned pointer is a pyc list,
-// usable by _CG_list_add and friends without further
-// conversion. C backend doesn't call this (it continues to use
-// the macro-generated per-struct _CG_to_list overload) but the
-// definition stays available so any v2 emission that picks up
-// the same name links cleanly under g++ as well.
-static inline void *_CG_to_list_runtime(void *struct_ptr,
-                                         unsigned int struct_size,
-                                         unsigned int semantic_n) {
-  char *base = (char *)GC_MALLOC(SIZEOF_LIST_HEADER + (size_t)struct_size);
-  void *result = base + SIZEOF_LIST_HEADER;
-  _CG_list_len(result) = semantic_n;
-  _CG_list_total_len(0, result) = semantic_n;
-  _CG_list_ptr(result) = result;
-  if (struct_ptr && struct_size > 0)
-    memcpy(result, struct_ptr, struct_size);
-  return result;
-}
 
 static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 size1, uint32 size2) {
   uint32 s1 = _CG_prim_len(0, l1), s2 = _CG_prim_len(0, l2);
@@ -421,7 +399,7 @@ static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int3
   return l1;
 }
 
-static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
+inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
   _CG_list x = _CG_ptr_to_list(GC_MALLOC(s * n + SIZEOF_LIST_HEADER));
   _CG_list_len(x) = n;
   _CG_list_total_len(0, x) = n;
@@ -429,8 +407,8 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
   return x;
 }
 
-#define _CG_write(_s) fwrite(_s, _CG_string_len(_s), 1, stdout)
-#define _CG_writeln(_s) fwrite("\n", 1, 1, stdout);
+inline void _CG_write(const void *s) { if (s) fwrite(s, _CG_string_len(s), 1, stdout); }
+inline void _CG_writeln(void) { fwrite("\n", 1, 1, stdout); }
 
 #define _CG_prim_tuple_list(_c, _n) (_c)(_CG_prim_tuple_list_internal(sizeof(*((_c)0)), _n))
 #define _CG_prim_list(_e, _n) _CG_prim_tuple_list_internal(sizeof(_e), _n)
@@ -475,12 +453,12 @@ static inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
 #define _CG_prim_greaterorequal(_a, _op, _b) ((_a) >= (_b))
 #define _CG_prim_equal(_a, _op, _b) ((_a) == (_b))
 #define _CG_prim_notequal(_a, _op, _b) ((_a) != (_b))
-static inline _CG_bool _CG_str_eq(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) == 0); }
-static inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) != 0); }
-static inline _CG_bool _CG_str_lt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) < 0); }
-static inline _CG_bool _CG_str_le(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) <= 0); }
-static inline _CG_bool _CG_str_gt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) > 0); }
-static inline _CG_bool _CG_str_ge(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) >= 0); }
+inline _CG_bool _CG_str_eq(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) == 0); }
+inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) != 0); }
+inline _CG_bool _CG_str_lt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) < 0); }
+inline _CG_bool _CG_str_le(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) <= 0); }
+inline _CG_bool _CG_str_gt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) > 0); }
+inline _CG_bool _CG_str_ge(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) >= 0); }
 #define _CG_prim_paren(_f, _a) ((*(_f))((_f), (_a)))
 #define _CG_prim_set(_a, _b) (_a) = (_b)
 #define _CG_prim_minus(_op, _a) (-(_a))
@@ -493,12 +471,12 @@ static inline _CG_bool _CG_str_ge(const char *a, const char *b) { return (_CG_bo
     _r->e0 = _f;                          \
     _r->e1 = _a;                          \
   } while (0)
-static inline char *_CG_chr(int x) {
+inline char *_CG_chr(int x) {
   unsigned char *s = (unsigned char *)_CG_string_alloc(1);
-  s[0] = x;
+  s[0] = (unsigned char)x;
   return (char *)s;
 }
-static inline int _CG_ord(char *x) {
+inline int _CG_ord(char *x) {
   if (x)
     return *(unsigned char *)x;
   else
