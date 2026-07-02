@@ -74,6 +74,32 @@ typedef void *_CG_nil_type;
 #define __init ((void *)0)
 #define nil_type 0
 
+/* Type Tags and Objects */
+typedef enum {
+  PYC_TAG_INT64,
+  PYC_TAG_STRING,
+  PYC_TAG_FLOAT64,
+  PYC_TAG_BOOL,
+  PYC_TAG_NIL,
+  PYC_TAG_OBJECT,
+  PYC_TAG_ANY
+} _CG_TypeTag;
+
+typedef struct {
+  _CG_TypeTag tag;
+  const char *name;
+} _CG_TypeObject;
+
+static _CG_TypeObject _CG_type_int64 = { PYC_TAG_INT64, "int64" };
+static _CG_TypeObject _CG_type_str = { PYC_TAG_STRING, "str" };
+static _CG_TypeObject _CG_type_float64 = { PYC_TAG_FLOAT64, "float64" };
+static _CG_TypeObject _CG_type_bool = { PYC_TAG_BOOL, "bool" };
+static _CG_TypeObject _CG_type_nil_type = { PYC_TAG_NIL, "nil_type" };
+static _CG_TypeObject _CG_type_object = { PYC_TAG_OBJECT, "object" };
+static _CG_TypeObject _CG_type_any = { PYC_TAG_ANY, "any" };
+
+#define _CG_prim_isinstance(obj, type_obj) ((type_obj) == &_CG_type_nil_type ? ((void*)(obj) == NULL) : 0)
+
 /*
   Strings
 
