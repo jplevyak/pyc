@@ -7,7 +7,17 @@ crosses a function-call boundary — passed as an argument,
 returned, or assigned to a global from inside a function.
 **Related:** [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
 (both are gaps in pyc's closure model); v2 LLVM closure handler
-work (commit `db4270a`).
+work (commit `db4270a`). Issue 001's investigation (dug into `ifa`'s
+`nesting_depth`/`display` machinery in depth) confirmed *that*
+issue's root cause is specific to lambdas/nested-defs capturing
+enclosing locals via `ifa`'s stack-disciplined nested-function
+support — a mechanism bound methods (this issue's repro) don't use
+at all (`self` is already threaded explicitly). This issue's crash
+(a silent segfault, not `unique_AVar`'s assertion) is more likely a
+separate bug in how a bound method's closure-struct type propagates
+across a call-edge boundary (`lower_send_period`, see below) — worth
+re-testing once issue 001's fix lands, but don't assume it's fixed
+without checking.
 
 ## Symptom
 
