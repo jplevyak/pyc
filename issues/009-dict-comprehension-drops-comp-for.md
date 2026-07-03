@@ -1,13 +1,17 @@
 # Issue 009: Dict comprehensions silently drop their `for` clause
 
-**Status:** open.
-**Affects:** `python_ifa_build_if1.cc:1296-1317` (`PY_dict` case in
-`build_if1_pyda`); `python.g:341-344` (`dictorsetmaker` grammar
-rule, for the AST shape).
+**Status:** fixed.
+**Affects:** `python_ifa_build_syms.cc`/`python_ifa_build_if1.cc`'s
+`PY_dict` cases (`python.g:341-344`'s `dictorsetmaker` grammar rule,
+for the AST shape).
 **Related:** issue 008 (set literals / genexpr / set
-comprehensions — same comprehension-support gap, but that one
-crashes the compiler outright; this one is worse in a different
-way — it "succeeds" and bakes in a runtime abort).
+comprehensions — same comprehension-support gap, fixed the same way
+in the same session; that one crashed the compiler outright, this
+one "succeeded" and baked in a runtime abort). Two new gaps
+discovered while writing this fix's regression tests, filed
+separately since they're unrelated to comprehensions specifically:
+issue 018 (`dict`/`set` with two different key/element types in one
+program fails to compile) and issue 019 (`dict` has no `__str__`).
 
 ## Symptom
 
@@ -97,22 +101,61 @@ constructor is called exactly once instead of once per iteration.
    which is strictly better for anyone hitting this before the
    real feature is scheduled.
 
+## What landed
+
+Landed exactly per the proposed fix sketch's option 1, sharing the
+loop-lowering machinery with issue 008's set-comprehension fix rather
+than duplicating it:
+
+1. **`build_syms_pyda`'s `PY_dict` case**: detects the 3-child
+   `[key_expr, value_expr, PY_comp_for]` shape and gives it its own
+   scope (mirroring `PY_listcomp`/`PY_set`), so the loop target
+   doesn't leak into the enclosing scope.
+2. **`build_list_comp_pyda`/`build_list_comp_inner_pyda`
+   generalized**: these previously took a single `PyDAST *elt` (one
+   produced value per iteration — fine for list `append`/set `add`,
+   both single-argument calls). Changed to take `Vec<PyDAST *>
+   &elts`, so the base case builds *all* of them each iteration and
+   passes their values as args to `accum_method` — one value for
+   list/set, two (key, value) for dict's `__setitem__`. Added
+   `call_method_v`, a `call_method` sibling that takes a
+   runtime-determined `Vec<Sym *>` of arguments instead of a fixed
+   C-varargs count, since `call_method`'s `int n, ...` can't express
+   "1 or 2 args depending on which caller."
+3. **`build_if1_pyda`'s `PY_dict` case**: branches on the same
+   3-child/`PY_comp_for` shape; the comprehension path reenters the
+   scope and calls `build_list_comp_pyda(..., sym___setitem__)` (2
+   elts: key, value); the flat-literal path is unchanged from
+   before.
+
+Verified against real `python3` output
+(`tests/dict_comprehension_basic.py`): basic comprehension, filtered
+comprehension, multiple comprehensions in one program (with distinct
+loop-variable names — reusing the same name across sibling
+comprehensions is a separate pre-existing scoping limitation, not
+part of this fix), iteration over the resulting dict. Passes on both
+the C and v2 LLVM backends. Full suite 112/0 (was 111/0).
+
+While testing, found two pre-existing, unrelated gaps (confirmed via
+plain flat dict/set literals with zero comprehension code): issue 018
+(a program using `dict`/`set` with two different key/element types
+anywhere fails to compile with a `BOXING`/"mixed basic types" error)
+and issue 019 (`dict` has no `__str__`, so `print(some_dict)` shows
+`<instance>`). Neither is fixed here; both filed separately.
+
 ## Verification plan
 
 1. `{x: x*2 for x in [1, 2, 3]}` produces a dict with entries
-   `{1:2, 2:4, 3:6}`; `d[2] == 4`.
+   `{1:2, 2:4, 3:6}`; `d[2] == 4`. ✓
 2. Comprehension with a filter clause: `{x: x for x in range(10)
-   if x % 2 == 0}`.
+   if x % 2 == 0}`. ✓
 3. No `assert(!"runtime error...")` in the generated C for any
-   dict-comprehension test.
-4. Add `tests/dict_comprehension_basic.py` + `.exec.check` — no
-   dict-comprehension test exists today (confirmed: no test
-   source matches `{.*:.*for.*in`).
+   dict-comprehension test. ✓
+4. `tests/dict_comprehension_basic.py` + `.exec.check` added. ✓
 
 ## What this unblocks
 
 Dict comprehensions are one of the most common idiomatic
 constructs in modern Python (config/lookup-table building,
-inverting mappings, filtering). The current failure mode — clean
-compile, runtime abort — is particularly bad for anyone who
-doesn't immediately execute the compiled binary in CI.
+inverting mappings, filtering), and now work correctly on both
+backends.

@@ -553,26 +553,49 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
   return 1;
 }
 
-// Build list/set comprehension for pyda path. `accum_method` is the method
-// called on `ast->rval` (the already-created accumulator instance) to add
-// each produced element: sym_append for a list comprehension, "add" for a
-// set comprehension. Defaults to sym_append so the existing PY_listcomp
-// call site doesn't need to change.
-static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx,
+// Like call_method, but takes a runtime-determined argument list rather
+// than a fixed C varargs count -- needed because a dict comprehension's
+// accumulator call (__setitem__) takes two produced values (key, value)
+// where a list/set comprehension's (append/add) takes one.
+static void call_method_v(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, Vec<Sym *> &args) {
+  Sym *t = new_sym(ast);
+  Code *method = if1_send(if1, code, 4, 1, sym_operator, o, sym_period, m, t);
+  method->ast = ast;
+  method->partial = Partial_OK;
+  Code *send = if1_send(if1, code, 1, 1, t, r);
+  send->ast = ast;
+  for (Sym *v : args.values()) if1_add_send_arg(if1, send, v ? v : sym_nil);
+}
+
+// Build list/set/dict comprehension for pyda path. `elts` holds the
+// expression(s) produced each iteration: one (the element) for list/set
+// comprehensions, two (key, value) for dict comprehensions. `accum_method`
+// is the method called on `ast->rval` (the already-created accumulator
+// instance) with `elts`' values as arguments: sym_append for a list
+// comprehension, "add" for a set comprehension, "__setitem__" for a dict
+// comprehension. Defaults to sym_append so the existing PY_listcomp call
+// site doesn't need to change.
+static void build_list_comp_pyda(PyDAST *list_for, Vec<PyDAST *> &elts, PycAST *ast, Code **code, PycCompiler &ctx,
                                   Sym *accum_method = sym_append);
 
-static void build_list_comp_inner_pyda(PyDAST *iter_node, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx,
-                                        Sym *accum_method) {
+static void build_list_comp_inner_pyda(PyDAST *iter_node, Vec<PyDAST *> &elts, PycAST *ast, Code **code,
+                                        PycCompiler &ctx, Sym *accum_method) {
   if (!iter_node) {
-    // Base case: emit the element
-    build_if1_pyda(elt, ctx);
-    PycAST *elt_ast = getAST(elt, ctx);
-    if1_gen(if1, code, elt_ast->code);
-    call_method(code, ast, ast->rval, accum_method, new_sym(ast), 1, elt_ast->rval);
+    // Base case: emit the produced value(s) and accumulate them.
+    Vec<Sym *> args;
+    for (auto elt : elts.values()) {
+      build_if1_pyda(elt, ctx);
+      PycAST *elt_ast = getAST(elt, ctx);
+      if1_gen(if1, code, elt_ast->code);
+      args.add(elt_ast->rval);
+    }
+    Sym *new_val = new_sym(ast);
+    call_method_v(code, ast, ast->rval, accum_method, new_val, args);
+    if1_move(if1, code, new_val, ast->rval, ast);
     return;
   }
   if (iter_node->kind == PY_list_for || iter_node->kind == PY_comp_for) {
-    build_list_comp_pyda(iter_node, elt, ast, code, ctx, accum_method);
+    build_list_comp_pyda(iter_node, elts, ast, code, ctx, accum_method);
   } else if (iter_node->kind == PY_list_if || iter_node->kind == PY_comp_if) {
     // PY_list_if / PY_comp_if: children = [test, list_iter?]
     build_if1_pyda(iter_node->children[0], ctx);
@@ -583,12 +606,12 @@ static void build_list_comp_inner_pyda(PyDAST *iter_node, PyDAST *elt, PycAST *a
     if1_if_label_false(if1, ifcode, short_circuit);
     if1_if_label_true(if1, ifcode, if1_label(if1, code, ast));
     PyDAST *next_iter = (iter_node->children.n > 1) ? iter_node->children[1] : nullptr;
-    build_list_comp_inner_pyda(next_iter, elt, ast, code, ctx, accum_method);
+    build_list_comp_inner_pyda(next_iter, elts, ast, code, ctx, accum_method);
     if1_label(if1, code, ast, short_circuit);
   }
 }
 
-static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx,
+static void build_list_comp_pyda(PyDAST *list_for, Vec<PyDAST *> &elts, PycAST *ast, Code **code, PycCompiler &ctx,
                                   Sym *accum_method) {
   // list_for/comp_for: children = [target_exprlist, iter_testlist, list_iter?]
   PyDAST *target = list_for->children[0];
@@ -606,7 +629,7 @@ static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Cod
   if (t->code) if1_gen(if1, &body, t->code);
   call_method(&body, ast, iter, sym___next__, tmp, 0);
   if1_move(if1, &body, tmp, t->sym, ast);
-  build_list_comp_inner_pyda(next_iter, elt, ast, &body, ctx, accum_method);
+  build_list_comp_inner_pyda(next_iter, elts, ast, &body, ctx, accum_method);
   if1_loop(if1, code, if1_alloc_label(if1), if1_alloc_label(if1), cond_var, before, cond, next, body, ast);
 }
 
@@ -1430,7 +1453,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       ast->rval = new_sym(ast);
       if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_make, sym_list, ast->rval)->ast = ast;
       reenter_scope_pyda(n, ctx);
-      build_list_comp_pyda(n->children[1], n->children[0], ast, &ast->code, ctx);
+      Vec<PyDAST *> elts;
+      elts.add(n->children[0]);
+      build_list_comp_pyda(n->children[1], elts, ast, &ast->code, ctx);
       exit_scope(ctx);
       return 0;
     }
@@ -1508,12 +1533,6 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
 
     case PY_dict: {
-      for (int i = 0; i + 1 < n->children.n; i += 2) {
-        build_if1_pyda(n->children[i], ctx);
-        build_if1_pyda(n->children[i + 1], ctx);
-        if1_gen(if1, &ast->code, getAST(n->children[i], ctx)->code);
-        if1_gen(if1, &ast->code, getAST(n->children[i + 1], ctx)->code);
-      }
       // Create dict instance by calling dict() constructor
       if (!ast->sym) fail("error line %d, 'dict' type not found (is __pyc__/07_dict.py loaded?)", n->line);
       Code *ctor = if1_send1(if1, &ast->code, ast);
@@ -1521,11 +1540,30 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *dict_inst = new_sym(ast);
       ast->rval = dict_inst;
       if1_add_send_result(if1, ctor, dict_inst);
-      // Call __setitem__ for each k-v pair
-      for (int i = 0; i + 1 < n->children.n; i += 2) {
-        call_method(&ast->code, ast, dict_inst, sym___setitem__, new_sym(ast), 2,
-                    getAST(n->children[i], ctx)->rval,
-                    getAST(n->children[i + 1], ctx)->rval);
+      if (n->children.n == 3 && n->children[2]->kind == PY_comp_for) {
+        // Dict comprehension: {key: value for target in iter [if cond]}.
+        // build_syms_pyda gave this its own scope (matching
+        // PY_listcomp/PY_set); reenter it here the same way PY_listcomp
+        // does via reenter_scope_pyda.
+        reenter_scope_pyda(n, ctx);
+        Vec<PyDAST *> elts;
+        elts.add(n->children[0]);
+        elts.add(n->children[1]);
+        build_list_comp_pyda(n->children[2], elts, ast, &ast->code, ctx, sym___setitem__);
+        exit_scope(ctx);
+      } else {
+        // Flat dict literal: {k1: v1, k2: v2, ...}
+        for (int i = 0; i + 1 < n->children.n; i += 2) {
+          build_if1_pyda(n->children[i], ctx);
+          build_if1_pyda(n->children[i + 1], ctx);
+          if1_gen(if1, &ast->code, getAST(n->children[i], ctx)->code);
+          if1_gen(if1, &ast->code, getAST(n->children[i + 1], ctx)->code);
+        }
+        for (int i = 0; i + 1 < n->children.n; i += 2) {
+          call_method(&ast->code, ast, dict_inst, sym___setitem__, new_sym(ast), 2,
+                      getAST(n->children[i], ctx)->rval,
+                      getAST(n->children[i + 1], ctx)->rval);
+        }
       }
       return 0;
     }
@@ -1545,7 +1583,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_add_send_result(if1, ctor, set_inst);
       if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
         reenter_scope_pyda(n, ctx);
-        build_list_comp_pyda(n->children[1], n->children[0], ast, &ast->code, ctx, make_symbol("add"));
+        Vec<PyDAST *> elts;
+        elts.add(n->children[0]);
+        build_list_comp_pyda(n->children[1], elts, ast, &ast->code, ctx, make_symbol("add"));
         exit_scope(ctx);
       } else {
         for (auto c : n->children.values()) {

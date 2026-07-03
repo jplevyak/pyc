@@ -61,9 +61,10 @@ conventions are the same; the only difference is location.
   the way. Generator expressions now fail cleanly instead of
   crashing (real support tracked with issue 014).
 - [009-dict-comprehension-drops-comp-for.md](009-dict-comprehension-drops-comp-for.md)
-  — Dict comprehensions "compile" (exit 0) but silently drop the
-  `for` clause, producing generated C that aborts at runtime with
-  `"matching function not found"`.
+  — **Fixed**: dict comprehensions now work correctly on both
+  backends, sharing the loop-lowering machinery added for issue
+  008's set comprehensions. Two unrelated pre-existing gaps found
+  while testing this were filed separately (018, 019).
 - [010-multiple-inheritance-unrelated-bases.md](010-multiple-inheritance-unrelated-bases.md)
   — `class C(A, B)` with two independent base classes fails with
   a confusing type-inference cascade ending in a C compile error;
@@ -93,6 +94,15 @@ conventions are the same; the only difference is location.
   ...`). Grouped as one filing; split out per sub-item as work
   starts (priority/effort vary widely — annotations and walrus
   are small, async/await and match/case are substantial).
+- [018-dict-mixed-key-types-boxing-failure.md](018-dict-mixed-key-types-boxing-failure.md)
+  — A program using `dict` (or `set`) with two different key/
+  element types anywhere fails to compile with a `BOXING`/"mixed
+  basic types" FA violation — each shared internal comparison
+  method (`_keys[i] == key`) isn't specialized per key type.
+- [019-dict-missing-str-repr.md](019-dict-missing-str-repr.md) —
+  `dict` has no `__str__`/`__repr__` (unlike `set`, which already
+  does); `print(some_dict)` shows the generic `<instance>`
+  placeholder instead of `{'a': 1, ...}`.
 
 ## Closed (archive)
 

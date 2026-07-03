@@ -457,7 +457,20 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_dict: {
-      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      // Two grammar shapes (python.g dictorsetmaker): a flat literal
+      // `{k: v, ...}` (2N children, alternating key/value exprs), or a dict
+      // comprehension `{key: value for target in iter}` (3 children:
+      // [key_expr, value_expr, PY_comp_for]). The comprehension form gets
+      // its own scope, mirroring PY_listcomp/PY_genexpr/PY_set above (so the
+      // loop target doesn't leak into the enclosing scope).
+      if (n->children.n == 3 && n->children[2]->kind == PY_comp_for) {
+        enter_scope(n, ctx, nullptr);
+        ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
+        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+        exit_scope(ctx);
+      } else {
+        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      }
       PycSymbol *ds = make_PycSymbol(ctx, "dict", PYC_USE);
       if (ds) ast->sym = ds->sym;
       else fprintf(stderr, "PY_dict: 'dict' not found in scope (line %d, imports.n=%d)\n", n->line, ctx.imports.n);
