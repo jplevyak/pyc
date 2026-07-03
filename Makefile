@@ -269,6 +269,18 @@ clean-tests:
 	  if [ -f "$$f" ] && [ -x "$$f" ] && [ -e "$$f.py" ]; then rm -f "$$f"; fi; \
 	done
 
+# compile_commands.json (clangd / standalone-linter support) -----------------
+#
+# Without this, clangd (and other tools that don't understand this
+# Makefile's -I/-D flags) can't find headers like common.h/ifadefs.h and
+# reports false-positive "file not found" / "unknown type" diagnostics on
+# every file under ifa/. Regenerate whenever source files are added/removed
+# or build flags change; not checked in (absolute paths, machine-specific --
+# see .gitignore).
+compile_commands:
+	$(MAKE) clean
+	bear -- $(MAKE) -j4
+
 # IFA subtree management ------------------------------------------------------
 
 pullifa:
