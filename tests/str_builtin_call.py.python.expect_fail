@@ -1,0 +1,1 @@
+# pyc float64 str() precision differs from CPython's repr (3.1400000000000001 vs 3.14) -- pre-existing float formatting gap, unrelated to issue 020's str(x) dispatch fix

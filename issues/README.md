@@ -36,11 +36,6 @@ conventions are the same; the only difference is location.
   errors ("struct has no member 'e0'"). Same root cause as the
   existing `class_attr_mutation.py` xfail. Blocks inheritance-
   driven polymorphism in lists.
-- [004-is-operator-unimplemented.md](004-is-operator-unimplemented.md)
-  — `is` and `is not` operators are unimplemented (frontend
-  generates `__is__` dispatch but no class defines the method).
-  Blocks `x is None`-style narrowing required for recursive
-  data structures.
 - [005-while-true-fa-crash.md](005-while-true-fa-crash.md) —
   `while True:` segfaults FA's `update_in` (constant-cond IF has
   no valid contour). Workaround: use a real/sentinel loop
@@ -95,12 +90,6 @@ conventions are the same; the only difference is location.
   element types anywhere fails to compile with a `BOXING`/"mixed
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
-- [020-str-builtin-call-broken.md](020-str-builtin-call-broken.md)
-  — `str(x)` (the builtin call, not the `.__str__()` method) fails
-  for every type — `class str` has no constructor accepting a value
-  to convert, and there's no frontend special-case for it (unlike
-  `print()`, which does have one). Compiles with exit 0 despite the
-  errors; the `.__str__()` method form works fine.
 - [021-scope-map-pointer-hash-nondeterminism.md](021-scope-map-pointer-hash-nondeterminism.md)
   — **In-progress, larger than originally scoped.** Two narrow
   fixes landed (`PycScope::map` → content-hashed `HashMap`; a
@@ -111,12 +100,31 @@ conventions are the same; the only difference is location.
   out to be the same cross-cutting audit `ifa/issues/010` already
   deferred (~150+ more unspecialized pointer-hashed `set_add` sites
   across `ifa/`); this issue's remaining scope now redirects there.
+- [022-builtin-type-zero-arg-constructor-broken.md](022-builtin-type-zero-arg-constructor-broken.md)
+  — Zero-argument constructor calls (`int()`, `float()`, `bool()`,
+  `list()`, `str()`) all fail identically at compile time and crash
+  at runtime ("matching function not found"). Discovered while
+  verifying issue 020's fix; confirmed pre-existing and unrelated to
+  that change — reproduces the same way for every builtin type
+  tested, so likely one shared code path in constructor-call
+  lowering, not a per-class issue.
 
 ## Closed (archive)
 
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [004](closed/004-is-operator-unimplemented.md) — `is`/`is not`
+  now lower to identity comparison (`prim_isinstance`/`prim_is`)
+  instead of an unresolved `__is__` dispatch; the follow-on
+  `is None` union-narrowing gap this exposed was tracked and fixed
+  separately as `ifa/issues/closed/024`.
+- [020](closed/020-str-builtin-call-broken.md) — `str(x)` (1-arg
+  call) now lowers directly to `x.__str__()` instead of falling
+  through the generic (and broken, for `str`) constructor-call
+  path. The zero-arg `str()` case turned out to be a separate,
+  broader pre-existing bug affecting every builtin type's zero-arg
+  constructor call, filed as 022.
 - [015](closed/015-pyc-pod-records-no-frontend-hook.md) —
   `@pyc_struct` decorator wired (originally
   `ifa/issues/015`; moved here because the gap was in the pyc

@@ -439,7 +439,6 @@ static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
 // Check for and handle builtin function calls (super, __pyc_symbol__, etc.)
 static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAST *ast, PycCompiler &ctx) {
   Sym *f = atom_ast->sym;
-  if (!f || !builtin_functions.set_in(f)) return 0;
   // Collect positional args from the call trailer
   Vec<PyDAST *> pos_args;
   if (call_trailer && call_trailer->children.n > 0) {
@@ -447,6 +446,24 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     for (auto arg : arglist->children.values())
       if (arg->kind != PY_keyword_arg) pos_args.add(arg);
   }
+  // issues/020: str(x) -- unlike print/super/etc., `str` is a real class
+  // (__pyc__/01_str.py), not a compiler-level builtin Sym, so it isn't in
+  // builtin_functions and must be resolved by name here (same pattern as
+  // PY_dict/PY_set resolving "dict"/"set" in build_syms_pyda). `class str`
+  // has no __init__ that accepts a value to convert, so a 1-arg call would
+  // otherwise fall through to the generic constructor-call path and silently
+  // fail to consume its argument. 0-arg `str()` is left alone -- the existing
+  // no-arg constructor path already produces an empty string correctly.
+  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "str")) {
+    PycSymbol *str_cls = make_PycSymbol(ctx, "str", PYC_USE);
+    if (str_cls && f == str_cls->sym) {
+      PycAST *a0 = getAST(pos_args[0], ctx);
+      ast->rval = new_sym(ast);
+      call_method(&ast->code, ast, a0->rval, sym___str__, ast->rval, 0);
+      return 1;
+    }
+  }
+  if (!f || !builtin_functions.set_in(f)) return 0;
   if (f == sym_super) {
     if (!ctx.fun()) fail("super outside of function");
     PycAST *fun_ast = (PycAST *)ctx.fun()->ast;

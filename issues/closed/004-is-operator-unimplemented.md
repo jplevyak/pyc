@@ -20,9 +20,9 @@
 `__pyc_None_type__` remain only for explicit
 `x.__is__(y)` calls.
 
-See [ifa/issues/024](../ifa/issues/closed/024-is-comparison-narrowing.md)
+See [ifa/issues/024](../../ifa/issues/closed/024-is-comparison-narrowing.md)
 for the narrowing-side fix and
-[ifa/issues/028](../ifa/issues/028-fibheap-blockers.md)
+[ifa/issues/028](../../ifa/issues/028-fibheap-blockers.md)
 for step 4's identity primitive.
 
 **Affects:** pyc Python frontend (`python_ifa_build_if1.cc:102`
@@ -30,7 +30,7 @@ maps `PY_CMP_IS` to a `__is__` symbol dispatch) + the
 `__pyc__` builtin module (no class defined `__is__` until
 this commit).
 **Surfaced while:** writing recursive-type tests for
-[issue 023](../ifa/issues/closed/023-v2-is-value-type-consumer.md)
+[issue 023](../../ifa/issues/closed/023-v2-is-value-type-consumer.md)
 escape coverage — the natural pattern
 `if node is None: return 0` fails to compile.
 
@@ -185,7 +185,7 @@ outcomes**, and it doesn't decompose union types for the
 inner method dispatch.
 
 These need IFA-level work, not __pyc__ changes.  Filed as
-[ifa/issues/024](../ifa/issues/closed/024-is-comparison-narrowing.md).
+[ifa/issues/024](../../ifa/issues/closed/024-is-comparison-narrowing.md).
 
 ## Verification plan
 

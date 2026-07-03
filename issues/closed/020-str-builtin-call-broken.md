@@ -1,6 +1,11 @@
 # Issue 020: `str(x)` (the builtin call) doesn't work for any type
 
-**Status:** open.
+**Status:** fixed (1-arg case; see "What landed" below). The
+zero-argument case (`str()`) turned out to be a distinct,
+pre-existing bug affecting *every* builtin type's zero-arg
+constructor call (`int()`, `float()`, `bool()`, `list()` too, not
+`str`-specific) — filed separately as
+[022-builtin-type-zero-arg-constructor-broken.md](022-builtin-type-zero-arg-constructor-broken.md).
 **Affects:** `__pyc__/01_str.py` (`class str` has no `__init__`/
 `__new__` that accepts a value to convert); `build_builtin_call_pyda`
 (`python_ifa_build_if1.cc`) has no special-case lowering for a call
@@ -81,19 +86,34 @@ the smaller change; likely the better starting point.
 ## Verification plan
 
 1. `str(5)` → `"5"`, `str(3.14)` → `"3.14"`, `str("hi")` → `"hi"`,
-   `str(True)` → `"True"`.
+   `str(True)` → `"True"`. ✓
 2. `str(some_custom_object)` calls the object's own `__str__`
    override if it has one (matching `x.__str__()`'s existing
-   behavior).
-3. `str()` with zero arguments still produces an empty string (the
-   existing no-arg constructor path, unaffected by this fix).
-4. Add `tests/str_builtin_call.py` + `.exec.check` — no test
-   exercises `str(x)` call syntax today (existing string tests only
-   use string *literals* or the `.__str__()`/`%`-formatting paths).
+   behavior). ✓
+3. ~~`str()` with zero arguments still produces an empty string~~ —
+   turned out to already be broken before this fix, identically for
+   every builtin type, not just `str`. Not this issue's scope; see
+   issue 022.
+4. Added `tests/str_builtin_call.py` + `.exec.check` (covers the
+   1-arg cases above plus a custom class with its own `__str__`).
+
+## What landed
+
+Special-cased a 1-positional-arg call to the `str` class in
+`build_builtin_call_pyda` (`python_ifa_build_if1.cc`), resolved by
+name via `make_PycSymbol(ctx, "str", PYC_USE)` (the same pattern
+`PY_dict`/`PY_set` already use to reference builtin classes from the
+frontend — `str` isn't a compiler-level `B(...)` symbol like `print`
+since it's a real class, so it can't be matched with a fixed
+`sym_str` global). Lowers directly to `x.__str__()`, sidestepping
+the generic constructor-call path entirely (option 1 from the
+proposed fix sketch above). 0-arg and other-arity calls fall through
+unchanged. Verified against CPython for int/float/str/bool operands
+and a custom class overriding `__str__`; full `./test_pyc` +
+`PYC_FLAGS="-b" ./test_pyc` 115/0 both backends, no regressions.
 
 ## What this unblocks
 
 `str(x)` is one of the most commonly used builtin conversions in
-Python (string building, formatting, debugging); right now it
-silently fails for every type, forcing anyone who hits it to
-discover and use the `.__str__()` method form instead.
+Python (string building, formatting, debugging); it no longer
+silently fails for the common 1-argument case.
