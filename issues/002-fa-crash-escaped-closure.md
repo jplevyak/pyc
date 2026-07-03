@@ -240,6 +240,47 @@ whether) FA refines a `global`-declared Sym's closure type at each
 read site. Filing as the open remainder of this issue rather than
 guessing further without tracing it directly.
 
+**Follow-up: confirmed precisely, via temporary debug tracing in
+`emit_send_call`** (added, traced, then removed — not committed).
+Comparing the two call sites directly:
+
+```
+Case A (works):   rval[0]: sym=f     type=closure
+Case B (crashes): rval[0]: sym=stash type=?
+```
+
+`f` (a function parameter, Case A) correctly carries a resolved
+`Type_FUN` closure type (`is_closure_var` recognizes it, and
+`write_send_arg`'s closure-unpacking branch fires correctly). `stash`
+(read back from a global, Case B) has **no resolved type at all** at
+the call site — `v0->type` is null. Since `is_closure_var` requires a
+non-null `Type_FUN` type, the closure-unpacking branch never fires;
+and separately, the codegen loop over `target->positional_arg_positions`
+(which reported `n=2` — the callee genuinely expects arguments) skips
+every position because `!av->live` for both — FA marked the formal
+argument Vars for this call target as **dead**, so nothing gets
+written, producing the observed zero-argument call.
+
+This confirms the earlier hypothesis: closures don't get correctly
+typed once round-tripped through a `global`-declared Sym. Almost
+certainly because `GLOBAL_CONTOUR` AVars (used for module-level
+globals) don't participate in FA's normal per-EntrySet/per-call-site
+specialization — the mechanism that gives locals, parameters, and
+return values their precise per-instance closure `has[]` shape.
+`stash`'s single shared global AVar apparently never gets refined to
+a concrete closure shape at all.
+
+Properly fixing this means extending FA's global-Sym handling to
+correctly propagate and refine closure shapes through
+`GLOBAL_CONTOUR` — genuine, non-trivial FA work, comparable in scope
+to [007-decorators-not-applied.md](007-decorators-not-applied.md)'s
+polymorphic-dispatch investigation, not a quick patch. Deferring
+further work on this specific remainder pending direction on whether
+it's worth the investment now — the two `simple_inlining` crashes
+(the actual majority of this issue's original repro surface) are
+fixed and verified; storing a callable in a global and calling it
+from elsewhere remains a known, narrow limitation.
+
 ## Verification plan
 
 1. ~~Reproduce: both Case A and Case B above segfault on current
