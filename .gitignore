@@ -3,6 +3,7 @@
 *.d
 *.a
 *.tmp
+*.bak
 core
 *.core
 *.gmon
@@ -64,6 +65,7 @@ tests/*.py.c
 tests/*.py.s
 tests/*.ll
 tests/*.o
+tests/*.bak
 tests/*.dSYM/
 
 # IFA library's own test outputs (its Makefile already cleans most of these).
@@ -82,7 +84,12 @@ ifa/tests/*.s
 ifa/tests/*.code
 ifa/tests/*.ll
 ifa/tests/*.o
+ifa/tests/*.bak
 ifa/tests/*.dSYM/
+# synthetic/ is un-ignored above, so its own generated .bak files need a
+# separate rule (the ifa/tests/*.bak pattern above only matches direct
+# children of ifa/tests/, not files nested under the re-included subdir).
+ifa/tests/synthetic/*.bak
 ifa/log/
 ifa/test_llvm
 ifa/test_llvm.ll
