@@ -41,6 +41,55 @@ conventions are the same; the only difference is location.
   generates `__is__` dispatch but no class defines the method).
   Blocks `x is None`-style narrowing required for recursive
   data structures.
+- [005-while-true-fa-crash.md](005-while-true-fa-crash.md) —
+  `while True:` segfaults FA's `update_in` (constant-cond IF has
+  no valid contour). Workaround: use a real/sentinel loop
+  condition.
+- [006-fstring-interpolation-not-implemented.md](006-fstring-interpolation-not-implemented.md)
+  — f-strings compile with no error and print the literal source
+  text (`f"value is {x}"`) instead of interpolating — a silent
+  correctness bug, not a rejected input.
+- [007-decorators-not-applied.md](007-decorators-not-applied.md)
+  — Any decorator other than the builtin `@vector`/`@pyc_struct`
+  directives is evaluated but never applied; decorated
+  functions/classes behave as if undecorated with no diagnostic.
+- [008-set-literal-genexpr-crash.md](008-set-literal-genexpr-crash.md)
+  — Set literals (`{1,2,3}`), set comprehensions, and generator
+  expressions (`(x for x in y)`) abort the compiler with an
+  internal `if1_move` assertion instead of a clean diagnostic.
+- [009-dict-comprehension-drops-comp-for.md](009-dict-comprehension-drops-comp-for.md)
+  — Dict comprehensions "compile" (exit 0) but silently drop the
+  `for` clause, producing generated C that aborts at runtime with
+  `"matching function not found"`.
+- [010-multiple-inheritance-unrelated-bases.md](010-multiple-inheritance-unrelated-bases.md)
+  — `class C(A, B)` with two independent base classes fails with
+  a confusing type-inference cascade ending in a C compile error;
+  root cause only partially traced (frontend side looks
+  base-count-agnostic; likely an FA/dispatch-level gap).
+- [011-exception-handling-unimplemented.md](011-exception-handling-unimplemented.md)
+  — `try`/`except`/`finally`/`raise` are entirely unimplemented
+  (`fail("statement not supported")`); no exception object model
+  or unwinding mechanism exists yet. Largest lift in this batch
+  besides generators.
+- [012-with-statement-unimplemented.md](012-with-statement-unimplemented.md)
+  — `with` (context managers) is unimplemented; a happy-path
+  `__enter__`/`__exit__` desugaring doesn't need issue 011's
+  exception model, only full exception-safety does.
+- [013-assert-statement-unimplemented.md](013-assert-statement-unimplemented.md)
+  — `assert` is unimplemented (`fail("'assert' not yet
+  supported")`); smallest of the missing-statement issues, good
+  first target.
+- [014-generators-yield-unimplemented.md](014-generators-yield-unimplemented.md)
+  — `yield` (generator functions) is unimplemented; needs a
+  resumable-function execution model (state-machine transform or
+  stackful coroutines) not present anywhere else in pyc today.
+- [016-missing-grammar-level-syntax.md](016-missing-grammar-level-syntax.md)
+  — Five newer syntax forms aren't in the grammar at all and fail
+  as parse errors: `async`/`await`, walrus `:=`, `match`/`case`,
+  PEP 484 type annotations, and extended unpacking (`a, *b =
+  ...`). Grouped as one filing; split out per sub-item as work
+  starts (priority/effort vary widely — annotations and walrus
+  are small, async/await and match/case are substantial).
 
 ## Closed (archive)
 
