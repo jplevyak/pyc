@@ -452,8 +452,7 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
   // PY_dict/PY_set resolving "dict"/"set" in build_syms_pyda). `class str`
   // has no __init__ that accepts a value to convert, so a 1-arg call would
   // otherwise fall through to the generic constructor-call path and silently
-  // fail to consume its argument. 0-arg `str()` is left alone -- the existing
-  // no-arg constructor path already produces an empty string correctly.
+  // fail to consume its argument.
   if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "str")) {
     PycSymbol *str_cls = make_PycSymbol(ctx, "str", PYC_USE);
     if (str_cls && f == str_cls->sym) {
@@ -461,6 +460,74 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       ast->rval = new_sym(ast);
       call_method(&ast->code, ast, a0->rval, sym___str__, ast->rval, 0);
       return 1;
+    }
+  }
+  // issues/022: zero-arg builtin-type constructor calls (int(), float(),
+  // bool(), str(), list(), tuple()) all fail identically. Root cause: the
+  // generic class-instantiation lowering (clone prototype + call __init__,
+  // gen_class_pyda in python_ifa_build_syms.cc) only synthesizes a __new__
+  // wrapper when `is_record` -- i.e. cls->type_kind == Type_RECORD. None of
+  // these six qualify: int/float are Type_ALIAS (aliased to int64/float64,
+  // see python_ifa_sym.cc), bool/list/tuple are ifa-core builtin primitive
+  // types (new_builtin_primitive_type, ifa/if1/ast.cc), so none of them ever
+  // get a __new__ candidate to dispatch a zero-arg call to. int/float
+  // additionally get a __coerce__-based 1-arg conversion path (num_kind !=
+  // IF1_NUM_KIND_NONE, same file), which is why e.g. int(5) already works
+  // but int() doesn't. Confirmed dict()/set() (real Type_RECORD classes
+  // with an explicit __init__, see issue 017) already work fine -- this is
+  // specific to non-record builtin value/container types.
+  //
+  // Fix: synthesize each type's zero value directly here, reusing the exact
+  // codegen an equivalent literal already produces (empty `[]`/`()` use the
+  // "make" primitive with no element args -- reused as-is here rather than
+  // returning a shared sym_empty_list/sym_empty_tuple singleton, which would
+  // alias mutations across every `list()`/`tuple()` call site, the same
+  // footgun issue 017 fixed for dict/set).
+  if (f && pos_args.n == 0) {
+    // int/float: unlike bool/list/tuple, `atom_ast->sym` for these names
+    // does not resolve to the fixed ifa-core sym_int/sym_float globals --
+    // class int/float get their own Sym via normal scope resolution when
+    // __pyc__/02_numeric.py's `class int:`/`class float:` are processed, so
+    // these need the same by-name lookup as str, not a direct pointer
+    // comparison.
+    if (f->name && !strcmp(f->name, "int")) {
+      PycSymbol *int_cls = make_PycSymbol(ctx, "int", PYC_USE);
+      if (int_cls && f == int_cls->sym) {
+        Immediate imm;
+        imm.v_int64 = 0;
+        ast->rval = if1_const(if1, sym_int64, "0", &imm);
+        return 1;
+      }
+    }
+    if (f->name && !strcmp(f->name, "float")) {
+      PycSymbol *float_cls = make_PycSymbol(ctx, "float", PYC_USE);
+      if (float_cls && f == float_cls->sym) {
+        Immediate imm;
+        imm.v_float64 = 0.0;
+        ast->rval = if1_const(if1, sym_float64, "0", &imm);
+        return 1;
+      }
+    }
+    if (f == sym_bool) {
+      ast->rval = sym_false;
+      return 1;
+    }
+    if (f == sym_list) {
+      ast->rval = new_sym(ast);
+      if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_make, sym_list, ast->rval)->ast = ast;
+      return 1;
+    }
+    if (f == sym_tuple) {
+      ast->rval = new_sym(ast);
+      if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_make, sym_tuple, ast->rval)->ast = ast;
+      return 1;
+    }
+    if (f->name && !strcmp(f->name, "str")) {
+      PycSymbol *str_cls = make_PycSymbol(ctx, "str", PYC_USE);
+      if (str_cls && f == str_cls->sym) {
+        ast->rval = make_string("");
+        return 1;
+      }
     }
   }
   if (!f || !builtin_functions.set_in(f)) return 0;

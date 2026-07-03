@@ -100,14 +100,15 @@ conventions are the same; the only difference is location.
   out to be the same cross-cutting audit `ifa/issues/010` already
   deferred (~150+ more unspecialized pointer-hashed `set_add` sites
   across `ifa/`); this issue's remaining scope now redirects there.
-- [022-builtin-type-zero-arg-constructor-broken.md](022-builtin-type-zero-arg-constructor-broken.md)
-  — Zero-argument constructor calls (`int()`, `float()`, `bool()`,
-  `list()`, `str()`) all fail identically at compile time and crash
-  at runtime ("matching function not found"). Discovered while
-  verifying issue 020's fix; confirmed pre-existing and unrelated to
-  that change — reproduces the same way for every builtin type
-  tested, so likely one shared code path in constructor-call
-  lowering, not a per-class issue.
+- [023-tuple-missing-eq-str.md](023-tuple-missing-eq-str.md) —
+  `tuple` has no `__eq__` or `__str__`/`__repr__` — comparing two
+  tuples fails to compile, and printing one shows the generic
+  `<instance>` placeholder instead of `(1, 2, 3)`. Discovered while
+  verifying issue 022's fix; pre-existing and unrelated (reproduces
+  identically for non-empty tuple literals). An attempted
+  `__str__` fix during that investigation introduced a *new*
+  C-backend compiler crash on a specific multi-empty-tuple-call-site
+  pattern, so it was reverted rather than landed half-verified.
 
 ## Closed (archive)
 
@@ -125,6 +126,17 @@ commit ref recorded in each file's status line.
   path. The zero-arg `str()` case turned out to be a separate,
   broader pre-existing bug affecting every builtin type's zero-arg
   constructor call, filed as 022.
+- [022](closed/022-builtin-type-zero-arg-constructor-broken.md) —
+  `int()`, `float()`, `bool()`, `list()`, `tuple()`, `str()` all now
+  produce the correct zero value instead of failing to compile.
+  Root cause: `int`/`float`/`bool`/`list`/`tuple` are never
+  `Type_RECORD` (aliased or ifa-core primitive types instead), so
+  the generic `__new__`-from-`__init__` constructor-call machinery
+  never had a candidate to dispatch a direct call to, regardless of
+  arg count. Fixed by synthesizing each type's zero value directly
+  in the frontend rather than going through class instantiation.
+  `tuple`'s missing `__eq__`/`__str__`, found along the way, filed
+  separately as 023.
 - [015](closed/015-pyc-pod-records-no-frontend-hook.md) —
   `@pyc_struct` decorator wired (originally
   `ifa/issues/015`; moved here because the gap was in the pyc
