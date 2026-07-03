@@ -793,6 +793,29 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_if(if1, &ast->code, 0, t, then_code, 0, chain, 0, 0, ast);
 }
 
+// issues/001: at the point a capturing lambda/nested-def expression is
+// evaluated (e.g. `make_adder`'s `return lambda x: x + n`), construct a
+// fresh instance of the closure-carrier class synthesized for it in
+// build_syms_pyda (ast->closure_cls) and populate one field per captured
+// name with that name's *current* value -- a snapshot at creation time,
+// correct for ordinary (non-`nonlocal`) closures. Mirrors gen_class_pyda's
+// __init__ construction (plain sym_new + per-field sym_setter; no
+// prototype/clone indirection needed since every field is set immediately
+// here, unlike a real class's prototype which persists between separate
+// __new__ calls -- see issue 017 for why that indirection matters there
+// and not here). Returns the new instance Sym, which becomes the lambda/
+// nested-def expression's rval instead of the raw Fun Sym `fn`.
+static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code) {
+  Sym *inst = new_sym(ast);
+  if1_send(if1, code, 3, 1, sym_primitive, sym_new, cls, inst)->ast = ast;
+  for (Sym *field : cls->has.values()) {
+    if1_send(if1, code, 5, 1, sym_operator, inst, sym_setter, if1_make_symbol(if1, field->name), field,
+              new_sym(ast))
+        ->ast = ast;
+  }
+  return inst;
+}
+
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
   if (!n) return 0;
   PycAST *ast = getAST(n, ctx);
@@ -810,6 +833,16 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_funcdef: {
       // Re-enter scope from build_syms pass and generate closure
       reenter_scope_pyda(n, ctx);
+      // issues/001: a nested def capturing enclosing-function locals gets
+      // the same treatment as a capturing lambda (see PY_lambda below) --
+      // fn->self must exist *before* the body is walked, since PY_name's
+      // self.field rewrite for a captured-name reference needs it already
+      // set at the point that reference is processed.
+      Sym *closure_cls = ast->closure_cls;
+      if (closure_cls) {
+        ast->rval->self = new_sym(ast);
+        ast->rval->self->must_implement_and_specialize(closure_cls);
+      }
       // Process default exprs (pre-scope in build_syms)
       PyDAST *params = n->children[1];
       PyDAST *varargsl = (params->children.n > 0) ? params->children[0] : nullptr;
@@ -827,6 +860,22 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       }
       gen_fun_pyda(n, ast, ctx);
       exit_scope(ctx);
+      if (closure_cls) {
+        // issues/001: unlike a lambda (an inline expression -- whatever
+        // consumes it, e.g. an assignment or `return`, reads this AST
+        // node's rval fresh), a nested `def` *names* its function directly:
+        // ast->sym IS the Sym "adder" resolves to everywhere else in the
+        // program (bound once, during the separate build_syms_pyda pass),
+        // and if1_closure above just attached the raw closure body to that
+        // same Sym. Setting ast->rval here has no effect on any other
+        // reference to the name (confirmed the hard way investigating
+        // issue 007's decorators) -- an explicit if1_move is needed to
+        // rebind it to the closure instance, mirroring plain `adder =
+        // <instance>` reassignment (PY_assign's plain-name-target case).
+        Sym *inst = build_closure_instance_pyda(closure_cls, ast, &ast->code);
+        if1_move(if1, &ast->code, inst, ast->sym, ast);
+        ast->rval = inst;
+      }
       return 0;
     }
 
@@ -939,6 +988,17 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_lambda: {
       // Re-enter scope from build_syms pass
       reenter_scope_pyda(n, ctx);
+      Sym *closure_cls = ast->closure_cls;
+      if (closure_cls) {
+        // issues/001: fn->self must exist *before* the body is walked
+        // below -- PY_name's self.field rewrite for a captured-name
+        // reference needs ctx.fun()->self already set at the point that
+        // reference is processed, not merely by the time gen_lambda_pyda
+        // (which reuses the body's already-computed code/rval) runs
+        // afterward.
+        ast->rval->self = new_sym(ast);
+        ast->rval->self->must_implement_and_specialize(closure_cls);
+      }
       PyDAST *varargsl = (n->children.n > 0 && n->children[0]->kind == PY_varargslist) ? n->children[0] : nullptr;
       if (varargsl)
         for (auto c : varargsl->children.values())
@@ -946,6 +1006,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       build_if1_pyda(n->children.last(), ctx);
       gen_lambda_pyda(n, ast, ctx);
       exit_scope(ctx);
+      if (closure_cls) ast->rval = build_closure_instance_pyda(closure_cls, ast, &ast->code);
       return 0;
     }
 

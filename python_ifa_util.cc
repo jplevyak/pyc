@@ -76,6 +76,7 @@ PycAST::PycAST()
       code(0),
       sym(0),
       rval(0),
+      closure_cls(0),
       is_builtin(0),
       is_member(0),
       is_object_index(0) {

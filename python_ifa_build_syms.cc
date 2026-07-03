@@ -105,6 +105,89 @@ static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   return fn;
 }
 
+// issues/001: if a just-finished lambda/nested-def scope references any
+// names from an enclosing FUNCTION scope (not global), synthesize a
+// closure-carrier class instead of relying on ifa's nesting_depth/display
+// machinery -- which only supports nested functions called while their
+// lexical parent's activation is still on the call stack, and asserts
+// (unique_AVar) the moment a closure escapes that activation (e.g. `f =
+// make_adder(3)` returned, then `f(4)` called later from an unrelated
+// scope). Mirrors gen_class_pyda's record-class construction: `self`
+// threaded as an explicit argument, one field per captured name, sidestepping
+// nesting_depth/display entirely (the same reason bound methods already work
+// when they escape -- `self` is a real heap value, not a stack-relative
+// lookup).
+//
+// Must run *after* the scope's own body has been walked by build_syms_pyda
+// (so every free-variable reference has already been marked NONLOCAL_USE by
+// make_PycSymbol's PYC_USE case) and *before* exit_scope. Returns the
+// closure class Sym, or null if the scope captured nothing (the common,
+// unaffected case -- top-level lambdas, methods, non-capturing nested defs).
+static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx) {
+  Vec<Sym *> captured;
+  form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
+    if (x->value == NONLOCAL_USE) {
+      int level = 0;
+      PycSymbol *outer = find_PycSymbol(ctx, x->key, &level);
+      if (!outer) continue;
+      // A bare-name sub-node inside a PY_attribute trailer (e.g. the `i`
+      // in `y.i`, or the `append` in `L.append(a)`) gets spuriously
+      // resolved and marked NONLOCAL_USE too: build_syms_pyda's
+      // PY_attribute case falls through to the same generic recursive
+      // case as PY_power/PY_call/etc, which walks *every* child --
+      // including a trailer's attribute-name child -- via ordinary
+      // PYC_USE scope lookup exactly like a real identifier reference.
+      // Harmless before this change (attribute access uses the
+      // trailer's raw string, not that resolution's result), but the
+      // scope-map side effect still fires. Two ways this shows up as a
+      // false positive, both excluded here:
+      //  - Found via an import scope (level < 0): these are compiler-
+      //    internal dispatch-name placeholders (e.g. `sym_append` from
+      //    pyc_symbols.h's S(append), used to reference "the append
+      //    operation" from C++ code, not a real Python-level binding)
+      //    that happen to be resolvable this way -- never a real
+      //    enclosing-function local regardless.
+      //  - Found in a class body (that scope's own `in` is set): real
+      //    Python scoping doesn't let a nested function see a class
+      //    attribute via a bare name anyway (class scope is famously
+      //    excluded from the enclosing-scope chain), so this was never
+      //    a genuine capture either. Checking `in` directly (not its
+      //    type_kind) matters: `enter_scope` sets `in` only for a real
+      //    PY_classdef, but a class's *own* type_kind isn't always
+      //    Type_RECORD -- int/float/bool/list/tuple/str all get a
+      //    different type_kind via their own special registration
+      //    (Type_ALIAS, Type_PRIMITIVE, etc, see issue 022), yet their
+      //    method bodies are still ordinary class-body scopes for this
+      //    purpose. A scope only ever gets a non-null `in` from
+      //    `enter_scope(ctx, ast->sym)` at a classdef, or retroactively
+      //    from this very function for an already-synthesized closure
+      //    (also correctly excluded here, since that scope's own body
+      //    already resolves its captures via self.field).
+      if (level < 0) continue;
+      if (ctx.scope_stack[level]->in) continue;
+      captured.add(outer->sym);
+    }
+  if (!captured.n) return nullptr;
+  if (captured.n > 1) qsort(captured.v, captured.n, sizeof(captured.v[0]), compar_syms);
+  Sym *cls = new_sym(ast, "__closure__", 1);
+  cls->type_kind = Type_RECORD;
+  cls->self = new_global(ast);
+  for (Sym *cap : captured.values()) cls->has.add(cap);
+  // Make bare references to a captured name inside this scope's body
+  // resolve as `self.name` reads/writes instead of raw nesting-depth
+  // lookups -- reusing the exact mechanism PY_name's build_if1_pyda case
+  // already uses for class-body-level attribute access (checks
+  // `scope_stack.last()->in`'s `has[]`), since `captured`'s Syms are the
+  // very same Sym objects those bare-name references already resolve to.
+  ctx.scope_stack.last()->in = cls;
+  // Stashed for build_if1_pyda's gen_lambda_pyda/gen_fun_pyda, which sets
+  // up fn->self (as the closure's own first formal, specialized against
+  // cls, mirroring gen_class_pyda's __call__ wrapper) and emits the
+  // creation-site instantiation + per-field capture.
+  ast->closure_cls = cls;
+  return cls;
+}
+
 // Extract parameter syms from PY_varargslist into has[]
 void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCompiler &ctx) {
   if (!varargslist) return;
@@ -235,7 +318,8 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
         for (auto c : varargsl->children.values())
           if (c->kind == PY_arg_default) build_syms_pyda(c->children[1], ctx);
       PycSymbol *ps = make_PycSymbol(ctx, n->children[0]->str_val, PYC_LOCAL);
-      if (ctx.in_class() && ctx.cls()->type_kind == Type_RECORD) {
+      bool is_method = ctx.in_class() && ctx.cls()->type_kind == Type_RECORD;
+      if (is_method) {
         // Mirror CPython FunctionDef_kind path: create named sym + func sym with alias
         ast->rval = ps->sym;
         ast->sym = new_sym(ast, 1);
@@ -265,6 +349,13 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           x->value->sym->is_local = 1;
           x->value->sym->nesting_depth = LOCALLY_NESTED;
         }
+      // issues/001: a nested `def` (this function defined directly inside
+      // another function's body, not a class body -- ctx.in_class() above
+      // already special-cased methods) can capture enclosing-function
+      // locals exactly like a lambda can (e.g. `def make_adder(n): def
+      // adder(x): return x + n; return adder`). Harmless no-op for the
+      // overwhelmingly common non-capturing case (top-level defs, methods).
+      if (!is_method) maybe_synthesize_closure_pyda(ast, ctx);
       exit_scope(ctx);
       return 0;
     }
@@ -336,6 +427,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           build_syms_pyda(param, ctx);
         }
       build_syms_pyda(n->children.last(), ctx);
+      maybe_synthesize_closure_pyda(ast, ctx);
       exit_scope(ctx);
       return 0;
     }
@@ -569,10 +661,20 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
-  as.add(new_sym(ast));
-  as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
+  Sym *cls = ast->closure_cls;
+  if (cls) {
+    // issues/001: this nested def captures enclosing-function locals --
+    // fn->self was already created and specialized against the
+    // closure-carrier class in PY_funcdef's build_if1_pyda case (before
+    // the body above was walked); reuse it as as[0] here, mirroring
+    // gen_lambda_pyda's identical pattern.
+    as.add(fn->self);
+  } else {
+    as.add(new_sym(ast));
+    as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
+  }
   get_syms_args_pyda(ast, varargsl, as, ctx);
-  if (in && !in->is_fun) {
+  if (!cls && in && !in->is_fun) {
     if (as.n > 1) {
       fn->self = as[1];
       fn->self->must_implement_and_specialize(in);
@@ -600,7 +702,21 @@ void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
-  as.add(fn);
+  Sym *cls = ast->closure_cls;
+  if (cls) {
+    // issues/001: this lambda captures enclosing-function locals. fn->self
+    // was already created and specialized against the closure-carrier
+    // class in PY_lambda's build_if1_pyda case (before the body above was
+    // walked, since PY_name's self.field rewrite for a captured-name
+    // reference needs it to already exist at that point) -- reuse it here
+    // as as[0], mirroring gen_class_pyda's __call__ wrapper: as[0] is a
+    // dispatch placeholder matched against the callee's own type at call
+    // sites, rather than `fn` self-identifying as the callee the way a
+    // non-capturing lambda does below.
+    as.add(fn->self);
+  } else {
+    as.add(fn);
+  }
   get_syms_args_pyda(ast, varargsl, as, ctx);
   if1_closure(if1, fn, body, as.n, as.v);
 }

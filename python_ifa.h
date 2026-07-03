@@ -53,6 +53,12 @@ class PycAST : public IFAAST {
   Code *code;       // IF1 Code (including children)
   Label *label[2];  // before and after for loops (continue,break)
   Sym *sym, *rval;  // IF1 Syms
+  // issues/001: for a PY_lambda/PY_funcdef node, the closure-carrier
+  // class synthesized during build_syms_pyda if this scope captures
+  // any enclosing-function locals (null otherwise -- the common,
+  // unaffected case). Set once in build_syms_pyda, read back during
+  // build_if1_pyda's construction of the closure-creation-site code.
+  Sym *closure_cls;
 
   uint32 is_builtin : 1;
   uint32 is_member : 1;
