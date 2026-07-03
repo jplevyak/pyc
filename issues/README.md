@@ -101,6 +101,16 @@ conventions are the same; the only difference is location.
   to convert, and there's no frontend special-case for it (unlike
   `print()`, which does have one). Compiles with exit 0 despite the
   errors; the `.__str__()` method form works fine.
+- [021-scope-map-pointer-hash-nondeterminism.md](021-scope-map-pointer-hash-nondeterminism.md)
+  — `PycScope::map` hashes on the raw pointer value of interned
+  name strings, not their content, so unsorted iteration over it
+  varies by process (ASLR/heap layout) even for byte-identical
+  input. Confirmed via a one-off `expr_evaluator.py` LLVM compile
+  flake that cleared on rerun. One narrow fix exists (class-field
+  ordering); most other consumers are unaudited. Distinct from
+  (and not fixed by) `ifa/issues/closed/009` + `ifa/notes/004`,
+  which addressed the *ifa library's* own `Vec`-as-set hashing,
+  not the pyc frontend's `PycScope::map`.
 
 ## Closed (archive)
 
