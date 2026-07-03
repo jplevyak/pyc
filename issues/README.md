@@ -102,15 +102,15 @@ conventions are the same; the only difference is location.
   `print()`, which does have one). Compiles with exit 0 despite the
   errors; the `.__str__()` method form works fine.
 - [021-scope-map-pointer-hash-nondeterminism.md](021-scope-map-pointer-hash-nondeterminism.md)
-  — `PycScope::map` hashes on the raw pointer value of interned
-  name strings, not their content, so unsorted iteration over it
-  varies by process (ASLR/heap layout) even for byte-identical
-  input. Confirmed via a one-off `expr_evaluator.py` LLVM compile
-  flake that cleared on rerun. One narrow fix exists (class-field
-  ordering); most other consumers are unaudited. Distinct from
-  (and not fixed by) `ifa/issues/closed/009` + `ifa/notes/004`,
-  which addressed the *ifa library's* own `Vec`-as-set hashing,
-  not the pyc frontend's `PycScope::map`.
+  — **In-progress, larger than originally scoped.** Two narrow
+  fixes landed (`PycScope::map` → content-hashed `HashMap`; a
+  missing `PointerHash<Var *>` specialization), both verified safe
+  with zero regressions — but direct testing shows they do *not*
+  achieve byte-identical builds (`expr_evaluator.py` LLVM output
+  still differs across all 8 repeated compiles). Root cause turned
+  out to be the same cross-cutting audit `ifa/issues/010` already
+  deferred (~150+ more unspecialized pointer-hashed `set_add` sites
+  across `ifa/`); this issue's remaining scope now redirects there.
 
 ## Closed (archive)
 

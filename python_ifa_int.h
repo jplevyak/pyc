@@ -17,7 +17,12 @@ struct PycScope : public gc {
   Sym *in;
   Sym *cls, *fun;
   Label *lbreak, *lcontinue, *lreturn, *lyield;
-  Map<cchar *, PycSymbol *> map;
+  // issues/021: HashMap (content-hashed via StringHashFns) instead of the
+  // plain Map (which hashes on the cchar* key's pointer value -- varies by
+  // GC/heap layout between processes, making scope-map iteration order,
+  // and therefore any codegen that walks a scope without an explicit sort,
+  // non-reproducible across runs of byte-identical input).
+  HashMap<cchar *, StringHashFns, PycSymbol *> map;
   PycScope() : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0) { id = scope_id++; }
 };
 

@@ -1,6 +1,17 @@
 # Issue 021: `PycScope::map` hashes on pointer value, causing run-to-run nondeterminism in the frontend
 
-**Status:** open.
+**Status:** in-progress — two narrow, precedented fixes landed
+(`PycScope::map` → `HashMap<..., StringHashFns, ...>`; a missing
+`PointerHash<Var *>` specialization), both verified safe (zero
+regressions, `./test_pyc` + `PYC_FLAGS="-b" ./test_pyc` 115/0 both
+before and after, `ifa`'s own `make test` unaffected — its 6
+pre-existing `patterns`-phase failures reproduce identically with
+or without these changes). **Full byte-identical build
+reproducibility is NOT achieved by these fixes** — see "Second
+investigation" below. Scope has grown to match
+`ifa/issues/010-vec-set-api-cleanup.md`'s already-deferred,
+cross-cutting audit; closing this issue for real is a multi-week
+project, not a quick fix, contrary to this issue's original framing.
 **Affects:** `python_ifa_int.h:20` (`PycScope::map`, a
 `Map<cchar *, PycSymbol *>`) and every unsorted iteration over it
 throughout `python_ifa_build_syms.cc`/`python_ifa_build_if1.cc`;
@@ -149,3 +160,87 @@ bisecting phantom failures. Directly motivated by losing time this
 session to exactly that: one anomalous `expr_evaluator.py` LLVM
 failure that took several reruns to confirm was not a real
 regression.
+
+## First fix landed: `PycScope::map` → `HashMap<StringHashFns>`
+
+`python_ifa_int.h`'s `PycScope::map` changed from
+`Map<cchar *, PycSymbol *>` to
+`HashMap<cchar *, StringHashFns, PycSymbol *>` — content-based
+hashing instead of pointer-value hashing, matching the sketch in
+"Proposed fix sketch" (2) above. Verified: full `./test_pyc` and
+`PYC_FLAGS="-b" ./test_pyc`, 115/0 both backends, no regressions.
+
+## Second investigation: this alone does not achieve determinism
+
+Directly testing the stated goal (byte-identical generated code
+across repeated process invocations of the same source) showed the
+`PycScope::map` fix, while correct and worth keeping, is nowhere
+near sufficient:
+
+- `tests/dict_basic.py` compiled 8 times (C backend) still produced
+  2 distinct outputs (down from ~5 distinct/5 runs pre-fix) —
+  varying only in the *declaration order* of a few local temp
+  variables within one function.
+- `tests/expr_evaluator.py` compiled 8 times (LLVM backend, `-b`)
+  produced **8 distinct outputs** — no improvement at all on this
+  fixture. Diffing two runs showed the actual struct **type id**
+  differing (`%Expr.4311` vs `%Expr.4305`) and function-symbol
+  numeric suffixes differing by inconsistent offsets
+  (`_CG_f_3824_32` vs `_CG_f_3824_54`, `_CG_f_4057_44` vs
+  `_CG_f_4057_66`, etc.).
+
+A follow-up fix was applied for one confirmed root cause: `Var`
+(`ifa/if1/var.h`) has a monotonic `int id` field but was never
+given a `PointerHash<Var *>` specialization when
+[`ifa/notes/004-plib-vec-pointer-set-hashing.md`](../ifa/notes/004-plib-vec-pointer-set-hashing.md)'s
+"options A+B" landed — the note's own list of six specialized
+types (`AVar`, `AEdge`, `EntrySet`, `CreationSet`, `Sym`, `Fun`)
+omits `Var` entirely. `collect_types_and_globals`
+(`ifa/analysis/fa.cc:4676-4705`) builds the C backend's emitted
+global-variable list via `globals.set_add(v)` on `Vec<Var *>`,
+finalized via `set_to_vec()` (bucket order, no sort) — exactly the
+"g&lt;N&gt;" numbering bug diffed in `dict_basic.py.c`. Fix: added
+`template <> struct PointerHash<Var *>` in `ifa/if1/var.h`, hashing
+on `c->id`, mirroring the existing five specializations' pattern
+exactly. Verified safe (115/0 both backends, no regressions).
+
+**But this still didn't close the gap** (`expr_evaluator.py` is
+still 8/8 distinct). The deeper problem: id-based hashing only
+produces stable iteration order if the **ids themselves are
+assigned in a stable order** across runs — and that's not
+guaranteed. `Sym`/`Var`/`Fun` ids are minted monotonically at
+construction time, during FA's cloning/specialization passes
+(`ifa/analysis/clone.cc`, `ifa/analysis/fa.cc`), which themselves
+walk dozens of other `Vec<Ptr *>::set_add`-populated sets over
+pointer types that have **no** `PointerHash` specialization and no
+stable id field at all — `PNode *` (`ifa/optimize/cfg.cc`,
+`ifa/codegen/cg.cc`), `Dom *` (`ifa/optimize/dom.cc`), `CallPoint *`
+(`ifa/common/html.cc`, `ifa/if1/fun.cc`), `MatchCacheEntry *`
+(`ifa/if1/pattern.cc`), `llvm::Value *` (`ifa/codegen/cg_emit_llvm.cc`),
+among others. A grep across `ifa/` found ~150+ `set_add`/`set_in`
+call sites beyond the six (now seven) types already fixed. If *any*
+upstream traversal that decides cloning/specialization order reads
+one of these unfixed sets, the resulting id-assignment order shifts
+between runs, and every downstream id-keyed structure — even ones
+with a correct `PointerHash` specialization — inherits the drift.
+
+This is not a new problem: it is [ifa/issues/010-vec-set-api-cleanup.md](../ifa/issues/010-vec-set-api-cleanup.md)'s
+already-deferred audit (Task A/B, "~244 `set_add`/`set_in` call
+sites... every one is a potential non-determinism source"),
+confirmed here for the first time to actually reach pyc's *emitted
+code* (not just `fa-converge` diagnostic counts, which is all 009's
+verification checked). Closing this issue for real means doing that
+full audit — a multi-week, cross-cutting project per notes/004's own
+estimate — not a follow-up patch.
+
+## Revised recommendation
+
+Land the two fixes above (both are correct, safe, zero-regression,
+and directly precedented) and stop here for now. Re-scope "full
+build reproducibility" as a shared goal with issue 010 rather than
+a sub-task of this issue — the fix is the same code, and issue 010
+already has the more complete audit plan (Task A: `Vec::capacity`/
+`Vec::size()` API rename to make future gaps compile-error
+detectable; Task B: `qsort_by_id` → `sorted_view` migration). This
+issue's remaining scope should redirect there rather than duplicate
+it.
