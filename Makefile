@@ -228,7 +228,10 @@ deinstall:
 test: test-unit test-ir test-e2e
 
 test-e2e: $(PYC)
+	@echo "--- Testing C Backend ---"
 	./test_pyc
+	@echo "--- Testing LLVM Backend ---"
+	PYC_FLAGS=-b ./test_pyc
 
 test-unit: $(IFALIB)
 	@if [ -x $(IFA_DIR)/ifa ]; then \

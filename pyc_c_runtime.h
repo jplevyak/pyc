@@ -7,10 +7,24 @@
 #include <math.h>
 
 #include "gc.h"
-#define MALLOC GC_MALLOC
-#define REALLOC GC_REALLOC
-#define FREE(_x)
-#define MEM_INIT() GC_INIT()
+
+/* --- Micro-Core: Memory Interface --- */
+#define _CG_Memory_Alloc(sz) GC_MALLOC(sz)
+#define _CG_Memory_Realloc(p, sz) GC_REALLOC(p, sz)
+#define _CG_Memory_Free(p)
+#define _CG_Memory_Init() GC_INIT()
+#define _CG_Memory_Copy(dst, src, sz) memcpy((dst), (src), (sz))
+#define _CG_Memory_Set(dst, val, sz) memset((dst), (val), (sz))
+
+/* --- Micro-Core: Syscall Interface --- */
+#define _CG_Syscall_Write(fd, buf, sz) fwrite((buf), 1, (sz), (fd) == 1 ? stdout : ((fd) == 2 ? stderr : stdout))
+#define _CG_Syscall_Exit(code) exit(code)
+
+/* Legacy mappings to Micro-Core */
+#define MALLOC _CG_Memory_Alloc
+#define REALLOC _CG_Memory_Realloc
+#define FREE(_x) _CG_Memory_Free(_x)
+#define MEM_INIT() _CG_Memory_Init()
 
 typedef char int8;
 typedef unsigned char uint8;
@@ -64,6 +78,10 @@ typedef void *_CG_ref;
 typedef void *_CG_fun;
 typedef void *_CG_nil_type;
 #define _CG_reply _CG_symbol
+
+/* FFI Wrappers for Python (__pyc_c_call__) */
+inline _CG_int64 _CG_FFI_Alloc(_CG_int64 sz) { return (_CG_int64)(uintptr_t)_CG_Memory_Alloc(sz); }
+inline void _CG_FFI_Free(_CG_int64 p) { _CG_Memory_Free((void*)(uintptr_t)p); }
 #define _CG_primitive _CG_symbol
 #define _CG_make_tuple _CG_symbol
 #define _CG_Symbol(_x, _y) ((void *)(uintptr_t)_x)
@@ -433,8 +451,8 @@ inline void *_CG_prim_tuple_list_internal(uint s, uint n) {
   return x;
 }
 
-inline void _CG_write(const void *s) { if (s) fwrite(s, _CG_string_len(s), 1, stdout); }
-inline void _CG_writeln(void) { fwrite("\n", 1, 1, stdout); }
+inline void _CG_write(const void *s) { if (s) _CG_Syscall_Write(1, s, _CG_string_len(s)); }
+inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
 
 #define _CG_prim_tuple_list(_c, _n) (_c)(_CG_prim_tuple_list_internal(sizeof(*((_c)0)), _n))
 #define _CG_prim_list(_e, _n) _CG_prim_tuple_list_internal(sizeof(_e), _n)
