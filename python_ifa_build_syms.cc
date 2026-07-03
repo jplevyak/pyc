@@ -124,7 +124,11 @@ void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCo
 
 static void build_import_syms_name_pyda(PyDAST *n, PycCompiler &ctx);
 static void build_import_syms_from_pyda(PyDAST *n, PycCompiler &ctx);
-static int build_syms_pyda(PyDAST *n, PycCompiler &ctx);
+// Not static: also called from python_ifa_build_if1.cc to build symbols for
+// expression ASTs synthesized after the whole-module build_syms pass has
+// already run (currently: f-string `{expr}` interpolation sub-expressions,
+// parsed on demand at build_if1 time). Declared in python_ifa_int.h.
+int build_syms_pyda(PyDAST *n, PycCompiler &ctx);
 
 static void build_import_syms_name_pyda(PyDAST *n, PycCompiler &ctx) {
   // n->kind == PY_import_name, children are PY_dotted_as_name or PY_testlist of them
@@ -167,7 +171,7 @@ static void build_import_syms_from_pyda(PyDAST *n, PycCompiler &ctx) {
   }
 }
 
-static int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
+int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
   if (!n) return 0;
   PycAST *ast = getAST(n, ctx);
   ctx.node = n;

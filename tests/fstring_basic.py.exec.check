@@ -1,0 +1,11 @@
+value is 5
+{literal}
+4
+a=1 b=2 sum=3
+
+no interp here
+'hi'
+hi
+val=1
+result: 42
+triple: 5

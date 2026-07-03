@@ -42,6 +42,19 @@ int dparse_python_file(const char *filename) {
 }
 
 
+static PyDAST *dparse_buf_to_ast_impl(const char *label, char *buf, int len) {
+  D_Parser *p = make_python_parser(label, buf, len);
+  dparse(p, buf, len);
+  PythonGlobals *pg = (PythonGlobals *)p->initial_globals;
+  PyDAST *ast = nullptr;
+  if (!p->syntax_errors)
+    ast = pg->root_ast;
+  else
+    fprintf(stderr, "dparse: parse error in '%s' near line %d\n", label, p->loc.line);
+  free_D_Parser(p);
+  return ast;
+}
+
 PyDAST *dparse_python_to_ast(const char *filename) {
   char *buf = 0;
   int len = 0;
@@ -49,16 +62,18 @@ PyDAST *dparse_python_to_ast(const char *filename) {
     fprintf(stderr, "dparse: unable to read '%s'\n", filename);
     return nullptr;
   }
-  D_Parser *p = make_python_parser(filename, buf, len);
-  dparse(p, buf, len);
-  PythonGlobals *pg = (PythonGlobals *)p->initial_globals;
-  PyDAST *ast = nullptr;
-  if (!p->syntax_errors)
-    ast = pg->root_ast;
-  else
-    fprintf(stderr, "dparse: parse error in '%s' near line %d\n", filename, p->loc.line);
-  free_D_Parser(p);
-  return ast;
+  return dparse_buf_to_ast_impl(filename, buf, len);
+}
+
+PyDAST *dparse_python_buf_to_ast(const char *label, const char *buf, int len) {
+  // GC-managed copy with trailing NUL padding (dparse's scanner may probe
+  // past the nominal content length; mirrors dparse_builtin_dir's buffer
+  // preparation below).
+  char *copy = (char *)MALLOC(len + 2);
+  memcpy(copy, buf, len);
+  copy[len] = 0;
+  copy[len + 1] = 0;
+  return dparse_buf_to_ast_impl(label, copy, len);
 }
 
 PyDAST *dparse_builtin_dir(const char *dirname) {

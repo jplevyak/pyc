@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
+#include "python_parse.h"
 
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx);
 
@@ -150,15 +151,95 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
 }
 
 // Parse a Python string literal into its actual string value (pure C, no CPython runtime needed)
+// Skip a string-literal prefix (any combination of r/R/b/B/u/U/f/F) and
+// classify it. Returns a pointer to the opening quote character.
+static const char *skip_string_prefix(const char *s, bool *is_raw, bool *is_fstring) {
+  *is_raw = false;
+  *is_fstring = false;
+  while (*s && (*s == 'r' || *s == 'R' || *s == 'b' || *s == 'B' ||
+                *s == 'u' || *s == 'U' || *s == 'f' || *s == 'F')) {
+    if (*s == 'r' || *s == 'R') *is_raw = true;
+    if (*s == 'f' || *s == 'F') *is_fstring = true;
+    s++;
+  }
+  return s;
+}
+
+// Decode escape sequences in [s, end) (or copy verbatim if is_raw). Shared
+// by plain string literals and by each literal run between `{expr}`
+// interpolations in an f-string.
+static char *decode_string_content(const char *s, const char *end, bool is_raw) {
+  int content_len = (int)(end - s);
+  char *out = (char *)MALLOC(content_len + 1);
+  if (is_raw) {
+    memcpy(out, s, content_len);
+    out[content_len] = 0;
+    return out;
+  }
+  char *op = out;
+  for (const char *p = s; p < end; ) {
+    if (*p != '\\') { *op++ = *p++; continue; }
+    p++;  // skip backslash
+    if (p >= end) break;
+    switch (*p) {
+      case '\\': *op++ = '\\'; p++; break;
+      case '\'': *op++ = '\''; p++; break;
+      case '"':  *op++ = '"';  p++; break;
+      case 'n':  *op++ = '\n'; p++; break;
+      case 't':  *op++ = '\t'; p++; break;
+      case 'r':  *op++ = '\r'; p++; break;
+      case 'b':  *op++ = '\b'; p++; break;
+      case 'f':  *op++ = '\f'; p++; break;
+      case 'v':  *op++ = '\v'; p++; break;
+      case 'a':  *op++ = '\a'; p++; break;
+      case '0':  *op++ = '\0'; p++; break;
+      case 'x': {
+        p++;
+        int v = 0;
+        for (int i = 0; i < 2 && p < end && isxdigit((unsigned char)*p); i++, p++) {
+          v = v * 16 + (isdigit((unsigned char)*p) ? *p - '0' : tolower((unsigned char)*p) - 'a' + 10);
+        }
+        *op++ = (char)v; break;
+      }
+      case 'u': case 'U': {
+        int ndigits = (*p == 'u') ? 4 : 8;
+        p++;
+        int v = 0;
+        for (int i = 0; i < ndigits && p < end && isxdigit((unsigned char)*p); i++, p++)
+          v = v * 16 + (isdigit((unsigned char)*p) ? *p - '0' : tolower((unsigned char)*p) - 'a' + 10);
+        // Encode as UTF-8
+        if (v < 0x80) { *op++ = (char)v; }
+        else if (v < 0x800) { *op++ = (char)(0xC0 | (v >> 6)); *op++ = (char)(0x80 | (v & 0x3F)); }
+        else if (v < 0x10000) { *op++ = (char)(0xE0 | (v >> 12)); *op++ = (char)(0x80 | ((v >> 6) & 0x3F)); *op++ = (char)(0x80 | (v & 0x3F)); }
+        else { *op++ = (char)(0xF0 | (v >> 18)); *op++ = (char)(0x80 | ((v >> 12) & 0x3F)); *op++ = (char)(0x80 | ((v >> 6) & 0x3F)); *op++ = (char)(0x80 | (v & 0x3F)); }
+        break;
+      }
+      case 'N': { // \N{name} — skip name, output replacement char
+        if (p[1] == '{') { while (p < end && *p != '}') p++; if (p < end) p++; }
+        *op++ = '?'; break;
+      }
+      default:
+        // Octal or unknown: \ooo
+        if (*p >= '0' && *p <= '7') {
+          int v = 0;
+          for (int i = 0; i < 3 && p < end && *p >= '0' && *p <= '7'; i++, p++)
+            v = v * 8 + (*p - '0');
+          *op++ = (char)v;
+        } else {
+          *op++ = '\\'; *op++ = *p++;  // keep literal backslash
+        }
+        break;
+    }
+  }
+  *op = 0;
+  return out;
+}
+
 static Sym *eval_string_pyda(PyDAST *n, PycCompiler &ctx) {
   const char *s = n->str_val;
   if (!s || !*s) return make_string("");
-  // Skip string prefix (r/b/u/R/B/U combinations, e.g. r, rb, br, u, b, etc.)
-  bool is_raw = false;
-  while (*s && (*s == 'r' || *s == 'R' || *s == 'b' || *s == 'B' || *s == 'u' || *s == 'U')) {
-    if (*s == 'r' || *s == 'R') is_raw = true;
-    s++;
-  }
+  bool is_raw, is_fstring;
+  s = skip_string_prefix(s, &is_raw, &is_fstring);
   // Determine quote character and whether triple-quoted
   char q = *s;
   if (q != '\'' && q != '"') return make_string(s);  // shouldn't happen
@@ -172,74 +253,168 @@ static Sym *eval_string_pyda(PyDAST *n, PycCompiler &ctx) {
   } else {
     while (*end && *end != q && *end != '\n') end++;
   }
-  int content_len = (int)(end - s);
-  if (!is_raw) {
-    // Process escape sequences — output buffer can be at most content_len chars
-    char *out = (char *)MALLOC(content_len + 1);
-    char *op = out;
-    for (const char *p = s; p < end; ) {
-      if (*p != '\\') { *op++ = *p++; continue; }
-      p++;  // skip backslash
-      if (p >= end) break;
-      switch (*p) {
-        case '\\': *op++ = '\\'; p++; break;
-        case '\'': *op++ = '\''; p++; break;
-        case '"':  *op++ = '"';  p++; break;
-        case 'n':  *op++ = '\n'; p++; break;
-        case 't':  *op++ = '\t'; p++; break;
-        case 'r':  *op++ = '\r'; p++; break;
-        case 'b':  *op++ = '\b'; p++; break;
-        case 'f':  *op++ = '\f'; p++; break;
-        case 'v':  *op++ = '\v'; p++; break;
-        case 'a':  *op++ = '\a'; p++; break;
-        case '0':  *op++ = '\0'; p++; break;
-        case 'x': {
-          p++;
-          int v = 0;
-          for (int i = 0; i < 2 && p < end && isxdigit((unsigned char)*p); i++, p++) {
-            v = v * 16 + (isdigit((unsigned char)*p) ? *p - '0' : tolower((unsigned char)*p) - 'a' + 10);
-          }
-          *op++ = (char)v; break;
-        }
-        case 'u': case 'U': {
-          int ndigits = (*p == 'u') ? 4 : 8;
-          p++;
-          int v = 0;
-          for (int i = 0; i < ndigits && p < end && isxdigit((unsigned char)*p); i++, p++)
-            v = v * 16 + (isdigit((unsigned char)*p) ? *p - '0' : tolower((unsigned char)*p) - 'a' + 10);
-          // Encode as UTF-8
-          if (v < 0x80) { *op++ = (char)v; }
-          else if (v < 0x800) { *op++ = (char)(0xC0 | (v >> 6)); *op++ = (char)(0x80 | (v & 0x3F)); }
-          else if (v < 0x10000) { *op++ = (char)(0xE0 | (v >> 12)); *op++ = (char)(0x80 | ((v >> 6) & 0x3F)); *op++ = (char)(0x80 | (v & 0x3F)); }
-          else { *op++ = (char)(0xF0 | (v >> 18)); *op++ = (char)(0x80 | ((v >> 12) & 0x3F)); *op++ = (char)(0x80 | ((v >> 6) & 0x3F)); *op++ = (char)(0x80 | (v & 0x3F)); }
-          break;
-        }
-        case 'N': { // \N{name} — skip name, output replacement char
-          if (p[1] == '{') { while (p < end && *p != '}') p++; if (p < end) p++; }
-          *op++ = '?'; break;
-        }
-        default:
-          // Octal or unknown: \ooo
-          if (*p >= '0' && *p <= '7') {
-            int v = 0;
-            for (int i = 0; i < 3 && p < end && *p >= '0' && *p <= '7'; i++, p++)
-              v = v * 8 + (*p - '0');
-            *op++ = (char)v;
-          } else {
-            *op++ = '\\'; *op++ = *p++;  // keep literal backslash
-          }
-          break;
-      }
+  return make_string(decode_string_content(s, end, is_raw));
+}
+
+// Append `piece` (a string-typed Sym) to the running f-string concatenation
+// `*result`, emitting a `__add__` send into `ast->code` when there's a prior
+// piece to concatenate with.
+static void fstring_append_piece(PycAST *ast, PycCompiler &ctx, Sym **result, Sym *piece) {
+  if (!*result) { *result = piece; return; }
+  Sym *next = new_sym(ast);
+  call_method(&ast->code, ast, *result, make_symbol("__add__"), next, 1, piece);
+  *result = next;
+}
+
+// Parse `src` (raw Python expression source, e.g. the text of an f-string's
+// `{expr}` field) as a standalone expression, build its symbols/IF1 code at
+// the CURRENT scope (ctx.scope_stack), and return its PycAST. Wraps `src` in
+// parens so it parses as one `file_input` -> `expr_stmt` -> expression.
+static PycAST *build_fstring_subexpr_pyda(const char *src, int lineno, PycCompiler &ctx) {
+  int len = (int)strlen(src);
+  char *buf = (char *)MALLOC(len + 3);
+  buf[0] = '(';
+  memcpy(buf + 1, src, len);
+  buf[len + 1] = ')';
+  buf[len + 2] = '\n';
+  PyDAST *mod = dparse_python_buf_to_ast("<fstring>", buf, len + 3);
+  if (!mod || mod->kind != PY_module || mod->children.n != 1 ||
+      mod->children[0]->kind != PY_expr_stmt || mod->children[0]->children.n != 1)
+    fail("error line %d, invalid expression in f-string field: '%s'", lineno, src);
+  PyDAST *expr = mod->children[0]->children[0];
+  build_syms_pyda(expr, ctx);
+  build_if1_pyda(expr, ctx);
+  return getAST(expr, ctx);
+}
+
+// Scan one `{...}` replacement field starting just after the opening `{`
+// (i.e. *p is the first character of the field). On return, `*p` points
+// just past the field's closing `}`. Splits off an optional `!s`/`!r`/`!a`
+// conversion and an optional `:spec` format spec, both recognized only at
+// nesting depth 0 relative to the field (bracket/paren/brace nesting and
+// quoted sub-strings are skipped over so slices, dict/set literals, and
+// lambdas inside the field don't confuse the scan).
+static void scan_fstring_field(const char **pp, const char *end, int lineno,
+                                char **out_expr, char *out_conv, char **out_spec) {
+  const char *start = *pp;
+  const char *p = *pp;
+  const char *expr_end = nullptr;
+  *out_conv = 0;
+  *out_spec = nullptr;
+  int depth = 0;
+  while (p < end) {
+    char c = *p;
+    if (c == '\'' || c == '"') {
+      char qc = c;
+      p++;
+      while (p < end && *p != qc) { if (*p == '\\' && p + 1 < end) p++; p++; }
+      if (p < end) p++;
+      continue;
     }
-    *op = 0;
-    return make_string(out);
-  } else {
-    // Raw string: copy as-is
-    char *out = (char *)MALLOC(content_len + 1);
-    memcpy(out, s, content_len);
-    out[content_len] = 0;
-    return make_string(out);
+    if (c == '(' || c == '[' || c == '{') { depth++; p++; continue; }
+    if (c == ')' || c == ']') { depth--; p++; continue; }
+    if (c == '}') {
+      if (depth == 0) { if (!expr_end) expr_end = p; p++; break; }
+      depth--; p++; continue;
+    }
+    if (depth == 0 && c == '!' && p + 1 < end &&
+        (p[1] == 's' || p[1] == 'r' || p[1] == 'a') &&
+        p + 2 < end && (p[2] == ':' || p[2] == '}')) {
+      if (!expr_end) expr_end = p;
+      *out_conv = p[1];
+      p += 2;
+      continue;
+    }
+    if (depth == 0 && c == ':' && !*out_spec) {
+      if (!expr_end) expr_end = p;
+      const char *spec_start = p + 1;
+      // Consume the rest of the field as the format spec (nested `{`/`}` in
+      // a dynamic format spec, e.g. `{x:{width}}`, aren't unpacked here).
+      int sdepth = 0;
+      p++;
+      while (p < end) {
+        if (*p == '{') sdepth++;
+        else if (*p == '}') { if (sdepth == 0) break; sdepth--; }
+        p++;
+      }
+      int slen = (int)(p - spec_start);
+      char *spec = (char *)MALLOC(slen + 1);
+      memcpy(spec, spec_start, slen);
+      spec[slen] = 0;
+      *out_spec = spec;
+      continue;
+    }
+    p++;
   }
+  if (!expr_end) fail("error line %d, unterminated '{' in f-string", lineno);
+  int elen = (int)(expr_end - start);
+  char *expr = (char *)MALLOC(elen + 1);
+  memcpy(expr, start, elen);
+  expr[elen] = 0;
+  *out_expr = expr;
+  *pp = p;
+}
+
+// f-strings (PEP 498). Splits the (already prefix/quote-stripped) content
+// into literal runs and `{expr}` fields, decodes each literal run through
+// decode_string_content (with `{{`/`}}` collapsed to a literal brace first),
+// lowers each field's expression via build_fstring_subexpr_pyda, stringifies
+// it (str() for no/`!s` conversion, repr() for `!r`; `!a` also uses repr()
+// since no separate ascii-escaping is implemented), and concatenates every
+// piece left-to-right with `__add__`. Format specs (`{x:spec}`) aren't
+// implemented yet — rather than silently ignoring them (this bug's whole
+// premise is that pyc must not silently produce the wrong string), a
+// non-empty spec is a hard compile error until issue 006's format-spec
+// follow-up lands.
+static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
+  const char *s = n->str_val;
+  bool is_raw, is_fstring;
+  s = skip_string_prefix(s, &is_raw, &is_fstring);
+  char q = *s;
+  if (q != '\'' && q != '"') { ast->rval = make_string(s); return; }
+  s++;
+  bool triple = (s[0] == q && s[1] == q);
+  if (triple) s += 2;
+  const char *end = s;
+  if (triple) {
+    while (*end && !(end[0] == q && end[1] == q && end[2] == q)) end++;
+  } else {
+    while (*end && *end != q && *end != '\n') end++;
+  }
+
+  Sym *result = nullptr;
+  Vec<char> lit;
+  const char *p = s;
+  auto flush_literal = [&]() {
+    if (!lit.n) return;
+    char *decoded = decode_string_content(lit.v, lit.v + lit.n, is_raw);
+    fstring_append_piece(ast, ctx, &result, make_string(decoded));
+    lit.clear();
+  };
+  while (p < end) {
+    if (*p == '{' && p + 1 < end && p[1] == '{') { lit.add('{'); p += 2; continue; }
+    if (*p == '}' && p + 1 < end && p[1] == '}') { lit.add('}'); p += 2; continue; }
+    if (*p == '{') {
+      flush_literal();
+      p++;
+      char *expr_src; char conv; char *spec;
+      scan_fstring_field(&p, end, ctx.lineno, &expr_src, &conv, &spec);
+      if (spec && *spec)
+        fail("error line %d, f-string format specs not yet supported: '{%s:%s}'",
+             ctx.lineno, expr_src, spec);
+      PycAST *e_ast = build_fstring_subexpr_pyda(expr_src, ctx.lineno, ctx);
+      if1_gen(if1, &ast->code, e_ast->code);
+      Sym *str_piece = new_sym(ast);
+      cchar *method_name = (conv == 'r' || conv == 'a') ? "__repr__" : "__str__";
+      call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), str_piece, 0);
+      fstring_append_piece(ast, ctx, &result, str_piece);
+      continue;
+    }
+    lit.add(*p);
+    p++;
+  }
+  flush_literal();
+  ast->rval = result ? result : make_string("");
 }
 
 // Check for and handle builtin function calls (super, __pyc_symbol__, etc.)
@@ -1177,9 +1352,16 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       ast->rval = make_num_pyda(n, ctx);
       return 0;
 
-    case PY_string:
-      ast->rval = eval_string_pyda(n, ctx);
+    case PY_string: {
+      bool is_raw, is_fstring;
+      if (n->str_val) skip_string_prefix(n->str_val, &is_raw, &is_fstring);
+      else is_fstring = false;
+      if (is_fstring)
+        build_fstring_pyda(n, ast, ctx);
+      else
+        ast->rval = eval_string_pyda(n, ctx);
       return 0;
+    }
 
     case PY_list: {
       for (auto c : n->children.values()) {

@@ -29,5 +29,10 @@ PyDAST *dparse_python_to_ast(const char *filename);
 // Parse all *.py files from a directory (sorted order) as one concatenated module.
 PyDAST *dparse_builtin_dir(const char *dirname);
 
+// Parse an in-memory Python source buffer (e.g. a synthesized snippet, not
+// backed by a file) and return the root PyDAST*, or null on error. `label`
+// is used only for diagnostics (parse-error messages).
+PyDAST *dparse_python_buf_to_ast(const char *label, const char *buf, int len);
+
 // Print a PyDAST tree for debugging.
 void pyast_print(PyDAST *ast, int depth);

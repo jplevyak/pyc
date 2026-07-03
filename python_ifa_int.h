@@ -161,6 +161,10 @@ void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCo
 void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx, char *vector_size = nullptr);
+// Symbol-table pass entry point, exposed so python_ifa_build_if1.cc can run
+// it over freshly-parsed expression ASTs that never went through the
+// whole-module build_syms pass (f-string interpolation sub-expressions).
+int build_syms_pyda(PyDAST *n, PycCompiler &ctx);
 
 // From python_ifa_build_if1.cc:
 int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code);

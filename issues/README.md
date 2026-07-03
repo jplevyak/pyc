@@ -46,9 +46,10 @@ conventions are the same; the only difference is location.
   no valid contour). Workaround: use a real/sentinel loop
   condition.
 - [006-fstring-interpolation-not-implemented.md](006-fstring-interpolation-not-implemented.md)
-  — f-strings compile with no error and print the literal source
-  text (`f"value is {x}"`) instead of interpolating — a silent
-  correctness bug, not a rejected input.
+  — **Partially fixed**: f-strings now interpolate correctly
+  (`{expr}`, `!s`/`!r`/`!a`, nested indexing/calls) on both
+  backends. Format specs (`{x:.2f}`) remain a clean compile error
+  rather than a silent no-op, pending a follow-up.
 - [007-decorators-not-applied.md](007-decorators-not-applied.md)
   — Any decorator other than the builtin `@vector`/`@pyc_struct`
   directives is evaluated but never applied; decorated
