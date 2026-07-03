@@ -47,6 +47,12 @@ extern _CG_bool _CG_str_lt(const char *a, const char *b);
 extern _CG_bool _CG_str_le(const char *a, const char *b);
 extern _CG_bool _CG_str_gt(const char *a, const char *b);
 extern _CG_bool _CG_str_ge(const char *a, const char *b);
+extern _CG_int64 _CG_FFI_Alloc(_CG_int64 sz);
+extern void _CG_FFI_Free(_CG_int64 p);
+extern _CG_int64 _CG_FFI_Get_Int64(_CG_int64 p, _CG_int64 offset);
+extern void _CG_FFI_Set_Int64(_CG_int64 p, _CG_int64 offset, _CG_int64 val);
+extern _CG_int8 _CG_FFI_Get_Int8(_CG_int64 p, _CG_int64 offset);
+extern void _CG_FFI_Set_Int8(_CG_int64 p, _CG_int64 offset, _CG_int8 val);
 
 /* Pyc list header layout macros — used by the LLVM-specific list
  * helpers below.  The header uses different macro names (_CG_list_len

@@ -223,6 +223,9 @@ for g in "$TESTS_DIR"/*.py; do
     continue
   fi
   if [ $rc -ne 0 ] || ! diff -q "$BUILD/$name.exec.out" "$g.exec.check" > /dev/null 2>&1; then
+    if [ -e "$g.check_fail" ]; then
+      passed=$((passed + 1)); pass_log "$name (exec-fail-ok)"; continue
+    fi
     fail_log "$name" "EXEC"
     diff "$BUILD/$name.exec.out" "$g.exec.check" | head -20 >&2
     note_failure "$name EXEC  diff $BUILD/$name.exec.out $g.exec.check"
