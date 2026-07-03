@@ -74,3 +74,17 @@ class dict:
     return False
   def __pyc_to_bool__(self):
     return self._len != 0
+  def __str__(self):
+    x = "{"
+    i = 0
+    while i < self._len:
+      if i:
+        x += ", "
+      x += self._keys[i].__repr__()
+      x += ": "
+      x += self._vals[i].__repr__()
+      i += 1
+    x += "}"
+    return x
+  def __repr__(self):
+    return self.__str__()

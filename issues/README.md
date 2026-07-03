@@ -99,10 +99,12 @@ conventions are the same; the only difference is location.
   element types anywhere fails to compile with a `BOXING`/"mixed
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
-- [019-dict-missing-str-repr.md](019-dict-missing-str-repr.md) —
-  `dict` has no `__str__`/`__repr__` (unlike `set`, which already
-  does); `print(some_dict)` shows the generic `<instance>`
-  placeholder instead of `{'a': 1, ...}`.
+- [020-str-builtin-call-broken.md](020-str-builtin-call-broken.md)
+  — `str(x)` (the builtin call, not the `.__str__()` method) fails
+  for every type — `class str` has no constructor accepting a value
+  to convert, and there's no frontend special-case for it (unlike
+  `print()`, which does have one). Compiles with exit 0 despite the
+  errors; the `.__str__()` method form works fine.
 
 ## Closed (archive)
 
@@ -120,3 +122,7 @@ commit ref recorded in each file's status line.
   container type. A second instance written to after a first one
   silently read/wrote the wrong data. Fixed by giving both an
   explicit `__init__`.
+- [019](closed/019-dict-missing-str-repr.md) — `dict` now has
+  `__str__`/`__repr__`, modeled on `set`'s (which already had it).
+  `print(some_dict)` shows real contents instead of the generic
+  `<instance>` placeholder.
