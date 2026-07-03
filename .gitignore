@@ -9,6 +9,10 @@ core
 *~
 *.swp
 .DS_Store
+# macOS debug-info bundles (produced alongside any compiled binary)
+*.dSYM/
+# Generated LLVM textual IR (dumped by -b / IFA_LLVM=1 / -t); never a fixture
+*.ll
 
 # Generated headers / cat-pages from LICENSE
 LICENSE.i
@@ -27,6 +31,8 @@ pyc.cat
 /hello_world
 /hello_world.py.c
 /hello_world.py.s
+/ifa/ifa
+/ifa/ifa-test
 
 # Compiled C output from pyc compilations at repo root
 /*.py.c
@@ -39,44 +45,44 @@ perf.data*
 
 # Test outputs --------------------------------------------------------------
 # New test runs write everything to tests/build/; old-style in-place outputs
-# (still produced by some manual invocations) are also covered.
+# (still produced by some manual invocations) are also covered. Compiled test
+# binaries (no extension; next to <name>.py) are covered by the broad ignore
+# + negation below rather than a per-test-name whitelist, so newly added
+# tests don't need a matching .gitignore edit to stay untracked. tests/empty
+# is an intentional 0-byte fixture; tests/ir/ holds real fixtures. The
+# specific patterns after re-ignore generated files that contain a dot (so
+# the blanket negation doesn't resurrect them).
+tests/*
+!tests/*.*
+!tests/empty
+!tests/ir/
 tests/build/
 tests/__pycache__/
 tests/pyc_compat.py
 tests/*.out
 tests/*.py.c
 tests/*.py.s
+tests/*.ll
+tests/*.o
+tests/*.dSYM/
 
-# Test binaries (no extension; compiled next to <name>.py).
-# Listed as a directory-scoped negation so we don't accidentally ignore
-# fixture files like `empty` that legitimately have no extension.
-# These are short-lived and removed by `test_pyc` on success.
-/tests/arithmetic_ops
-/tests/attr_augmented_assign
-/tests/basic_function
-/tests/bitwise_operators
-/tests/break_continue
-/tests/builtins
-/tests/chained_comparison
-/tests/class_attr_mutation
-/tests/class_attributes
-/tests/class_definition_order
-/tests/class_inheritance
-/tests/class_inherited_attrs
-/tests/class_init
-/tests/conditional
-/tests/default_args
-/tests/dict_basic
-/tests/fibonacci
-/tests/for_over_range
-/tests/lambda_class_attr
-/tests/pyc_compat
-
-# IFA library's own test outputs (its Makefile already cleans most of these)
+# IFA library's own test outputs (its Makefile already cleans most of these).
+# Compiled V-language test binaries (no extension, next to <name>.v) are
+# covered by the broad ignore + negation; ir/ and synthetic/ hold real
+# fixtures and stay tracked; the specific patterns below re-ignore generated
+# files that happen to contain a dot (so the blanket negation doesn't
+# resurrect them).
+ifa/tests/*
+!ifa/tests/*.*
+!ifa/tests/ir/
+!ifa/tests/synthetic/
 ifa/tests/*.out
 ifa/tests/*.c
 ifa/tests/*.s
 ifa/tests/*.code
+ifa/tests/*.ll
+ifa/tests/*.o
+ifa/tests/*.dSYM/
 ifa/log/
 ifa/test_llvm
 ifa/test_llvm.ll

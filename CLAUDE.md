@@ -27,3 +27,17 @@ documents symptom, root cause, proposed fix, verification plan,
 and what fixing it would unblock. See
 [ifa/issues/README.md](ifa/issues/README.md) for conventions and
 when to file vs. fix-now.
+
+## Do not check in build artifacts
+
+Never `git add` compiled binaries, object files, generated IR, or
+debug-info bundles — this repo has needed cleanup for exactly this
+before (compiled test binaries, `.dSYM` bundles, and generated
+`.ll` files had accumulated under `tests/` and `ifa/tests/`).
+`.gitignore` uses a pattern-based rule (`tests/*` / `ifa/tests/*`
+plus extension negations) rather than a per-file whitelist, so new
+tests should never need a matching `.gitignore` edit to stay
+untracked — if a new build output isn't being ignored, fix the
+pattern instead of adding the file. Same rule for `ifa/ifa`,
+`ifa/ifa-test`, and any other Makefile-produced binary: these are
+rebuilt by `make` and must never be committed.
