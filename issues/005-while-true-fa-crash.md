@@ -1,6 +1,8 @@
 # Issue 005: `while True:` crashes FA in `update_in`
 
-**Status:** open.
+**Status:** fixed (landed in the 2026-06-26 "Interim" commit,
+`97f6a6c`, before this doc was ever updated to say so — caught during
+a 2026-07 re-check). See "What landed" below.
 
 ## Symptom
 
@@ -85,7 +87,7 @@ set in `add_pnode_constraints` (around the issue-025
 narrowing block) without a matching `contour` set, the
 later `update_in` deref segfaults.
 
-## Fix sketches
+## Fix sketches (superseded — see "What landed")
 
 - Frontend: convert `while True:` to an IF1 unconditional
   loop without a runtime-tested IF (the loop just goes
@@ -97,3 +99,55 @@ later `update_in` deref segfaults.
 
 The frontend fix is cleaner; the FA guard is a useful
 backstop for any other "constant cond" path.
+
+## What landed
+
+The **FA guard** sketch above was implemented, in `update_in`
+(`ifa/analysis/fa.cc:283-303`):
+
+```cpp
+if (v->is_if_arg && v->contour != GLOBAL_CONTOUR) {
+  // Guard against the GLOBAL_CONTOUR case: `make_AVar` returns a
+  // globally-shared AVar (with `contour == GLOBAL_CONTOUR`, which is
+  // `(void*)1`) when the Var is module-level and non-internal --
+  // e.g. the `True` constant used as the condition of a top-level
+  // `while True:`. `analyze_edge` then sets `is_if_arg = 1` on that
+  // global AVar, but its `contour` isn't a real EntrySet -- dereffing
+  // `(EntrySet *)1)->in_es_worklist` segfaults. Skipping the enqueue
+  // is sound: the global AVar doesn't need per-ES re-analysis (no
+  // per-ES contour to refine).
+  EntrySet *es = (EntrySet *)v->contour;
+  ...
+```
+
+i.e. exactly the root cause this issue diagnosed (`sym_true`'s AVar
+gets `contour == GLOBAL_CONTOUR`, a sentinel, not a real `EntrySet*`,
+but still gets `is_if_arg = 1` set on it by `analyze_edge`) — the fix
+adds the `v->contour != GLOBAL_CONTOUR` guard before the deref rather
+than switching the frontend lowering. The frontend-side sketch
+(lower `while True:` to an unconditional-goto loop, no synthetic IF
+at all) was **not** taken; `while True:` still lowers through the
+same synthetic-IF path, just with FA now tolerating the constant
+condition's degenerate AVar.
+
+This landed in commit `97f6a6c` ("Interim", 2026-06-26), alongside a
+large batch of other FA/codegen work — this issue's own doc was never
+updated to reflect it until this 2026-07 re-check.
+
+### Verification (2026-07 re-check)
+
+- The issue's own minimal repro (`count`/`break` loop) and the
+  original fib-heap root-list idiom quoted in "Surfaced while"
+  (circular linked list, `while True: ...; if w is head: break`)
+  both compile and run correctly on **both backends** (C and LLVM),
+  with no crash and correct output.
+- `tests/fibheap_full.py` and `tests/fibheap_decrease_key.py` already
+  exercise this exact shape (`while True:` + identity comparison +
+  field traversal) and both pass on both backends —
+  `fibheap_full.py:10` even carries a comment noting it exercises
+  "issue 005 GLOBAL_CONTOUR guard" explicitly, confirming this was a
+  deliberate regression-guard addition, not an accidental side effect.
+- `./test_pyc -k fibheap` / `PYC_FLAGS=-b ./test_pyc -k fibheap`: 5
+  passed, 0 failed, both backends.
+- No new test added — existing `fibheap_full.py`/
+  `fibheap_decrease_key.py` already cover this shape.
