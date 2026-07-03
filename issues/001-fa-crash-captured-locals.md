@@ -386,6 +386,25 @@ adding one would require the harness to tolerate a known-harmless
 stderr warning, which it currently doesn't (`.exec.check` comparison
 requires empty stderr).
 
+**2026-07 update:** confirmed this is very likely the same
+underlying mechanism as
+[issue 007](007-decorators-not-applied.md)'s "Finding 2"
+(self-referential reassignment of a Sym that already has
+`if1_closure` attached directly to it breaks FA's dispatch) —
+see issue 007's re-check notes for a controlled experiment isolating
+the exact trigger condition and three distinct severities (harmless
+warning here vs. a wall of compile-time violations vs. a runtime
+`matching function not found` crash, depending on how polymorphic
+the reassigned value's type is). The fix sketched there (give every
+non-method `def`'d function its own internal Sym identity from the
+start, alias the public name to it, mirroring the class-method
+pattern already at `python_ifa_build_syms.cc`'s `PY_funcdef`
+`is_method` branch) would likely also close this gap — but it's a
+substantial, higher-risk change with an open question about
+recursive/mutually-recursive self-calls, not something to piggyback
+onto this issue's own fix. Tracked as a shared follow-on in issue
+007, not duplicated here.
+
 ### Verification results
 
 - `./test_pyc`: 122 passed, 0 failed (C backend).

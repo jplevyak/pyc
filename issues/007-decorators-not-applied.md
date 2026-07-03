@@ -144,26 +144,94 @@ dispatch bug. Confirmed across three realistic shapes, all broken:
 
 ### A plausible fix shape exists, but requires touching the syms pass too
 
-`python_ifa_build_syms.cc:238-246` already has the right *pattern*,
-for a different case (methods defined inside a class body): instead
-of tying the closure body directly to the method's public-name Sym,
-it creates a **separate internal Sym** for the actual closure,
-makes the public-name Sym **alias** to it
-(`ast->rval->alias = ast->sym`), and installs it via a `setter` send
-rather than direct `if1_closure` attachment. Applying the same
-pattern to module-level decorated functions — give the raw closure
-its own internal identity from the start, never call `if1_closure`
-directly on the name everyone else resolves to, and reserve that
-public Sym purely as an alias/indirection target set by decorator
-application — would very plausibly sidestep Finding 2 entirely
-(no self-referential reassignment of an already-`if1_closure`'d Sym
-would be needed at all). This requires changes to
-`python_ifa_build_syms.cc`'s `PY_decorated`/`PY_funcdef` symbol
-creation (not just `build_if1_pyda`), and still leaves issue 001
-blocking the single most common decorator shape (closures)
-separately. Not attempted here — flagging as the concrete starting
-point for a future attempt, since finding it took real investigation
-that shouldn't need repeating.
+`python_ifa_build_syms.cc`'s `PY_funcdef` case (`is_method` branch,
+currently around line 321-330) already has the right *pattern*, for
+a different case (methods defined inside a class body): instead of
+tying the closure body directly to the method's public-name Sym, it
+creates a **separate internal Sym** for the actual closure
+(`ast->sym = new_sym(ast, 1)`), makes the public-name Sym **alias**
+to it (`ast->rval->alias = ast->sym`), and installs it via a
+`setter` send into the class's `self` rather than direct
+`if1_closure` attachment onto the public Sym. The `else` branch
+(every *non-method* def — i.e. every module-level or nested
+function) does not get this treatment: `ast->rval = ast->sym =
+def_fun_pyda(n, ast, ps->sym, ctx)` ties `if1_closure` directly onto
+`ps->sym`, the exact Sym every other reference to the name resolves
+through.
+
+**2026-07 re-check (post issue-001 fix), confirmed via direct
+experiment:** the necessary and sufficient condition for Finding 2's
+crash is not "the target was `def`'d" per se, but specifically
+**reassigning a Sym that already has `if1_closure` attached directly
+to it, using a call that reads that same Sym as an argument in the
+same statement**:
+- `other = get_it(add_one)` (distinct target, not self-referential):
+  works, prints correctly.
+- `add_one = get_it(0)` (self-named target, but RHS doesn't read
+  `add_one`): works, prints correctly — confirms it's not merely
+  "reassigning a Sym that already IS a function."
+- `add_one = get_it(add_one)` (`def`-bound target, truly
+  self-referential): reproduces Finding 2 exactly — a wall of
+  compile-time `NOTYPE`/`SEND_ARGUMENT` violations (`'add_one' has
+  no type`, `illegal call argument type`), because FA's variable
+  resolution scheme (a fresh Var/SSU generation per assignment)
+  looks like it should handle a plain reassignment fine — and does,
+  for a plain `int` (`x = f(x)` for an `int`-valued `x` compiles and
+  runs correctly, printing `6`) — but breaks specifically when the
+  Sym being read-then-rewritten is one FA/if1 treats as *being* a
+  function (`if1_closure` attached directly, not merely holding a
+  reference to one).
+- `g = lambda x: x + 1; g = get_it(g)` (lambda-bound target, self-
+  referential): does **not** produce compile-time violations at all,
+  but crashes at **runtime** with the same `assert(!"runtime error:
+  matching function not found")` `get_target_fun`/polymorphic-
+  dispatch failure documented in `ifa/CODEGEN_C.md §12` — a
+  *different* visible symptom (silent-until-runtime vs. loud-at-
+  compile-time) but plausibly the same underlying resolution gap,
+  just caught at a different stage depending on how the Sym was
+  first bound (`gen_lambda_pyda`'s `as.add(fn)` vs. `def_fun_pyda`'s
+  direct `ast->sym = ps->sym` tie-in).
+
+**This is very likely the identical mechanism** behind
+[issue 001](001-fa-crash-captured-locals.md)'s own accepted
+"known remaining limitation": a capturing nested `def`'s name-rebind
+fix there (`if1_move(inst, ast->sym)`, rebinding a Sym that already
+has `if1_closure` attached, into a freshly-built closure instance)
+left one harmless-but-present FA warning at the call site precisely
+because it's the same shape of self-owned-Sym reassignment — just
+with a monomorphic result type (a single concrete closure-carrier
+class), so FA's confusion manifests as a survivable warning rather
+than the wall of violations or runtime crash seen here with a
+genuinely polymorphic result (could be either of two unrelated
+`Fun`s). One underlying bug, three severities depending on how
+polymorphic the reassignment's result type is.
+
+Applying the class-method alias pattern to *all* non-method
+`PY_funcdef`s (not just decorated ones) — give the raw closure its
+own internal Sym identity from the start via `def_fun_pyda`, never
+call `if1_closure` directly on the name everyone else resolves to,
+and bind the public name's Sym via an ordinary `if1_move` from that
+internal Sym (mirroring how any other `name = value` assignment
+already works) — would very plausibly close this gap for module-level
+functions generally, not just decorators, and would likely also
+clean up issue 001's remaining cosmetic warning as a side effect.
+This is a **larger, higher-risk change than it looks**: it touches
+Sym-identity creation for literally every function definition in
+every pyc program (not just decorated or reassigned ones), including
+recursive and mutually-recursive functions, where a bare-name
+self-call inside the function's own body currently resolves through
+the same Sym `if1_closure` is attached to — under the alias scheme,
+that self-call would need to resolve through the *public* alias Sym
+instead, and it's not yet confirmed whether that Sym reliably holds
+the right value/type at the point the function's own body is
+compiled (methods sidestep this by always calling themselves via
+`self.name(...)`, never a bare name, so this ordering question has
+never actually been exercised by the existing alias-pattern code).
+Not attempted here — flagging as the concrete starting point for a
+future attempt, since finding it took real investigation that
+shouldn't need repeating, but the recursive/mutual-recursion
+interaction needs to be worked out and tested before landing it
+broadly.
 
 ## Proposed fix sketch (superseded — see "Investigation" above)
 
