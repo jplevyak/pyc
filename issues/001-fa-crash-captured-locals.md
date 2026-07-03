@@ -405,6 +405,30 @@ recursive/mutually-recursive self-calls, not something to piggyback
 onto this issue's own fix. Tracked as a shared follow-on in issue
 007, not duplicated here.
 
+**2026-07 follow-up regression found while investigating issue 007:**
+a *nested* recursive function (`def outer(): def fact(n): ... return
+n * fact(n - 1) ...`) is now spuriously treated as "capturing itself"
+by `maybe_synthesize_closure_pyda`, since a function's own name,
+referenced recursively from inside its own body, is indistinguishable
+(from that scan's perspective) from a genuine free-variable capture
+found in an intermediate enclosing scope. Confirmed via a scratch
+test: execution is still correct (`fact(5)` prints `120`), but FA now
+emits spurious warnings it didn't before this fix landed — the exact
+same self-referential-reassignment shape as issue 007's Finding 2,
+just reached via a different route (the closure-instance construction
+rebinding `ast->sym`, not a decorator). Plain top-level (module-scope)
+recursive functions are unaffected (`fibonacci.py` stays clean) because
+module-level names resolve via `GLOBAL_CONTOUR`, never through the
+capture-detection path at all. Likely fix: exclude a capture candidate
+whose resolved Sym is the function's own name (`outer->sym ==
+ast->sym` in `maybe_synthesize_closure_pyda`) — a function recursing
+on itself doesn't need to be threaded through as a captured field, it
+should keep resolving through the ordinary (nesting_depth/display)
+path, which already handles this case correctly since a direct
+recursive call is always stack-disciplined (never escapes). Not yet
+implemented — flagging as a small, well-scoped follow-on, separate
+from issue 007's much larger polymorphic-dispatch question.
+
 ### Verification results
 
 - `./test_pyc`: 122 passed, 0 failed (C backend).

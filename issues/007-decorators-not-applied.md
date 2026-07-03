@@ -1,20 +1,36 @@
 # Issue 007: User-defined decorators are silently ignored
 
-**Status:** open — investigated in depth; blocked on two separate,
-deeper, pre-existing FA/dispatch limitations, not a quick frontend
-fix as originally scoped. See "Investigation: why this is bigger
-than it looks" below before attempting again.
+**Status:** open — investigated in depth; blocked on a chain of three
+separate, deeper, pre-existing limitations, not a quick frontend fix
+as originally scoped. The final and largest of the three
+(`ifa/issues/029-polymorphic-dispatch.md` /
+`ifa/issues/030-polymorphic-dispatch-fat-pointers.md`'s fat-pointer
+dispatch design, extended to a call-site shape those issues don't yet
+cover) is a genuinely large feature, not something to improvise here
+— see "2026-07 re-check: the real blocker is 029/030's dispatch gap,
+extended to a new shape" below before attempting again.
 **Affects:** `python_ifa_build_if1.cc:517-606` (`PY_decorated` case
 in `build_if1_pyda`); the real fix, if attempted, also touches
 `python_ifa_build_syms.cc` (symbol creation for decorated defs — see
-below), not just `build_if1_pyda`.
+below), not just `build_if1_pyda`; and, per the 2026-07 re-check,
+`ifa/codegen/codegen_common.cc`'s `get_target_fun_core` /
+`ifa/codegen/cg.cc`'s `emit_send_call` (and the LLVM-backend
+equivalent) for the dispatch layer.
 **Related:** `PYTHON_FRONTEND.md` §11 documents `@vector("s")` as
 the one class decorator with real semantics; `@pyc_struct` (issue
 `closed/015-pyc-pod-records-no-frontend-hook.md`) is the other.
 No general decorator-application mechanism exists.
 [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
-is one of the two blockers found here — closure-wrapping decorators
+is one of the blockers found here — closure-wrapping decorators
 (the most common decorator shape) hit it directly.
+[ifa/issues/029-polymorphic-dispatch.md](../ifa/issues/029-polymorphic-dispatch.md)
+/
+[ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+already track and design the general "call site resolves to ≥2
+candidate `Fun`s" problem for method-call-through-receiver shapes;
+this issue's Finding 2 is the same architectural gap for a shape
+those issues don't cover yet (calling a bare function-typed variable
+directly, no receiver object to dispatch through).
 
 ## Symptom
 
@@ -232,6 +248,92 @@ future attempt, since finding it took real investigation that
 shouldn't need repeating, but the recursive/mutual-recursion
 interaction needs to be worked out and tested before landing it
 broadly.
+
+## 2026-07 re-check: the real blocker is 029/030's dispatch gap, extended to a new shape
+
+Re-confirmed both Finding 1 and Finding 2 still reproduce exactly as
+described above, unaffected by issue 001's closure fix (which solved
+a different problem — closures escaping their creation context, not
+decorator application). Went looking for whether the alias-pattern
+fix sketched above would be enough to make the motivating
+`@double def add_one` example actually work, and found it would not
+— it only shifts the failure to a different, still-unfixed layer.
+
+**Controlled experiment isolating the exact trigger:**
+
+| Case | Result |
+|---|---|
+| `other = get_it(add_one)` (distinct target, not self-referential) | works |
+| `add_one = get_it(0)` (self-named target, RHS doesn't read `add_one`) | works |
+| `x = f(x)` for a plain `int` (self-referential, non-function) | works |
+| `add_one = get_it(add_one)` — `add_one` bound via `def` (has `if1_closure` attached directly) | Finding 2: wall of compile-time `NOTYPE`/`SEND_ARGUMENT` FA violations |
+| `g = get_it(g)` — `g` bound via `g = lambda x: ...` (ordinary `if1_move`, no direct `if1_closure`) | compiles **clean**, crashes at **runtime**: `assert(!"runtime error: matching function not found")` — and crashes even a `print(g(5))` call written *before* the reassignment, since FA analyzes the whole program, not execution order |
+
+The `def` case and the `lambda` case are **two different bugs, not
+one**:
+
+1. The `def` case's compile-time violation wall is specific to
+   reassigning a Sym that has `if1_closure` attached *directly* to
+   it — this is what the alias-pattern fix (previous section) targets,
+   and it would very plausibly turn this case into the *lambda*
+   case's failure mode (clean compile, runtime crash) — genuine
+   progress, but not a fix, since the lambda case is `still broken`.
+2. The lambda case's runtime crash is `ifa/issues/029-polymorphic-dispatch.md`'s
+   documented mechanism, confirmed by tracing it directly:
+   `get_target_fun_core` (`ifa/codegen/codegen_common.cc:97`) returns
+   null because the call site genuinely has ≥2 candidate `Fun`s
+   (FA correctly determined `g` could be either the original lambda
+   or `replacement`), and `cg.cc`'s `emit_send_call` falls through to
+   the polymorphic-dispatch path (`cg.cc:769-822`) — but that path
+   only knows how to dispatch a method call **through a receiver
+   object**, looking up a vtable-like slot in the receiver's
+   concrete-type struct (`csym->has[k]->name == method_name`,
+   `cg.cc:801-802` — exactly what `tests/poly_dispatch_low.py` and
+   issue 030's fat-pointer design already cover). Our case has **no
+   receiver at all** — `g` itself is the polymorphic callable, called
+   directly (`g(5)`), not `something.g()`. There is no object to read
+   a classtag/slot from, so the dispatch path can't apply, and it
+   falls through to the unconditional
+   `assert(!"runtime error: matching function not found")`.
+
+**This means issue 007's actual fix needs two layers, not one:**
+
+1. The alias-pattern fix (previous section) — normalizes `def`-bound
+   reassignment to behave like `lambda`-bound reassignment (fixes the
+   asymmetry, likely also closes issue 001's cosmetic warning), but
+   is *necessary, not sufficient*.
+2. **Extending issue 029/030's fat-pointer/classtag dispatch design
+   to cover calling a bare polymorphic function-typed value directly**
+   (no receiver), not just a method call through a receiver instance.
+   This means:
+   - `get_target_fun_core`/`get_target_funs` needs a codegen path for
+     "no receiver, dispatch on the callable value's own concrete type"
+     — plausibly requiring first-class function values to carry the
+     same kind of classtag/vtable-pointer materialization issue 030
+     proposes for objects, even when they were never wrapped in a
+     user-visible class at all (a `def`-bound or `lambda`-bound
+     value is not today represented as a taggable/dispatchable
+     record the way a class instance is).
+   - Needs to land in both `cg.cc` (C backend) and the LLVM backend's
+     equivalent emit path (030's own doc already notes this dual-
+     backend requirement for its existing scope).
+   - Issue 030's own design doc treats this as real, multi-step
+     design work (backward-flow analysis from dispatch points, fat-
+     pointer materialization, fan-out-adaptive emission) — even its
+     *already-started* method-receiver case has an open, not-yet-fixed
+     high-fan-out gap (`tests/poly_dispatch_high.py`'s FA-fixpoint
+     issue). Extending it to cover bare callable values is additional
+     scope on top of that, not a small addition.
+
+Given this, issue 007 should not be picked up again as an isolated
+decorator fix — it is now understood to require the same
+architectural investment already tracked (and only partially done)
+under issues 029/030, extended to one more call-site shape. Land
+029/030's core fat-pointer mechanism first (for the method-receiver
+case it already targets); revisit whether extending it to bare
+callable values is worth doing generally (it would also unblock
+polymorphic callback/strategy patterns beyond decorators) before
+returning to this issue specifically.
 
 ## Proposed fix sketch (superseded — see "Investigation" above)
 
