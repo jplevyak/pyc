@@ -72,6 +72,20 @@ class dict:
         return True
       i += 1
     return False
+  def __eq__(self, d):
+    if self._len != len(d):
+      return False
+    i = 0
+    while i < self._len:
+      k = self._keys[i]
+      if not d.__contains__(k):
+        return False
+      if d[k] != self._vals[i]:
+        return False
+      i += 1
+    return True
+  def __ne__(self, d):
+    return not self.__eq__(d)
   def __pyc_to_bool__(self):
     return self._len != 0
   def __str__(self):

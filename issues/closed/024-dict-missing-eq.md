@@ -1,6 +1,6 @@
 # Issue 024: `dict` has no `__eq__`/`__ne__`
 
-**Status:** open.
+**Status:** fixed. See "What landed" below.
 **Affects:** `__pyc__/07_dict.py` (`class dict`).
 **Related:** discovered while fixing
 [023-tuple-missing-eq-str.md](closed/023-tuple-missing-eq-str.md) — checked
@@ -54,19 +54,24 @@ def __ne__(self, d):
   return not self.__eq__(d)
 ```
 
-## Verification plan
+## What landed
 
-1. `{"a": 1, "b": 2} == {"a": 1, "b": 2}` → `True`.
-2. `{"a": 1, "b": 2} == {"b": 2, "a": 1}` → `True` (key-order
-   independent — the case that would break a naive index-aligned
-   port of list's fix).
-3. `{"a": 1} == {"a": 2}` → `False`; `{"a": 1} == {"a": 1, "b": 2}`
-   → `False`.
-4. `!=` mirrors `==` throughout.
-5. Existing dict tests continue to pass unchanged.
+Added `__eq__`/`__ne__` to `__pyc__/07_dict.py` essentially as
+sketched above (using `self._len` directly instead of `len(self)`
+inside the loop bound, and a `while` loop matching the rest of the
+class's existing style rather than `for i in range(...)`).
+
+Verified against CPython on both backends: same-content dicts built
+in the same order, same-content dicts built in **different**
+insertion order (the key-order-independence case), different values
+for the same key, a strict superset, and the empty-dict case.
+Added `tests/dict_eq_ne.py`.
+
+Full `./test_pyc` + `PYC_FLAGS="-b" ./test_pyc`: 120/0 both
+backends, no regressions.
 
 ## What this unblocks
 
 Comparing dicts (config equality checks, memoization/caching keyed
-on dict contents, test assertions) is a common operation that
-currently fails to compile for any dict.
+on dict contents, test assertions) is a common operation that no
+longer fails to compile for any dict.

@@ -55,11 +55,6 @@ conventions are the same; the only difference is location.
   operand-order bug affecting *every* container type, found along
   the way. Generator expressions now fail cleanly instead of
   crashing (real support tracked with issue 014).
-- [009-dict-comprehension-drops-comp-for.md](009-dict-comprehension-drops-comp-for.md)
-  — **Fixed**: dict comprehensions now work correctly on both
-  backends, sharing the loop-lowering machinery added for issue
-  008's set comprehensions. Two unrelated pre-existing gaps found
-  while testing this were filed separately (018, 019).
 - [010-multiple-inheritance-unrelated-bases.md](010-multiple-inheritance-unrelated-bases.md)
   — `class C(A, B)` with two independent base classes fails with
   a confusing type-inference cascade ending in a C compile error;
@@ -100,12 +95,6 @@ conventions are the same; the only difference is location.
   out to be the same cross-cutting audit `ifa/issues/010` already
   deferred (~150+ more unspecialized pointer-hashed `set_add` sites
   across `ifa/`); this issue's remaining scope now redirects there.
-- [024-dict-missing-eq.md](024-dict-missing-eq.md) — `dict` has no
-  `__eq__`/`__ne__` at all (unlike `set`, which has both). Needs a
-  key-order-independent comparison, not a straight port of
-  `list`/`tuple`'s index-aligned `__eq__` (issue 023) — two dicts
-  built by inserting the same pairs in different orders must still
-  compare equal.
 
 ## Closed (archive)
 
@@ -117,6 +106,11 @@ commit ref recorded in each file's status line.
   instead of an unresolved `__is__` dispatch; the follow-on
   `is None` union-narrowing gap this exposed was tracked and fixed
   separately as `ifa/issues/closed/024`.
+- [009](closed/009-dict-comprehension-drops-comp-for.md) — dict
+  comprehensions now work correctly on both backends, sharing the
+  loop-lowering machinery added for issue 008's set comprehensions.
+  Two unrelated pre-existing gaps found while testing this were
+  filed separately (018, 019).
 - [020](closed/020-str-builtin-call-broken.md) — `str(x)` (1-arg
   call) now lowers directly to `x.__str__()` instead of falling
   through the generic (and broken, for `str`) constructor-call
@@ -148,6 +142,10 @@ commit ref recorded in each file's status line.
   `__ne__` was missing on both `list` and `tuple` entirely. `dict`'s
   matching gap needs a different (key-order-independent) shape,
   filed separately as 024.
+- [024](closed/024-dict-missing-eq.md) — `dict` now has
+  `__eq__`/`__ne__`, key-order-independent (mutual-containment plus
+  value comparison per key, mirroring `set.__eq__`'s shape rather
+  than `list`/`tuple`'s index-aligned one from issue 023).
 - [015](closed/015-pyc-pod-records-no-frontend-hook.md) —
   `@pyc_struct` decorator wired (originally
   `ifa/issues/015`; moved here because the gap was in the pyc
