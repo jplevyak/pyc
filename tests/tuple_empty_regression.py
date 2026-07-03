@@ -1,0 +1,5 @@
+print(len(tuple()))
+t = tuple()
+print(len(t))
+print(() == ())
+print(tuple() == ())

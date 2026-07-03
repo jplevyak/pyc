@@ -65,22 +65,16 @@ class list:
     pass
 #  @must_specialize("l:list")
   def __eq__(self, l):
-    ll = __pyc_clone_constants__(l.len())
-    lself = __pyc_clone_constants__(self.len());
-    if lself == 0:
-      if ll == 0:
-        return True
-      else:
+    ll = __pyc_clone_constants__(len(l))
+    lself = __pyc_clone_constants__(len(self))
+    if lself != ll:
+      return False
+    for i in range(lself):
+      if l[i] != self[i]:
         return False
-    else:
-      if ll == 0:
-        return False
-      for i in range(lself):
-        if l[i] != self[i]:
-           return False
-      return True
-#  def __eq__(self, l):
-#    return False
+    return True
+  def __ne__(self, l):
+    return not self.__eq__(l)
   def append(self, x):
     l = __pyc_primitive__(__pyc_symbol__("len"), self)
     tmp = __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
@@ -129,3 +123,25 @@ class tuple:
     return self.__len__() != 0
   def __pyc_tuplify__(self):
     return self
+  def __eq__(self, t):
+    lt = __pyc_clone_constants__(len(t))
+    lself = __pyc_clone_constants__(len(self))
+    if lself != lt:
+      return False
+    for i in range(lself):
+      if t[i] != self[i]:
+        return False
+    return True
+  def __ne__(self, t):
+    return not self.__eq__(t)
+  def __str__(self):
+    n = len(self)
+    x = "("
+    for k in range(0, n):
+      if (k):
+        x += ", "
+      x += self[k].__repr__()
+    if n == 1:
+      x += ","
+    x += ")"
+    return x

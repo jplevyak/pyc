@@ -100,15 +100,12 @@ conventions are the same; the only difference is location.
   out to be the same cross-cutting audit `ifa/issues/010` already
   deferred (~150+ more unspecialized pointer-hashed `set_add` sites
   across `ifa/`); this issue's remaining scope now redirects there.
-- [023-tuple-missing-eq-str.md](023-tuple-missing-eq-str.md) —
-  `tuple` has no `__eq__` or `__str__`/`__repr__` — comparing two
-  tuples fails to compile, and printing one shows the generic
-  `<instance>` placeholder instead of `(1, 2, 3)`. Discovered while
-  verifying issue 022's fix; pre-existing and unrelated (reproduces
-  identically for non-empty tuple literals). An attempted
-  `__str__` fix during that investigation introduced a *new*
-  C-backend compiler crash on a specific multi-empty-tuple-call-site
-  pattern, so it was reverted rather than landed half-verified.
+- [024-dict-missing-eq.md](024-dict-missing-eq.md) — `dict` has no
+  `__eq__`/`__ne__` at all (unlike `set`, which has both). Needs a
+  key-order-independent comparison, not a straight port of
+  `list`/`tuple`'s index-aligned `__eq__` (issue 023) — two dicts
+  built by inserting the same pairs in different orders must still
+  compare equal.
 
 ## Closed (archive)
 
@@ -137,6 +134,20 @@ commit ref recorded in each file's status line.
   in the frontend rather than going through class instantiation.
   `tuple`'s missing `__eq__`/`__str__`, found along the way, filed
   separately as 023.
+- [023](closed/023-tuple-missing-eq-str.md) — `tuple` now has
+  `__eq__`/`__ne__`/`__str__`/`__repr__`. Root cause of the C-backend
+  crash hit while landing `__str__` (traced via `gdb`, not guessed):
+  a null-pointer dereference in `ifa/codegen/cg.cc`'s empty-tuple
+  codegen (`element` can be null for an always-empty tuple, not just
+  `element->type`). Also fixed along the way: a missing
+  `PointerHash<PNode*>` specialization (same bug class as issue 021's
+  `Var*` finding — `PNode` has a monotonic id but was left out of
+  `ifa/notes/004`'s six); `list.__eq__`'s latent bug (`.len()`,
+  not a real method, silently returned wrong answers for
+  different-length lists — `[1,2]==[1,2,3]` returned `True`); and
+  `__ne__` was missing on both `list` and `tuple` entirely. `dict`'s
+  matching gap needs a different (key-order-independent) shape,
+  filed separately as 024.
 - [015](closed/015-pyc-pod-records-no-frontend-hook.md) —
   `@pyc_struct` decorator wired (originally
   `ifa/issues/015`; moved here because the gap was in the pyc
