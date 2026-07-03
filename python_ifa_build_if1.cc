@@ -1508,9 +1508,42 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       fail("error line %d, statement not supported in pyda path", ctx.lineno);
       return -1;
 
-    case PY_assert_stmt:
-      fail("error line %d, 'assert' not yet supported", ctx.lineno);
-      return -1;
+    case PY_assert_stmt: {
+      // children: [cond] or [cond, msg]. No exception model exists yet
+      // (issues/011), so this lowers to `if not cond:
+      // __pyc_assert_fail__(msg)` -- an abort, not a catchable
+      // AssertionError. The message expression is only built inside the
+      // false branch (not evaluated eagerly before the check), matching
+      // real Python's `assert cond, msg` never evaluating `msg` unless
+      // the assertion fails.
+      build_if1_pyda(n->children[0], ctx);
+      PycAST *cond_ast = getAST(n->children[0], ctx);
+      if1_gen(if1, &ast->code, cond_ast->code);
+      Sym *cond_bool = new_sym(ast);
+      call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, cond_bool, 0);
+      Label *cont_label = if1_alloc_label(if1);
+      Code *ifcode = if1_if_goto(if1, &ast->code, cond_bool, ast);
+      if1_if_label_true(if1, ifcode, cont_label);
+      if1_if_label_false(if1, ifcode, if1_label(if1, &ast->code, ast));
+      Sym *msg_val;
+      if (n->children.n > 1) {
+        build_if1_pyda(n->children[1], ctx);
+        PycAST *msg_ast = getAST(n->children[1], ctx);
+        if1_gen(if1, &ast->code, msg_ast->code);
+        msg_val = new_sym(ast);
+        call_method(&ast->code, ast, msg_ast->rval, sym___str__, msg_val, 0);
+      } else {
+        msg_val = make_string("");
+      }
+      PycSymbol *fail_fn = make_PycSymbol(ctx, "__pyc_assert_fail__", PYC_USE);
+      if (!fail_fn) fail("error line %d, '__pyc_assert_fail__' not found (is __pyc__/05_builtins.py loaded?)", n->line);
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, fail_fn->sym);
+      if1_add_send_arg(if1, send, msg_val);
+      if1_add_send_result(if1, send, new_sym(ast));
+      if1_label(if1, &ast->code, ast, cont_label);
+      return 0;
+    }
 
     // Nodes that are handled by their parent
     case PY_list_for:

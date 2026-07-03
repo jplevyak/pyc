@@ -35,6 +35,18 @@ def bin(x): # return integer as string in binary
 def exit(status = 0):
     __pyc_c_call__(int, "::exit", int, status)
 
+# issues/013: minimal `assert` support -- the frontend (PY_assert_stmt
+# in python_ifa_build_if1.cc) lowers `assert cond, msg` to
+# `if not cond: __pyc_assert_fail__(msg)`, calling this directly by
+# name (no exception model exists yet -- issues/011 -- so this aborts
+# the process rather than raising a catchable AssertionError).
+def __pyc_assert_fail__(msg):
+    if len(msg):
+        print("AssertionError: " + msg)
+    else:
+        print("AssertionError")
+    exit(1)
+
 class range:
   i = 0
   j = 0

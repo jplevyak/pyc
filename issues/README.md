@@ -79,10 +79,6 @@ conventions are the same; the only difference is location.
   — `with` (context managers) is unimplemented; a happy-path
   `__enter__`/`__exit__` desugaring doesn't need issue 011's
   exception model, only full exception-safety does.
-- [013-assert-statement-unimplemented.md](013-assert-statement-unimplemented.md)
-  — `assert` is unimplemented (`fail("'assert' not yet
-  supported")`); smallest of the missing-statement issues, good
-  first target.
 - [014-generators-yield-unimplemented.md](014-generators-yield-unimplemented.md)
   — `yield` (generator functions) is unimplemented; needs a
   resumable-function execution model (state-machine transform or
@@ -126,3 +122,11 @@ commit ref recorded in each file's status line.
   `__str__`/`__repr__`, modeled on `set`'s (which already had it).
   `print(some_dict)` shows real contents instead of the generic
   `<instance>` placeholder.
+- [013](closed/013-assert-statement-unimplemented.md) — `assert`
+  now lowers to an abort (print `AssertionError[: msg]`, `exit(1)`)
+  on both backends; a fully catchable `AssertionError` still awaits
+  issue 011. Found and fixed an unrelated pre-existing bug along the
+  way: the v2 LLVM backend's `__pyc_c_call__` never stripped a
+  leading `::` (a C++-only global-scope qualifier) from the target
+  function name, so `exit()` — and anything else calling a
+  `"::"`-qualified C function — could never link on that backend.

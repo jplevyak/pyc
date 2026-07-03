@@ -10,6 +10,11 @@ site, different feature); `issues/005-while-true-fa-crash.md`
 mentions a fib-heap idiom (`while True: ... break`) that had to
 route around a *different* crash — exception handling was never
 attempted in that work because it hits this wall immediately.
+`closed/013-assert-statement-unimplemented.md` — `assert` landed a
+minimal "abort the process" version explicitly *not* depending on
+this issue; once this lands, `__pyc_assert_fail__`
+(`__pyc__/05_builtins.py`) should be upgraded to raise a catchable
+`AssertionError(msg)` instead of printing + `exit(1)`.
 
 ## Symptom
 
