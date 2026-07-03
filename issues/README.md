@@ -93,14 +93,6 @@ conventions are the same; the only difference is location.
   ...`). Grouped as one filing; split out per sub-item as work
   starts (priority/effort vary widely — annotations and walrus
   are small, async/await and match/case are substantial).
-- [017-multi-instance-mutation-corruption.md](017-multi-instance-mutation-corruption.md)
-  — A second instance of `dict`/`set` (or presumably any
-  self-reassigning-mutator class) constructed in the same function
-  and written to reads back the *wrong* value — silently, on both
-  backends. Minimal repro needs no recursion or subclassing, just
-  two sibling dict instances. Likely an FA/clone-level bug;
-  foundational and probably higher-priority than the missing-feature
-  issues filed alongside it.
 
 ## Closed (archive)
 
@@ -111,3 +103,10 @@ commit ref recorded in each file's status line.
   `@pyc_struct` decorator wired (originally
   `ifa/issues/015`; moved here because the gap was in the pyc
   frontend, not the ifa library).
+- [017](closed/017-multi-instance-mutation-corruption.md) —
+  `dict`/`set` lacked an `__init__`, so their `_keys`/`_vals`/
+  `_items` list fields were bare class-body attributes — Python's
+  classic mutable-class-attribute footgun, applied to a builtin
+  container type. A second instance written to after a first one
+  silently read/wrote the wrong data. Fixed by giving both an
+  explicit `__init__`.

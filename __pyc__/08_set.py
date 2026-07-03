@@ -15,6 +15,12 @@ class __set_iter__:
 class set:
   _items = []
   _len = 0
+  def __init__(self):
+    # issues/017: see dict.__init__'s comment in __pyc__/07_dict.py --
+    # without this, a second set instance constructed after a first one
+    # has already been mutated silently aliases the wrong data.
+    self._items = []
+    self._len = 0
   def __len__(self):
     return self._len
   def __contains__(self, item):

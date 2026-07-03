@@ -12,11 +12,10 @@ remains open, tracked jointly with issue 014 (generators).
 `x in y` / `x not in y` operand-order bug found while wiring up
 `set.__contains__` (see "What landed").
 **Related:** issue 009 (dict comprehensions — same family of gap,
-different failure mode, still open); **issue 017** — filed after
-this fix exposed a serious pre-existing multi-instance data
+different failure mode, still open); **issue 017** (closed) — filed
+after this fix exposed a serious pre-existing multi-instance data
 corruption bug (affects `dict` too, nothing to do with sets
-specifically) that constrained how the new set tests could be
-composed.
+specifically), then fixed in a follow-up pass.
 
 ## Symptom
 
@@ -137,24 +136,22 @@ upstream ever produced a value for the set/genexpr node.
    operand-order fix made it reachable.
 
 Verified against real `python3` output (`tests/set_literal_basic.py`,
-`tests/set_comprehension.py`, `tests/set_comprehension_filter.py`,
-`tests/set_mutation.py`; `tests/genexpr_basic.py` locks in the clean
-`fail()` via `.expect_fail`): set literals, dedup, `in`/`not in`,
-iteration, `str()`, comprehensions (plain and filtered), `add`/
-`discard`. Passes on both the C and v2 LLVM backends. Full suite:
-114/0 (was 110/0 before this fix; +4 new set tests, +1 genexpr
-xfail — up from 1 to 2 expected fails).
+`tests/genexpr_basic.py` locks in the clean `fail()` via
+`.expect_fail`): set literals, dedup, `in`/`not in`, iteration,
+`str()`, comprehensions (plain and filtered), `add`/`discard`,
+multiple concurrent instances. Passes on both the C and v2 LLVM
+backends.
 
-**While testing, found issue 017**: constructing a second instance
-of `dict` (or `set`) in the same function and mutating it produces
-silently wrong values — nothing to do with sets specifically (a
-minimal `dict`-only repro reproduces it identically), but it
-directly constrained how the new set tests could be composed (each
-test keeps mutation to a single instance, or keeps multiple
-instances read-only, since combining "2nd+ instance" with "any
-mutation" is the confirmed trigger). See issue 017 for the full
-write-up; not fixed here — it's a foundational FA/clone-level bug
-well beyond this issue's scope.
+**While testing, found (and later fixed) issue 017**: constructing a
+second instance of `dict` (or `set`) in the same function and
+mutating it produced silently wrong values — nothing to do with sets
+specifically (a minimal `dict`-only repro reproduced it identically).
+It initially constrained how the new set tests could be composed
+(each test kept mutation to a single instance, or kept multiple
+instances read-only); once issue 017 was fixed, `tests/set_literal_basic.py`
+was consolidated back into one natural test exercising several
+concurrent instances (`s`, `dup`, `comp`, `evens`) plus mutation,
+since the artificial isolation was no longer needed.
 
 ## Verification plan
 
@@ -162,9 +159,7 @@ well beyond this issue's scope.
 2. `(x * 2 for x in [1, 2, 3])` fails cleanly (interim; real
    laziness tracked in issue 014). ✓
 3. No `Assertion .* failed` / core dump for either construct. ✓
-4. `tests/set_literal_basic.py`, `tests/set_comprehension.py`,
-   `tests/set_comprehension_filter.py`, `tests/set_mutation.py`,
-   `tests/genexpr_basic.py` added. ✓
+4. `tests/set_literal_basic.py` and `tests/genexpr_basic.py` added. ✓
 
 ## What this unblocks
 

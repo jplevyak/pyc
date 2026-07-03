@@ -16,6 +16,22 @@ class dict:
   _keys = []
   _vals = []
   _len = 0
+  def __init__(self):
+    # issues/017: without this, _keys/_vals/_len stay bare class-body
+    # attributes -- shared (via the prototype-clone instantiation model)
+    # across every dict instance until each one's first write, exactly
+    # like Python's classic mutable-class-attribute footgun. A second
+    # instance constructed after a first one has already been written to
+    # silently reads/writes the wrong data (see issues/017 for the full
+    # trace). __new__() already calls __init__ fresh per instance
+    # (mirroring __dict_iter__'s own __init__ above, which has the same
+    # class-body-default-immediately-overwritten shape); giving each
+    # instance its own list objects here, rather than relying on
+    # list.append()'s return value to implicitly decouple from the
+    # shared default on first write, closes the gap.
+    self._keys = []
+    self._vals = []
+    self._len = 0
   def __len__(self):
     return self._len
   def __getitem__(self, key):
