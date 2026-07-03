@@ -108,6 +108,25 @@ static Sym *map_pyop_to_cmp(int op) {
   }
 }
 
+// `x in y` / `x not in y` are asymmetric: unlike every other comparison
+// operator (where the left operand is always the dispatch receiver), `in`
+// calls the *container's* (right operand's) __contains__ with the item
+// (left operand) as the argument. There is no real `__ncontains__` dunder
+// in Python (map_pyop_to_cmp's PY_CMP_NOT_IN mapping to that name is never
+// actually reached — this helper intercepts both PY_CMP_IN/PY_CMP_NOT_IN
+// before either comparison call site falls through to map_pyop_to_cmp);
+// `not in` is `__contains__` followed by `__not__`, mirroring how `is not`
+// is already lowered a few lines up.
+static void emit_in_pyda(Code **code, PycAST *ast, Sym *item, Sym *container, int op, Sym *result) {
+  if (op == PY_CMP_IN) {
+    call_method(code, ast, container, make_symbol("__contains__"), result, 1, item);
+  } else {
+    Sym *tmp = new_sym(ast);
+    call_method(code, ast, container, make_symbol("__contains__"), tmp, 1, item);
+    if1_send(if1, code, 2, 1, make_symbol("__not__"), tmp, result)->ast = ast;
+  }
+}
+
 // Make a number constant from a PyDAST PY_number node
 static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
   // Parse str_val since is_int/int_val/float_val may not be set from grammar
@@ -534,20 +553,26 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
   return 1;
 }
 
-// Build list comprehension for pyda path
-static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx);
+// Build list/set comprehension for pyda path. `accum_method` is the method
+// called on `ast->rval` (the already-created accumulator instance) to add
+// each produced element: sym_append for a list comprehension, "add" for a
+// set comprehension. Defaults to sym_append so the existing PY_listcomp
+// call site doesn't need to change.
+static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx,
+                                  Sym *accum_method = sym_append);
 
-static void build_list_comp_inner_pyda(PyDAST *iter_node, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx) {
+static void build_list_comp_inner_pyda(PyDAST *iter_node, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx,
+                                        Sym *accum_method) {
   if (!iter_node) {
     // Base case: emit the element
     build_if1_pyda(elt, ctx);
     PycAST *elt_ast = getAST(elt, ctx);
     if1_gen(if1, code, elt_ast->code);
-    call_method(code, ast, ast->rval, sym_append, new_sym(ast), 1, elt_ast->rval);
+    call_method(code, ast, ast->rval, accum_method, new_sym(ast), 1, elt_ast->rval);
     return;
   }
   if (iter_node->kind == PY_list_for || iter_node->kind == PY_comp_for) {
-    build_list_comp_pyda(iter_node, elt, ast, code, ctx);
+    build_list_comp_pyda(iter_node, elt, ast, code, ctx, accum_method);
   } else if (iter_node->kind == PY_list_if || iter_node->kind == PY_comp_if) {
     // PY_list_if / PY_comp_if: children = [test, list_iter?]
     build_if1_pyda(iter_node->children[0], ctx);
@@ -558,12 +583,13 @@ static void build_list_comp_inner_pyda(PyDAST *iter_node, PyDAST *elt, PycAST *a
     if1_if_label_false(if1, ifcode, short_circuit);
     if1_if_label_true(if1, ifcode, if1_label(if1, code, ast));
     PyDAST *next_iter = (iter_node->children.n > 1) ? iter_node->children[1] : nullptr;
-    build_list_comp_inner_pyda(next_iter, elt, ast, code, ctx);
+    build_list_comp_inner_pyda(next_iter, elt, ast, code, ctx, accum_method);
     if1_label(if1, code, ast, short_circuit);
   }
 }
 
-static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx) {
+static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Code **code, PycCompiler &ctx,
+                                  Sym *accum_method) {
   // list_for/comp_for: children = [target_exprlist, iter_testlist, list_iter?]
   PyDAST *target = list_for->children[0];
   PyDAST *iter_expr = list_for->children[1];
@@ -580,7 +606,7 @@ static void build_list_comp_pyda(PyDAST *list_for, PyDAST *elt, PycAST *ast, Cod
   if (t->code) if1_gen(if1, &body, t->code);
   call_method(&body, ast, iter, sym___next__, tmp, 0);
   if1_move(if1, &body, tmp, t->sym, ast);
-  build_list_comp_inner_pyda(next_iter, elt, ast, &body, ctx);
+  build_list_comp_inner_pyda(next_iter, elt, ast, &body, ctx, accum_method);
   if1_loop(if1, code, if1_alloc_label(if1), if1_alloc_label(if1), cond_var, before, cond, next, body, ast);
 }
 
@@ -1110,6 +1136,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             if1_send(if1, &ast->code, 2, 1,
                      make_symbol("__not__"), tmp, ast->rval)->ast = ast;
           }
+        } else if (op == PY_CMP_IN || op == PY_CMP_NOT_IN) {
+          emit_in_pyda(&ast->code, ast, lv->rval, rv->rval, op, ast->rval);
         } else {
           if1_send(if1, &ast->code, 3, 1, map_pyop_to_cmp(op),
                    lv->rval, rv->rval, ast->rval)->ast = ast;
@@ -1126,7 +1154,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           PycAST *rv = getAST(rhs_node, ctx);
           if1_gen(if1, &ast->code, rv->code);
           s = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, map_pyop_to_cmp(op_node->op), ls, rv->rval, s)->ast = ast;
+          if (op_node->op == PY_CMP_IN || op_node->op == PY_CMP_NOT_IN) {
+            emit_in_pyda(&ast->code, ast, ls, rv->rval, op_node->op, s);
+          } else {
+            if1_send(if1, &ast->code, 3, 1, map_pyop_to_cmp(op_node->op), ls, rv->rval, s)->ast = ast;
+          }
           ls = rv->rval;
           Code *ifcode = if1_if_goto(if1, &ast->code, s, ast);
           if1_if_label_false(if1, ifcode, ast->label[0]);
@@ -1498,8 +1530,42 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
-    case PY_set:
+    case PY_set: {
+      // Two grammar shapes (python.g dictorsetmaker): a flat literal
+      // `{e1, e2, ...}` (n children, all element exprs), or a set
+      // comprehension `{expr for target in iter}` (2 children: [expr,
+      // PY_comp_for]) — build_syms_pyda gave the comprehension form its own
+      // scope, matching PY_listcomp; reenter it here the same way
+      // PY_listcomp does via reenter_scope_pyda.
+      if (!ast->sym) fail("error line %d, 'set' type not found (is __pyc__/08_set.py loaded?)", n->line);
+      Code *ctor = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, ctor, ast->sym);  // set class sym (set by build_syms_pyda)
+      Sym *set_inst = new_sym(ast);
+      ast->rval = set_inst;
+      if1_add_send_result(if1, ctor, set_inst);
+      if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
+        reenter_scope_pyda(n, ctx);
+        build_list_comp_pyda(n->children[1], n->children[0], ast, &ast->code, ctx, make_symbol("add"));
+        exit_scope(ctx);
+      } else {
+        for (auto c : n->children.values()) {
+          build_if1_pyda(c, ctx);
+          if1_gen(if1, &ast->code, getAST(c, ctx)->code);
+          call_method(&ast->code, ast, set_inst, make_symbol("add"), new_sym(ast), 1, getAST(c, ctx)->rval);
+        }
+      }
+      return 0;
+    }
+
     case PY_genexpr:
+      // Generator expressions need a lazily-evaluated iterator object (see
+      // issue 014's generator/yield work); until that lands, fail cleanly
+      // instead of falling through to the no-op default case (issue 008 —
+      // that used to crash the compiler with an internal if1_move
+      // assertion rather than reject the input).
+      fail("error line %d, generator expressions not yet supported (see issues/008, issues/014)", ctx.lineno);
+      return -1;
+
     case PY_yield_expr:
     case PY_slice:
     case PY_subscriptlist:

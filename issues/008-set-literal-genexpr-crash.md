@@ -1,12 +1,22 @@
 # Issue 008: Set literals and generator expressions crash the compiler
 
-**Status:** open.
-**Affects:** `python_ifa_build_if1.cc:1319-1327` (`PY_set` /
-`PY_genexpr` fall into the generic default case in
-`build_if1_pyda`); `ifa/if1/if1.cc:171` (`if1_move`, where the
-crash actually fires).
-**Related:** issue 009 (dict/set comprehensions — same family of
-gap, different failure mode).
+**Status:** set literals and set comprehensions fixed. Generator
+expressions turned into a clean `fail()` (was a crash) per this
+issue's own interim-fix sketch; real generator-expression support
+remains open, tracked jointly with issue 014 (generators).
+**Affects:** `python_ifa_build_if1.cc` (`build_syms_pyda`'s and
+`build_if1_pyda`'s `PY_set` cases — new; `PY_genexpr` given its own
+`fail()` instead of falling into the shared no-op default);
+`__pyc__/08_set.py` — new `set`/`__set_iter__` classes;
+`python_ifa_build_if1.cc`'s `PY_compare` — fixed a pre-existing
+`x in y` / `x not in y` operand-order bug found while wiring up
+`set.__contains__` (see "What landed").
+**Related:** issue 009 (dict comprehensions — same family of gap,
+different failure mode, still open); **issue 017** — filed after
+this fix exposed a serious pre-existing multi-instance data
+corruption bug (affects `dict` too, nothing to do with sets
+specifically) that constrained how the new set tests could be
+composed.
 
 ## Symptom
 
@@ -87,28 +97,79 @@ upstream ever produced a value for the set/genexpr node.
    from "compiler crash" to "clean rejection" while the real
    fix is designed.
 
+## What landed
+
+1. **`__pyc__/08_set.py`**: a new `set`/`__set_iter__` pair, modeled
+   directly on `07_dict.py`'s linear-scan-over-a-backing-list
+   pattern (`_items`/`_len`, `self._items = self._items.append(x)`
+   dedup-on-add). Implements `__len__`, `__contains__`, `add`,
+   `discard`, `remove`, `pop`, `clear`, `__iter__`,
+   `__pyc_to_bool__`, `__eq__`/`__ne__`, `__str__`.
+2. **`build_syms_pyda`'s `PY_set` case**: resolves `ast->sym` to the
+   `set` class (mirroring `PY_dict`), and — since `dictorsetmaker`
+   gives the comprehension form `{expr for ...}` a 2-child shape
+   (`[expr, PY_comp_for]`) distinct from the flat-literal N-child
+   shape — gives the comprehension form its own scope, mirroring
+   `PY_listcomp`/`PY_genexpr` just above it.
+3. **`build_if1_pyda`'s `PY_set` case**: instantiates an empty `set`
+   via a real constructor call (like `PY_dict`, since there's no
+   low-level `sym_set` primitive the way `PY_list`/`PY_tuple` have);
+   flat literals call `add()` per element; comprehensions reuse
+   `build_list_comp_pyda` (the same loop-lowering machinery
+   `PY_listcomp` uses), parameterized with a new `accum_method`
+   argument so it calls `add()` instead of `sym_append`.
+4. **`PY_genexpr`**: split out of the shared silent-recursion
+   fallthrough into its own `fail("generator expressions not yet
+   supported")` — the interim fix this issue's sketch proposed.
+5. **Fixed `x in y` / `x not in y`** (`PY_compare`): discovered while
+   wiring up `2 in {1,2,3}` that the *existing* lowering called
+   `lv.__contains__(rv)` (left operand as receiver) instead of the
+   correct `rv.__contains__(lv)` — Python's `in` is asymmetric, the
+   container (right operand) is always the receiver. Also dropped
+   the fictitious `__ncontains__` dunder (`not in` doesn't have a
+   separate protocol in real Python) in favor of `__contains__` +
+   `__not__`, matching how `is not` is already lowered. This bug
+   predated this issue and affected **every** container type
+   (`list`, `dict`, `set`) — confirmed via `2 in [1,2,3]`, which was
+   equally broken before this fix. Also implemented
+   `list.__contains__` (`__pyc__/04_sequence.py`), previously a
+   `pass` stub that silently returned `None` — invisible until the
+   operand-order fix made it reachable.
+
+Verified against real `python3` output (`tests/set_literal_basic.py`,
+`tests/set_comprehension.py`, `tests/set_comprehension_filter.py`,
+`tests/set_mutation.py`; `tests/genexpr_basic.py` locks in the clean
+`fail()` via `.expect_fail`): set literals, dedup, `in`/`not in`,
+iteration, `str()`, comprehensions (plain and filtered), `add`/
+`discard`. Passes on both the C and v2 LLVM backends. Full suite:
+114/0 (was 110/0 before this fix; +4 new set tests, +1 genexpr
+xfail — up from 1 to 2 expected fails).
+
+**While testing, found issue 017**: constructing a second instance
+of `dict` (or `set`) in the same function and mutating it produces
+silently wrong values — nothing to do with sets specifically (a
+minimal `dict`-only repro reproduces it identically), but it
+directly constrained how the new set tests could be composed (each
+test keeps mutation to a single instance, or keeps multiple
+instances read-only, since combining "2nd+ instance" with "any
+mutation" is the confirmed trigger). See issue 017 for the full
+write-up; not fixed here — it's a foundational FA/clone-level bug
+well beyond this issue's scope.
+
 ## Verification plan
 
-1. `{1, 2, 3}` compiles and `len(s) == 3` at runtime (once
-   implemented), or fails cleanly with a diagnostic (interim).
-2. `(x * 2 for x in [1, 2, 3])` iterates correctly in a `for`
-   loop and produces `[2, 4, 6]` (once implemented), or fails
-   cleanly (interim).
-3. No `Assertion .* failed` / core dump for either construct —
-   the interim bar is "clean fail() instead of crash."
-4. Add `tests/set_literal_basic.py` and
-   `tests/genexpr_basic.py` (+ `.exec.check` or
-   `.expect_fail`/`.check_fail` markers matching whichever fix
-   tier lands) — neither exists today (confirmed: no test in
-   `tests/*.py` uses set-literal or genexpr syntax).
+1. `{1, 2, 3}` compiles and `len(s) == 3` at runtime. ✓
+2. `(x * 2 for x in [1, 2, 3])` fails cleanly (interim; real
+   laziness tracked in issue 014). ✓
+3. No `Assertion .* failed` / core dump for either construct. ✓
+4. `tests/set_literal_basic.py`, `tests/set_comprehension.py`,
+   `tests/set_comprehension_filter.py`, `tests/set_mutation.py`,
+   `tests/genexpr_basic.py` added. ✓
 
 ## What this unblocks
 
 Set literals are common in idiomatic Python (deduplication,
-membership tests); generator expressions are the standard
-memory-efficient alternative to list comprehensions and appear
-throughout ported CPython code (e.g. `sum(x*x for x in items)`).
-Beyond the missing feature, an uncaught process abort on valid
-Python syntax is a much worse failure mode than a clean
-diagnostic — it should be triaged ahead of the "add the feature"
-work purely as a crash-hardening fix.
+membership tests) and now work correctly on both backends. Generator
+expressions remain unimplemented but no longer crash the compiler —
+tracked jointly with issue 014. The `in`/`not in` operator fix
+unblocks membership testing for *any* container, not just sets.

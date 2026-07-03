@@ -465,10 +465,31 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
+    case PY_set: {
+      // Two grammar shapes (python.g dictorsetmaker): a flat literal
+      // `{e1, e2, ...}` (n children, all element exprs), or a set
+      // comprehension `{expr for target in iter}` (2 children: [expr,
+      // PY_comp_for]). The comprehension form gets its own scope, mirroring
+      // PY_listcomp/PY_genexpr just above (so the loop target doesn't leak
+      // into the enclosing scope).
+      if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
+        enter_scope(n, ctx, nullptr);
+        ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
+        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+        exit_scope(ctx);
+      } else {
+        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      }
+      PycSymbol *ss = make_PycSymbol(ctx, "set", PYC_USE);
+      if (ss) ast->sym = ss->sym;
+      else fprintf(stderr, "PY_set: 'set' not found in scope (line %d)\n", n->line);
+      ast->rval = new_sym(ast);
+      return 0;
+    }
+
     case PY_number:
     case PY_string:
     case PY_list:
-    case PY_set:
     case PY_slice:
     case PY_subscriptlist:
     case PY_parameters:

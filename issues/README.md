@@ -55,9 +55,11 @@ conventions are the same; the only difference is location.
   directives is evaluated but never applied; decorated
   functions/classes behave as if undecorated with no diagnostic.
 - [008-set-literal-genexpr-crash.md](008-set-literal-genexpr-crash.md)
-  — Set literals (`{1,2,3}`), set comprehensions, and generator
-  expressions (`(x for x in y)`) abort the compiler with an
-  internal `if1_move` assertion instead of a clean diagnostic.
+  — **Set literals/comprehensions fixed** (new `__pyc__/08_set.py`
+  `set` class); also fixed a pre-existing `x in y`/`x not in y`
+  operand-order bug affecting *every* container type, found along
+  the way. Generator expressions now fail cleanly instead of
+  crashing (real support tracked with issue 014).
 - [009-dict-comprehension-drops-comp-for.md](009-dict-comprehension-drops-comp-for.md)
   — Dict comprehensions "compile" (exit 0) but silently drop the
   `for` clause, producing generated C that aborts at runtime with
@@ -91,6 +93,14 @@ conventions are the same; the only difference is location.
   ...`). Grouped as one filing; split out per sub-item as work
   starts (priority/effort vary widely — annotations and walrus
   are small, async/await and match/case are substantial).
+- [017-multi-instance-mutation-corruption.md](017-multi-instance-mutation-corruption.md)
+  — A second instance of `dict`/`set` (or presumably any
+  self-reassigning-mutator class) constructed in the same function
+  and written to reads back the *wrong* value — silently, on both
+  backends. Minimal repro needs no recursion or subclassing, just
+  two sibling dict instances. Likely an FA/clone-level bug;
+  foundational and probably higher-priority than the missing-feature
+  issues filed alongside it.
 
 ## Closed (archive)
 
