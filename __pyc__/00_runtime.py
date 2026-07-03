@@ -11,6 +11,13 @@ class __pyc_any_type__:
     return self.__getitem__(slice(i,j,s))
   def __repr__(self):
     return self.__str__()
+  def __format__(self, spec):
+    # issues/006: default __format__ for classes with no override.
+    # CPython's object.__format__ raises TypeError for a non-empty
+    # spec; pyc has no exception model yet (issue 011), so this
+    # falls back to str() for any spec rather than failing at
+    # runtime -- permissive, not exactly CPython's behavior.
+    return self.__str__()
   # Issue 028 step 4: `is` / `is not` no longer dispatch to
   # these methods.  The frontend (`python_ifa_build_if1.cc`
   # PY_compare) now lowers ALL `is`/`is not` to one of:
@@ -96,6 +103,16 @@ class bool:
       return "False"
   def __pyc_to_bool__(self):
     return __pyc_clone_constants__(self)
+  def __format__(self, spec):
+    # issues/006: PEP 3101 format-spec mini-language. Matches CPython:
+    # bool is an int subtype, so a numeric spec ("d", "x", width, etc.)
+    # formats 0/1 as an int; an empty spec falls back to str().
+    if len(spec) == 0:
+      return self.__str__()
+    v = 0
+    if self:
+      v = 1
+    return __pyc_c_call__(str, "_CG_format_int_spec", int, v, str, spec)
 
 class __base_iter__:
   thestr = None

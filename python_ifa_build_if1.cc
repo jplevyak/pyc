@@ -380,11 +380,11 @@ static void scan_fstring_field(const char **pp, const char *end, int lineno,
 // lowers each field's expression via build_fstring_subexpr_pyda, stringifies
 // it (str() for no/`!s` conversion, repr() for `!r`; `!a` also uses repr()
 // since no separate ascii-escaping is implemented), and concatenates every
-// piece left-to-right with `__add__`. Format specs (`{x:spec}`) aren't
-// implemented yet — rather than silently ignoring them (this bug's whole
-// premise is that pyc must not silently produce the wrong string), a
-// non-empty spec is a hard compile error until issue 006's format-spec
-// follow-up lands.
+// piece left-to-right with `__add__`. A non-empty format spec (`{x:spec}`)
+// dispatches to `__format__` (mirroring CPython's `format(x, spec)`):
+// if a conversion (`!r`/`!s`/`!a`) was also given, the spec formats the
+// already-converted *string*, not the original value, matching CPython's
+// order of operations.
 static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   const char *s = n->str_val;
   bool is_raw, is_fstring;
@@ -418,14 +418,22 @@ static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       p++;
       char *expr_src; char conv; char *spec;
       scan_fstring_field(&p, end, ctx.lineno, &expr_src, &conv, &spec);
-      if (spec && *spec)
-        fail("error line %d, f-string format specs not yet supported: '{%s:%s}'",
-             ctx.lineno, expr_src, spec);
       PycAST *e_ast = build_fstring_subexpr_pyda(expr_src, ctx.lineno, ctx);
       if1_gen(if1, &ast->code, e_ast->code);
       Sym *str_piece = new_sym(ast);
       cchar *method_name = (conv == 'r' || conv == 'a') ? "__repr__" : "__str__";
-      call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), str_piece, 0);
+      if (spec && *spec) {
+        Sym *spec_sym = make_string(spec);
+        if (conv) {
+          Sym *converted = new_sym(ast);
+          call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), converted, 0);
+          call_method(&ast->code, ast, converted, make_symbol("__format__"), str_piece, 1, spec_sym);
+        } else {
+          call_method(&ast->code, ast, e_ast->rval, make_symbol("__format__"), str_piece, 1, spec_sym);
+        }
+      } else {
+        call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), str_piece, 0);
+      }
       fstring_append_piece(ast, ctx, &result, str_piece);
       continue;
     }

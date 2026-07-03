@@ -1,10 +1,9 @@
 # Issue 006: f-strings compile silently but never interpolate
 
-**Status:** partially fixed. Interpolation (`{expr}`, `{{`/`}}`
-literal braces, `!s`/`!r`/`!a` conversions, nesting/indexing/method
-calls inside the field) works on both backends. Format specs
-(`{x:spec}`) are intentionally a hard compile error for now rather
-than a silent no-op — see "Remaining gap" below.
+**Status:** fixed. Interpolation (`{expr}`, `{{`/`}}` literal braces,
+`!s`/`!r`/`!a` conversions, nesting/indexing/method calls inside the
+field) and format specs (`{x:spec}`, PEP 3101 mini-language) both
+work on both backends. See "Format specs: what landed" below.
 **Affects:** `python_ifa_build_if1.cc` (`build_fstring_pyda`,
 `scan_fstring_field`, `build_fstring_subexpr_pyda`,
 `fstring_append_piece`, `decode_string_content`,
@@ -161,29 +160,82 @@ triple-quoted f-strings. Passes on both the C and v2 LLVM backends
 (110/0 on `./test_pyc` and `PYC_FLAGS="-b" ./test_pyc`, up from
 109/0 before this fix — no regressions).
 
-## Remaining gap
+## Format specs: what landed
 
-**Format specs** (`{x:.2f}`, `{x:>10}`, `{x:,}`, etc.) are not
-implemented — `scan_fstring_field` already extracts the spec
-string cleanly, so wiring it up means mapping PEP 3101's mini
-format-spec language onto pyc's existing `_CG_*`
-number-formatting primitives (the same ones `"%f" % x`-style
-`__pyc_format_string__` uses; see `01_str.py`'s `__mod__`). Worth
-its own follow-up issue once someone hits a real need for it;
-today it's a clean compile error rather than silently dropped.
+Implemented the PEP 3101 format-spec mini-language
+(`[[fill]align][sign]["#"]["0"][width][","|"_"]["." precision][type]`)
+via a `__format__` dunder method, dispatched exactly like `__str__`/
+`__repr__` (mirrors CPython's `format(x, spec)` → `type(x).__format__`):
 
-## Verification plan (for the format-spec follow-up)
+1. **`pyc_c_runtime.h`/`pyc_runtime.c`.** Added `_CG_parse_format_spec`
+   (parses the spec string into fill/align/sign/alt/zero/width/
+   group/precision/type), `_CG_group_digits` (comma/underscore
+   thousands grouping), and `_CG_pad_align` (width/fill/alignment,
+   including the cases plain `printf` can't do at all — a custom
+   fill character, center alignment, or `=` padding-after-sign) as
+   shared helpers, plus three type-specific formatters built on top:
+   `_CG_format_int_spec`, `_CG_format_float_spec`,
+   `_CG_format_str_spec`. Numeric conversions (`f`/`F`/`e`/`E`/`g`/`G`/
+   `%`/`d`/`x`/`X`/`o`/`b`) reuse ordinary `printf` conversions for
+   the "core" digit string wherever printf already does the right
+   thing; grouping and alignment/fill are applied afterward,
+   uniformly across all three types. Exposed to the LLVM backend via
+   the same `inline`-in-header-plus-`extern`-in-`pyc_runtime.c`
+   pattern as `_CG_str_from_int`/`_CG_str_from_float`.
+2. Added `__format__(self, spec)` to `int`/`float`/`str`
+   (`__pyc__/02_numeric.py`, `01_str.py`), each a thin
+   `__pyc_c_call__` wrapper around the matching `_CG_format_*_spec`.
+   `bool.__format__` (`00_runtime.py`) special-cases an empty spec to
+   `self.__str__()` (`"True"`/`"False"`) and otherwise converts to
+   0/1 and delegates to `_CG_format_int_spec`, matching CPython's
+   "bool is an int subtype" formatting behavior.
+   `__pyc_any_type__.__format__` (the default for classes with no
+   override) falls back to `self.__str__()` unconditionally — CPython's
+   `object.__format__` raises `TypeError` for a non-empty spec, but
+   pyc has no exception model yet (issue 011), so this is
+   deliberately permissive rather than matching that error case.
+3. `build_fstring_pyda` (`python_ifa_build_if1.cc`) now dispatches to
+   `__format__` for any non-empty spec instead of failing to compile.
+   If a conversion (`!r`/`!s`/`!a`) was also given, the *converted
+   string* is formatted (`str.__format__`), not the original value —
+   matches CPython's order of operations (convert, then format).
 
-1. Width/precision: `f"{3.14159:.2f}"` → `"3.14"`.
-2. Alignment/fill: `f"{'x':>5}"` → `"    x"`.
-3. Integer presentation types: `f"{255:x}"` → `"ff"`.
-4. Existing `tests/fstring_basic.py` continues to pass unchanged.
+**Found and fixed along the way**: verifying `f"{1234567.89:,.2f}"`
+surfaced a real, pre-existing, unrelated bug — the C backend (not
+LLVM) silently corrupted *any* float literal needing more than 6
+significant digits (e.g. `1234567.89` became `1234570.0`) when
+embedding it as a compiled constant. Root cause: `ifa/if1/num.cc`'s
+`sprint_float_val` (used by `cg.cc`'s `write_c` to serialize a float
+constant's literal text into the generated `.c` file) used bare
+`"%g"` (6 significant digits) instead of `"%.17g"`, unlike
+`pyc_c_runtime.h`'s `_CG_str_from_float`/
+`_CG_prim_primitive_to_string(double)`, which already use `%.17g`
+for exactly this reason. Fixed by matching that existing convention.
+This is a codegen-constant-embedding bug, not new corruption from
+this change — `sprint_float_val` is core `ifa` code, not part of
+this issue's `__format__` work, but the fix was small, obviously
+correct (matches an established pattern used two other places
+already), and directly needed to verify format specs against
+realistic values. Verified `./ifa --test` (58/0) and `make test`
+(same 6 pre-existing, unrelated `patterns`-phase failures) unaffected.
+
+Verified against CPython on both backends: width, precision, all
+sign variants, `#`/`0` flags, all three alignments plus a custom
+fill character, comma grouping (int and float together), percentage
+type, all integer presentation types (`d`/`x`/`X`/`o`/`b`/`#x`),
+string truncation via precision, `bool`, and a custom class's
+`__str__` used inside another f-string. Added
+`tests/fstring_format_spec.py` and (for the `sprint_float_val` fix)
+`tests/float_literal_precision.py`. Full `./test_pyc` +
+`PYC_FLAGS="-b" ./test_pyc`: 121/0 both backends, no regressions.
 
 ## What this unblocks
 
 f-strings are the standard modern-Python string-formatting idiom;
 before this fix, any ported CPython code using them miscompiled
 silently rather than failing loudly — a trap for anyone porting
-code to pyc without independently noticing the wrong output. Basic
-interpolation (the overwhelming majority of real-world f-string
-usage) now works correctly on both backends.
+code to pyc without independently noticing the wrong output.
+Interpolation and format specs — the two pieces of PEP 498 — both
+now work correctly on both backends. The `sprint_float_val` fix
+also removes a silent numeric-precision bug affecting any compiled
+float literal, independent of f-strings.

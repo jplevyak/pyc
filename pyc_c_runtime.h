@@ -208,6 +208,276 @@ inline char *_CG_str_from_float(double d) {
   return s;
 }
 
+// issues/006: PEP 3101 format-spec mini-language for f-strings
+// (`f"{x:.2f}"`, `f"{x:>10}"`, `f"{x:,}"`, etc.) and `__format__`.
+//
+// format_spec ::= [[fill]align][sign]["#"]["0"][width][","|"_"]["." precision][type]
+//
+// Parsed once per call into `_CG_FormatSpec`; `_CG_format_int_spec`/
+// `_CG_format_float_spec`/`_CG_format_str_spec` each build a "core"
+// string (sign + digits/text, no width padding) using ordinary
+// printf conversions for the numeric cases, then hand off to the
+// shared `_CG_group_digits` (comma/underscore grouping) and
+// `_CG_pad_align` (width/fill/alignment, including printf-unsupported
+// cases like a custom fill character or center alignment) helpers,
+// which work uniformly across all three types. `n`/`c` and locale-aware
+// grouping are not implemented (treated as `d`/plain width padding);
+// dynamic width/precision (`{x:{width}}`) are handled by the frontend
+// re-parsing the spec as a literal string, so they're out of scope here.
+typedef struct {
+  char fill;
+  char align;   // '<', '>', '^', '=', or 0 (unspecified)
+  char sign;    // '+', '-', ' '
+  int alt;      // '#' flag
+  int zero;     // '0' flag
+  int width;    // -1 if unspecified
+  char group;   // ',', '_', or 0
+  int precision;  // -1 if unspecified
+  char type;    // presentation type, or 0 if unspecified
+} _CG_FormatSpec;
+
+inline void _CG_parse_format_spec(const char *spec, _CG_FormatSpec *out) {
+  out->fill = ' ';
+  out->align = 0;
+  out->sign = '-';
+  out->alt = 0;
+  out->zero = 0;
+  out->width = -1;
+  out->group = 0;
+  out->precision = -1;
+  out->type = 0;
+  const char *p = spec;
+  if (p[0] && p[1] && (p[1] == '<' || p[1] == '>' || p[1] == '^' || p[1] == '=')) {
+    out->fill = p[0];
+    out->align = p[1];
+    p += 2;
+  } else if (p[0] == '<' || p[0] == '>' || p[0] == '^' || p[0] == '=') {
+    out->align = p[0];
+    p += 1;
+  }
+  if (p[0] == '+' || p[0] == '-' || p[0] == ' ') {
+    out->sign = p[0];
+    p++;
+  }
+  if (p[0] == '#') {
+    out->alt = 1;
+    p++;
+  }
+  if (p[0] == '0') {
+    out->zero = 1;
+    p++;
+    if (!out->align) {
+      out->align = '=';
+      out->fill = '0';
+    }
+  }
+  if (p[0] >= '0' && p[0] <= '9') {
+    int w = 0;
+    while (p[0] >= '0' && p[0] <= '9') {
+      w = w * 10 + (*p - '0');
+      p++;
+    }
+    out->width = w;
+  }
+  if (p[0] == ',' || p[0] == '_') {
+    out->group = p[0];
+    p++;
+  }
+  if (p[0] == '.') {
+    p++;
+    int pr = 0;
+    while (p[0] >= '0' && p[0] <= '9') {
+      pr = pr * 10 + (*p - '0');
+      p++;
+    }
+    out->precision = pr;
+  }
+  if (p[0]) out->type = p[0];
+}
+
+// Insert `sep` every 3 digits (from the right) in `core`'s integer
+// part, skipping a leading sign and stopping at a decimal point.
+// Caller frees the result with `free`.
+inline char *_CG_group_digits(const char *core, char sep) {
+  int len = (int)strlen(core);
+  int sign_len = (core[0] == '-' || core[0] == '+' || core[0] == ' ') ? 1 : 0;
+  int dot = len;
+  for (int i = sign_len; i < len; i++)
+    if (core[i] == '.') {
+      dot = i;
+      break;
+    }
+  int int_len = dot - sign_len;
+  int groups = int_len > 0 ? (int_len - 1) / 3 : 0;
+  char *out = (char *)malloc(len + groups + 1);
+  int oi = 0;
+  for (int i = 0; i < sign_len; i++) out[oi++] = core[i];
+  for (int i = sign_len; i < dot; i++) {
+    int from_left = i - sign_len;
+    int remaining_after = int_len - from_left - 1;
+    out[oi++] = core[i];
+    if (remaining_after > 0 && remaining_after % 3 == 0) out[oi++] = sep;
+  }
+  for (int i = dot; i < len; i++) out[oi++] = core[i];
+  out[oi] = 0;
+  return out;
+}
+
+// Pad/align `core` to `width` using `fill`. `sign_len` is the number
+// of leading sign/space characters in `core` (only meaningful for
+// '=' alignment, which pads between the sign and the digits).
+// Returns a freshly-allocated pyc string.
+inline char *_CG_pad_align(const char *core, int width, char align, char fill, int sign_len) {
+  int len = (int)strlen(core);
+  if (width <= len) return _CG_String(core);
+  int pad = width - len;
+  char *out = (char *)malloc((size_t)width + 1);
+  int oi = 0;
+  if (align == '>') {
+    for (int i = 0; i < pad; i++) out[oi++] = fill;
+    memcpy(out + oi, core, len);
+    oi += len;
+  } else if (align == '^') {
+    int left = pad / 2, right = pad - left;
+    for (int i = 0; i < left; i++) out[oi++] = fill;
+    memcpy(out + oi, core, len);
+    oi += len;
+    for (int i = 0; i < right; i++) out[oi++] = fill;
+  } else if (align == '=') {
+    memcpy(out + oi, core, sign_len);
+    oi += sign_len;
+    for (int i = 0; i < pad; i++) out[oi++] = fill;
+    memcpy(out + oi, core + sign_len, len - sign_len);
+    oi += len - sign_len;
+  } else {
+    memcpy(out + oi, core, len);
+    oi += len;
+    for (int i = 0; i < pad; i++) out[oi++] = fill;
+  }
+  out[oi] = 0;
+  char *r = _CG_String(out);
+  free(out);
+  return r;
+}
+
+inline char *_CG_format_float_spec(double val, const char *spec_str) {
+  _CG_FormatSpec fs;
+  _CG_parse_format_spec(spec_str, &fs);
+  int prec = fs.precision >= 0 ? fs.precision : 6;
+  int isneg = val < 0 || (val == 0 && signbit(val));
+  double av = isneg ? -val : val;
+  const char *sign_str = isneg ? "-" : (fs.sign == '+' ? "+" : (fs.sign == ' ' ? " " : ""));
+  char buf[512];
+  switch (fs.type) {
+    case 'f':
+    case 'F':
+      snprintf(buf, sizeof(buf), fs.alt ? "%#.*f" : "%.*f", prec, av);
+      break;
+    case 'e':
+      snprintf(buf, sizeof(buf), fs.alt ? "%#.*e" : "%.*e", prec, av);
+      break;
+    case 'E':
+      snprintf(buf, sizeof(buf), fs.alt ? "%#.*E" : "%.*E", prec, av);
+      break;
+    case 'g':
+      snprintf(buf, sizeof(buf), fs.alt ? "%#.*g" : "%.*g", prec > 0 ? prec : 1, av);
+      break;
+    case 'G':
+      snprintf(buf, sizeof(buf), fs.alt ? "%#.*G" : "%.*G", prec > 0 ? prec : 1, av);
+      break;
+    case '%':
+      snprintf(buf, sizeof(buf), "%.*f%%", prec, av * 100.0);
+      break;
+    default:
+      if (fs.precision >= 0) {
+        snprintf(buf, sizeof(buf), "%.*g", prec > 0 ? prec : 1, av);
+      } else {
+        char *s = _CG_str_from_float(av);
+        snprintf(buf, sizeof(buf), "%s", s);
+      }
+  }
+  char core[560];
+  snprintf(core, sizeof(core), "%s%s", sign_str, buf);
+  char *grouped = fs.group ? _CG_group_digits(core, fs.group) : strdup(core);
+  int width = fs.width > 0 ? fs.width : 0;
+  char align = fs.align ? fs.align : '>';
+  char *result = _CG_pad_align(grouped, width, align, fs.fill, (int)strlen(sign_str));
+  free(grouped);
+  return result;
+}
+
+inline char *_CG_format_int_spec(int64 val, const char *spec_str) {
+  _CG_FormatSpec fs;
+  _CG_parse_format_spec(spec_str, &fs);
+  if (fs.type == 'f' || fs.type == 'F' || fs.type == 'e' || fs.type == 'E' || fs.type == 'g' ||
+      fs.type == 'G' || fs.type == '%')
+    return _CG_format_float_spec((double)val, spec_str);
+  uint64 av = (uint64)(val < 0 ? -val : val);
+  const char *sign_str = val < 0 ? "-" : (fs.sign == '+' ? "+" : (fs.sign == ' ' ? " " : ""));
+  char buf[80];
+  switch (fs.type) {
+    case 'x':
+      snprintf(buf, sizeof(buf), fs.alt ? "0x%llx" : "%llx", (unsigned long long)av);
+      break;
+    case 'X':
+      snprintf(buf, sizeof(buf), fs.alt ? "0X%llX" : "%llX", (unsigned long long)av);
+      break;
+    case 'o':
+      snprintf(buf, sizeof(buf), fs.alt ? "0o%llo" : "%llo", (unsigned long long)av);
+      break;
+    case 'b': {
+      char tmp[80];
+      int ti = 0;
+      uint64 uv = av;
+      if (uv == 0) tmp[ti++] = '0';
+      while (uv) {
+        tmp[ti++] = (char)('0' + (uv & 1));
+        uv >>= 1;
+      }
+      int oi = 0;
+      if (fs.alt) {
+        buf[oi++] = '0';
+        buf[oi++] = 'b';
+      }
+      for (int i = ti - 1; i >= 0; i--) buf[oi++] = tmp[i];
+      buf[oi] = 0;
+      break;
+    }
+    case 'c':
+      buf[0] = (char)val;
+      buf[1] = 0;
+      break;
+    default:
+      snprintf(buf, sizeof(buf), "%llu", (unsigned long long)av);
+  }
+  char core[160];
+  snprintf(core, sizeof(core), "%s%s", sign_str, buf);
+  char *grouped = fs.group ? _CG_group_digits(core, fs.group) : strdup(core);
+  int width = fs.width > 0 ? fs.width : 0;
+  char align = fs.align ? fs.align : '>';
+  char *result = _CG_pad_align(grouped, width, align, fs.fill, (int)strlen(sign_str));
+  free(grouped);
+  return result;
+}
+
+inline char *_CG_format_str_spec(const char *val, const char *spec_str) {
+  _CG_FormatSpec fs;
+  _CG_parse_format_spec(spec_str, &fs);
+  const char *core = val;
+  char *trunc = 0;
+  if (fs.precision >= 0 && (int)strlen(val) > fs.precision) {
+    trunc = (char *)malloc((size_t)fs.precision + 1);
+    memcpy(trunc, val, (size_t)fs.precision);
+    trunc[fs.precision] = 0;
+    core = trunc;
+  }
+  char align = fs.align ? fs.align : '<';
+  int width = fs.width > 0 ? fs.width : 0;
+  char *result = _CG_pad_align(core, width, align, fs.fill, 0);
+  if (trunc) free(trunc);
+  return result;
+}
+
 inline char *_CG_string_mult(char *str, int64 n) {
   size_t l = _CG_string_len(str);
   char *ret = _CG_string_alloc(l * n);

@@ -1,0 +1,6 @@
+# pyc float64 str() shows full %.17g precision (1234567.8899999999) instead
+# of CPython's shortest round-trip repr (1234567.89) for values without an
+# exact binary representation -- pre-existing, already-documented gap (see
+# tests/str_builtin_call.py.python.expect_fail), not introduced by the
+# ifa/if1/num.cc sprint_float_val fix that stopped this specific value from
+# being silently corrupted to 1234570.0 in generated C code.

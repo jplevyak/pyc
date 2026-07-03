@@ -29,3 +29,6 @@ class str:
     return __pyc_c_call__(bool, "_CG_str_ge", str, self, str, x)
   def __mod__(self, t):
     return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t)
+  def __format__(self, spec):
+    # issues/006: PEP 3101 format-spec mini-language, see int.__format__.
+    return __pyc_c_call__(str, "_CG_format_str_spec", str, self, str, spec)

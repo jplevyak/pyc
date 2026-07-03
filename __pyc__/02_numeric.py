@@ -90,6 +90,12 @@ class int:
                           int, __pyc_clone_constants__(self))
   def __pyc_to_bool__(self):
     return __pyc_clone_constants__(self) != 0
+  def __format__(self, spec):
+    # issues/006: PEP 3101 format-spec mini-language (f-string
+    # `{x:spec}` / `format(x, spec)`). _CG_format_int_spec parses
+    # `spec` and does the actual formatting/padding in C.
+    return __pyc_c_call__(str, "_CG_format_int_spec",
+                          int, __pyc_clone_constants__(self), str, spec)
 
 class float:
   def __add__(self, x):
@@ -152,3 +158,6 @@ class float:
     return __pyc_c_call__(str, "_CG_str_from_float", float, self)
   def __pyc_to_bool__(self):
     return self != 0.0
+  def __format__(self, spec):
+    # issues/006: PEP 3101 format-spec mini-language, see int.__format__.
+    return __pyc_c_call__(str, "_CG_format_float_spec", float, self, str, spec)

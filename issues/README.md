@@ -40,11 +40,6 @@ conventions are the same; the only difference is location.
   `while True:` segfaults FA's `update_in` (constant-cond IF has
   no valid contour). Workaround: use a real/sentinel loop
   condition.
-- [006-fstring-interpolation-not-implemented.md](006-fstring-interpolation-not-implemented.md)
-  — **Partially fixed**: f-strings now interpolate correctly
-  (`{expr}`, `!s`/`!r`/`!a`, nested indexing/calls) on both
-  backends. Format specs (`{x:.2f}`) remain a clean compile error
-  rather than a silent no-op, pending a follow-up.
 - [007-decorators-not-applied.md](007-decorators-not-applied.md)
   — Any decorator other than the builtin `@vector`/`@pyc_struct`
   directives is evaluated but never applied; decorated
@@ -106,6 +101,17 @@ commit ref recorded in each file's status line.
   instead of an unresolved `__is__` dispatch; the follow-on
   `is None` union-narrowing gap this exposed was tracked and fixed
   separately as `ifa/issues/closed/024`.
+- [006](closed/006-fstring-interpolation-not-implemented.md) —
+  f-strings fully implemented: interpolation and PEP 3101 format
+  specs (`{x:.2f}`, `{x:>10}`, `{x:,}`, etc.) both work on both
+  backends, dispatched via a new `__format__` dunder mirroring
+  CPython's `format(x, spec)`. Found and fixed an unrelated
+  pre-existing bug while verifying against realistic values: the C
+  backend (not LLVM) silently corrupted any float literal needing
+  more than 6 significant digits when embedding it as a compiled
+  constant (`ifa/if1/num.cc`'s `sprint_float_val` used bare `%g`
+  instead of the `%.17g` convention already used elsewhere in the
+  runtime).
 - [009](closed/009-dict-comprehension-drops-comp-for.md) — dict
   comprehensions now work correctly on both backends, sharing the
   loop-lowering machinery added for issue 008's set comprehensions.
