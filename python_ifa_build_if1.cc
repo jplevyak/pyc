@@ -834,6 +834,61 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code) {
   return inst;
 }
 
+static void build_if1_assign_target(PyDAST *tgt, PycAST *v, PycAST *ast, PycCompiler &ctx) {
+  build_if1_pyda(tgt, ctx);
+  PycAST *a = getAST(tgt, ctx);
+  if (tgt->kind == PY_tuple || tgt->kind == PY_testlist || tgt->kind == PY_exprlist) {
+    // Destructuring assignment
+    if (!a->sym) fail("error line %d, illegal destructuring", ctx.lineno);
+    for (int j = 0; j < tgt->children.n; j++) {
+      PycAST *elt = getAST(tgt->children[j], ctx);
+      call_method(&ast->code, ast, v->rval, sym___getitem__, elt->rval, 1, int64_constant(j));
+    }
+  } else {
+    if1_gen(if1, &ast->code, a->code);
+    if (a->is_member)
+      if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
+               (ast->rval = new_sym(ast)))
+          ->ast = ast;
+    else if (a->is_object_index)
+      if1_add_send_arg(if1, find_send(a->code), v->rval);
+    else
+      if1_move(if1, &ast->code, v->rval, a->sym);
+  }
+}
+
+static void build_if1_with_items(PyDAST *stmt_node, int item_idx, PycCompiler &ctx, PycAST *ast) {
+  if (item_idx == stmt_node->children.n - 1) {
+    PyDAST *body_node = stmt_node->children[item_idx];
+    build_if1_pyda(body_node, ctx);
+    PycAST *body = getAST(body_node, ctx);
+    if1_gen(if1, &ast->code, body->code);
+    return;
+  }
+
+  PyDAST *item_node = stmt_node->children[item_idx];
+  PyDAST *cm_expr = item_node->children[0];
+  
+  build_if1_pyda(cm_expr, ctx);
+  PycAST *cm = getAST(cm_expr, ctx);
+  if1_gen(if1, &ast->code, cm->code);
+  
+  Sym *enter_val = new_sym(ast);
+  call_method(&ast->code, ast, cm->rval, make_symbol("__enter__"), enter_val, 0);
+  
+  if (item_node->children.n == 2) {
+    PyDAST *tgt = item_node->children[1];
+    PycAST temp_v;
+    temp_v.rval = enter_val;
+    build_if1_assign_target(tgt, &temp_v, ast, ctx);
+  }
+  
+  build_if1_with_items(stmt_node, item_idx + 1, ctx, ast);
+  
+  Sym *exit_val = new_sym(ast);
+  call_method(&ast->code, ast, cm->rval, make_symbol("__exit__"), exit_val, 3, sym_nil, sym_nil, sym_nil);
+}
+
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
   if (!n) return 0;
   PycAST *ast = getAST(n, ctx);
@@ -1049,28 +1104,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_gen(if1, &ast->code, v->code);
       for (int i = 0; i < n->children.n - 1; i++) {
         PyDAST *tgt = n->children[i];
-        build_if1_pyda(tgt, ctx);
-        PycAST *a = getAST(tgt, ctx);
-        if (tgt->kind == PY_tuple || tgt->kind == PY_testlist || tgt->kind == PY_exprlist) {
-          // Destructuring assignment
-          if (!a->sym) fail("error line %d, illegal destructuring", ctx.lineno);
-          for (int j = 0; j < tgt->children.n; j++) {
-            PycAST *elt = getAST(tgt->children[j], ctx);
-            call_method(&ast->code, ast, v->rval, sym___getitem__, elt->rval, 1, int64_constant(j));
-          }
-        } else {
-          if1_gen(if1, &ast->code, a->code);
-          if (a->is_member)
-            if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
-                     (ast->rval = new_sym(ast)))
-                ->ast = ast;
-          else if (a->is_object_index)
-            if1_add_send_arg(if1, find_send(a->code), v->rval);
-          else
-            if1_move(if1, &ast->code, v->rval, a->sym);
-        }
+        build_if1_assign_target(tgt, v, ast, ctx);
       }
-      ast->rval = 0;
       return 0;
     }
 
@@ -1730,7 +1765,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_except_clause:
     case PY_except_handler:
     case PY_finally_clause:
-    case PY_with_stmt:
+    case PY_with_stmt: {
+      build_if1_with_items(n, 0, ctx, ast);
+      return 0;
+    }
     case PY_with_item:
       fail("error line %d, statement not supported in pyda path", ctx.lineno);
       return -1;

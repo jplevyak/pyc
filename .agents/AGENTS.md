@@ -6,7 +6,7 @@ When modifying or refactoring code generation (CG) in `pyc`, keep these points i
    - `./pyc -b <file.py>` triggers the LLVM backend natively and outputs a binary.
    - `./pyc <file.py>` (without `-b`) triggers the C backend and generates a `<file.py>.c` file.
    - To compile the generated C file, you MUST use `clang++` (not `clang`), because `pyc_c_runtime.h` relies on C++ implicit `struct` typedefs.
-   - Example compilation: `clang++ -I. tests/file.py.c ifa/libifa_gc.a -lgc -o out`
+   - Example compilation: `clang++ -std=c++23 -I. -I/usr/local/include -I/opt/homebrew/include tests/file.py.c ifa/libifa_gc.a -lgc -o out`
 
 2. **Handling `P_prim_reply` (Returns):**
    - The unified `virtual_cg_emit_send` dispatcher intentionally **skips** `P_prim_reply`. 
