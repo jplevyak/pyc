@@ -229,9 +229,14 @@ test: test-unit test-ir test-e2e
 
 test-e2e: $(PYC) libpyc_runtime.a
 	@echo "--- Testing C Backend ---"
-	./test_pyc
+	./test_pyc.py
 	@echo "--- Testing LLVM Backend ---"
-	PYC_FLAGS=-b ./test_pyc
+	PYC_FLAGS=-b ./test_pyc.py
+
+test_llvm: pyc
+	PYC_FLAGS=-b ./test_pyc.py
+
+
 
 test-unit: $(IFALIB)
 	@if [ -x $(IFA_DIR)/ifa ]; then \
