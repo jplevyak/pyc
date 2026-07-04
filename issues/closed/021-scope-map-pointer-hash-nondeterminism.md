@@ -1,17 +1,6 @@
 # Issue 021: `PycScope::map` hashes on pointer value, causing run-to-run nondeterminism in the frontend
 
-**Status:** in-progress — two narrow, precedented fixes landed
-(`PycScope::map` → `HashMap<..., StringHashFns, ...>`; a missing
-`PointerHash<Var *>` specialization), both verified safe (zero
-regressions, `./test_pyc` + `PYC_FLAGS="-b" ./test_pyc` 115/0 both
-before and after, `ifa`'s own `make test` unaffected — its 6
-pre-existing `patterns`-phase failures reproduce identically with
-or without these changes). **Full byte-identical build
-reproducibility is NOT achieved by these fixes** — see "Second
-investigation" below. Scope has grown to match
-`ifa/issues/010-vec-set-api-cleanup.md`'s already-deferred,
-cross-cutting audit; closing this issue for real is a multi-week
-project, not a quick fix, contrary to this issue's original framing.
+**Status:** closed — the final known surface-level instance of pointer-hashing nondeterminism (`EdgeHash` in `ifa/analysis/fa.h`) was fixed by introducing an ID-based `AEdgeHashFns`. As recommended, full build reproducibility (i.e. replacing pointer hashes in the remaining ~150+ sites) is formally deferred to `ifa/issues/010-vec-set-api-cleanup.md`'s planned codebase audit.
 **Affects:** `python_ifa_int.h:20` (`PycScope::map`, a
 `Map<cchar *, PycSymbol *>`) and every unsorted iteration over it
 throughout `python_ifa_build_syms.cc`/`python_ifa_build_if1.cc`;
