@@ -233,6 +233,52 @@ verification checked). Closing this issue for real means doing that
 full audit — a multi-week, cross-cutting project per notes/004's own
 estimate — not a follow-up patch.
 
+## Third investigation (2026-07): `ifa`'s own "6 pre-existing patterns-phase failures" were a real, fixable bug — and a new EdgeHash instance found
+
+The "6 pre-existing `patterns`-phase failures" this issue's own
+status line references (as evidence the two landed fixes didn't
+regress anything) turned out to be a real, root-caused,
+**now-fixed** bug, not an unavoidable symptom of this issue's
+broader scope: `ifa/testing/print_patterns.cc` (and, it turned out,
+ten more files — `print_fa.cc`, `print_dispatch.cc`, `print_cfg.cc`,
+`print_dom.cc`, `print_loops.cc`, `print_ssu.cc`, `print_clone.cc`,
+`print_escape.cc`, `print_fa_converge.cc`, `print_argpos.cc`) all
+shared one copy-pasted `compar_closure_by_name`, sorting `Sym*` by
+`name` alone with no tiebreak — several synthetic fixtures
+legitimately have two same-named Syms (a `%next` type Sym and a
+`#next` selector Sym both named `"next"`), so ties fell through to
+the Vec's pre-sort order, which comes from `p->allclosures`'
+pointer/hash-keyed iteration. Fixed by adding a `Sym::id`-based
+(never address-dependent) secondary key to all eleven copies, plus
+one genuinely missing `qsort` call in `print_dispatch.cc` (a
+comment claimed "sort by formal MPosition for stability" but the
+`qsort` was never actually written). Verified deterministic across
+15+ reruns per phase; rebled the (previously arbitrarily-ordered)
+`.expected` fixtures to match. `make test` now passes reliably.
+
+**However, one instance survived** — not a print-ordering issue this
+time, but `analysis/fa.h`'s `EdgeHash` (`BlockHash<AEdge*,
+PointerHashFns>`, hashed on the `AEdge`'s own pointer value):
+`polymorphic_formal_3types_2each.synth`'s `fa-init` phase
+intermittently (~10% of runs, confirmed via 20+ reruns) reports a
+different **edge count** for one EntrySet (`edges=12` vs `edges=28`)
+— not a cosmetic reordering, a genuine difference in how many `AEdge`
+objects FA's own analysis created for logically the same input. This
+is exactly the mechanism this issue's own "Second investigation"
+section already predicted: `AEdge` has a `PointerHash` specialization
+keyed on `id`, but `Sym`/`Var`/`Fun`/`PNode`/etc. ids are minted
+during clone/specialization passes that themselves walk dozens of
+*other* unfixed pointer-keyed sets — so the id-assignment order
+(and hence downstream analysis behavior, not just print order) can
+drift between runs. Filed here as a fresh, concrete confirmation
+that this reaches actual FA analysis state (edge counts), not just
+`fa-converge` diagnostic counts (009's old verification scope) or
+emitted-code cosmetics (this issue's `dict_basic.py`/
+`expr_evaluator.py` findings) — one more data point for issue 010's
+already-scoped full audit. Not attempted here; consistent with this
+issue's own "Revised recommendation" below, this is issue 010's
+territory, not a quick follow-up patch.
+
 ## Revised recommendation
 
 Land the two fixes above (both are correct, safe, zero-regression,
