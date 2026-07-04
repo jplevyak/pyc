@@ -3,7 +3,7 @@
 **Status:** open — investigated in depth; blocked on a chain of three
 separate, deeper, pre-existing limitations, not a quick frontend fix
 as originally scoped. The final and largest of the three
-(`ifa/issues/029-polymorphic-dispatch.md` /
+(`ifa/issues/closed/029-polymorphic-dispatch.md` /
 `ifa/issues/030-polymorphic-dispatch-fat-pointers.md`'s fat-pointer
 dispatch design, extended to a call-site shape those issues don't yet
 cover) is a genuinely large feature, not something to improvise here
@@ -23,7 +23,7 @@ No general decorator-application mechanism exists.
 [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
 is one of the blockers found here — closure-wrapping decorators
 (the most common decorator shape) hit it directly.
-[ifa/issues/029-polymorphic-dispatch.md](../ifa/issues/029-polymorphic-dispatch.md)
+[ifa/issues/closed/029-polymorphic-dispatch.md](../ifa/issues/closed/029-polymorphic-dispatch.md)
 /
 [ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
 already track and design the general "call site resolves to ≥2
@@ -278,7 +278,7 @@ one**:
    and it would very plausibly turn this case into the *lambda*
    case's failure mode (clean compile, runtime crash) — genuine
    progress, but not a fix, since the lambda case is `still broken`.
-2. The lambda case's runtime crash is `ifa/issues/029-polymorphic-dispatch.md`'s
+2. The lambda case's runtime crash is `ifa/issues/closed/029-polymorphic-dispatch.md`'s
    documented mechanism, confirmed by tracing it directly:
    `get_target_fun_core` (`ifa/codegen/codegen_common.cc:97`) returns
    null because the call site genuinely has ≥2 candidate `Fun`s

@@ -23,7 +23,7 @@ recommendation 3 follow-up).
 looked at first glance like the same root cause, but is more likely
 a separate bug in a different mechanism — see "Relationship to
 issue 002" below; worth re-checking once this lands, not assuming
-fixed. `ifa/issues/029-polymorphic-dispatch.md` /
+fixed. `ifa/issues/closed/029-polymorphic-dispatch.md` /
 `ifa/issues/030-polymorphic-dispatch-fat-pointers.md` are relevant
 to harder cases of the fix (a variable that can hold *different*
 closure shapes depending on control flow) — see "Relationship to
@@ -494,7 +494,7 @@ depending on control flow (e.g. two different `@decorator`-produced
 wrappers reaching the same call site, or a list of differently-
 captured closures) — would need real dispatch over a union of
 concrete callable types, which is exactly what
-[../ifa/issues/029-polymorphic-dispatch.md](../ifa/issues/029-polymorphic-dispatch.md)
+[../ifa/issues/closed/029-polymorphic-dispatch.md](../ifa/issues/closed/029-polymorphic-dispatch.md)
 and
 [../ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
 are already tracking (029's struct-slot dispatch is reportedly
