@@ -163,8 +163,12 @@ assert_stmt: 'assert' test (',' test)? {
   $$.ast = new_pyast_collect(PY_assert_stmt, &$n);
 };
 
-compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated | match_stmt;
+compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated | match_stmt | async_stmt;
 
+async_stmt: async_funcdef | async_for_stmt | async_with_stmt;
+async_funcdef: 'async' funcdef { $$.ast = $1.ast; $$.ast->is_async = 1; };
+async_for_stmt: 'async' for_stmt { $$.ast = $1.ast; $$.ast->is_async = 1; };
+async_with_stmt: 'async' with_stmt { $$.ast = $1.ast; $$.ast->is_async = 1; };
 match_stmt: MATCH_KW test ':' NL INDENT case_block+ DEDENT {
   $$.ast = new_pyast_collect(PY_match_stmt, &$n);
 };
@@ -266,6 +270,9 @@ factor: ('+'|'-'|'~') factor {
     char opch = $n.start_loc.s[0];
     $$.ast->op = (opch == '+') ? PY_OP_UADD : (opch == '-') ? PY_OP_USUB : PY_OP_INVERT;
     $$.ast->add($1.ast);
+  }
+  | 'await' factor {
+    $$.ast = new_pyast(PY_await_expr, &$n, $1.ast);
   }
   | power;
 power: atom trailer* ('**' factor)* {

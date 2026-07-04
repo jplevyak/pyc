@@ -946,6 +946,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
   PycAST *ast = getAST(n, ctx);
   ctx.node = n;
   ctx.lineno = n->line;
+  if (n->is_async) {
+    fail("error line %d, async syntax not yet supported", ctx.lineno);
+    return -1;
+  }
 
   switch (n->kind) {
     case PY_suite:
@@ -1845,6 +1849,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
     case PY_with_item:
       fail("error line %d, statement not supported in pyda path", ctx.lineno);
+      return -1;
+
+    case PY_await_expr:
+      fail("error line %d, async/await syntax not yet supported", ctx.lineno);
       return -1;
 
     case PY_assert_stmt: {

@@ -567,6 +567,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_cmp_op:
     case PY_binop:
     case PY_unaryop:
+    case PY_await_expr:
     case PY_power:
     case PY_call:
     case PY_attribute:
