@@ -31,6 +31,24 @@ static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) 
   }
 }
 
+// ifa/issues/031 step 2: is this Sym a module-level *data*
+// variable (a mutable global cell)? Reads of these are routed
+// through a per-read local temp (see PY_name in build_if1_pyda)
+// so each read site gets an EntrySet-contoured, SSU-renamable
+// Var instead of the single shared GLOBAL_CONTOUR AVar.
+// Excludes everything whose identity downstream passes match on:
+// functions (call dispatch), classes/types (instantiation,
+// isinstance), modules (attribute resolution), interned symbols,
+// constants (True/False/literals), and builtin unique objects
+// (None/nil, void, unknown -- `is_external`/`is_builtin`; codegen's
+// constant-elision protocol assumes consumers reference these
+// directly, so a load temp for them would be declared but never
+// defined).
+static bool is_module_data_var(Sym *s) {
+  return s && s->nesting_depth == 0 && s->name && !s->is_fun && !s->is_module && !s->is_symbol && !s->is_constant &&
+         !s->constant && !s->type_kind && !s->is_meta_type && !s->is_external && !s->is_builtin;
+}
+
 static Code *find_send(Code *c) {
   if (c->kind == Code_SEND) return c;
   assert(c->kind == Code_SUB);
@@ -1552,6 +1570,18 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           ast->sym = make_symbol(ast->sym->name);
           ast->rval = ctx.fun()->self;
         }
+      } else if (load && is_module_data_var(ast->sym)) {
+        // ifa/issues/031 step 2: treat a module-level data variable
+        // as a memory cell, not a register -- each *read* loads the
+        // cell into a fresh local temp. The temp is on FA's
+        // first-class track (SSU-renamed, EntrySet-contoured,
+        // eligible for issue-025 narrowing and per-read
+        // concretization); the cell's shared GLOBAL_CONTOUR AVar
+        // keeps the sound flow-insensitive union of all stores.
+        // Stores (ctx == PY_STORE) still write the cell directly.
+        Sym *t = new_sym(ast);
+        if1_move(if1, &ast->code, ast->sym, t, ast);
+        ast->rval = t;
       }
       return 0;
     }

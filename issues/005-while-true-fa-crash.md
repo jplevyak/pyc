@@ -3,6 +3,14 @@
 **Status:** fixed (landed in the 2026-06-26 "Interim" commit,
 `97f6a6c`, before this doc was ever updated to say so — caught during
 a 2026-07 re-check). See "What landed" below.
+**2026-07-04 follow-up:** the `update_in` guard described below was
+removed again — structurally subsumed by
+[ifa/issues/031](../ifa/issues/031-globals-outside-fa-precision.md)
+step 1: `GLOBAL_CONTOUR` is now a real singleton EntrySet
+(`fa->global_es`) whose `in_es_worklist` is permanently 1, so the
+deref that used to segfault is safe and the enqueue self-suppresses.
+`fibheap_full.py` / `fibheap_decrease_key.py` still cover the
+original repro shape on both backends.
 
 ## Symptom
 
