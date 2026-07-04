@@ -387,9 +387,18 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       build_syms_pyda(cdef->children.last(), ctx);
       // Post-classdef: collect base classes and members
       for (int i = 1; i < cdef->children.n - 1; i++) {
-        Sym *base = getAST(cdef->children[i], ctx)->sym;
-        if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
-        cdef_ast->sym->inherits_add(base);
+        PyDAST *base_ast = cdef->children[i];
+        if (base_ast->kind == PY_tuple) {
+          for (int j = 0; j < base_ast->children.n; j++) {
+            Sym *base = getAST(base_ast->children[j], ctx)->sym;
+            if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
+            cdef_ast->sym->inherits_add(base);
+          }
+        } else {
+          Sym *base = getAST(base_ast, ctx)->sym;
+          if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
+          cdef_ast->sym->inherits_add(base);
+        }
       }
       // Collect class fields into a temporary Vec, sort by
       // name, then commit to `has` in sorted order.  Direct
