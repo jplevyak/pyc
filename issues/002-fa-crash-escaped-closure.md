@@ -1,12 +1,15 @@
 # Issue 002: Segfault when a bound-method closure escapes its binding scope
 
-**Status:** partially fixed (2026-07). Case A (closure passed as a
-function argument) is fully fixed and verified on both backends —
-plus a new confirmed-working shape, a closure returned from a
-function. Case B (closure stored in and read back from a **global**
-variable) is narrowed to a precise, different, still-open bug in
-codegen's argument-writing, not the FA/type-propagation gap this
-issue originally hypothesized. See "2026-07 re-investigation" below.
+**Status:** fixed (2026-07-04). Case A (closure passed as a
+function argument) was fixed earlier — see "2026-07
+re-investigation" below. Case B (closure stored in and read back
+from a **global** variable) is now also fixed: root cause was the
+`None` initializer polluting the global's single flow-insensitive
+GLOBAL_CONTOUR cell, typing it `SUM{__pyc_None_type__, closure}`,
+which codegen's closure-unpacking path (`is_closure_var`, requiring
+a bare `Type_FUN`) didn't recognize — see "2026-07-04 Case B root
+cause and fix" at the bottom. Regression test:
+`tests/closure_in_global.py` (both backends).
 **Affects:** pyc frontend (suspected: `python_ifa_build_if1.cc`
 or `analysis/fa.cc`); manifests when a closure created by `a.m`
 crosses a function-call boundary — passed as an argument,
@@ -306,16 +309,76 @@ from elsewhere remains a known, narrow limitation.
 6. Added `tests/closure_returned_from_function.py` (`.exec.check`
    `42\n`) as a second, independently-confirmed escape shape not in
    the original verification plan.
-7. Case B's remaining codegen bug (global-stored closures) is not
-   yet fixed — no verification plan for it yet, pending further
-   investigation into FA's global-Sym closure-type tracking.
+7. ~~Case B's remaining codegen bug (global-stored closures) is not
+   yet fixed~~ Fixed — see "2026-07-04 Case B root cause and fix"
+   below. `tests/closure_in_global.py` added; full suite 124/124 on
+   both backends, `ifa/ifa-test` 14/14.
+
+## 2026-07-04 Case B root cause and fix
+
+Re-traced from scratch (temporary env-gated tracing in
+`write_send_arg`, `-v -v -v` `.dead_log` inspection). Two of the
+earlier hypotheses turned out stale or wrong; the real chain:
+
+- **FA propagates the closure through the global just fine.** The
+  GLOBAL_CONTOUR AVar for `stash` had
+  `out = ( __pyc_None_type__ closure [ get, c:Counter ] )`; dispatch
+  at `stash()` resolved to the lambda and typed the result `int64`.
+  The earlier "`stash` has no resolved type at all / formals dead"
+  trace no longer reproduces (both formals were live and
+  `v->type` non-null) — evidently fixed in the interim by the
+  fibheap-era codegen/liveness work.
+- **The killer is specifically the `stash = None` initializer.**
+  Globals are exempt from SSU renaming (`ssu.cc`'s
+  `new_Var`/`get_Var` return the original Var for `!is_local`), so
+  a global has ONE flow-insensitive Var/AVar program-wide, and the
+  dead `None` store unions into every read. Concretization made
+  `stash`'s type `Type_SUM{__pyc_None_type__, closure}`. Control:
+  the identical program **without** the `None` initializer already
+  worked, as did the local-variable equivalent (`f = None;
+  f = c.get; f()` — SSU splits the local, the read sees only the
+  closure).
+- **Codegen couldn't call through the SUM.** `is_closure_var`
+  required a bare `Type_FUN`, so `write_send_arg` fell into the
+  direct-call path, indexed `n->rvals[1]` on a 1-element `rvals`,
+  and `c_rhs` dereferenced the out-of-bounds garbage — the
+  segfault. (The LLVM v2 path bounds-checks, which is why it
+  produced the zero-argument-call verifier error instead.)
+
+The fix, in keeping with the existing nullable-pointer idiom
+(`assign_type_cg_strings_pass2` already gives
+`SUM{nil_type, T}` the C type of `T`, since pyc's
+`__pyc_None_type__` IS `sym_nil_type`):
+
+- `ifa/codegen/codegen_common.{h,cc}`: new `closure_fun_type(Var*)`
+  — returns the effective closure `Type_FUN` Sym, looking through a
+  two-member `SUM{nil_type, closure}`; `is_closure_var` reimplemented
+  on top of it.
+- `ifa/codegen/cg.cc` `write_send_arg`: uses `closure_fun_type`
+  for the unpack; plus a bounds check that turns any future
+  rvals-index overrun into a `codegen_fail` with a source location
+  instead of a segfault.
+- `ifa/codegen/cg_emit_llvm.cc`: same `closure_fun_type` switch in
+  the closure-unpack branch of call emission.
+
+Verified working: Case B exact repro (42, both backends), the
+None-guarded variant (`if stash is not None: stash()`), and the
+no-initializer variant. Known boundary: **two different closure
+shapes** stored in one global (`stash = a.get` / `stash = b.geta`
+on different classes) compiles but fails at runtime with the
+defined `matching function not found` assertion — that is the
+polymorphic-dispatch gap tracked in `ifa/issues/029`/`030`, not
+this issue.
 
 ## What this unblocks
 
 - Higher-order functions (`map`, `filter`, callback APIs) where the
   closure is passed as a parameter or returned — now works.
 - Event-handler / observer patterns that stash a callback in a
-  **global** — still blocked on the Case B codegen gap above.
+  **global** — now works for a single closure shape
+  (`closure_in_global.py`); multiple shapes through one global
+  await `ifa/issues/029`/`030` polymorphic dispatch.
 - A second and third closure test in the suite that don't trivially
   reduce to the FA pre-resolving everything statically
-  (`escaped_closure.py`, `closure_returned_from_function.py`).
+  (`escaped_closure.py`, `closure_returned_from_function.py`,
+  now also `closure_in_global.py`).
