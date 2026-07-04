@@ -8,6 +8,57 @@
 
 #include "gc.h"
 
+#ifdef __cplusplus
+#include <coroutine>
+
+struct _CG_Coroutine {
+  struct promise_type {
+    void* value = nullptr;
+    std::coroutine_handle<> awaiter;
+
+    _CG_Coroutine get_return_object() {
+      return _CG_Coroutine{std::coroutine_handle<promise_type>::from_promise(*this)};
+    }
+    std::suspend_never initial_suspend() { return {}; }
+    
+    struct final_awaiter {
+      bool await_ready() const noexcept { return false; }
+      std::coroutine_handle<> await_suspend(std::coroutine_handle<promise_type> h) noexcept {
+        if (h.promise().awaiter) return h.promise().awaiter;
+        return std::noop_coroutine();
+      }
+      void await_resume() noexcept {}
+    };
+    final_awaiter final_suspend() noexcept { return {}; }
+
+    template<typename T>
+    void return_value(T v) { value = (void*)(uintptr_t)v; }
+    void unhandled_exception() {}
+  };
+
+  std::coroutine_handle<promise_type> handle;
+
+  bool await_ready() const noexcept { return handle.done(); }
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiting_handle) noexcept {
+    handle.promise().awaiter = awaiting_handle;
+    return handle; // resume this coroutine immediately
+  }
+  void* await_resume() const noexcept { return handle.promise().value; }
+};
+
+inline void* _CG_run_coro(_CG_Coroutine coro) {
+  if (!coro.handle.done()) {
+    coro.handle.resume();
+  }
+  while (!coro.handle.done()) {
+    // A real event loop would yield and wait. For simple tests, we assume it finishes synchronously
+    // or we just break if it requires true async I/O.
+    coro.handle.resume();
+  }
+  return coro.handle.promise().value;
+}
+#endif
+
 /* --- Micro-Core: Memory Interface --- */
 #define _CG_Memory_Alloc(sz) GC_MALLOC(sz)
 #define _CG_Memory_Realloc(p, sz) GC_REALLOC(p, sz)

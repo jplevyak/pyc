@@ -93,6 +93,7 @@ static void mark_store(PyDAST *n) {
 // Set up function scope for pyda path
 static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   fn->in = ctx.scope_stack.last()->in;
+  fn->is_async = n->is_async;
   new_fun(ast, fn);
   ctx.node = n;
   if (n->kind == PY_classdef)

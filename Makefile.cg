@@ -9,7 +9,8 @@ ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt
 endif
 
-CC = g++
+CC = clang++
+CFLAGS += -std=c++23
 
 ifdef OPTIMIZE
   CFLAGS += -O3

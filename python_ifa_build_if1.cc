@@ -946,10 +946,6 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
   PycAST *ast = getAST(n, ctx);
   ctx.node = n;
   ctx.lineno = n->line;
-  if (n->is_async) {
-    fail("error line %d, async syntax not yet supported", ctx.lineno);
-    return -1;
-  }
 
   switch (n->kind) {
     case PY_suite:
@@ -1851,9 +1847,16 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       fail("error line %d, statement not supported in pyda path", ctx.lineno);
       return -1;
 
-    case PY_await_expr:
-      fail("error line %d, async/await syntax not yet supported", ctx.lineno);
-      return -1;
+    case PY_await_expr: {
+      build_if1_pyda(n->children[0], ctx);
+      PycAST *val_ast = getAST(n->children[0], ctx);
+      if1_gen(if1, &ast->code, val_ast->code);
+      ast->rval = new_sym(ast);
+      Code *send = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("await"), val_ast->rval, ast->rval);
+      send->ast = ast;
+      ast->sym = ast->rval;
+      return 0;
+    }
 
     case PY_assert_stmt: {
       // children: [cond] or [cond, msg]. No exception model exists yet
