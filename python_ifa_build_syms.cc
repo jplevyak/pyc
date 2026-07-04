@@ -470,6 +470,20 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);
       return 0;
 
+    case PY_namedexpr_test:
+      mark_store(n->children[0]);
+      build_syms_pyda(n->children[0], ctx);
+      build_syms_pyda(n->children[1], ctx);
+      return 0;
+
+    case PY_annassign:
+      mark_store(n->children[0]);
+      build_syms_pyda(n->children[0], ctx);
+      if (n->children.n == 3) {
+        build_syms_pyda(n->children[2], ctx);
+      }
+      return 0;
+
     case PY_augassign:
       // children: [target, PY_augassign_op, value] for statement node; 0 children for operator node
       if (n->children.n < 3) return 0;  // Skip the operator-only PY_augassign child

@@ -1,0 +1,232 @@
+/Library/Developer/CommandLineTools/usr/bin/make -C ifa
+make[1]: Nothing to be done for `all'.
+PASSED alog unit test
+PASSED my unit test
+PASSED my_test
+PASSED union_find_test
+PASSED intervals_test
+PASSED accum_test
+PASSED vec_values_range
+PASSED vec_range_for_const
+PASSED vec_range_for_empty
+PASSED vec_range_for_modify
+PASSED vec_range_for_basic
+PASSED set_is_vec_is_set
+PASSED vec_to_set_conversion
+PASSED set_to_vec_conversion
+PASSED set_some_predicates
+PASSED set_disjunction_result
+PASSED set_difference_result
+PASSED set_intersection_result
+PASSED set_intersection_inplace
+PASSED set_union
+PASSED set_remove
+PASSED set_first
+PASSED set_hash_large
+PASSED set_transition
+PASSED set_linear
+PASSED vec_count
+PASSED vec_search
+PASSED vec_single_ctor
+PASSED vec_copy_move
+PASSED vec_qsort
+PASSED vec_reverse
+PASSED vec_remove
+PASSED vec_insert
+PASSED vec_prepend
+PASSED vec_append
+PASSED vec_fill
+PASSED vec_reserve
+PASSED vec_accessors
+PASSED vec_get
+PASSED vec_pop
+PASSED vec_growth
+PASSED vec_add_basic
+PASSED test_compute_escape_idempotent_empty
+PASSED test_compute_escape_flag_off_noop
+PASSED test_compute_escape_empty_fa
+PASSED test_compute_escape_null_fa
+PASSED test_avar_ctor_escape_top
+PASSED test_escape_lattice_algebra
+PASSED run_cg_normalize_v2_no_funs
+PASSED run_cg_normalize_v2_no_globals
+PASSED run_cg_normalize_v2_builtin_types
+PASSED run_cg_normalize_v2_null
+PASSED run_cg_normalize_v2_stub
+PASSED run_cg_ir_v2_test_c_call_roundtrip
+PASSED run_cg_ir_v2_emit_test_c_call
+PASSED run_cg_ir_v2_emit_test_clone
+PASSED run_cg_ir_v2_emit_test_binop_dispatch
+PASSED run_cg_ir_v2_emit_test_sizeof
+PASSED run_cg_ir_v2_emit_test_cast
+PASSED run_cg_ir_v2_emit_test_len
+PASSED run_cg_ir_v2_emit_test_index_store
+PASSED run_cg_ir_v2_emit_test_binop_coverage
+PASSED run_cg_ir_v2_test11_roundtrip
+PASSED run_cg_ir_v2_emit_test_ssu
+PASSED run_cg_ir_v2_test_ssu_roundtrip
+PASSED run_cg_ir_v2_emit_test13
+PASSED run_cg_ir_v2_test13_roundtrip
+PASSED run_cg_ir_v2_emit_test12
+PASSED run_cg_ir_v2_test12_roundtrip
+PASSED run_cg_ir_v2_emit_test10
+PASSED run_cg_ir_v2_test10_roundtrip
+PASSED run_cg_ir_v2_emit_test09
+PASSED run_cg_ir_v2_test09_roundtrip
+PASSED run_cg_ir_v2_emit_test08
+PASSED run_cg_ir_v2_test08_roundtrip
+PASSED run_cg_ir_v2_type_vector_roundtrip
+PASSED run_cg_ir_v2_type_opaque_roundtrip
+PASSED run_cg_ir_v2_type_decl_roundtrip
+PASSED run_cg_ir_v2_emit_test07
+PASSED run_cg_ir_v2_test07_roundtrip
+PASSED run_cg_ir_v2_emit_test06
+PASSED run_cg_ir_v2_test06_roundtrip
+PASSED run_cg_ir_v2_emit_test_copy
+PASSED run_cg_ir_v2_test_copy_roundtrip
+PASSED run_cg_ir_v2_emit_test05
+PASSED run_cg_ir_v2_test05_roundtrip
+PASSED run_cg_ir_v2_emit_test04
+PASSED run_cg_ir_v2_test04_roundtrip
+PASSED run_cg_ir_v2_emit_test03
+PASSED run_cg_ir_v2_test03_roundtrip
+PASSED run_cg_ir_v2_emit_test02
+PASSED run_cg_ir_v2_test02_roundtrip
+PASSED run_cg_ir_v2_emit_test01_br
+PASSED run_cg_ir_v2_emit_test01
+PASSED run_cg_ir_v2_roundtrip
+PASSED test_type_violation_dedup_invariance
+PASSED test_lattice_cross_ops
+PASSED test_type_cannonicalize
+PASSED test_type_diff
+PASSED test_type_intersection
+PASSED test_type_union
+PASSED run_rich_roundtrip
+PASSED run_roundtrip
+PASSED run_smoke
+PASSED test_ir_builder
+UnitTest: 105 PASSED 0 FAILED, SUCCESS
+/Library/Developer/CommandLineTools/usr/bin/make -C ifa test-ir
+=== ifa-test --phase finalize ===
+
+[1m---- summary ----
+  phase:   finalize
+  passed:  14
+  failed:  0
+  total:   14
+=== ifa-test --phase cfg ===
+
+[1m---- summary ----
+  phase:   cfg
+  passed:  19
+  failed:  0
+  total:   19
+=== ifa-test --phase ssu ===
+
+[1m---- summary ----
+  phase:   ssu
+  passed:  18
+  failed:  0
+  total:   18
+=== ifa-test --phase dom ===
+
+[1m---- summary ----
+  phase:   dom
+  passed:  16
+  failed:  0
+  total:   16
+=== ifa-test --phase loops ===
+
+[1m---- summary ----
+  phase:   loops
+  passed:  16
+  failed:  0
+  total:   16
+=== ifa-test --phase argpos ===
+
+[1m---- summary ----
+  phase:   argpos
+  passed:  16
+  failed:  0
+  total:   16
+=== ifa-test --phase patterns ===
+
+[1m---- summary ----
+  phase:   patterns
+  passed:  15
+  failed:  0
+  total:   15
+=== ifa-test --phase fa-init ===
+
+[1m---- summary ----
+  phase:   fa-init
+  passed:  28
+  failed:  0
+  total:   28
+=== ifa-test --phase dispatch ===
+
+[1m---- summary ----
+  phase:   dispatch
+  passed:  16
+  failed:  0
+  total:   16
+=== ifa-test --phase clone ===
+
+[1m---- summary ----
+  phase:   clone
+  passed:  16
+  failed:  0
+  total:   16
+=== ifa-test --phase dce ===
+
+[1m---- summary ----
+  phase:   dce
+  passed:  15
+  failed:  0
+  total:   15
+=== ifa-test --phase freq ===
+
+[1m---- summary ----
+  phase:   freq
+  passed:  16
+  failed:  0
+  total:   16
+=== ifa-test --phase codegen-c ===
+
+[1m---- summary ----
+  phase:   codegen-c
+  passed:  19
+  failed:  0
+  total:   19
+=== ifa-test --phase inline ===
+
+[1m---- summary ----
+  phase:   inline
+  passed:  15
+  failed:  0
+  total:   15
+=== ifa-test --phase escape ===
+
+[1m---- summary ----
+  phase:   escape
+  passed:  17
+  failed:  0
+  total:   17
+=== ifa-test --phase fa-converge ===
+
+[1m---- summary ----
+  phase:   fa-converge
+  passed:  18
+  failed:  0
+  total:   18
+clang++ -std=c++23 -Wall -MMD -MP -D__PYC__=1 -Wno-register -g -DDEBUG=1 -Iifa/common -Iifa -Iifa/if1 -Iifa/frontend -Iifa/analysis -Iifa/codegen -Iifa/optimize -I/usr/local/include -I/opt/homebrew/include -I./Python-2.7.18/Include -I./Python-2.7.18/PC -DUSE_GC -I/opt/homebrew/Cellar/llvm/22.1.2/include -DUSE_LLVM=1 -fno-exceptions -funwind-tables -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS  -o pyc pyc.o python_ifa_util.o python_ifa_sym.o python_ifa_build_syms.o python_ifa_build_if1.o python_ifa_main.o python_parse.o version.o gnuc.g.d_parser.o python.g.d_parser.o ifa/libifa_gc.a -lm -lpcre -L/opt/homebrew/lib -L/usr/local/lib -Lifa -lifa_gc -lgc -lgccpp -ldparse_gc -L/opt/homebrew/Cellar/llvm/22.1.2/lib -lLLVM-22
+./test_pyc
+.......x.........ss.....................................................................s......
+
+---- summary ----
+  passed          91
+  expected fails  1
+  failed          0
+  skipped         3
+  time            78s
+rm: tests/build: Directory not empty

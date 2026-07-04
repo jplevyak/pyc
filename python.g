@@ -44,16 +44,16 @@ decorators: decorator+ {
 decorated: decorators (classdef | funcdef) {
   $$.ast = new_pyast_collect(PY_decorated, &$n);
 };
-funcdef: 'def' NAME parameters ':' suite {
-  $$.ast = new_pyast_collect(PY_funcdef, &$n);
+funcdef: 'def' NAME parameters ('->' test)? ':' suite {
+  $$.ast = new_pyast(PY_funcdef, &$n, $1.ast, $2.ast, $5.ast);
 };
 parameters: LP varargslist? RP {
   $$.ast = new_pyast_collect(PY_parameters, &$n);
 };
 varargsarg: fpdef '=' test { $$.ast = new_pyast(PY_arg_default, &$n, $0.ast, $2.ast); }
            | fpdef { $$.ast = $0.ast; };
-star_arg: '*' NAME { $$.ast = new_pyast(PY_star_arg, &$n, $1.ast); };
-dstar_arg: '**' NAME { $$.ast = new_pyast(PY_dstar_arg, &$n, $1.ast); };
+star_arg: '*' NAME (':' test)? { $$.ast = new_pyast(PY_star_arg, &$n, $1.ast); };
+dstar_arg: '**' NAME (':' test)? { $$.ast = new_pyast(PY_dstar_arg, &$n, $1.ast); };
 varargslist: varargsarg (',' varargsarg)* (',' (star_arg (',' dstar_arg)? | dstar_arg))? ','? {
   $$.ast = new_pyast_collect(PY_varargslist, &$n);
 }
@@ -63,7 +63,9 @@ varargslist: varargsarg (',' varargsarg)* (',' (star_arg (',' dstar_arg)? | dsta
 | dstar_arg ','? {
   $$.ast = new_pyast_collect(PY_varargslist, &$n);
 };
-fpdef: NAME | LP fplist RP {
+fpdef: NAME (':' test)? {
+  $$.ast = $0.ast;
+} | LP fplist RP {
   $$.ast = new_pyast_collect(PY_fpdef, &$n);
 };
 fplist: fpdef (',' fpdef)* ','? {
@@ -83,6 +85,13 @@ expr_stmt: testlist (augassign testlist | ('=' testlist)*) {
     $$.ast->kind = PY_augassign;
   else if ($$.ast->children.n >= 2)
     $$.ast->kind = PY_assign;
+}
+| testlist ':' test ('=' testlist)? {
+  PyDAST *val = dig_pyast(d_get_child(&$n, 3));
+  if (val)
+    $$.ast = new_pyast(PY_annassign, &$n, $0.ast, $2.ast, val);
+  else
+    $$.ast = new_pyast(PY_annassign, &$n, $0.ast, $2.ast);
 };
 augassign: '+='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_ADD); }
          | '-='  { $$.ast = new_op_ast(PY_augassign, &$n, PY_OP_SUB); }
@@ -207,7 +216,10 @@ suite_cmds: stmt
             ]
           ;
 
-test: or_test ('if' or_test 'else' test)? {
+test: NAME ':=' test {
+    $$.ast = new_pyast(PY_namedexpr_test, &$n, $0.ast, $2.ast);
+  }
+  | or_test ('if' or_test 'else' test)? {
     $$.ast = pass_or_collect(1, PY_ternary, &$n, $0.ast);
   }
   | lambdef;
@@ -653,6 +665,7 @@ Ldone:;
       "compare", "cmp_op", "binop", "unaryop",
       "call", "attribute", "subscript", "power",
       "lambda", "yield_expr",
+      "namedexpr_test", "annassign",
       "name", "number", "string",
       "tuple", "list", "dict", "set",
       "listcomp", "genexpr",

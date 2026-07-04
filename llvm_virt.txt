@@ -1,0 +1,40 @@
+.....x.......ss...........................................s......
+
+---- summary ----
+  passed          61
+  expected fails  1
+  failed          30
+  skipped         3
+  time            143s
+
+failures:
+  builtins.py EXEC  diff tests/build/builtins.py.exec.out tests/builtins.py.exec.check
+  chained_comparison.py EXEC  diff tests/build/chained_comparison.py.exec.out tests/chained_comparison.py.exec.check
+  closure_in_loop.py EXEC  diff tests/build/closure_in_loop.py.exec.out tests/closure_in_loop.py.exec.check
+  default_args.py EXEC  diff tests/build/default_args.py.exec.out tests/default_args.py.exec.check
+  for_over_range.py EXEC  diff tests/build/for_over_range.py.exec.out tests/for_over_range.py.exec.check
+  for_over_string.py EXEC  diff tests/build/for_over_string.py.exec.out tests/for_over_string.py.exec.check
+  for_range_from_zero.py EXEC-TIMEOUT  log: tests/build/for_range_from_zero.py.exec.out
+  lambda_closure.py EXEC  diff tests/build/lambda_closure.py.exec.out tests/lambda_closure.py.exec.check
+  linked_list_ops.py EXEC  diff tests/build/linked_list_ops.py.exec.out tests/linked_list_ops.py.exec.check
+  list_comprehension.py EXEC  diff tests/build/list_comprehension.py.exec.out tests/list_comprehension.py.exec.check
+  list_concat.py EXEC  diff tests/build/list_concat.py.exec.out tests/list_concat.py.exec.check
+  list_multiply.py EXEC  diff tests/build/list_multiply.py.exec.out tests/list_multiply.py.exec.check
+  list_or_concat.py EXEC  diff tests/build/list_or_concat.py.exec.out tests/list_or_concat.py.exec.check
+  list_print.py EXEC  diff tests/build/list_print.py.exec.out tests/list_print.py.exec.check
+  list_reassign.py EXEC  diff tests/build/list_reassign.py.exec.out tests/list_reassign.py.exec.check
+  list_set_next.py EXEC  diff tests/build/list_set_next.py.exec.out tests/list_set_next.py.exec.check
+  list_slicing.py EXEC  diff tests/build/list_slicing.py.exec.out tests/list_slicing.py.exec.check
+  logical_operators.py EXEC  diff tests/build/logical_operators.py.exec.out tests/logical_operators.py.exec.check
+  multi_type_unpack.py EXEC  diff tests/build/multi_type_unpack.py.exec.out tests/multi_type_unpack.py.exec.check
+  multimethod_closure.py EXEC  diff tests/build/multimethod_closure.py.exec.out tests/multimethod_closure.py.exec.check
+  numeric_edges.py EXEC  diff tests/build/numeric_edges.py.exec.out tests/numeric_edges.py.exec.check
+  recursive_alloc_basic.py EXEC  diff tests/build/recursive_alloc_basic.py.exec.out tests/recursive_alloc_basic.py.exec.check
+  recursive_alloc_multi.py EXEC  diff tests/build/recursive_alloc_multi.py.exec.out tests/recursive_alloc_multi.py.exec.check
+  recursive_list_is_none.py EXEC  diff tests/build/recursive_list_is_none.py.exec.out tests/recursive_list_is_none.py.exec.check
+  recursive_local_alloc.py EXEC  diff tests/build/recursive_local_alloc.py.exec.out tests/recursive_local_alloc.py.exec.check
+  sieve.py EXEC  diff tests/build/sieve.py.exec.out tests/sieve.py.exec.check
+  string_format.py COMPILE  log: tests/build/string_format.py.out
+  string_index.py EXEC  diff tests/build/string_index.py.exec.out tests/string_index.py.exec.check
+  string_repr.py EXEC  diff tests/build/string_repr.py.exec.out tests/string_repr.py.exec.check
+  string_unpack.py EXEC  diff tests/build/string_unpack.py.exec.out tests/string_unpack.py.exec.check

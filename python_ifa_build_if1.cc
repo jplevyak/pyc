@@ -1074,6 +1074,50 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
+    case PY_namedexpr_test: {
+      PyDAST *tgt = n->children[0];
+      PyDAST *val_node = n->children[1];
+      build_if1_pyda(val_node, ctx);
+      PycAST *v = getAST(val_node, ctx);
+      if1_gen(if1, &ast->code, v->code);
+      build_if1_pyda(tgt, ctx);
+      PycAST *a = getAST(tgt, ctx);
+      if1_gen(if1, &ast->code, a->code);
+      if (a->is_member) {
+        if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
+                 new_sym(ast));
+      } else if (a->is_object_index) {
+        if1_add_send_arg(if1, find_send(a->code), v->rval);
+      } else {
+        if1_move(if1, &ast->code, v->rval, a->sym);
+      }
+      ast->rval = v->rval; // Return the assigned value
+      return 0;
+    }
+
+    case PY_annassign: {
+      if (n->children.n == 3) {
+        PyDAST *tgt = n->children[0];
+        PyDAST *val_node = n->children[2];
+        build_if1_pyda(val_node, ctx);
+        PycAST *v = getAST(val_node, ctx);
+        if1_gen(if1, &ast->code, v->code);
+        build_if1_pyda(tgt, ctx);
+        PycAST *a = getAST(tgt, ctx);
+        if1_gen(if1, &ast->code, a->code);
+        if (a->is_member) {
+          if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
+                   new_sym(ast));
+        } else if (a->is_object_index) {
+          if1_add_send_arg(if1, find_send(a->code), v->rval);
+        } else {
+          if1_move(if1, &ast->code, v->rval, a->sym);
+        }
+      }
+      ast->rval = 0;
+      return 0;
+    }
+
     case PY_augassign: {
       // children: [target, PY_augassign_op_node, value] for statement; 0 children for operator node
       if (n->children.n < 3) return 0;  // Skip operator-only nodes

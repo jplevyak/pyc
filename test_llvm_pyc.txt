@@ -1,0 +1,132 @@
+ln: tests/build/arithmetic_ops.py: File exists
+ln: tests/build/attr_augmented_assign.py: File exists
+ln: tests/build/basic_function.py: File exists
+ln: tests/build/class_inheritance.py: File exists
+ln: tests/build/conditional.py: File exists
+ln: tests/build/dict_basic.py: File exists
+ln: tests/build/doubly_linked_list.py: File exists
+ln: tests/build/empty_list_check.py: File exists
+ln: tests/build/fibonacci.py: File exists
+ln: tests/build/for_over_list.py: File exists
+ln: tests/build/for_over_string.py: File exists
+ln: tests/build/forward_function_call.py: File exists
+ln: tests/build/global_in_class.py: File exists
+ln: tests/build/linked_list_ops.py: File exists
+ln: tests/build/list_comprehension.py: File exists
+ln: tests/build/list_concat.py: File exists
+ln: tests/build/list_multiply.py: File exists
+ln: tests/build/list_print.py: File exists
+ln: tests/build/list_reassign.py: File exists
+ln: tests/build/list_set_next.py: File exists
+ln: tests/build/method_alias_external.py: File exists
+ln: tests/build/method_on_literal.py: File exists
+ln: tests/build/multi_assignment.py: File exists
+ln: tests/build/multimethod_closure.py: File exists
+ln: tests/build/none_value.py: File exists
+ln: tests/build/numeric_edges.py: File exists
+ln: tests/build/polymorphic_function.py: File exists
+ln: tests/build/pyc_struct_basic.py: File exists
+ln: tests/build/pyc_struct_no_escape.py: File exists
+ln: tests/build/recursive_alloc_basic.py: File exists
+ln: tests/build/scope_ahead_of_use.py: File exists
+ln: tests/build/scope_global_local_conflict.py: File exists
+ln: tests/build/scope_nested_locals.py: File exists
+ln: tests/build/string_index.py: File exists
+ln: tests/build/string_repr.py: File exists
+ln: tests/build/vector_through_formal.py: File exists
+ln: tests/build/while_loop.py: File exists
+.......x........
+  FAIL default_args.py (COMPILE)
+ss
+  FAIL doubly_linked_list.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'doubly_linked_list.py'
+
+  FAIL dynamic_attr.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'dynamic_attr.py'
+
+  FAIL empty_list_check.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'empty_list_check.py'
+
+  FAIL fibonacci.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'fibonacci.py'
+
+  FAIL for_over_list.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'for_over_list.py'
+
+  FAIL for_over_range.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'for_over_range.py'
+
+  FAIL for_over_string.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'for_over_string.py'
+
+  FAIL for_over_tuple.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'for_over_tuple.py'
+
+  FAIL for_range_from_zero.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'for_range_from_zero.py'
+
+  FAIL forward_function_call.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'forward_function_call.py'
+
+  FAIL function_reassignment.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'function_reassignment.py'
+
+  FAIL global_forward_ref.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'global_forward_ref.py'
+
+  FAIL global_in_class.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'global_in_class.py'
+
+  FAIL lambda_basic.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'lambda_basic.py'
+
+  FAIL lambda_class_attr.py (COMPILE-OUT)
+1d0
+< dparse: unable to read 'lambda_class_attr.py'
+
+  FAIL lambda_closure.py (EXEC)
+1c1
+< 0
+---
+> 4
+.....................................................s......
+
+---- summary ----
+  passed          74
+  expected fails  1
+  failed          17
+  skipped         3
+  time            61s
+
+failures:
+  default_args.py COMPILE  log: tests/build/default_args.py.out
+  doubly_linked_list.py COMPILE-OUT  diff tests/build/doubly_linked_list.py.out tests/empty
+  dynamic_attr.py COMPILE-OUT  diff tests/build/dynamic_attr.py.out tests/empty
+  empty_list_check.py COMPILE-OUT  diff tests/build/empty_list_check.py.out tests/empty
+  fibonacci.py COMPILE-OUT  diff tests/build/fibonacci.py.out tests/empty
+  for_over_list.py COMPILE-OUT  diff tests/build/for_over_list.py.out tests/empty
+  for_over_range.py COMPILE-OUT  diff tests/build/for_over_range.py.out tests/empty
+  for_over_string.py COMPILE-OUT  diff tests/build/for_over_string.py.out tests/empty
+  for_over_tuple.py COMPILE-OUT  diff tests/build/for_over_tuple.py.out tests/empty
+  for_range_from_zero.py COMPILE-OUT  diff tests/build/for_range_from_zero.py.out tests/empty
+  forward_function_call.py COMPILE-OUT  diff tests/build/forward_function_call.py.out tests/empty
+  function_reassignment.py COMPILE-OUT  diff tests/build/function_reassignment.py.out tests/empty
+  global_forward_ref.py COMPILE-OUT  diff tests/build/global_forward_ref.py.out tests/empty
+  global_in_class.py COMPILE-OUT  diff tests/build/global_in_class.py.out tests/empty
+  lambda_basic.py COMPILE-OUT  diff tests/build/lambda_basic.py.out tests/empty
+  lambda_class_attr.py COMPILE-OUT  diff tests/build/lambda_class_attr.py.out tests/empty
+  lambda_closure.py EXEC  diff tests/build/lambda_closure.py.exec.out tests/lambda_closure.py.exec.check

@@ -36,6 +36,8 @@ enum PyASTKind {
   PY_binop, PY_unaryop,
   PY_call, PY_attribute, PY_subscript, PY_power,
   PY_lambda, PY_yield_expr,
+  PY_namedexpr_test,
+  PY_annassign,
   // Atoms
   PY_name, PY_number, PY_string,
   PY_tuple, PY_list, PY_dict, PY_set,
