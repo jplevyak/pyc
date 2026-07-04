@@ -82,6 +82,10 @@ typedef void *_CG_nil_type;
 /* FFI Wrappers for Python (__pyc_c_call__) */
 inline _CG_int64 _CG_FFI_Alloc(_CG_int64 sz) { return (_CG_int64)(uintptr_t)_CG_Memory_Alloc(sz); }
 inline void _CG_FFI_Free(_CG_int64 p) { _CG_Memory_Free((void*)(uintptr_t)p); }
+inline _CG_int64 _CG_FFI_Get_Int64(_CG_int64 p, _CG_int64 offset) { return *(_CG_int64*)((char*)(uintptr_t)p + offset); }
+inline void _CG_FFI_Set_Int64(_CG_int64 p, _CG_int64 offset, _CG_int64 val) { *(_CG_int64*)((char*)(uintptr_t)p + offset) = val; }
+inline _CG_int8 _CG_FFI_Get_Int8(_CG_int64 p, _CG_int64 offset) { return *(_CG_int8*)((char*)(uintptr_t)p + offset); }
+inline void _CG_FFI_Set_Int8(_CG_int64 p, _CG_int64 offset, _CG_int8 val) { *(_CG_int8*)((char*)(uintptr_t)p + offset) = val; }
 #define _CG_primitive _CG_symbol
 #define _CG_make_tuple _CG_symbol
 #define _CG_Symbol(_x, _y) ((void *)(uintptr_t)_x)
