@@ -37,16 +37,23 @@ extern Vec<Sym *> builtin_functions;
 
 // -- PycCompiler: combines PycCallbacks + former PycContext state --
 
+struct WithCleanup {
+  Sym *cm_rval;
+  int loop_depth;
+};
+
 class PycCompiler : public PycCallbacks {
  public:
   // --- State (formerly PycContext) ---
   cchar *filename;
   int lineno;
+  int loop_depth = 0;
   void *node;
   PycModule *mod, *package;
   Vec<PycModule *> *modules;
   Vec<cchar *> *search_path;
   Vec<PycScope *> scope_stack;
+  Vec<WithCleanup> with_stack;
   Vec<cchar *> c_code;
   Map<void *, PycScope *> saved_scopes;
   Map<int, Sym *> tuple_types;

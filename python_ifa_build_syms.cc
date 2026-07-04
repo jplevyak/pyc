@@ -546,6 +546,8 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_finally_clause:
     case PY_with_stmt:
     case PY_with_item:
+    case PY_match_stmt:
+    case PY_case_block:
     case PY_bool_or:
     case PY_bool_and:
     case PY_bool_not:

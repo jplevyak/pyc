@@ -811,6 +811,56 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_if(if1, &ast->code, 0, t, then_code, 0, chain, 0, 0, ast);
 }
 
+// Helper: build if-else chain for PY_match_stmt
+static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
+  // children[0] = MATCH_KW, children[1] = subject (test), children[2..N-1] = case_blocks
+  PyDAST *subject = n->children[1];
+  build_if1_pyda(subject, ctx);
+  PycAST *subject_ast = getAST(subject, ctx);
+  if1_gen(if1, &ast->code, subject_ast->code);
+  
+  Code *chain = 0; // Default is do nothing
+  for (int i = n->children.n - 1; i >= 2; i--) {
+    PyDAST *case_block = n->children[i];
+    PyDAST *case_cond = case_block->children[1];
+    PyDAST *case_suite = case_block->children[2];
+    PycAST *case_ast = getAST(case_block, ctx);
+    
+    Code *case_chain = 0;
+    Code *case_then = 0;
+    if (case_block->children.n == 3) {
+      case_cond = case_block->children[1];
+      case_suite = case_block->children[2];
+    } else if (case_block->children.n >= 4) {
+      case_cond = case_block->children[1];
+      case_suite = case_block->children[3]; // Skip ':'
+    } else {
+      case_cond = case_block->children[0];
+      case_suite = case_block->children[1];
+    }
+    build_if1_suite_pyda(case_suite, &case_then, ctx);
+    
+    // Support wildcard `case _:` as default
+    if (case_cond->kind == PY_name && !strcmp(case_cond->str_val, "_")) {
+      if1_gen(if1, &case_chain, case_then);
+    } else {
+      build_if1_pyda(case_cond, ctx);
+      PycAST *case_cond_ast = getAST(case_cond, ctx);
+      if1_gen(if1, &case_chain, case_cond_ast->code);
+      
+      Sym *cmp_result = new_sym(case_ast);
+      Sym *bool_result = new_sym(case_ast);
+      call_method(&case_chain, case_ast, subject_ast->rval, sym___eq__, cmp_result, 1, case_cond_ast->rval);
+      call_method(&case_chain, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
+      
+      if1_if(if1, &case_chain, 0, bool_result, case_then, 0, chain, 0, 0, case_ast);
+    }
+    chain = case_chain;
+  }
+  
+  if1_gen(if1, &ast->code, chain);
+}
+
 // issues/001: at the point a capturing lambda/nested-def expression is
 // evaluated (e.g. `make_adder`'s `return lambda x: x + n`), construct a
 // fresh instance of the closure-carrier class synthesized for it in
@@ -883,7 +933,9 @@ static void build_if1_with_items(PyDAST *stmt_node, int item_idx, PycCompiler &c
     build_if1_assign_target(tgt, &temp_v, ast, ctx);
   }
   
+  ctx.with_stack.add(WithCleanup{cm->rval, ctx.loop_depth});
   build_if1_with_items(stmt_node, item_idx + 1, ctx, ast);
+  ctx.with_stack.n--;
   
   Sym *exit_val = new_sym(ast);
   call_method(&ast->code, ast, cm->rval, make_symbol("__exit__"), exit_val, 3, sym_nil, sym_nil, sym_nil);
@@ -1092,6 +1144,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_move(if1, &ast->code, val->rval, ctx.fun()->ret, ast);
       } else
         if1_move(if1, &ast->code, sym_nil, ctx.fun()->ret, ast);
+      
+      // Emit cleanups for all active with statements in this function
+      for (int i = ctx.with_stack.n - 1; i >= 0; i--) {
+        Sym *exit_val = new_sym(ast);
+        call_method(&ast->code, ast, ctx.with_stack[i].cm_rval, make_symbol("__exit__"), exit_val, 3, sym_nil, sym_nil, sym_nil);
+      }
+      
       if1_goto(if1, &ast->code, ast->label[0])->ast = ast;
       return 0;
     }
@@ -1197,7 +1256,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       call_method(&cond, ast, iter, sym___pyc_more__, tmp, 0);
       call_method(&body, ast, iter, sym___next__, tmp2, 0);
       if1_move(if1, &body, tmp2, t->sym, ast);
+      ctx.loop_depth++;
       build_if1_suite_pyda(n->children[2], &body, ctx);
+      ctx.loop_depth--;
       if (n->children.n > 3 && n->children[3]->kind == PY_else_clause)
         build_if1_suite_pyda(n->children[3]->children[0], &orelse, ctx);
       if1_loop(if1, &ast->code, ast->label[0], ast->label[1], tmp, 0, cond, next, body, ast);
@@ -1210,7 +1271,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       build_if1_pyda(n->children[0], ctx);
       PycAST *t = getAST(n->children[0], ctx);
       Code *body = 0, *orelse = 0;
+      ctx.loop_depth++;
       build_if1_suite_pyda(n->children[1], &body, ctx);
+      ctx.loop_depth--;
       if (n->children.n > 2 && n->children[2]->kind == PY_else_clause)
         build_if1_suite_pyda(n->children[2]->children[0], &orelse, ctx);
       if1_loop(if1, &ast->code, ast->label[0], ast->label[1], t->rval, 0, t->code, 0, body, ast);
@@ -1220,6 +1283,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
 
     case PY_if_stmt:
       build_if_pyda(n, ast, ctx);
+      return 0;
+
+    case PY_match_stmt:
+      build_match_pyda(n, ast, ctx);
       return 0;
 
     case PY_elif_clause: {
@@ -1279,9 +1346,16 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
 
     case PY_break_stmt:
-    case PY_continue_stmt:
+    case PY_continue_stmt: {
+      // Emit cleanups for active with statements within this loop
+      for (int i = ctx.with_stack.n - 1; i >= 0; i--) {
+        if (ctx.with_stack[i].loop_depth < ctx.loop_depth) break; // Exited the loop's bounds
+        Sym *exit_val = new_sym(ast);
+        call_method(&ast->code, ast, ctx.with_stack[i].cm_rval, make_symbol("__exit__"), exit_val, 3, sym_nil, sym_nil, sym_nil);
+      }
       if1_goto(if1, &ast->code, ast->label[0])->ast = ast;
       return 0;
+    }
 
     case PY_expr_stmt: {
       // Single expression statement (function call, etc.)

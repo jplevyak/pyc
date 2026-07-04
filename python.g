@@ -163,7 +163,15 @@ assert_stmt: 'assert' test (',' test)? {
   $$.ast = new_pyast_collect(PY_assert_stmt, &$n);
 };
 
-compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated;
+compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated | match_stmt;
+
+match_stmt: MATCH_KW test ':' NL INDENT case_block+ DEDENT {
+  $$.ast = new_pyast_collect(PY_match_stmt, &$n);
+};
+
+case_block: CASE_KW test ':' suite {
+  $$.ast = new_pyast_collect(PY_case_block, &$n);
+};
 
 /* Named clause sub-rules for cleaner AST */
 elif_clause: 'elif' test ':' suite {
@@ -410,6 +418,16 @@ yield_expr: 'yield' testlist? {
 NL: '\n';
 INDENT: [ if (!python_indent(&$g)) return -1; ] ;
 DEDENT: [ if (!python_dedent(&$g)) return -1; ] ;
+MATCH_KW: "[a-zA-Z_][a-zA-Z0-9_]*" $term -1 [ if ($n.end - $n.start_loc.s != 5 || strncmp($n.start_loc.s, "match", 5)) return -1; ] {
+  $$.ast = new_pyast(PY_match_kw, &$n);
+  $$.ast->str_val = pyast_dupstr($n.start_loc.s, 5);
+};
+
+CASE_KW: "[a-zA-Z_][a-zA-Z0-9_]*" $term -1 [ if ($n.end - $n.start_loc.s != 4 || strncmp($n.start_loc.s, "case", 4)) return -1; ] {
+  $$.ast = new_pyast(PY_case_kw, &$n);
+  $$.ast->str_val = pyast_dupstr($n.start_loc.s, 4);
+};
+
 NAME: "[a-zA-Z_][a-zA-Z0-9_]*" $term -1 {
   $$.ast = new_pyast(PY_name, &$n);
   int len = (int)($n.end - $n.start_loc.s);
