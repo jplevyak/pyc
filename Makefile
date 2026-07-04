@@ -227,7 +227,7 @@ deinstall:
 
 test: test-unit test-ir test-e2e
 
-test-e2e: $(PYC)
+test-e2e: $(PYC) libpyc_runtime.a
 	@echo "--- Testing C Backend ---"
 	./test_pyc
 	@echo "--- Testing LLVM Backend ---"
