@@ -425,9 +425,21 @@ ast->sym` in `maybe_synthesize_closure_pyda`) — a function recursing
 on itself doesn't need to be threaded through as a captured field, it
 should keep resolving through the ordinary (nesting_depth/display)
 path, which already handles this case correctly since a direct
-recursive call is always stack-disciplined (never escapes). Not yet
-implemented — flagging as a small, well-scoped follow-on, separate
-from issue 007's much larger polymorphic-dispatch question.
+recursive call is always stack-disciplined (never escapes).
+**FIXED (2026-07-04):** implemented exactly that exclusion
+(`if (outer->sym == ast->sym) continue;` in
+`maybe_synthesize_closure_pyda`), verified clean (zero warnings,
+correct output, both backends), and promoted to an official test —
+`tests/nested_recursion.py` (self-recursive nested def; nested def
+called twice with independent arguments). One adjacent shape
+remains broken, pre-existing on both sides of this fix (confirmed
+by A/B against the pre-fix build): a nested recursive def that
+ALSO genuinely captures an enclosing local (`def count(n): ...
+base ... count(n - 1)`) — the self-reference then resolves through
+the carrier-class rebind and fails to compile with issue 007
+Finding 2's `illegal call argument type` violations. That shape
+belongs to issue 007's Sym-identity rework, noted in the test's
+header comment.
 
 ### Verification results
 

@@ -165,6 +165,18 @@ static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx) {
       //    already resolves its captures via self.field).
       if (level < 0) continue;
       if (ctx.scope_stack[level]->in) continue;
+      // issues/001 follow-up: a function's own name, referenced
+      // recursively from inside its own body (`def outer(): def
+      // fact(n): ... n * fact(n - 1)`), resolves to the enclosing
+      // scope's binding exactly like a genuine free variable -- but
+      // it must NOT be treated as a capture: threading the function
+      // through a carrier-class field rebinds ast->sym to the
+      // closure instance and triggers the issue-007 Finding 2
+      // self-referential-reassignment FA warnings. A direct
+      // recursive call is always stack-disciplined (the activation
+      // is live), so the ordinary nesting_depth/display path
+      // handles it correctly.
+      if (outer->sym == ast->sym) continue;
       captured.add(outer->sym);
     }
   if (!captured.n) return nullptr;

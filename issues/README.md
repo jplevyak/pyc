@@ -24,15 +24,17 @@ conventions are the same; the only difference is location.
 ## Current open issues
 
 - [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
-  — **Mostly fixed, kept open for two documented residuals.** The
+  — **Mostly fixed, kept open for documented residuals.** The
   original `unique_AVar` crash on closures capturing enclosing
   locals is fixed (closure-carrier classes; `captured_local.py`
-  is fully clean). Still open in the doc itself: nested-`def`
-  captures execute correctly but emit a cosmetic FA warning at
-  call sites (so no official nested-def test — the harness needs
-  empty stderr), and a nested *recursive* `def` is spuriously
-  treated as capturing itself (fix sketched, not yet implemented).
-  Deeper Sym-identity rework shared with issue 007.
+  is fully clean), and the self-capture regression for nested
+  *recursive* defs is fixed too (`nested_recursion.py`). Still
+  open: nested-`def` captures execute correctly but emit a
+  cosmetic FA warning at call sites (so no official nested-def
+  capture test — the harness needs empty stderr), and the mixed
+  shape (nested recursive def that also captures an enclosing
+  local) fails to compile. Both belong to the Sym-identity rework
+  shared with issue 007.
 - [003-subclass-struct-layout-mismatch.md](003-subclass-struct-layout-mismatch.md)
   — Subclasses that redefine inherited fields produce C compile
   errors ("struct has no member 'e0'"). Same root cause as the
@@ -78,14 +80,6 @@ conventions are the same; the only difference is location.
   element types anywhere fails to compile with a `BOXING`/"mixed
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
-- [025-while-true-first-statement-of-function.md](025-while-true-first-statement-of-function.md)
-  — `while True:` as a function's *first statement* breaks FA
-  typing of the enclosing function's formals ("'n' has no type" +
-  runtime `matching function not found`, both backends; a variant
-  trips the LLVM verifier's entry-block-predecessor check). Any
-  statement before the loop avoids it. Found while writing the
-  regression test that closed issue 005 (which was the
-  *module-level* `while True:` case — different, fixed bug).
 
 ## Closed (archive)
 
@@ -199,3 +193,14 @@ commit ref recorded in each file's status line.
   `while_true_loop.py`. The separate `while True:`-as-first-
   statement-of-a-function FA bug found while closing this is filed
   as issue 025.
+- [025](closed/025-while-true-first-statement-of-function.md) —
+  `while True:` opening a function body no longer breaks FA typing
+  of the formals (and no longer trips the LLVM
+  entry-block-predecessor verifier). Root cause: the loop-header
+  LABEL became the entry PNode, so SSU's loop phi (sized by
+  `cfg_pred.n`) only saw the back edge and the formals' values
+  never flowed into the loop. Fixed in `Fun::build_cfg` by
+  prepending a synthetic NOP whenever the body's first leaf Code
+  is a LABEL — the entry PNode is never a jump target. Coverage in
+  `while_true_loop.py`. Filed and closed same day, found while
+  closing issue 005.

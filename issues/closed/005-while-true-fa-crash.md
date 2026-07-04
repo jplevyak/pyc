@@ -13,7 +13,8 @@ level `while True:`, the circular-list ring idiom, and a nested
 in-function variant). Related but distinct, found while writing
 that test and filed separately: `while True:` as a function's
 *first statement* breaks FA typing —
-[025-while-true-first-statement-of-function.md](../025-while-true-first-statement-of-function.md).
+[025-while-true-first-statement-of-function.md](025-while-true-first-statement-of-function.md)
+(also since fixed and closed).
 
 ## Symptom
 
