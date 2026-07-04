@@ -1,20 +1,27 @@
 # Issue 002: Segfault when a bound-method closure escapes its binding scope
 
-**Status:** fixed (2026-07-04). Case A (closure passed as a
-function argument) was fixed earlier — see "2026-07
-re-investigation" below. Case B (closure stored in and read back
-from a **global** variable) is now also fixed: root cause was the
-`None` initializer polluting the global's single flow-insensitive
-GLOBAL_CONTOUR cell, typing it `SUM{__pyc_None_type__, closure}`,
-which codegen's closure-unpacking path (`is_closure_var`, requiring
-a bare `Type_FUN`) didn't recognize — see "2026-07-04 Case B root
-cause and fix" at the bottom. Regression test:
-`tests/closure_in_global.py` (both backends).
+**Status:** closed (2026-07-04). Case A (closure passed as a
+function argument) fixed in `b7721ae` (two `simple_inlining`
+bounds bugs) — see "2026-07 re-investigation" below. Case B
+(closure stored in and read back from a **global** variable) fixed
+in `41aa654`: root cause was the `None` initializer polluting the
+global's single flow-insensitive GLOBAL_CONTOUR cell, typing it
+`SUM{__pyc_None_type__, closure}`, which codegen's
+closure-unpacking path (`is_closure_var`, requiring a bare
+`Type_FUN`) didn't recognize — see "2026-07-04 Case B root cause
+and fix" at the bottom. Follow-up `2b3bcd3` (ifa/issues/031 step
+2) routes global reads through per-read load temps, so the call
+site now consumes an EntrySet-contoured temp. Regression tests:
+`tests/escaped_closure.py`, `tests/closure_returned_from_function.py`,
+`tests/closure_in_global.py` (both backends). Known boundary, out
+of scope here: two *different* closure shapes stored in one global
+need `ifa/issues/029`/`030` polymorphic dispatch (defined runtime
+`matching function not found`, no longer a compiler crash).
 **Affects:** pyc frontend (suspected: `python_ifa_build_if1.cc`
 or `analysis/fa.cc`); manifests when a closure created by `a.m`
 crosses a function-call boundary — passed as an argument,
 returned, or assigned to a global from inside a function.
-**Related:** [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
+**Related:** [001-fa-crash-captured-locals.md](../001-fa-crash-captured-locals.md)
 (both are gaps in pyc's closure model); v2 LLVM closure handler
 work (commit `db4270a`). Issue 001's investigation (dug into `ifa`'s
 `nesting_depth`/`display` machinery in depth) confirmed *that*
@@ -276,7 +283,7 @@ a concrete closure shape at all.
 Properly fixing this means extending FA's global-Sym handling to
 correctly propagate and refine closure shapes through
 `GLOBAL_CONTOUR` — genuine, non-trivial FA work, comparable in scope
-to [007-decorators-not-applied.md](007-decorators-not-applied.md)'s
+to [007-decorators-not-applied.md](../007-decorators-not-applied.md)'s
 polymorphic-dispatch investigation, not a quick patch. Deferring
 further work on this specific remainder pending direction on whether
 it's worth the investment now — the two `simple_inlining` crashes

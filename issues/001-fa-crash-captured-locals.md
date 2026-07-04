@@ -19,7 +19,7 @@ a structurally-identical problem (see below).
 test as part of the v2 LLVM closure-handler coverage push (see
 [ifa/codegen/CG_IR_PARITY_PLAN.md](../ifa/codegen/CG_IR_PARITY_PLAN.md)
 recommendation 3 follow-up).
-**Related:** [002-fa-crash-escaped-closure.md](002-fa-crash-escaped-closure.md)
+**Related:** [002-fa-crash-escaped-closure.md](closed/002-fa-crash-escaped-closure.md)
 looked at first glance like the same root cause, but is more likely
 a separate bug in a different mechanism — see "Relationship to
 issue 002" below; worth re-checking once this lands, not assuming
@@ -161,7 +161,7 @@ it, structurally cannot satisfy that.
 | Bound method (two methods, same instance) | yes — `multimethod_closure.py` |
 | Bound method called from a loop | yes — `closure_in_loop.py` |
 | **Inner lambda capturing enclosing local** | **no — this issue** |
-| Closure passed across function boundary | no — [002](002-fa-crash-escaped-closure.md), likely separate mechanism |
+| Closure passed across function boundary | no — [002](closed/002-fa-crash-escaped-closure.md), likely separate mechanism (since fixed and closed) |
 
 The pattern in the "works" rows is telling: every one of them
 carries its captured state **explicitly**, as a real value (`self`,
@@ -542,7 +542,7 @@ fails loudly with a source location instead of a bare `Aborted`.
   is picked up.)
 - `tests/captured_local.py` (re-added the case dropped in commit
   `b24bfbb`).
-- Possibly (unconfirmed) [issue 002](002-fa-crash-escaped-closure.md)
+- Possibly (unconfirmed) [issue 002](closed/002-fa-crash-escaped-closure.md)
   — worth re-testing at some point, but likely a separate mechanism;
   see "Relationship to issue 002" above.
 - Realistic stdlib porting — even `functools` shims need this.

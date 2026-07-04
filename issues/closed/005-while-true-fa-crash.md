@@ -1,16 +1,19 @@
 # Issue 005: `while True:` crashes FA in `update_in`
 
-**Status:** fixed (landed in the 2026-06-26 "Interim" commit,
-`97f6a6c`, before this doc was ever updated to say so — caught during
-a 2026-07 re-check). See "What landed" below.
-**2026-07-04 follow-up:** the `update_in` guard described below was
-removed again — structurally subsumed by
-[ifa/issues/031](../ifa/issues/031-globals-outside-fa-precision.md)
+**Status:** closed (2026-07-04). Fixed in the 2026-06-26 "Interim"
+commit `97f6a6c` (the `update_in` guard, landed before this doc was
+ever updated to say so — caught during a 2026-07 re-check); the
+guard was then structurally subsumed in `2b3bcd3` by
+[ifa/issues/031](../../ifa/issues/031-globals-outside-fa-precision.md)
 step 1: `GLOBAL_CONTOUR` is now a real singleton EntrySet
 (`fa->global_es`) whose `in_es_worklist` is permanently 1, so the
 deref that used to segfault is safe and the enqueue self-suppresses.
-`fibheap_full.py` / `fibheap_decrease_key.py` still cover the
-original repro shape on both backends.
+Committed regression coverage: `tests/while_true_loop.py` (module-
+level `while True:`, the circular-list ring idiom, and a nested
+in-function variant). Related but distinct, found while writing
+that test and filed separately: `while True:` as a function's
+*first statement* breaks FA typing —
+[025-while-true-first-statement-of-function.md](../025-while-true-first-statement-of-function.md).
 
 ## Symptom
 

@@ -24,22 +24,20 @@ conventions are the same; the only difference is location.
 ## Current open issues
 
 - [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
-  — `def outer(): return lambda x: x + captured` crashes the FA
-  at `unique_AVar` assertion. Blocks Python closures over
-  enclosing-scope locals.
-- [002-fa-crash-escaped-closure.md](002-fa-crash-escaped-closure.md)
-  — Passing a bound method closure across a function-call
-  boundary segfaults pyc. Blocks closures that escape their
-  binding scope as arguments / return values / global assignment.
+  — **Mostly fixed, kept open for two documented residuals.** The
+  original `unique_AVar` crash on closures capturing enclosing
+  locals is fixed (closure-carrier classes; `captured_local.py`
+  is fully clean). Still open in the doc itself: nested-`def`
+  captures execute correctly but emit a cosmetic FA warning at
+  call sites (so no official nested-def test — the harness needs
+  empty stderr), and a nested *recursive* `def` is spuriously
+  treated as capturing itself (fix sketched, not yet implemented).
+  Deeper Sym-identity rework shared with issue 007.
 - [003-subclass-struct-layout-mismatch.md](003-subclass-struct-layout-mismatch.md)
   — Subclasses that redefine inherited fields produce C compile
   errors ("struct has no member 'e0'"). Same root cause as the
   existing `class_attr_mutation.py` xfail. Blocks inheritance-
   driven polymorphism in lists.
-- [005-while-true-fa-crash.md](005-while-true-fa-crash.md) —
-  `while True:` segfaults FA's `update_in` (constant-cond IF has
-  no valid contour). Workaround: use a real/sentinel loop
-  condition.
 - [007-decorators-not-applied.md](007-decorators-not-applied.md)
   — Any decorator other than the builtin `@vector`/`@pyc_struct`
   directives is evaluated but never applied; decorated
@@ -80,16 +78,14 @@ conventions are the same; the only difference is location.
   element types anywhere fails to compile with a `BOXING`/"mixed
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
-- [021-scope-map-pointer-hash-nondeterminism.md](021-scope-map-pointer-hash-nondeterminism.md)
-  — **In-progress, larger than originally scoped.** Two narrow
-  fixes landed (`PycScope::map` → content-hashed `HashMap`; a
-  missing `PointerHash<Var *>` specialization), both verified safe
-  with zero regressions — but direct testing shows they do *not*
-  achieve byte-identical builds (`expr_evaluator.py` LLVM output
-  still differs across all 8 repeated compiles). Root cause turned
-  out to be the same cross-cutting audit `ifa/issues/010` already
-  deferred (~150+ more unspecialized pointer-hashed `set_add` sites
-  across `ifa/`); this issue's remaining scope now redirects there.
+- [025-while-true-first-statement-of-function.md](025-while-true-first-statement-of-function.md)
+  — `while True:` as a function's *first statement* breaks FA
+  typing of the enclosing function's formals ("'n' has no type" +
+  runtime `matching function not found`, both backends; a variant
+  trips the LLVM verifier's entry-block-predecessor check). Any
+  statement before the loop avoids it. Found while writing the
+  regression test that closed issue 005 (which was the
+  *module-level* `while True:` case — different, fixed bug).
 
 ## Closed (archive)
 
@@ -175,3 +171,31 @@ commit ref recorded in each file's status line.
   leading `::` (a C++-only global-scope qualifier) from the target
   function name, so `exit()` — and anything else calling a
   `"::"`-qualified C function — could never link on that backend.
+- [021](closed/021-scope-map-pointer-hash-nondeterminism.md) —
+  frontend/FA run-to-run nondeterminism from pointer-keyed hashing.
+  Landed fixes: `PycScope::map` → content-hashed `HashMap`, missing
+  `PointerHash` specializations, and finally an ID-based
+  `AEdgeHashFns` for `EdgeHash` (commit `1613af8`), the last known
+  surface-level instance. Full byte-identical-build reproducibility
+  (~150+ remaining pointer-hashed sites) is formally deferred to
+  `ifa/issues/010`'s planned audit.
+- [002](closed/002-fa-crash-escaped-closure.md) — bound-method
+  closures now survive escaping their binding scope on both
+  backends: passed as arguments and returned (`b7721ae`, two
+  `simple_inlining` bounds bugs at first-PNode/escaped-call-site
+  shapes), and stored in / read back from a `global` (`41aa654`:
+  the `None` initializer made the global's type
+  `SUM{None, closure}`; codegen now sees through the nullable SUM
+  via `closure_fun_type`, plus a bounds-checked `write_send_arg`).
+  Tests: `escaped_closure.py`, `closure_returned_from_function.py`,
+  `closure_in_global.py`. Multiple *different* closure shapes in
+  one global remain `ifa/issues/029`/`030` territory (defined
+  runtime error, not a crash).
+- [005](closed/005-while-true-fa-crash.md) — `while True:` no
+  longer crashes FA: fixed by the `update_in` guard in `97f6a6c`,
+  then made structural in `2b3bcd3` (`ifa/issues/031` step 1:
+  `GLOBAL_CONTOUR` is a real singleton EntrySet, so the sentinel
+  deref class is gone entirely). Committed coverage:
+  `while_true_loop.py`. The separate `while True:`-as-first-
+  statement-of-a-function FA bug found while closing this is filed
+  as issue 025.

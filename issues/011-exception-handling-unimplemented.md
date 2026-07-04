@@ -6,7 +6,7 @@
 `PY_except_handler`, `PY_finally_clause` all hit the same
 `fail(...)`).
 **Related:** issue 012 (`with` statement — same `fail()` call
-site, different feature); `issues/005-while-true-fa-crash.md`
+site, different feature); `issues/closed/005-while-true-fa-crash.md`
 mentions a fib-heap idiom (`while True: ... break`) that had to
 route around a *different* crash — exception handling was never
 attempted in that work because it hits this wall immediately.
