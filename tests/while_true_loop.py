@@ -36,12 +36,13 @@ while True:
     break
 print(total)
 
-# Nested: `while True:` inside a function, breaking on a global
-# mutated by a callee. NOTE: the loop is deliberately not the
-# function's first statement -- `while True:` as the very first
-# PNode of a function is a separate, pre-existing bug (FA "'n' has
-# no type" + wrong dispatch on both backends; see
-# issues/025-while-true-first-statement-of-function.md).
+# Nested: `while True:` as the *first statement* of a function,
+# breaking on a global mutated by a callee. This shape was issue
+# 025: the loop-header LABEL used to be the function's entry PNode
+# (a jump target), so SSU's loop phi only saw the back edge and the
+# formals/locals never got typed; a break-only exit also tripped
+# the LLVM entry-block-predecessor verifier. Fixed by prepending a
+# synthetic NOP in Fun::build_cfg.
 done = False
 steps = 0
 
@@ -52,12 +53,21 @@ def step():
     done = True
 
 def run():
-  local_guard = 0
   while True:
     step()
     if done:
       break
-  return local_guard
 
 run()
 print(steps)
+
+# Issue 025's original repro: loop over a *parameter*, `while True:`
+# first statement.
+def bump(n):
+  while True:
+    n = n + 1
+    if n >= 5:
+      break
+  return n
+
+print(bump(0))
