@@ -1,12 +1,25 @@
 # Issue 001: FA assertion crash on closures capturing enclosing-scope locals
 
-**Status:** fixed. The closure-carrier-class design below ("Proposed
-fix: reuse the bound-method pattern") is implemented for both
-capturing lambdas and capturing nested `def`s. Lambda captures are
-fully clean (zero FA warnings); nested-def captures execute
-correctly on both backends but leave one known, harmless, cosmetic
-FA warning at call sites — see "What landed" below for the full
-account, including four bugs found and fixed along the way.
+**Status:** closed (2026-07-05). The closure-carrier-class design
+below is implemented for both capturing lambdas and capturing
+nested `def`s, and every residual this issue accumulated is now
+resolved by issues/007's split-identity rework (commits through
+2026-07-05):
+- The nested-def cosmetic FA warning at call sites is GONE (the
+  name-rebind no longer rewrites a Sym carrying `if1_closure`);
+  `tests/nested_capture.py` (this issue's own `make_adder` repro)
+  is now an official, warning-free test on both backends.
+- The self-capture regression (nested recursive def) was fixed
+  earlier via the `outer->sym == ast->sym` exclusion and stays
+  fixed under split identity (extended to the public-name Sym).
+- The mixed shape (nested recursive def that ALSO captures an
+  enclosing local) now works — the in-body self-reference resolves
+  to the carrier instance (`self`); covered in
+  `tests/nested_recursion.py`.
+- Transitive captures (a name captured from a grandparent scope
+  through an intermediate function) work — needed by
+  parameterized decorators; see `tests/decorator_basic.py`.
+Original account follows.
 **Affects:** `ifa/analysis/fa.cc` (`make_AVar`, `unique_AVar`,
 `edge_nest_compatible_with_entry_set`); `ifa/if1/if1.cc`
 (`if1_fixup_nesting`, called from `if1_closure`) — this is core
@@ -19,7 +32,7 @@ a structurally-identical problem (see below).
 test as part of the v2 LLVM closure-handler coverage push (see
 [ifa/codegen/CG_IR_PARITY_PLAN.md](../ifa/codegen/CG_IR_PARITY_PLAN.md)
 recommendation 3 follow-up).
-**Related:** [002-fa-crash-escaped-closure.md](closed/002-fa-crash-escaped-closure.md)
+**Related:** [002-fa-crash-escaped-closure.md](002-fa-crash-escaped-closure.md)
 looked at first glance like the same root cause, but is more likely
 a separate bug in a different mechanism — see "Relationship to
 issue 002" below; worth re-checking once this lands, not assuming
@@ -161,7 +174,7 @@ it, structurally cannot satisfy that.
 | Bound method (two methods, same instance) | yes — `multimethod_closure.py` |
 | Bound method called from a loop | yes — `closure_in_loop.py` |
 | **Inner lambda capturing enclosing local** | **no — this issue** |
-| Closure passed across function boundary | no — [002](closed/002-fa-crash-escaped-closure.md), likely separate mechanism (since fixed and closed) |
+| Closure passed across function boundary | no — [002](002-fa-crash-escaped-closure.md), likely separate mechanism (since fixed and closed) |
 
 The pattern in the "works" rows is telling: every one of them
 carries its captured state **explicitly**, as a real value (`self`,
@@ -388,7 +401,7 @@ requires empty stderr).
 
 **2026-07 update:** confirmed this is very likely the same
 underlying mechanism as
-[issue 007](007-decorators-not-applied.md)'s "Finding 2"
+[issue 007](../007-decorators-not-applied.md)'s "Finding 2"
 (self-referential reassignment of a Sym that already has
 `if1_closure` attached directly to it breaks FA's dispatch) —
 see issue 007's re-check notes for a controlled experiment isolating
@@ -494,9 +507,9 @@ depending on control flow (e.g. two different `@decorator`-produced
 wrappers reaching the same call site, or a list of differently-
 captured closures) — would need real dispatch over a union of
 concrete callable types, which is exactly what
-[../ifa/issues/closed/029-polymorphic-dispatch.md](../ifa/issues/closed/029-polymorphic-dispatch.md)
+[../../ifa/issues/closed/029-polymorphic-dispatch.md](../../ifa/issues/closed/029-polymorphic-dispatch.md)
 and
-[../ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+[../ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
 are already tracking (029's struct-slot dispatch is reportedly
 already implemented for a related shape). Land the simple case
 first; treat "a name can hold structurally different closures" as
@@ -545,7 +558,7 @@ fails loudly with a source location instead of a bare `Aborted`.
 - The most common Python closure pattern (`functools.partial`-
   style adapters, factory functions returning configured
   callables, decorators that wrap with captured state) —
-  including, notably, [issue 007](007-decorators-not-applied.md)'s
+  including, notably, [issue 007](../007-decorators-not-applied.md)'s
   most common decorator shape (`def double(f): def wrapper(x): ...
   return wrapper`), which was confirmed blocked directly on this
   issue's assertion during that investigation. (Note: 007's own
@@ -554,7 +567,7 @@ fails loudly with a source location instead of a bare `Aborted`.
   is picked up.)
 - `tests/captured_local.py` (re-added the case dropped in commit
   `b24bfbb`).
-- Possibly (unconfirmed) [issue 002](closed/002-fa-crash-escaped-closure.md)
+- Possibly (unconfirmed) [issue 002](002-fa-crash-escaped-closure.md)
   — worth re-testing at some point, but likely a separate mechanism;
   see "Relationship to issue 002" above.
 - Realistic stdlib porting — even `functools` shims need this.

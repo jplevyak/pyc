@@ -1,14 +1,48 @@
 # Issue 007: User-defined decorators are silently ignored
 
-**Status:** open — investigated in depth; blocked on a chain of three
-separate, deeper, pre-existing limitations, not a quick frontend fix
-as originally scoped. The final and largest of the three
-(`ifa/issues/closed/029-polymorphic-dispatch.md` /
-`ifa/issues/030-polymorphic-dispatch-fat-pointers.md`'s fat-pointer
-dispatch design, extended to a call-site shape those issues don't yet
-cover) is a genuinely large feature, not something to improvise here
-— see "2026-07 re-check: the real blocker is 029/030's dispatch gap,
-extended to a new shape" below before attempting again.
+**Status:** largely fixed (2026-07-05). The Sym-identity ("split
+identity") rework landed: every non-method `def` gets its own
+internal function Sym (never attaching `if1_closure` to the
+public-name Sym, mirroring the class-method alias pattern), the
+public name is an ordinary variable bound by `if1_move`, and
+`PY_decorated` actually applies decorators bottom-up as
+`name = dN(...(d1(fn)))`. Working and covered by
+`tests/decorator_basic.py` on both backends: the standard
+closure-wrapping shape (`@double` → 12), a decorator returning a
+different function (`@swap` → 105, i.e. Finding 2's
+self-referential reassignment is FIXED — also directly covered by
+`tests/function_selfref_reassign.py`), and parameterized
+decorators (`@add_n(30)` → 37, which required transitive-capture
+propagation: an intermediate scope now captures what its inner
+scopes capture from further out, and closure-instance snapshots
+read such fields through the creator's own `self`). The
+bare-callable dispatch layer landed too (value-identity dispatch
+in both backends, `tests/function_reassignment.py` passes; mixed
+classtag+address chains supported).
+
+Still open, all with defined failure modes rather than silent
+mis-execution:
+- **Stacked applications of the same closure-wrapping decorator**
+  (`@double @double`): the inner wrapper value is a
+  closure-carrier *instance* while the outer candidate set mixes
+  raw functions — needs carrier classes to carry a method-pointer
+  slot and unique class names (all carriers currently share the
+  name `__closure__`); tracked as remaining scope in
+  `ifa/issues/030`. Fails loudly at runtime ("no branch matched").
+- **Class-based decorators** (`@Wrapper` with
+  `__init__`/`__call__`): the decorator-position class call does
+  not route through constructor lowering (`Wrapper(fn)` emitted as
+  a raw send); FA reports "expression has no type".
+- **Dotted-name decorators** (`@mod.dec`): keep the historical
+  silent no-op (only plain names are resolved in
+  `PY_decorated`'s application loop).
+- **Known CPython divergence:** a recursive call inside a
+  decorated function invokes the *undecorated* function (the
+  in-body self-reference resolves to the internal fn Sym /
+  carrier self — see `def_internal_fn` in `python_ifa_int.h`).
+- `@staticmethod`/`@classmethod`/`@property` semantics were not
+  evaluated (methods keep the pre-existing alias/setter path;
+  decorated *methods* still take the legacy no-op route).
 **Affects:** `python_ifa_build_if1.cc:517-606` (`PY_decorated` case
 in `build_if1_pyda`); the real fix, if attempted, also touches
 `python_ifa_build_syms.cc` (symbol creation for decorated defs — see
@@ -20,7 +54,7 @@ equivalent) for the dispatch layer.
 the one class decorator with real semantics; `@pyc_struct` (issue
 `closed/015-pyc-pod-records-no-frontend-hook.md`) is the other.
 No general decorator-application mechanism exists.
-[001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
+[001-fa-crash-captured-locals.md](closed/001-fa-crash-captured-locals.md)
 is one of the blockers found here — closure-wrapping decorators
 (the most common decorator shape) hit it directly.
 [ifa/issues/closed/029-polymorphic-dispatch.md](../ifa/issues/closed/029-polymorphic-dispatch.md)
@@ -209,7 +243,7 @@ same statement**:
   direct `ast->sym = ps->sym` tie-in).
 
 **This is very likely the identical mechanism** behind
-[issue 001](001-fa-crash-captured-locals.md)'s own accepted
+[issue 001](closed/001-fa-crash-captured-locals.md)'s own accepted
 "known remaining limitation": a capturing nested `def`'s name-rebind
 fix there (`if1_move(inst, ast->sym)`, rebinding a Sym that already
 has `if1_closure` attached, into a freshly-built closure instance)

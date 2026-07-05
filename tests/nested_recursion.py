@@ -3,12 +3,6 @@
 # function Sym to a closure instance and trigger issue-007
 # Finding 2 FA warnings). The recursive call resolves through the
 # ordinary nesting_depth/display path -- always stack-disciplined.
-#
-# NOTE: the *mixed* shape -- a nested recursive def that ALSO
-# genuinely captures an enclosing local (`def count(n): ... base
-# ... count(n-1)`) -- fails to compile both before and after this
-# fix (self-reference through a carrier-class rebind; needs issue
-# 007's Sym-identity rework). Not covered here.
 def outer():
   def fact(n):
     if n <= 1:
@@ -28,3 +22,16 @@ def outer2():
   return fib(10) + fib(5)
 
 print(outer2())
+
+# The mixed shape -- a nested recursive def that ALSO captures an
+# enclosing local -- works since issues/007's split identity (the
+# recursive self-reference resolves to the carrier instance, i.e.
+# `self`, inside the body).
+def make_counter(base):
+  def count(n):
+    if n <= 0:
+      return base
+    return 1 + count(n - 1)
+  return count(3)
+
+print(make_counter(10))

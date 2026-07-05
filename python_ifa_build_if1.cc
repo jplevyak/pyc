@@ -873,11 +873,26 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
 // __new__ calls -- see issue 017 for why that indirection matters there
 // and not here). Returns the new instance Sym, which becomes the lambda/
 // nested-def expression's rval instead of the raw Fun Sym `fn`.
-static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code) {
+static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycCompiler &ctx) {
   Sym *inst = new_sym(ast);
   if1_send(if1, code, 3, 1, sym_primitive, sym_new, cls, inst)->ast = ast;
   for (Sym *field : cls->has.values()) {
-    if1_send(if1, code, 5, 1, sym_operator, inst, sym_setter, if1_make_symbol(if1, field->name), field,
+    Sym *val = field;
+    // Transitive capture (issues/007 parameterized decorators): the
+    // captured value may itself be a captured field of the CREATOR's
+    // own carrier (e.g. `wrapper` capturing `n` two scopes up, with
+    // the intermediate `dec` capturing it too). Read it through the
+    // creator's self.field instead of the raw outer Sym -- a raw
+    // reference here would be mis-promoted by the creator's
+    // if1_fixup_nesting (it looks like a LOCALLY_NESTED local of the
+    // creator) and corrupt the outer function's own reads.
+    Sym *cin = ctx.scope_stack.last()->in;
+    if (cin && cin != cls && cin->has.in(field) && ctx.fun() && ctx.fun()->self) {
+      val = new_sym(ast);
+      if1_send(if1, code, 4, 1, sym_operator, ctx.fun()->self, sym_period, if1_make_symbol(if1, field->name), val)
+          ->ast = ast;
+    }
+    if1_send(if1, code, 5, 1, sym_operator, inst, sym_setter, if1_make_symbol(if1, field->name), val,
               new_sym(ast))
         ->ast = ast;
   }
@@ -965,8 +980,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // set at the point that reference is processed.
       Sym *closure_cls = ast->closure_cls;
       if (closure_cls) {
-        ast->rval->self = new_sym(ast);
-        ast->rval->self->must_implement_and_specialize(closure_cls);
+        // fn->self lives on the INTERNAL function Sym (ast->sym) --
+        // gen_fun_pyda reads it from there; since issues/007's split
+        // identity, ast->rval is the public-name variable, not the fn.
+        ast->sym->self = new_sym(ast);
+        ast->sym->self->must_implement_and_specialize(closure_cls);
       }
       // Process default exprs (pre-scope in build_syms)
       PyDAST *params = n->children[1];
@@ -985,21 +1003,21 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       }
       gen_fun_pyda(n, ast, ctx);
       exit_scope(ctx);
+      // issues/007 split identity: bind the public-name variable
+      // (ast->rval) to the function value. For a capturing nested def
+      // (issues/001) the value is the closure-carrier instance; for a
+      // plain def it is the internal function Sym itself. Methods
+      // (recognized by the alias link set in build_syms_pyda) are
+      // installed into the class via the setter emitted there and get
+      // no variable binding.
+      bool fd_is_method = ast->rval && ast->rval->alias == ast->sym;
       if (closure_cls) {
-        // issues/001: unlike a lambda (an inline expression -- whatever
-        // consumes it, e.g. an assignment or `return`, reads this AST
-        // node's rval fresh), a nested `def` *names* its function directly:
-        // ast->sym IS the Sym "adder" resolves to everywhere else in the
-        // program (bound once, during the separate build_syms_pyda pass),
-        // and if1_closure above just attached the raw closure body to that
-        // same Sym. Setting ast->rval here has no effect on any other
-        // reference to the name (confirmed the hard way investigating
-        // issue 007's decorators) -- an explicit if1_move is needed to
-        // rebind it to the closure instance, mirroring plain `adder =
-        // <instance>` reassignment (PY_assign's plain-name-target case).
-        Sym *inst = build_closure_instance_pyda(closure_cls, ast, &ast->code);
-        if1_move(if1, &ast->code, inst, ast->sym, ast);
-        ast->rval = inst;
+        Sym *inst = build_closure_instance_pyda(closure_cls, ast, &ast->code, ctx);
+        if1_move(if1, &ast->code, inst, ast->rval, ast);
+      } else if (!fd_is_method && ast->rval != ast->sym) {
+        // rval == sym is the legacy direct binding (non-RECORD
+        // class-body defs) -- no variable to bind.
+        if1_move(if1, &ast->code, ast->sym, ast->rval, ast);
       }
       return 0;
     }
@@ -1023,6 +1041,66 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         }
         gen_fun_pyda(def, def_ast, ctx);
         exit_scope(ctx);
+        // issues/007: actually APPLY the decorators. With split
+        // identity (build_syms_pyda), the def's public name
+        // (def_ast->rval) is an ordinary variable and the raw
+        // function is the internal Sym (def_ast->sym) -- so
+        // decoration is just `name = dN(...(d1(fn)))`, ordinary
+        // sends and moves. Decorators apply bottom-up (innermost
+        // first), each one's expression evaluated just before its
+        // application. Only plain-name decorators (optionally with
+        // an argument list, applied as `d(args)(fn)`) are handled;
+        // dotted names keep the historical silent no-op.
+        Sym *cur = def_ast->sym;
+        for (int i = n->children.n - 2; i >= 0; i--) {
+          PyDAST *child = n->children[i];
+          Vec<PyDAST *> decs;
+          if (child->kind == PY_suite) {
+            for (auto c : child->children.values()) decs.add(c);
+          } else
+            decs.add(child);
+          for (int di = decs.n - 1; di >= 0; di--) {
+            PyDAST *dec = decs[di];
+            if (dec->kind != PY_decorator || dec->children.n < 1) continue;
+            PyDAST *fname_node = dec->children[0];
+            PycAST *fname_ast = getAST(fname_node, ctx);
+            Sym *dval = fname_ast->rval;
+            if (!dval && fname_node->str_val && !strchr(fname_node->str_val, '.')) {
+              // PY_dotted_name is a leaf with no build_syms case, so
+              // no rval was set; resolve a plain name through the
+              // scope stack ourselves. The decorator is an ordinary
+              // variable under issues/007's split identity -- read it
+              // through a fresh temp (the issues/031 load pattern).
+              int lvl = 0;
+              PycSymbol *dps = find_PycSymbol(ctx, cannonicalize_string(fname_node->str_val), &lvl);
+              if (dps && dps->sym) {
+                Sym *t = new_sym(ast);
+                if1_move(if1, &def_ast->code, dps->sym, t, ast);
+                dval = t;
+              }
+            }
+            if (!dval) continue;  // dotted/unresolved: historical no-op
+            if1_gen(if1, &def_ast->code, fname_ast->code);
+            if (dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) {
+              // @d(args): evaluate d(args) first, then apply.
+              PyDAST *arglist = dec->children[1];
+              Code *send = if1_send1(if1, &def_ast->code, ast);
+              if1_add_send_arg(if1, send, dval);
+              for (auto a : arglist->children.values()) {
+                PycAST *aast = getAST(a, ctx);
+                if1_gen(if1, &def_ast->code, aast->code);
+                if1_add_send_arg(if1, send, aast->rval);
+              }
+              Sym *dv2 = new_sym(ast);
+              if1_add_send_result(if1, send, dv2);
+              dval = dv2;
+            }
+            Sym *res = new_sym(ast);
+            if1_send(if1, &def_ast->code, 2, 1, dval, cur, res)->ast = ast;
+            cur = res;
+          }
+        }
+        if1_move(if1, &def_ast->code, cur, def_ast->rval, ast);
         ast->rval = def_ast->rval;
         ast->code = def_ast->code;
       } else if (def->kind == PY_classdef) {
@@ -1131,7 +1209,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       build_if1_pyda(n->children.last(), ctx);
       gen_lambda_pyda(n, ast, ctx);
       exit_scope(ctx);
-      if (closure_cls) ast->rval = build_closure_instance_pyda(closure_cls, ast, &ast->code);
+      if (closure_cls) ast->rval = build_closure_instance_pyda(closure_cls, ast, &ast->code, ctx);
       return 0;
     }
 
@@ -1723,6 +1801,22 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           ast->sym = make_symbol(ast->sym->name);
           ast->rval = ctx.fun()->self;
         }
+      } else if (load && ast->sym && ctx.def_internal_fn.get(ast->sym) &&
+                 [&] {
+                   Sym *ifn = ctx.def_internal_fn.get(ast->sym);
+                   for (int i = ctx.scope_stack.n - 1; i >= 0; i--)
+                     if (ctx.scope_stack[i]->fun == ifn) return true;
+                   return false;
+                 }()) {
+        // issues/007: a function's own name referenced INSIDE its own
+        // body (recursion) resolves to the internal function Sym
+        // directly -- see def_internal_fn in python_ifa_int.h. For a
+        // CAPTURING nested def (issues/001 carrier class), the
+        // callable value is the carrier instance, which inside the
+        // body is exactly `self` (fn->self, set before the body walk)
+        // -- so a recursive `count(n-1)` becomes a call on self.
+        Sym *ifn = ctx.def_internal_fn.get(ast->sym);
+        ast->rval = ifn->self ? ifn->self : ifn;
       } else if (load && is_module_data_var(ast->sym)) {
         // ifa/issues/031 step 2: treat a module-level data variable
         // as a memory cell, not a register -- each *read* loads the

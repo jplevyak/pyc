@@ -23,27 +23,23 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
-- [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
-  — **Mostly fixed, kept open for documented residuals.** The
-  original `unique_AVar` crash on closures capturing enclosing
-  locals is fixed (closure-carrier classes; `captured_local.py`
-  is fully clean), and the self-capture regression for nested
-  *recursive* defs is fixed too (`nested_recursion.py`). Still
-  open: nested-`def` captures execute correctly but emit a
-  cosmetic FA warning at call sites (so no official nested-def
-  capture test — the harness needs empty stderr), and the mixed
-  shape (nested recursive def that also captures an enclosing
-  local) fails to compile. Both belong to the Sym-identity rework
-  shared with issue 007.
 - [003-subclass-struct-layout-mismatch.md](003-subclass-struct-layout-mismatch.md)
   — Subclasses that redefine inherited fields produce C compile
   errors ("struct has no member 'e0'"). Same root cause as the
   existing `class_attr_mutation.py` xfail. Blocks inheritance-
   driven polymorphism in lists.
 - [007-decorators-not-applied.md](007-decorators-not-applied.md)
-  — Any decorator other than the builtin `@vector`/`@pyc_struct`
-  directives is evaluated but never applied; decorated
-  functions/classes behave as if undecorated with no diagnostic.
+  — **Largely fixed** by the split-identity rework: user-defined
+  function decorators now apply (closure-wrapping, replacement,
+  parameterized — `decorator_basic.py`), and Finding 2's
+  self-referential reassignment is fixed
+  (`function_selfref_reassign.py`). Remaining, all loud failures:
+  stacked applications of the same closure-wrapping decorator
+  (needs carrier-class method slots — `ifa/issues/030` scope),
+  class-based decorators (`@Wrapper` — decorator-position class
+  call doesn't route through constructor lowering), dotted-name
+  decorators (silent no-op), and decorated *methods* (legacy
+  no-op).
 - [008-set-literal-genexpr-crash.md](008-set-literal-genexpr-crash.md)
   — **Set literals/comprehensions fixed** (new `__pyc__/08_set.py`
   `set` class); also fixed a pre-existing `x in y`/`x not in y`
@@ -204,3 +200,11 @@ commit ref recorded in each file's status line.
   is a LABEL — the entry PNode is never a jump target. Coverage in
   `while_true_loop.py`. Filed and closed same day, found while
   closing issue 005.
+- [001](closed/001-fa-crash-captured-locals.md) — closures
+  capturing enclosing-scope locals: the original `unique_AVar`
+  crash was fixed by closure-carrier classes; every residual
+  (nested-def cosmetic FA warning, self-capture regression, the
+  mixed recursion+capture shape, transitive grandparent-scope
+  captures) resolved by issue 007's split-identity rework. Tests:
+  `captured_local.py`, `nested_capture.py`, `nested_recursion.py`,
+  `decorator_basic.py`.

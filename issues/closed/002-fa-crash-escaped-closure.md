@@ -21,7 +21,7 @@ need `ifa/issues/029`/`030` polymorphic dispatch (defined runtime
 or `analysis/fa.cc`); manifests when a closure created by `a.m`
 crosses a function-call boundary — passed as an argument,
 returned, or assigned to a global from inside a function.
-**Related:** [001-fa-crash-captured-locals.md](../001-fa-crash-captured-locals.md)
+**Related:** [001-fa-crash-captured-locals.md](001-fa-crash-captured-locals.md)
 (both are gaps in pyc's closure model); v2 LLVM closure handler
 work (commit `db4270a`). Issue 001's investigation (dug into `ifa`'s
 `nesting_depth`/`display` machinery in depth) confirmed *that*
