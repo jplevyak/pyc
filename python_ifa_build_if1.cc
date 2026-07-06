@@ -21,7 +21,14 @@ static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) 
   char *mod = from ? from : sym;
   if (!strcmp(mod, "pyc_compat")) return;
   PycModule *m = get_module(mod, ctx);
-  assert(m);
+  // build_import_syms only registers a module if it found <mod>.py on
+  // the search path; a missing module (typically an unshimmed stdlib
+  // module -- time/random/math/sys/copy/...) left `m` null and this
+  // used to abort the whole compiler with assert(m). Importing a
+  // module pyc doesn't provide is a user-facing condition, not an
+  // internal invariant: emit a clean diagnostic instead of SIGABRT.
+  if (!m) fail("error line %d, cannot find module '%s' (no '%s.py' on the search path; "
+               "pyc does not yet provide this module)", ctx.lineno, mod, mod);
   if (!m->built_if1) {
     Code **c;
     c = &getAST((PyDAST *)ctx.node, ctx)->code;
