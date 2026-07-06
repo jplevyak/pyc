@@ -292,12 +292,30 @@ re-run individually to classify.)
    crash DONE, 2026-07. Actual coverage blocked on a module-import
    subsystem (module objects + cross-module name binding) plus
    per-module shims; treat as its own issue. See bucket C.
-4. **module import + module objects** — the real unlock for C (and
-   bucket A's `import sys`): `import X; X.attr` and
-   `from X import Y` for user/library modules. Prerequisite for any
-   stdlib shim.
-5. **D** — grammar fixes, one construct at a time.
-6. **E** — the lone deep crash.
+4. ~~**module import + module objects**~~ — DONE, 2026-07: from-import
+   name binding, `import X`/`X.attr` module objects, and `pyc_lib/`
+   shims for math/time/random/sys. Module-blocked 40 → 14. See
+   bucket C.
+5. ~~**illegal destructuring**~~ — DONE, 2026-07. Tuple-unpacking to
+   attribute (`self.x, self.y = ...`), subscript (`a[i], a[j] = ...`
+   swaps), and nested targets now works (recursive assign in
+   `build_if1_assign_target`). Cleared fysphun/softrender/sat off
+   this error. Test `tests/destructuring_targets.py`.
+6. **D** — grammar fixes, one construct at a time (~24 examples,
+   the largest remaining bucket).
+7. **type resolution** — the deepest and the real gate to the first
+   *green* example: `unresolved call` / `has no type` / `_CG_any`
+   (void\*) in generated C (~19 examples, incl. mandelbrot/neural1/
+   chull which reach codegen but emit invalid C). Best as a vertical
+   slice driving one small example (mandelbrot) to compile+run.
+8. **crashes** — `if1_send` assert (amaze + others), `coerce_immediate`
+   assert, and segfaults newly exposed past the import wall
+   (pystone, tictactoe). A compiler shouldn't crash on input.
+
+Newly-surfaced non-module blockers after clearing imports +
+destructuring: `open()`/file I/O (softrender), generator
+expressions (sat, sudoku5; issue 014), FA convergence timeouts
+(fysphun).
 
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
