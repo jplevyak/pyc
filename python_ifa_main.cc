@@ -183,6 +183,12 @@ static void build_search_path(PycCompiler &ctx) {
   char *here = dupstr(getcwd(f, PATH_MAX));
   ctx.search_path = new Vec<cchar *>;
   ctx.search_path->add(here);
+  // pyc's own standard-library shims (math, ...) live under
+  // <system_dir>/pyc_lib, alongside the __pyc__ builtin module. Put
+  // them on the module search path so `import math` resolves to the
+  // shim (issue 025 bucket C). The cwd is searched first, so a user
+  // module can still shadow a shim with its own file.
+  ctx.search_path->add(dupstrs((cchar *)system_dir, "/pyc_lib"));
   const char *pythonpath_env = getenv("PYTHONPATH");
   if (!pythonpath_env) return;
   char *path = (char *)pythonpath_env;
