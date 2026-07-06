@@ -235,7 +235,9 @@ int _CG_net_connect(int fd, const char* host, int port) {
   server.sin_family = AF_INET;
   server.sin_port = htons(port);
   server.sin_addr = *((struct in_addr *)he->h_addr);
+#ifdef __APPLE__
   server.sin_len = sizeof(server);
+#endif
   printf("_CG_net_connect host='%s' IP='%s' port=%d\n", host, inet_ntoa(server.sin_addr), port);
 
   
