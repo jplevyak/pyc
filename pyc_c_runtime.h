@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include "gc.h"
 
