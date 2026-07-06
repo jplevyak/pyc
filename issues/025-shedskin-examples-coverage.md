@@ -64,7 +64,7 @@ highest value-per-fix bucket because each is one missing
 dispatch away from a full pipeline run, and the operators
 (`__gt__`, `__iter__`, `__iadd__`, `__add__`, `__sub__`) are core.
 
-### B. `'X' redefined as local` — 18 → 4 examples (PARTIALLY FIXED 2026-07)
+### B. `'X' redefined as local` — 18 → 0 examples (FIXED 2026-07)
 
 Originally 18: `chess collatz dijkstra go linalg minpng othello
 path_tracing pisang pygmy pylife sat sudoku2 sudoku3 sudoku4
@@ -85,20 +85,27 @@ params are the targets." Regression test:
 past this error (most now land in bucket C, sudoku5 in D's
 generator-expression gate).
 
-**Remaining 4 — a DIFFERENT scoping sub-case** (not comprehension
-related; each resists a trivial repro so likely needs interaction
-with class methods / global compare-constants / nested defs):
-- `go` `color` @373 — a method parameter reassigned in a loop
-  (`if color==BLACK: color=WHITE`).
-- `sunfish` `board` @202 — a lambda parameter (`lambda board,i,p:
-  …`) that appears to leak into the enclosing method where
-  `board = self.board`.
-- `path_tracing` `direction` @245, `pygmy` `position` @205 —
-  similar local/param reassignment shapes.
+**Remaining 4 — SECOND root cause, also fixed 2026-07.** `go`
+`color` @373, `path_tracing` `direction` @245, `pygmy` `position`
+@205, `sunfish` `board` @202 all shared a *different* bug: an
+attribute name in `x.attr` was resolved as a variable reference by
+the symbol-table pass (`PY_attribute` fell through to the generic
+recurse-all-children case), which looked the name up, failed, and
+created a spurious *module global* for every attribute name in the
+program. Inert until that same name was later a reassigned
+parameter/local — then the store saw the global sentinel and died
+"'X' redefined as local". E.g. go's `[SHOW[sq.color] …]` created a
+global `color`, poisoning `update_path`'s `color` parameter.
+Diagnosed by instrumenting the global-creation path (the offending
+name was created at the comprehension line, not the failing line).
+Fix: a dedicated `PY_attribute` case in `build_syms_pyda` that does
+NOT resolve the attribute-name child (build_if1 already consumes it
+as a raw string via `make_symbol`). Regression test:
+`tests/attr_name_not_global.py`.
 
-Minimal `lambda board,i: …` + outer `board=…`, and a plain
-param-reassigned-in-loop function, both compile fine — so the
-trigger is more specific. Left as a follow-on scoping investigation.
+**Bucket B is now fully eliminated: 18 → 0.** All 18 advanced —
+most to bucket C (imports), `go` to bucket E (the `if1_send`
+crash), `sudoku5` to D (generator expressions).
 
 ### C. `build_import_if1` assertion `m' failed` — 24 examples (import resolution abort)
 
@@ -137,9 +144,9 @@ re-run individually to classify.)
 
 ## Recommended order
 
-1. ~~**B (`redefined as local`)**~~ — DONE for the common
-   (comprehension) case, 2026-07: 18 → 4. The remaining 4 are a
-   distinct param/lambda-reassignment sub-case (see bucket B).
+1. ~~**B (`redefined as local`)**~~ — DONE, 2026-07: 18 → 0. Two
+   root causes, both fixed (comprehension target-binding order +
+   attribute names resolved as variables); see bucket B.
 2. **A (`unresolved call`)** — 7 examples one dispatch from a
    full run; core operators.
 3. **C** — first make the import path emit a diagnostic instead

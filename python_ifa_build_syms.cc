@@ -597,6 +597,24 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);
       return 0;
 
+    case PY_attribute:
+      // An attribute trailer `.name`: children[0] is the attribute
+      // NAME, a literal identifier that build_if1's PY_power handler
+      // consumes as a raw string (`trailer->children[0]->str_val` ->
+      // make_symbol). It is NOT a variable reference and must NOT be
+      // run through build_syms_pyda / PYC_USE scope resolution. Doing
+      // so (the old generic-recurse behavior) looked the name up as an
+      // ordinary identifier, failed, and created a spurious *module
+      // global* for every attribute name in the program. Usually inert
+      // -- but if that same name was later a reassigned parameter or
+      // local (`color` in go.py: `[SHOW[sq.color] ...]` then a method
+      // with `def m(self, color): ...; color = ...`), the store saw the
+      // global sentinel and died with "'X' redefined as local". The
+      // object being accessed is the sibling atom in the enclosing
+      // PY_power, not a child here, so there is nothing to recurse.
+      ast->rval = new_sym(ast);
+      return 0;
+
     case PY_import_name:
       build_import_syms_name_pyda(n, ctx);
       return 0;
@@ -639,7 +657,6 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_await_expr:
     case PY_power:
     case PY_call:
-    case PY_attribute:
     case PY_subscript:
     case PY_ternary:
     case PY_tuple:
