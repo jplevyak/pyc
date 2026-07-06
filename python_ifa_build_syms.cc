@@ -54,6 +54,11 @@ static void rtrim_str(char *s) {
   while (len > 0 && isspace((unsigned char)s[len-1])) s[--len] = 0;
 }
 
+// True for a real PycSymbol pointer (not one of the scope sentinels
+// GLOBAL_USE/NONLOCAL_USE/GLOBAL_DEF/NONLOCAL_DEF, which are small
+// integers cast to PycSymbol*).
+static inline bool is_real_pycsymbol(PycSymbol *s) { return (intptr_t)s > (intptr_t)NONLOCAL_DEF; }
+
 static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx) {
   rtrim_str(sym); rtrim_str(from);
   char *mod = from ? from : sym;
@@ -65,6 +70,23 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
       if (!is_regular_file(p, "/", mod, ".py")) continue;
       import_file(mod, p, ctx);
       break;
+    }
+    m = get_module(mod, ctx);
+  }
+  if (!m) return;  // module not found; build_import_if1 emits the diagnostic
+  // `from X import Y [as Z]`: bind the module's symbol Y into the
+  // importing scope under Z (or Y). The module's symbols were fully
+  // built by import_file (or a prior import), so its top scope is
+  // saved under m->pymod. Without this the imported name has no
+  // binding and every use fails as "'Y' has no type" (issue 025
+  // bucket C -- the module-import subsystem). `import X` (no `from`)
+  // is the module-object case, handled separately.
+  if (from) {
+    PycScope *modscope = m->ctx->saved_scopes.get(m->pymod);
+    if (modscope) {
+      PycSymbol *y = modscope->map.get(cannonicalize_string(sym));
+      if (is_real_pycsymbol(y))
+        ctx.scope_stack.last()->map.put(cannonicalize_string(as ? as : sym), y);
     }
   }
 }
