@@ -64,17 +64,41 @@ highest value-per-fix bucket because each is one missing
 dispatch away from a full pipeline run, and the operators
 (`__gt__`, `__iter__`, `__iadd__`, `__add__`, `__sub__`) are core.
 
-### B. `'X' redefined as local` — 18 examples (import-free scoping bug)
+### B. `'X' redefined as local` — 18 → 4 examples (PARTIALLY FIXED 2026-07)
 
-`chess collatz dijkstra go linalg minpng othello path_tracing
-pisang pygmy pylife sat sudoku2 sudoku3 sudoku4 sudoku5 sunfish
-tictactoe`
+Originally 18: `chess collatz dijkstra go linalg minpng othello
+path_tracing pisang pygmy pylife sat sudoku2 sudoku3 sudoku4
+sudoku5 sunfish tictactoe`.
 
-A single scoping diagnostic fires across 18 programs (e.g.
-`collatz.py:40`). These are largely import-free, so fixing the
-underlying scoping rule should unblock the whole bucket at once —
-the cleanest single lever. First step: reduce `collatz` line 40
-to a minimal repro under `tests/`.
+**Root cause (the common case, fixed):** comprehension bodies were
+symbol-walked before the `for`-chain bound the loop targets, so an
+element that referenced its own target (`[i for i in xs]`)
+resolved `i` as a not-yet-bound USE, fell through to the module
+scope, and created a spurious global. A second same-named
+comprehension then died with `'i' redefined as local`. All four
+comprehension forms (list/gen/set/dict) shared the bug. Fix:
+`build_comprehension_body_syms` in `python_ifa_build_syms.cc`
+walks the `for`-chain (always the last child) before the element
+expressions, matching CPython's "comprehension is a function whose
+params are the targets." Regression test:
+`tests/comprehension_reused_var.py`. This advanced 13 of the 18
+past this error (most now land in bucket C, sudoku5 in D's
+generator-expression gate).
+
+**Remaining 4 — a DIFFERENT scoping sub-case** (not comprehension
+related; each resists a trivial repro so likely needs interaction
+with class methods / global compare-constants / nested defs):
+- `go` `color` @373 — a method parameter reassigned in a loop
+  (`if color==BLACK: color=WHITE`).
+- `sunfish` `board` @202 — a lambda parameter (`lambda board,i,p:
+  …`) that appears to leak into the enclosing method where
+  `board = self.board`.
+- `path_tracing` `direction` @245, `pygmy` `position` @205 —
+  similar local/param reassignment shapes.
+
+Minimal `lambda board,i: …` + outer `board=…`, and a plain
+param-reassigned-in-loop function, both compile fine — so the
+trigger is more specific. Left as a follow-on scoping investigation.
 
 ### C. `build_import_if1` assertion `m' failed` — 24 examples (import resolution abort)
 
@@ -113,8 +137,9 @@ re-run individually to classify.)
 
 ## Recommended order
 
-1. **B (`redefined as local`)** — one scoping rule, 18 examples,
-   no import prerequisite. Best first lever.
+1. ~~**B (`redefined as local`)**~~ — DONE for the common
+   (comprehension) case, 2026-07: 18 → 4. The remaining 4 are a
+   distinct param/lambda-reassignment sub-case (see bucket B).
 2. **A (`unresolved call`)** — 7 examples one dispatch from a
    full run; core operators.
 3. **C** — first make the import path emit a diagnostic instead

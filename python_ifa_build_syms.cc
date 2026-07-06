@@ -245,6 +245,25 @@ static void build_import_syms_from_pyda(PyDAST *n, PycCompiler &ctx);
 // parsed on demand at build_if1 time). Declared in python_ifa_int.h.
 int build_syms_pyda(PyDAST *n, PycCompiler &ctx);
 
+// Symbol-table pass for a comprehension / generator expression body,
+// run inside the comprehension's own scope (already entered by the
+// caller). In every comprehension form the `for`-chain
+// (PY_list_for / PY_comp_for) is the LAST child and the element
+// expressions (list/gen elt, set expr, or dict key+value) precede
+// it. The for-chain is what binds the loop targets, so it MUST be
+// walked before the element expressions: otherwise an element that
+// references a target (e.g. `[i for i in xs]`) resolves that name as
+// a not-yet-bound USE, which falls through to the module scope and
+// creates a spurious global. A second same-named comprehension then
+// sees that global and dies with "'i' redefined as local". Binding
+// targets first matches CPython, where the comprehension is analyzed
+// as a function whose parameters are the targets.
+static void build_comprehension_body_syms(PyDAST *n, PycCompiler &ctx) {
+  int last = n->children.n - 1;
+  build_syms_pyda(n->children[last], ctx);                              // for-chain: bind targets
+  for (int i = 0; i < last; i++) build_syms_pyda(n->children[i], ctx);  // then element exprs
+}
+
 static void build_import_syms_name_pyda(PyDAST *n, PycCompiler &ctx) {
   // n->kind == PY_import_name, children are PY_dotted_as_name or PY_testlist of them
   Vec<PyDAST *> names;
@@ -567,7 +586,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_genexpr: {
       enter_scope(n, ctx, nullptr);
       ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
-      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      build_comprehension_body_syms(n, ctx);
       exit_scope(ctx);
       return 0;
     }
@@ -646,7 +665,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       if (n->children.n == 3 && n->children[2]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
-        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+        build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
       } else {
         for (auto c : n->children.values()) build_syms_pyda(c, ctx);
@@ -668,7 +687,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
-        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+        build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
       } else {
         for (auto c : n->children.values()) build_syms_pyda(c, ctx);
