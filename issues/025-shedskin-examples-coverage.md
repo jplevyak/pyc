@@ -307,9 +307,26 @@ re-run individually to classify.)
    first *green* example: `unresolved call` / `has no type` /
    `_CG_any` (void\*) in generated C (~19 examples). Investigated via
    the mandelbrot vertical slice 2026-07; findings below.
-8. **crashes** — `if1_send` assert (amaze + others), `coerce_immediate`
-   assert, and segfaults newly exposed past the import wall
-   (pystone, tictactoe). A compiler shouldn't crash on input.
+8. **crashes** — PARTIALLY DONE 2026-07. Two assert crashes fixed:
+   - `if1_send` assert (amaze, go, othello, sudoku3): `try`/`except`/
+     `finally` were routed to the WITH-item handler, mis-lowering the
+     try body to a null rval. Now `try` has its own handler (build
+     body + else/finally, skip except); exception handling stays
+     unimplemented (issue 011) but no longer crashes. Test
+     `tests/try_body_runs.py`.
+   - `coerce_immediate` assert (sudoku2): `fold_constant` numerically
+     coerced a string operand in a mixed op (`str == int`). Now it
+     bails to a runtime op. Test `tests/const_str_compare.py`.
+   Remaining: the pystone/tictactoe **segfaults** are a deep FA
+   display-setup bug. Traced to `make_AVar(Proc1, Proc1_es)` during
+   top-edge setup where `Proc1_es.display.n == 0` but a module-level
+   function (nesting_depth 1) referencing a sibling
+   (pystone's Proc1..8 call each other) needs `display[0]`. A
+   per-consumer guard (fall back to GLOBAL_CONTOUR) just moves the
+   crash to the next display reader -- the entry set is genuinely
+   built with an empty display when it should have `display[0]`, so
+   the fix is in the display setup itself (make_entry_set / the
+   top-edge path), not a guard. Left open.
 
 Newly-surfaced non-module blockers after clearing imports +
 destructuring: `open()`/file I/O (softrender), generator
