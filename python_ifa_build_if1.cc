@@ -1982,10 +1982,33 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
 
     case PY_yield_stmt:
     case PY_raise_stmt:
-    case PY_try_stmt:
+    case PY_try_stmt: {
+      // Exception handling is unimplemented (issue 011), but a `try`
+      // must not crash the compiler. It was routed to the WITH-item
+      // handler (build_if1_with_items) along with `with` -- which
+      // mis-lowered the try body into null rvals and aborted if1_send
+      // (e.g. amaze/go/othello/sudoku3: a method call inside `try`).
+      // Build the try body plus the else/finally clauses (the normal
+      // control flow) so the happy path compiles and runs; skip the
+      // except handlers. Children: body suite, except_handler*,
+      // else_clause?, finally_clause?.
+      for (PyDAST *c : n->children.values()) {
+        if (c->kind == PY_except_handler || c->kind == PY_except_clause) continue;
+        // else_clause / finally_clause wrap a suite; build that suite.
+        PyDAST *blk = ((c->kind == PY_else_clause || c->kind == PY_finally_clause) && c->children.n)
+                          ? c->children.last()
+                          : c;
+        build_if1_pyda(blk, ctx);
+        if1_gen(if1, &ast->code, getAST(blk, ctx)->code);
+      }
+      return 0;
+    }
     case PY_except_clause:
     case PY_except_handler:
     case PY_finally_clause:
+      // Reached only if built standalone (the try handler above skips
+      // except handlers and inlines finally); no-op defensively.
+      return 0;
     case PY_with_stmt: {
       build_if1_with_items(n, 0, ctx, ast);
       return 0;
