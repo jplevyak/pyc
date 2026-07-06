@@ -88,6 +88,17 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
       if (is_real_pycsymbol(y))
         ctx.scope_stack.last()->map.put(cannonicalize_string(as ? as : sym), y);
     }
+  } else {
+    // `import X [as Z]`: bind Z (or X) to a module-marker symbol.
+    // Modules are compile-time namespaces here, not runtime values,
+    // so `X.attr` is resolved to the module member at build_if1 time
+    // (see PY_power). The marker itself never flows as a value.
+    cchar *bind = cannonicalize_string(as ? as : mod);
+    PycSymbol *marker = new_PycSymbol(bind, ctx);
+    marker->sym->is_module = 1;
+    marker->sym->nesting_depth = 0;
+    ctx.module_syms.put(marker->sym, m);
+    ctx.scope_stack.last()->map.put(bind, marker);
   }
 }
 

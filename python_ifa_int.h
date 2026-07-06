@@ -68,6 +68,13 @@ class PycCompiler : public PycCallbacks {
   // function calls the UNDECORATED function.)
   Map<Sym *, Sym *> def_internal_fn;
 
+  // issue 025 module subsystem phase 2: for `import X`, X is bound to
+  // a module-marker Sym (is_module set). This maps that marker to the
+  // imported PycModule so build_if1's PY_power handler can resolve
+  // `X.attr` to the module's member symbol at compile time (modules
+  // are compile-time-known namespaces, not runtime objects).
+  Map<Sym *, PycModule *> module_syms;
+
   // --- Accessors (formerly PycContext methods) ---
   bool is_builtin() { return mod->is_builtin; }
   Sym *fun() { return scope_stack.last()->fun; }

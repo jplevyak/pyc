@@ -1638,6 +1638,22 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       for (int i = 1; i < n->children.n; i++) {
         PyDAST *trailer = n->children[i];
         if (trailer->kind == PY_attribute) {
+          // `X.attr` where X is an imported module (issue 025 module
+          // subsystem phase 2): a module is a compile-time namespace,
+          // not a runtime object, so resolve attr directly to the
+          // module member symbol instead of emitting a `.` dispatch.
+          if (!pending_member && cur_val && cur_val->is_module) {
+            PycModule *mm = ctx.module_syms.get(cur_val);
+            if (mm) {
+              cchar *attr = trailer->children[0]->str_val;
+              PycScope *ms = mm->ctx->saved_scopes.get(mm->pymod);
+              PycSymbol *member = ms ? ms->map.get(cannonicalize_string(attr)) : nullptr;
+              if ((intptr_t)member <= (intptr_t)NONLOCAL_DEF)
+                fail("error line %d, module '%s' has no attribute '%s'", ctx.lineno, mm->name, attr);
+              cur_val = member->sym;
+              continue;
+            }
+          }
           // Flush previous pending member
           if (pending_member) {
             Sym *t = new_sym(ast);
