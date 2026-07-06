@@ -144,14 +144,56 @@ as a raw string via `make_symbol`). Regression test:
 most to bucket C (imports), `go` to bucket E (the `if1_send`
 crash), `sudoku5` to D (generator expressions).
 
-### C. missing-module imports — ~40 examples (investigated 2026-07; crash fixed, coverage blocked on a module subsystem)
+### C. missing-module imports — module subsystem BUILT 2026-07; per-module shims ongoing
 
 After the bucket-B fixes this grew to ~40 examples (B's examples
 flowed in). The imports needed, by frequency: `time` (32,
 mostly benchmark timing), `random` (13), `math` (12), `sys` (6),
 `copy` (5), then a long tail (`struct`, `itertools`, `functools`,
 `colorsys`, `array`, `re`, `getopt`, plus quameon's local
-submodules). None are provided by pyc.
+submodules).
+
+**UPDATE 2026-07 — the module subsystem now works.** What was
+called a "deep blocker" below is implemented (commits after
+`82d2fa1b`):
+- **Phase 1 — `from X import Y [as Z]`**: `build_import_syms` now
+  binds the imported name into the importing scope from the
+  module's saved top scope. Functions, classes, and data all
+  import and are callable cross-module.
+- **Phase 2 — `import X [as Z]`**: `X` binds to a module-marker
+  Sym (`is_module`), mapped to its `PycModule` in
+  `PycCompiler::module_syms`. `build_if1`'s `PY_power` resolves
+  `X.attr` to the module member at compile time (modules are
+  compile-time namespaces, not runtime objects). Unknown members
+  give a clean "no attribute" diagnostic.
+- **Phase 3 — stdlib shims** under `pyc_lib/` (on the search path
+  at `<system_dir>/pyc_lib`, after the cwd): `math` (elementary
+  functions → libc `<math.h>` via `__pyc_c_call__`, results match
+  CPython) and `time` (`time.time()` whole-second wall clock;
+  no-op `sleep`). Tests: `tests/from_import.py`,
+  `tests/import_module.py`, `tests/math_module.py`,
+  `tests/time_module.py`, all both backends.
+
+Effect: `import math`/`import time`/`from X import Y`/`import X;
+X.attr` all resolve and run. The module-blocked count dropped only
+slightly in the sweep (40→38) because most examples import
+*several* modules and still lack `random`/`sys`/`copy` shims — and
+once past imports they hit their *next*, non-import blocker (type
+inference, destructuring, the `if1_send` crash). The import wall
+itself is gone.
+
+**Remaining shim work** (each its own increment):
+- `random` — needs a PRNG; a pure-Python LCG gives deterministic,
+  self-consistent (not CPython-matching) output. 13 examples.
+- `sys` — `sys.argv` (list), `sys.exit`, `sys.setrecursionlimit`
+  (no-op), `sys.maxsize` (const) are easy; `sys.stdout/stderr/stdin`
+  are file objects and are the hard part. 6 examples.
+- `copy` — `copy.copy` shallow is feasible; `copy.deepcopy` is
+  hard under static typing. 5 examples.
+- long tail: `struct`, `itertools`, `functools`, `colorsys`,
+  `array`, `re`, `getopt`.
+
+Historical note (the original bucket-C framing, now resolved):
 
 **Crash fixed (committed).** `build_import_if1` did `assert(m)` on
 the module `get_module` returns, which is null for any unfound
