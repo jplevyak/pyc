@@ -343,19 +343,51 @@ unsound: the int values flowing in (the initial `0`) are never
 finds no matching function ("matching function not found") and the
 LLVM backend rejects the IR. Reverted as fragile.
 
-**What a real fix needs:** insert an int→float conversion where an
-int value reaches a variable/phi whose resolved type is float — the
-classic shedskin-style numeric unification with **coercion at merge
-points** (the loop-head phi), done as a post-convergence IR
-transform (pyc's FA is forward, so it can't just propagate
-float-ness backward to the `0` initializer during inference). The
-`P_prim_coerce` primitive already exists; the missing piece is a
-pass that inserts it at the numeric-union joins the promotion
-identifies. This is a substantial feature and the true gate to the
-first green example — worth its own issue. The other type-resolution
-symptoms (`unresolved call`, `has no type`) are a mix of this same
-numeric-union problem surfacing at a call and the bucket-A
-first-class-function-in-field gap.
+**Second attempt — Go/Dart untyped-constant coercion — and the
+fundamental obstacle it hit (2026-07).** The clean approach is to
+let a numeric literal adopt the wider type when it meets one:
+`x = 0` in a float loop becomes `0.0`, coercion is compile-time and
+free. Proven by construction — `x = 0.0` (float literal) compiles
+and runs; `x = 0` (int literal) is the *only* difference. I
+prototyped it as `coerce_numeric_constants(AType*)` called from
+`update_in`, rewriting a numeric-mixed AVar type to the widest
+numeric (`coerce_num`). Two findings:
+  1. By the time the union forms at the loop-head phi, the literal
+     `0` has already been **widened from the constant to the generic
+     `int64` type** — so a constant-only rewrite never fires; the
+     narrower member is an abstract `int64`, not the literal.
+  2. **The real blocker is monotonicity.** Rewriting an AVar's `out`
+     to drop `int` and keep `float` is *non-monotonic*: in pyc's
+     lattice `int` and `float` are siblings under `any`, not
+     ordered, so removing `int` shrinks the type. FA is a monotone
+     fixpoint (`type_union` only grows types); a shrinking `out`
+     violates the worklist invariants and **segfaults** (consistently
+     once the state is corrupted). Coercion simply cannot run *during*
+     convergence. And post-convergence is too late — polymorphic
+     dispatch for `x * 2.0` was already baked from the `{int,float}`
+     receiver during FA (this is why the earlier `make_LUB_type`
+     type-only change failed at runtime).
+
+**What a real fix requires — a new lattice element, not a coercion
+pass.** The monotonic, Go/Dart-faithful design is an **"untyped
+numeric constant"** that sits *below* every concrete numeric in the
+lattice (a numeric ⊥). Then a literal contributes `untyped`, and
+`untyped ∪ float = float` is a proper monotone *join* (float is
+above untyped — nothing is removed), so the loop variable is `float`
+throughout FA, dispatch is monomorphic, and the fixpoint stays
+stable. Pieces: (a) a CS/type kind for untyped numeric literals;
+(b) `type_union` absorption `untyped_num ∪ concrete_num =
+concrete_num` (and `untyped ∪ untyped = untyped`); (c) a
+post-convergence default `untyped → int` for literals that never met
+a concrete type; (d) codegen emitting the constant in its resolved
+type. This is a real type-system feature (worth its own issue), but
+it is the correct and *stable* shape — the naive "coerce the union"
+and "promote the LUB" shortcuts are both dead ends (crash / runtime
+dispatch failure respectively), now proven.
+
+The other type-resolution symptoms (`unresolved call`, `has no
+type`) are a mix of this same numeric-union problem surfacing at a
+call and the bucket-A first-class-function-in-field gap.
 
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
