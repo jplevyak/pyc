@@ -76,6 +76,7 @@ def run_test(g, args, envs):
     out_path = os.path.join(build_dir, f"{name}.out")
     
     # Compile
+    print(f"CMD: {' '.join(cmd)}")
     try:
         with open(out_path, "w") as outf:
             res = subprocess.run(cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT, timeout=args.timeout)

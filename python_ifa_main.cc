@@ -54,7 +54,16 @@ static void c_call_transfer_function(PNode *pn, EntrySet *es) {
 }
 
 static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
-  fputs(n->rvals[3]->sym->constant, fp);
+  cchar *name = n->rvals[3]->sym->constant;
+  if (name && !strcmp(name, "__pyc_net_wait_read__")) {
+    fprintf(fp, "co_await _CG_Await_Net_Read{(int)%s};\n", n->rvals[5]->cg_string);
+    return;
+  }
+  if (name && !strcmp(name, "__pyc_net_wait_write__")) {
+    fprintf(fp, "co_await _CG_Await_Net_Write{(int)%s};\n", n->rvals[5]->cg_string);
+    return;
+  }
+  fputs(name, fp);
   fputs("(", fp);
   int first = 1;
   for (int i = 5; i < n->rvals.n; i += 2) {
@@ -118,10 +127,14 @@ static void add_primitive_transfer_functions() {
   // dispatches via the lower_send_prim chain in cg_normalize_v2.
   prim_reg(sym_write->name, return_nil_transfer_function, write_codegen)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function, writeln_codegen)->is_visible = 1;
-  prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen)->is_visible = 1;
+  RegisteredPrim *c_call_prim = prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen);
+  c_call_prim->is_visible = 1;
+  c_call_prim->is_functional = 0;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(sym___pyc_to_str__->name, to_str_transfer_function, to_str_codegen)->is_visible = 1;
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
+  prim_reg(cannonicalize_string("__pyc_net_wait_read__"), return_nil_transfer_function)->is_visible = 1;
+  prim_reg(cannonicalize_string("__pyc_net_wait_write__"), return_nil_transfer_function)->is_visible = 1;
 }
 
 /*

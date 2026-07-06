@@ -210,3 +210,222 @@ void *_CG_list_setslice(void *l1, int64 size, int64 l_in, int64 h_in,
   if (sh > 0) memcpy(p, ((char *)p1) + (size_t)h * sz, (size_t)sh * sz);
   return l1;
 }
+
+#include <poll.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+
+/* --- Event Loop Implementation --- */
+_CG_ReadyTask* _CG_ready_queue_head = NULL;
+_CG_ReadyTask* _CG_ready_queue_tail = NULL;
+_CG_TimerTask* _CG_timer_queue_head = NULL;
+_CG_IoTask* _CG_io_queue_head = NULL;
+_CG_IoTask* _CG_io_queue_tail = NULL;
+
+#include <arpa/inet.h>
+int _CG_net_connect(int fd, const char* host, int port) {
+  struct hostent *he;
+  struct sockaddr_in server;
+  if ((he = gethostbyname(host)) == NULL) return -1;
+  memset(&server, 0, sizeof(server));
+  server.sin_family = AF_INET;
+  server.sin_port = htons(port);
+  server.sin_addr = *((struct in_addr *)he->h_addr);
+  server.sin_len = sizeof(server);
+  printf("_CG_net_connect host='%s' IP='%s' port=%d\n", host, inet_ntoa(server.sin_addr), port);
+
+  
+  int flags = fcntl(fd, F_GETFL, 0);
+  fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+  
+  int res = connect(fd, (struct sockaddr *)&server, sizeof(struct sockaddr));
+  printf("_CG_net_connect connect returned %d, errno %d\n", res, errno);
+  if (res < 0 && errno != EINPROGRESS) return -1;
+  return 0;
+}
+
+char* _CG_net_read_str(int fd, int max_len) {
+  char* buf = (char*)GC_MALLOC_ATOMIC(max_len + 1);
+  int n = read(fd, buf, max_len);
+  if (n < 0) n = 0;
+  buf[n] = '\0';
+  return _CG_String(buf);
+}
+
+int _CG_net_write_str(int fd, const char* str) {
+  printf("_CG_net_write_str called with fd=%d\n", fd);
+  int err = 0;
+  socklen_t len = sizeof(err);
+  getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+  if (err != 0) {
+    printf("socket error before write: %s\n", strerror(err));
+    return -1;
+  }
+  int res = write(fd, str, strlen(str));
+  if (res < 0) {
+    printf("write failed: %s\n", strerror(errno));
+  }
+  return res;
+}
+
+void _CG_event_loop_register_io(void* hdl, int fd, int events) {
+  _CG_IoTask* task = (_CG_IoTask*)GC_MALLOC(sizeof(_CG_IoTask));
+  task->hdl = hdl;
+  task->fd = fd;
+  task->events = events;
+  task->next = NULL;
+  
+  if (!_CG_io_queue_head) {
+    _CG_io_queue_head = task;
+    _CG_io_queue_tail = task;
+  } else {
+    _CG_io_queue_tail->next = task;
+    _CG_io_queue_tail = task;
+  }
+}
+
+double _CG_get_time(void) {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return tv.tv_sec + tv.tv_usec / 1000000.0;
+}
+
+#ifndef __cplusplus
+void _CG_resume_coro(void* hdl) {
+  printf("_CG_resume_coro called with %p\n", hdl);
+  void (**vtable)(void*) = (void (**)(void*))hdl;
+  if (vtable && vtable[0]) {
+    printf("resuming...\n");
+    vtable[0](hdl);
+    printf("resumed.\n");
+  } else {
+    printf("invalid vtable!\n");
+  }
+}
+#endif
+
+void _CG_event_loop_spawn(void* hdl) {
+  _CG_ReadyTask* task = (_CG_ReadyTask*)GC_MALLOC(sizeof(_CG_ReadyTask));
+  task->hdl = hdl;
+  task->next = NULL;
+  if (!_CG_ready_queue_head) {
+    _CG_ready_queue_head = task;
+    _CG_ready_queue_tail = task;
+  } else {
+    _CG_ready_queue_tail->next = task;
+    _CG_ready_queue_tail = task;
+  }
+}
+
+void _CG_event_loop_sleep(void* hdl, double seconds) {
+  _CG_TimerTask* task = (_CG_TimerTask*)GC_MALLOC(sizeof(_CG_TimerTask));
+  task->hdl = hdl;
+  task->wakeup_time = _CG_get_time() + seconds;
+  
+  // Insert sorted by wakeup_time
+  if (!_CG_timer_queue_head || _CG_timer_queue_head->wakeup_time > task->wakeup_time) {
+    task->next = _CG_timer_queue_head;
+    _CG_timer_queue_head = task;
+  } else {
+    _CG_TimerTask* curr = _CG_timer_queue_head;
+    while (curr->next && curr->next->wakeup_time <= task->wakeup_time) {
+      curr = curr->next;
+    }
+    task->next = curr->next;
+    curr->next = task;
+  }
+}
+
+void _CG_event_loop_run(void* initial_hdl) {
+  if (initial_hdl) {
+    _CG_event_loop_spawn(initial_hdl);
+  }
+  
+  while (_CG_ready_queue_head || _CG_timer_queue_head || _CG_io_queue_head) {
+    if (_CG_ready_queue_head) {
+      _CG_ReadyTask* task = _CG_ready_queue_head;
+      _CG_ready_queue_head = task->next;
+      if (!_CG_ready_queue_head) _CG_ready_queue_tail = NULL;
+      
+      void* hdl = task->hdl;
+      /* removed free(task) */
+      _CG_resume_coro(hdl);
+    } else {
+      int nfds = 0;
+      for (_CG_IoTask* t = _CG_io_queue_head; t; t = t->next) nfds++;
+      
+      struct pollfd* pfds = NULL;
+      if (nfds > 0) {
+        pfds = (struct pollfd*)malloc(nfds * sizeof(struct pollfd));
+        int i = 0;
+        for (_CG_IoTask* t = _CG_io_queue_head; t; t = t->next) {
+          pfds[i].fd = t->fd;
+          pfds[i].events = t->events;
+          i++;
+        }
+      }
+      
+      int timeout_ms = -1;
+      if (_CG_timer_queue_head) {
+        double now = _CG_get_time();
+        double wakeup = _CG_timer_queue_head->wakeup_time;
+        if (wakeup > now) timeout_ms = (int)((wakeup - now) * 1000.0);
+        else timeout_ms = 0;
+      }
+      
+      printf("Polling %d fds with timeout %d ms\n", nfds, timeout_ms);
+      int n = poll(pfds, nfds, timeout_ms);
+      if (n > 0) {
+        for (int i=0; i<nfds; i++) {
+           printf("fd %d revents %d\n", pfds[i].fd, pfds[i].revents);
+        }
+      }
+      
+      if (n > 0 && nfds > 0) {
+        _CG_IoTask* prev = NULL;
+        _CG_IoTask* curr = _CG_io_queue_head;
+        int j = 0;
+        while (curr) {
+          if ((pfds[j].revents & curr->events) || (pfds[j].revents & (POLLERR | POLLHUP))) {
+            _CG_event_loop_spawn(curr->hdl);
+            if (prev) prev->next = curr->next;
+            else _CG_io_queue_head = curr->next;
+            
+            _CG_IoTask* to_free = curr;
+            curr = curr->next;
+            if (!curr && prev) _CG_io_queue_tail = prev;
+            else if (!curr && !prev) _CG_io_queue_tail = NULL;
+            /* free(to_free); managed by GC */
+          } else {
+            prev = curr;
+            curr = curr->next;
+          }
+          j++;
+        }
+      }
+      if (pfds) free(pfds);
+      printf("After free pfds, ready_queue_head is %p\n", _CG_ready_queue_head);
+      
+      double now = _CG_get_time();
+      while (_CG_timer_queue_head && _CG_timer_queue_head->wakeup_time <= now) {
+        _CG_TimerTask* task = _CG_timer_queue_head;
+        _CG_timer_queue_head = task->next;
+        _CG_event_loop_spawn(task->hdl);
+        free(task);
+      }
+    }
+  }
+}
+
+void* _CG_run_coro(void* coro_hdl) {
+  _CG_event_loop_run(coro_hdl);
+  // Need to get the return value from the promise...
+  // For LLVM coroutines, the promise is offset from the handle, but we don't have the struct def in C!
+  // Actually, LLVM `coro.promise` intrinsic gets it.
+  // We don't really need to return it for `main()`, but let's return NULL for now in C runtime.
+  return NULL;
+}

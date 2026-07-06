@@ -7,6 +7,67 @@
 #include <math.h>
 
 #include "gc.h"
+#include <sys/time.h>
+#include <unistd.h>
+#include <sys/socket.h>
+
+#ifdef __cplusplus
+#include <coroutine>
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void __pyc_net_wait_write__(int fd);
+void __pyc_net_wait_read__(int fd);
+int _CG_net_connect(int fd, const char* host, int port);
+char* _CG_net_read_str(int fd, int size);
+int _CG_net_write_str(int fd, const char* data);
+
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Event Loop Queues
+typedef struct _CG_ReadyTask {
+  void* hdl;
+  struct _CG_ReadyTask* next;
+} _CG_ReadyTask;
+
+typedef struct _CG_TimerTask {
+  void* hdl;
+  double wakeup_time;
+  struct _CG_TimerTask* next;
+} _CG_TimerTask;
+
+typedef struct _CG_IoTask {
+  void* hdl;
+  int fd;
+  int events;
+  struct _CG_IoTask* next;
+} _CG_IoTask;
+
+extern _CG_ReadyTask* _CG_ready_queue_head;
+extern _CG_ReadyTask* _CG_ready_queue_tail;
+extern _CG_TimerTask* _CG_timer_queue_head;
+extern _CG_IoTask* _CG_io_queue_head;
+extern _CG_IoTask* _CG_io_queue_tail;
+
+double _CG_get_time(void);
+void _CG_resume_coro(void* hdl);
+void _CG_event_loop_spawn(void* hdl);
+void _CG_event_loop_sleep(void* hdl, double seconds);
+void _CG_event_loop_register_io(void* hdl, int fd, int events);
+void _CG_event_loop_run(void* initial_hdl);
+void* _CG_run_coro(void* coro_hdl);
+#ifdef __cplusplus
+}
+#endif
 
 #ifdef __cplusplus
 #include <coroutine>
@@ -19,7 +80,7 @@ struct _CG_Coroutine {
     _CG_Coroutine get_return_object() {
       return _CG_Coroutine{std::coroutine_handle<promise_type>::from_promise(*this)};
     }
-    std::suspend_never initial_suspend() { return {}; }
+    std::suspend_always initial_suspend() { return {}; }
     
     struct final_awaiter {
       bool await_ready() const noexcept { return false; }
@@ -47,16 +108,28 @@ struct _CG_Coroutine {
 };
 
 inline void* _CG_run_coro(_CG_Coroutine coro) {
-  if (!coro.handle.done()) {
-    coro.handle.resume();
-  }
-  while (!coro.handle.done()) {
-    // A real event loop would yield and wait. For simple tests, we assume it finishes synchronously
-    // or we just break if it requires true async I/O.
-    coro.handle.resume();
-  }
+  _CG_event_loop_run(coro.handle.address());
   return coro.handle.promise().value;
 }
+
+struct _CG_Await_Net_Read {
+  int fd;
+  bool await_ready() const noexcept { return false; }
+  void await_suspend(std::coroutine_handle<> h) noexcept {
+    _CG_event_loop_register_io(h.address(), fd, 1);
+  }
+  int await_resume() const noexcept { return 0; }
+};
+
+struct _CG_Await_Net_Write {
+  int fd;
+  bool await_ready() const noexcept { return false; }
+  void await_suspend(std::coroutine_handle<> h) noexcept {
+    _CG_event_loop_register_io(h.address(), fd, 4);
+  }
+  int await_resume() const noexcept { return 0; }
+};
+
 #endif
 
 /* --- Micro-Core: Memory Interface --- */
