@@ -906,27 +906,41 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
   return inst;
 }
 
-static void build_if1_assign_target(PyDAST *tgt, PycAST *v, PycAST *ast, PycCompiler &ctx) {
-  build_if1_pyda(tgt, ctx);
+// Assign an already-computed value Sym `val` to the (already-built)
+// target `tgt`. Handles simple names, attribute targets (`self.x`),
+// subscript targets (`a[i]`), and arbitrarily nested tuple/list
+// targets, recursing on each element.
+static void emit_assign_to_target(PyDAST *tgt, Sym *val, PycAST *ast, PycCompiler &ctx) {
   PycAST *a = getAST(tgt, ctx);
   if (tgt->kind == PY_tuple || tgt->kind == PY_testlist || tgt->kind == PY_exprlist) {
-    // Destructuring assignment
-    if (!a->sym) fail("error line %d, illegal destructuring", ctx.lineno);
+    // Destructuring: pull out val[j] and assign it to element j. The
+    // element may itself be a name, attribute, subscript, or a further
+    // nested tuple -- recursion covers all of them. The previous code
+    // required the tuple's own sym and moved val[j] straight into the
+    // element's rval, which only worked for plain-name elements, so
+    // `self.x, self.y = ...` and `a[i], a[j] = ...` failed with
+    // "illegal destructuring" (issue 025 illegal-destructuring
+    // frontier: attribute / subscript / nested targets).
     for (int j = 0; j < tgt->children.n; j++) {
-      PycAST *elt = getAST(tgt->children[j], ctx);
-      call_method(&ast->code, ast, v->rval, sym___getitem__, elt->rval, 1, int64_constant(j));
+      Sym *item = new_sym(ast);
+      call_method(&ast->code, ast, val, sym___getitem__, item, 1, int64_constant(j));
+      emit_assign_to_target(tgt->children[j], item, ast, ctx);
     }
   } else {
     if1_gen(if1, &ast->code, a->code);
     if (a->is_member)
-      if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
-               (ast->rval = new_sym(ast)))
+      if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, val, (ast->rval = new_sym(ast)))
           ->ast = ast;
     else if (a->is_object_index)
-      if1_add_send_arg(if1, find_send(a->code), v->rval);
+      if1_add_send_arg(if1, find_send(a->code), val);
     else
-      if1_move(if1, &ast->code, v->rval, a->sym);
+      if1_move(if1, &ast->code, val, a->sym);
   }
+}
+
+static void build_if1_assign_target(PyDAST *tgt, PycAST *v, PycAST *ast, PycCompiler &ctx) {
+  build_if1_pyda(tgt, ctx);  // build the whole target tree once
+  emit_assign_to_target(tgt, v->rval, ast, ctx);
 }
 
 static void build_if1_with_items(PyDAST *stmt_node, int item_idx, PycCompiler &ctx, PycAST *ast) {
