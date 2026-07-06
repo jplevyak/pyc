@@ -54,6 +54,11 @@ static void rtrim_str(char *s) {
   while (len > 0 && isspace((unsigned char)s[len-1])) s[--len] = 0;
 }
 
+// True for a real PycSymbol pointer (not one of the scope sentinels
+// GLOBAL_USE/NONLOCAL_USE/GLOBAL_DEF/NONLOCAL_DEF, which are small
+// integers cast to PycSymbol*).
+static inline bool is_real_pycsymbol(PycSymbol *s) { return (intptr_t)s > (intptr_t)NONLOCAL_DEF; }
+
 static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx) {
   rtrim_str(sym); rtrim_str(from);
   char *mod = from ? from : sym;
@@ -66,6 +71,34 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
       import_file(mod, p, ctx);
       break;
     }
+    m = get_module(mod, ctx);
+  }
+  if (!m) return;  // module not found; build_import_if1 emits the diagnostic
+  // `from X import Y [as Z]`: bind the module's symbol Y into the
+  // importing scope under Z (or Y). The module's symbols were fully
+  // built by import_file (or a prior import), so its top scope is
+  // saved under m->pymod. Without this the imported name has no
+  // binding and every use fails as "'Y' has no type" (issue 025
+  // bucket C -- the module-import subsystem). `import X` (no `from`)
+  // is the module-object case, handled separately.
+  if (from) {
+    PycScope *modscope = m->ctx->saved_scopes.get(m->pymod);
+    if (modscope) {
+      PycSymbol *y = modscope->map.get(cannonicalize_string(sym));
+      if (is_real_pycsymbol(y))
+        ctx.scope_stack.last()->map.put(cannonicalize_string(as ? as : sym), y);
+    }
+  } else {
+    // `import X [as Z]`: bind Z (or X) to a module-marker symbol.
+    // Modules are compile-time namespaces here, not runtime values,
+    // so `X.attr` is resolved to the module member at build_if1 time
+    // (see PY_power). The marker itself never flows as a value.
+    cchar *bind = cannonicalize_string(as ? as : mod);
+    PycSymbol *marker = new_PycSymbol(bind, ctx);
+    marker->sym->is_module = 1;
+    marker->sym->nesting_depth = 0;
+    ctx.module_syms.put(marker->sym, m);
+    ctx.scope_stack.last()->map.put(bind, marker);
   }
 }
 
@@ -178,7 +211,26 @@ static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx) {
       // is live), so the ordinary nesting_depth/display path
       // handles it correctly.
       if (outer->sym == ast->sym) continue;
+      // issues/007 split identity: the public name is now a distinct
+      // variable Sym (ast->rval) from the closure body's internal Sym
+      // (ast->sym); a recursive self-reference resolves to the public
+      // one. Same reasoning as above: not a capture.
+      if (ast->rval && outer->sym == ast->rval) continue;
       captured.add(outer->sym);
+      // Transitive captures (issues/007 parameterized decorators,
+      // e.g. `def add_n(n): def dec(f): def wrapper(x): return
+      // f(x) + n`): `wrapper` captures `n` from its GRANDPARENT
+      // scope. Every intermediate function scope must capture it
+      // too, so this scope's creation-site snapshot can read it
+      // (via the intermediate scope's own self.field rewrite).
+      // Mark the name NONLOCAL_USE in each intermediate scope;
+      // inner scopes exit (and synthesize) before outer ones, so
+      // the outer maybe_synthesize call sees the propagated mark.
+      for (int lvl = level + 1; lvl < ctx.scope_stack.n - 1; lvl++) {
+        PycScope *s = ctx.scope_stack[lvl];
+        if (s->in) continue;  // class-body scopes don't capture
+        if (!s->map.get(x->key)) s->map.put(x->key, NONLOCAL_USE);
+      }
     }
   if (!captured.n) return nullptr;
   if (captured.n > 1) qsort(captured.v, captured.n, sizeof(captured.v[0]), compar_syms);
@@ -225,6 +277,25 @@ static void build_import_syms_from_pyda(PyDAST *n, PycCompiler &ctx);
 // already run (currently: f-string `{expr}` interpolation sub-expressions,
 // parsed on demand at build_if1 time). Declared in python_ifa_int.h.
 int build_syms_pyda(PyDAST *n, PycCompiler &ctx);
+
+// Symbol-table pass for a comprehension / generator expression body,
+// run inside the comprehension's own scope (already entered by the
+// caller). In every comprehension form the `for`-chain
+// (PY_list_for / PY_comp_for) is the LAST child and the element
+// expressions (list/gen elt, set expr, or dict key+value) precede
+// it. The for-chain is what binds the loop targets, so it MUST be
+// walked before the element expressions: otherwise an element that
+// references a target (e.g. `[i for i in xs]`) resolves that name as
+// a not-yet-bound USE, which falls through to the module scope and
+// creates a spurious global. A second same-named comprehension then
+// sees that global and dies with "'i' redefined as local". Binding
+// targets first matches CPython, where the comprehension is analyzed
+// as a function whose parameters are the targets.
+static void build_comprehension_body_syms(PyDAST *n, PycCompiler &ctx) {
+  int last = n->children.n - 1;
+  build_syms_pyda(n->children[last], ctx);                              // for-chain: bind targets
+  for (int i = 0; i < last; i++) build_syms_pyda(n->children[i], ctx);  // then element exprs
+}
 
 static void build_import_syms_name_pyda(PyDAST *n, PycCompiler &ctx) {
   // n->kind == PY_import_name, children are PY_dotted_as_name or PY_testlist of them
@@ -296,8 +367,16 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           for (auto c : varargsl->children.values())
             if (c->kind == PY_arg_default) build_syms_pyda(c->children[1], ctx);
         PycSymbol *ps = make_PycSymbol(ctx, def->children[0]->str_val, PYC_LOCAL);
-        def_ast->rval = def_ast->sym = def_fun_pyda(def, def_ast, ps->sym, ctx);
-        ast->rval = ast->sym = def_ast->sym;
+        // issues/007: same split identity as the plain PY_funcdef
+        // case -- the public name is a variable; the internal Sym
+        // carries the closure. Decorator application then rebinds
+        // the variable (`f = d(f)`) via ordinary moves (see
+        // PY_decorated in build_if1_pyda).
+        def_ast->rval = ps->sym;
+        def_ast->sym = def_fun_pyda(def, def_ast, new_sym(def_ast, def->children[0]->str_val, 1), ctx);
+        ctx.def_internal_fn.put(def_ast->rval, def_ast->sym);
+        ast->rval = def_ast->rval;
+        ast->sym = def_ast->sym;
         if (varargsl)
           for (auto c : varargsl->children.values()) {
             if (c->kind == PY_arg_default) {
@@ -341,8 +420,30 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
         // Generate setter into ast->code (collected by gen_class_pyda into class init body)
         if1_send(if1, &ast->code, 5, 1, sym_operator, ctx.cls()->self, sym_setter,
                  if1_make_symbol(if1, ast->rval->name), ast->sym, new_sym(ast))->ast = ast;
-      } else
+      } else if (ctx.in_class()) {
+        // Class-body def in a NON-Type_RECORD class (the builtin
+        // int/float/list/tuple/str/... classes get other type_kinds
+        // via their special registration -- issue 022). Their method
+        // machinery binds through the scope Sym directly
+        // (gen_class_pyda's has[] collection / name-symbol
+        // dispatch), so keep the legacy identity here.
         ast->rval = ast->sym = def_fun_pyda(n, ast, ps->sym, ctx);
+      } else {
+        // issues/007 Finding 2 (and issues/001's residuals): never
+        // attach if1_closure directly to the public-name Sym.
+        // The function body gets its own internal Sym (mirroring the
+        // is_method branch above); the public name is an ordinary
+        // variable bound via if1_move at the def site (see
+        // PY_funcdef in build_if1_pyda). Reassigning the name (a
+        // decorator's `f = d(f)`, or any `f = g`) then behaves like
+        // any other variable reassignment instead of rewriting a Sym
+        // FA treats as BEING a function. Note: no `alias` link here
+        // -- build_if1_pyda uses `rval->alias == sym` to recognize
+        // the method case.
+        ast->rval = ps->sym;
+        ast->sym = def_fun_pyda(n, ast, new_sym(ast, n->children[0]->str_val, 1), ctx);
+        ctx.def_internal_fn.put(ast->rval, ast->sym);
+      }
       if (varargsl)
         for (auto c : varargsl->children.values()) {
           if (c->kind == PY_arg_default) {
@@ -518,7 +619,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_genexpr: {
       enter_scope(n, ctx, nullptr);
       ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
-      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      build_comprehension_body_syms(n, ctx);
       exit_scope(ctx);
       return 0;
     }
@@ -527,6 +628,24 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_comp_for:
       mark_store(n->children[0]);
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      return 0;
+
+    case PY_attribute:
+      // An attribute trailer `.name`: children[0] is the attribute
+      // NAME, a literal identifier that build_if1's PY_power handler
+      // consumes as a raw string (`trailer->children[0]->str_val` ->
+      // make_symbol). It is NOT a variable reference and must NOT be
+      // run through build_syms_pyda / PYC_USE scope resolution. Doing
+      // so (the old generic-recurse behavior) looked the name up as an
+      // ordinary identifier, failed, and created a spurious *module
+      // global* for every attribute name in the program. Usually inert
+      // -- but if that same name was later a reassigned parameter or
+      // local (`color` in go.py: `[SHOW[sq.color] ...]` then a method
+      // with `def m(self, color): ...; color = ...`), the store saw the
+      // global sentinel and died with "'X' redefined as local". The
+      // object being accessed is the sibling atom in the enclosing
+      // PY_power, not a child here, so there is nothing to recurse.
+      ast->rval = new_sym(ast);
       return 0;
 
     case PY_import_name:
@@ -571,7 +690,6 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_await_expr:
     case PY_power:
     case PY_call:
-    case PY_attribute:
     case PY_subscript:
     case PY_ternary:
     case PY_tuple:
@@ -597,7 +715,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       if (n->children.n == 3 && n->children[2]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
-        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+        build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
       } else {
         for (auto c : n->children.values()) build_syms_pyda(c, ctx);
@@ -619,7 +737,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
-        for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+        build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
       } else {
         for (auto c : n->children.values()) build_syms_pyda(c, ctx);
@@ -701,6 +819,7 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
   Sym *cls = ast->closure_cls;
+  bool is_method = in && !in->is_fun;
   if (cls) {
     // issues/001: this nested def captures enclosing-function locals --
     // fn->self was already created and specialized against the
@@ -708,12 +827,20 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     // the body above was walked); reuse it as as[0] here, mirroring
     // gen_lambda_pyda's identical pattern.
     as.add(fn->self);
-  } else {
+  } else if (is_method) {
     as.add(new_sym(ast));
     as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
+  } else {
+    // issues/007 split identity: a plain (non-method) def is now a
+    // first-class function value bound to its public-name variable
+    // via if1_move; call sites read the variable and call the value.
+    // Use the lambda convention (as[0] IS the function Sym) so the
+    // pattern matcher recognizes value-carried applications, instead
+    // of the name-symbol dispatch placeholder methods use.
+    as.add(fn);
   }
   get_syms_args_pyda(ast, varargsl, as, ctx);
-  if (!cls && in && !in->is_fun) {
+  if (!cls && is_method) {
     if (as.n > 1) {
       fn->self = as[1];
       fn->self->must_implement_and_specialize(in);
@@ -833,7 +960,15 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
       as.add(new_sym(ast, "__new__"));
       as[0]->must_implement_and_specialize(ast->sym->meta_type);
       fn->name = as[0]->name;
-      for (int i = 2; i < init_sym->has.n; i++) as.add(new_sym(ast));
+      // Name each __new__-wrapper formal after the corresponding
+      // __init__ parameter so keyword arguments to a constructor
+      // (`T(a=1, b=2)`) can bind by name. Without a name the formal has
+      // no entry in named_to_positional (pattern.cc build_arg_position),
+      // so the matcher can't place a keyword actual and the whole
+      // constructor call fails to resolve ("'t' has no type"). A null
+      // param name (e.g. *args) degrades to an unnamed formal as before.
+      // issue 025 bucket A: timsort's `Timsort(list_, comparefn=comparefn)`.
+      for (int i = 2; i < init_sym->has.n; i++) as.add(new_sym(ast, init_sym->has[i]->name));
       body = 0;
       Sym *t = new_sym(ast);
       if (!cls->is_vector)

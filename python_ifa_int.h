@@ -58,6 +58,22 @@ class PycCompiler : public PycCallbacks {
   Map<void *, PycScope *> saved_scopes;
   Map<int, Sym *> tuple_types;
   Vec<PycScope *> imports;
+  // issues/007 split identity: public-name variable Sym -> internal
+  // function Sym for every non-method def. Used by PY_name's load
+  // path to redirect a function's own-name reference INSIDE its own
+  // body to the internal Sym (value self-identity), so recursion
+  // neither routes through ifa's stack-disciplined display machinery
+  // nor becomes a spurious self-capture. (Known CPython divergence,
+  // documented in issues/007: a recursive call inside a decorated
+  // function calls the UNDECORATED function.)
+  Map<Sym *, Sym *> def_internal_fn;
+
+  // issue 025 module subsystem phase 2: for `import X`, X is bound to
+  // a module-marker Sym (is_module set). This maps that marker to the
+  // imported PycModule so build_if1's PY_power handler can resolve
+  // `X.attr` to the module's member symbol at compile time (modules
+  // are compile-time-known namespaces, not runtime objects).
+  Map<Sym *, PycModule *> module_syms;
 
   // --- Accessors (formerly PycContext methods) ---
   bool is_builtin() { return mod->is_builtin; }
