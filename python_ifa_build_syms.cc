@@ -927,7 +927,15 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
       as.add(new_sym(ast, "__new__"));
       as[0]->must_implement_and_specialize(ast->sym->meta_type);
       fn->name = as[0]->name;
-      for (int i = 2; i < init_sym->has.n; i++) as.add(new_sym(ast));
+      // Name each __new__-wrapper formal after the corresponding
+      // __init__ parameter so keyword arguments to a constructor
+      // (`T(a=1, b=2)`) can bind by name. Without a name the formal has
+      // no entry in named_to_positional (pattern.cc build_arg_position),
+      // so the matcher can't place a keyword actual and the whole
+      // constructor call fails to resolve ("'t' has no type"). A null
+      // param name (e.g. *args) degrades to an unnamed formal as before.
+      // issue 025 bucket A: timsort's `Timsort(list_, comparefn=comparefn)`.
+      for (int i = 2; i < init_sym->has.n; i++) as.add(new_sym(ast, init_sym->has[i]->name));
       body = 0;
       Sym *t = new_sym(ast);
       if (!cls->is_vector)

@@ -52,17 +52,54 @@ None compile to C yet; this is the honest starting line. The
 failures cluster into four actionable buckets plus a couple of
 deep crashes. Ordered by how close each bucket is to working:
 
-### A. `unresolved call` — 7 examples (CLOSEST: past parse, import, scoping; die in FA)
+### A. `unresolved call` — 7 examples (investigated 2026-07: NOT "one dispatch away")
 
 `block` (`__sub__`), `dijkstra2` (`__gt__`), `life` (`__iter__`),
 `loop` (`__iadd__`), `mwmatching` (`__iter__`), `oliva2`
 (`__add__`), `timsort` (`__gt__`).
 
-These get furthest — the frontend accepts them and FA runs; it
-just can't resolve an operator/iterator dispatch. Likely the
-highest value-per-fix bucket because each is one missing
-dispatch away from a full pipeline run, and the operators
-(`__gt__`, `__iter__`, `__iadd__`, `__add__`, `__sub__`) are core.
+The baseline framing ("each is one missing dispatch away") was
+wrong. The unresolved operator is a *downstream symptom*: the
+receiver has no type because inference broke further up. Every one
+of these has cascading `'X' has no type` warnings before the
+`unresolved call`. Root causes found so far are unrelated to the
+operators themselves:
+- `dijkstra2` — `len(sys.argv) > 1`; the `import sys` failure
+  (bucket C) leaves `sys.argv` untyped, so `__gt__` has no
+  receiver. It's really a bucket-C example.
+- `timsort` — `Timsort(list_, comparefn=comparefn)` stores a
+  *function* in an instance field and later calls it
+  (`self.comparefn(...)`). Blocked on **first-class functions in
+  struct fields** (see below), a deep FA gap. The `__gt__` at
+  :1033 is in `range_check`, never reached with typed args.
+- `life` — `map(process, generator(...))` plus `itertools.product`
+  / `collections.defaultdict`; needs those higher-order builtins.
+
+**Two real, standalone bugs found and fixed while digging here**
+(neither fully clears an example — they were necessary but not
+sufficient — but both are genuine correctness fixes):
+1. **Keyword args were silently dropped from calls.** `PY_call`
+   collected `name=value` pairs and even built their values but
+   never added them to the emitted send, so the callee's params
+   went untyped. Fixed: keyword actuals are now added to the send
+   under their (interned) parameter name; the IFA matcher already
+   supports named→positional mapping. `tests/keyword_args.py`.
+2. **Keyword args to constructors failed** even for plain values:
+   the `__new__` wrapper's formals were created unnamed, so no
+   `named_to_positional` entry existed to bind a keyword actual.
+   Fixed: wrapper formals are named after the `__init__` params.
+
+**Known remaining blockers for this bucket** (each its own task):
+- First-class functions stored in struct fields and called through
+  them (`self.fn(...)`) — timsort, and a common callback pattern.
+- Out-of-order keyword args (`f(high=9, low=2)`) still fail to
+  compile (safely — no miscompile). In-order works.
+- Higher-order builtins `map` / `filter` / `itertools.product` /
+  `collections.defaultdict` — life, others.
+- The `import` bucket (C) masks dijkstra2 and likely more.
+
+Net: bucket A is not a quick win. It bottoms out in first-class
+function values and higher-order builtins.
 
 ### B. `'X' redefined as local` — 18 → 0 examples (FIXED 2026-07)
 

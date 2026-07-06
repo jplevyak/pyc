@@ -1661,6 +1661,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           for (auto a : pos_args.values()) build_if1_pyda(a, ctx);
           for (auto a : kw_vals.values()) build_if1_pyda(a, ctx);
           for (auto a : pos_args.values()) if1_gen(if1, &ast->code, getAST(a, ctx)->code);
+          for (auto a : kw_vals.values()) if1_gen(if1, &ast->code, getAST(a, ctx)->code);
           // Check for builtin call (only for direct name invocations, no pending member)
           if (!pending_member && build_builtin_call_pyda(atom_ast, trailer, ast, ctx)) {
             cur_val = ast->rval;
@@ -1681,6 +1682,21 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             if1_add_send_arg(if1, send, cur_val);
           }
           for (auto a : pos_args.values()) if1_add_send_arg(if1, send, getAST(a, ctx)->rval);
+          // Keyword arguments: pass each value under its parameter name.
+          // The IFA matcher (pattern.cc positional_to_named /
+          // named_to_positional) maps these onto the callee's formals by
+          // name, so the name string must be interned the same way formal
+          // parameter names are (cannonicalize_string == the IF1 string
+          // table). Previously kw args were collected and their values
+          // built but never added to the send at all -- silently dropped,
+          // leaving the callee's params untyped, which surfaced far away
+          // as "unresolved call '__gt__'" etc. (issue 025 bucket A;
+          // timsort's `sort(low=0, high=len(list_))`). The key node is a
+          // bare identifier; only its string is read (never resolved as a
+          // variable, which would spuriously globalize it like the
+          // attribute-name bug).
+          for (int ki = 0; ki < kw_vals.n; ki++)
+            if1_add_send_arg(if1, send, getAST(kw_vals[ki], ctx)->rval, cannonicalize_string(kw_keys[ki]->str_val));
           ast->rval = new_sym(ast);
           if1_add_send_result(if1, send, ast->rval);
           cur_val = ast->rval;
