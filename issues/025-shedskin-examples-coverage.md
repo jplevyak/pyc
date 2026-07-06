@@ -385,6 +385,35 @@ it is the correct and *stable* shape — the naive "coerce the union"
 and "promote the LUB" shortcuts are both dead ends (crash / runtime
 dispatch failure respectively), now proven.
 
+**Third attempt — absorb the constant inside `type_cannonicalize`
+— and the invariant it exposed (2026-07).** `type_cannonicalize`
+*already* strips a constant when its base type is present
+(`{const_0, int64} → {int64}`), and does so stably (the absorption
+is part of forming the canonical value, not a post-hoc mutation), so
+this looked like the right home: extend it to drop a numeric
+constant when a *wider* numeric is present (`{const_0, float} →
+{float}`). Bisected result: computing the widest type is harmless;
+the **strip itself segfaults**, consistently. The reason is a core
+invariant — *the type a value flows in as must remain in the AVar's
+type*. The existing strip is safe precisely because it keeps the
+base type (`int64` stays); mine removes `int64` while an int value
+(the `0` move) still flows in, and downstream (clone/concretize)
+crashes looking the type up. So even canonicalization cannot drop a
+concrete type that a value physically flows as.
+
+**Consequence — the real shape is confirmed as coercion at the
+flow, not any type-set edit.** For `x` to be float-only, the literal
+`0` must *itself flow as float* — i.e. the `x = 0` move must become
+`x = 0.0`. That is a post-convergence IR rewrite of the constant at
+its source (cheap and lossless for a literal), after which the type
+is uniformly float with no invariant violation. Equivalently, the
+untyped-numeric lattice element (above) works only if it is threaded
+through **all** consumers (FA dispatch, clone/concretize, codegen) so
+none of them see a bare int flowing into a float-typed var. Either
+way it is a multi-subsystem change; three post-hoc shortcuts
+(mutate `out`, promote the LUB, strip in canonicalize) are now each
+proven to fail, and for understood reasons.
+
 The other type-resolution symptoms (`unresolved call`, `has no
 type`) are a mix of this same numeric-union problem surfacing at a
 call and the bucket-A first-class-function-in-field gap.
