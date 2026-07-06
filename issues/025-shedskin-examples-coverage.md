@@ -182,16 +182,37 @@ once past imports they hit their *next*, non-import blocker (type
 inference, destructuring, the `if1_send` crash). The import wall
 itself is gone.
 
-**Remaining shim work** (each its own increment):
-- `random` — needs a PRNG; a pure-Python LCG gives deterministic,
-  self-consistent (not CPython-matching) output. 13 examples.
-- `sys` — `sys.argv` (list), `sys.exit`, `sys.setrecursionlimit`
-  (no-op), `sys.maxsize` (const) are easy; `sys.stdout/stderr/stdin`
-  are file objects and are the hard part. 6 examples.
-- `copy` — `copy.copy` shallow is feasible; `copy.deepcopy` is
-  hard under static typing. 5 examples.
+**Shims landed 2026-07:** `math`, `time`, **`random`**, **`sys`
+(easy parts)**. `random` is a pure-Python LCG (seed/random/uniform/
+randrange/randint/choice/shuffle) — deterministic given a seed but
+NOT CPython's stream. `sys` provides `argv` (stub `["pyc"]`),
+`maxsize`, `exit`, `setrecursionlimit` (no-op). With these four
+shims the module-blocked count fell **40 → 14** in the sweep.
+
+**Remaining shim work:**
+- `copy` — INVESTIGATED, not an easy win. Live usage is
+  `copy.deepcopy` (recursive; not modellable under static typing).
+  Shallow `copy.copy` via the `clone` primitive is unsound: a
+  cloned live object loses its field types in flow analysis (the
+  primitive is built for the `__new__` wrapper, where `__init__`
+  re-initializes the fields immediately after). Needs either a
+  type-preserving shallow-copy mechanism in FA or real deepcopy.
+- `sys` file objects — `sys.stdout`/`stderr`/`stdin`. Two examples
+  (othello2, path_tracing) now hit the clean
+  "module 'sys' has no attribute 'stdout'" diagnostic. Needs a
+  file/stream object type.
 - long tail: `struct`, `itertools`, `functools`, `colorsys`,
-  `array`, `re`, `getopt`.
+  `array`, `re`, `getopt`, plus quameon's local submodules.
+
+The 14 still-module-blocked are mostly `copy` importers and the
+long tail. Examples that cleared imports now surface their next
+blocker, which is NOT module-related: tuple destructuring, the
+`if1_send` crash (bucket E), FA timeouts, or -- newly exposed by
+getting further -- a couple of segfaults in later code
+(pystone, tictactoe). A known LLVM-backend bug also surfaced:
+`int_fn() / float` mis-types as an integer op when the int comes
+from a mutable-global helper (worked around with explicit `float()`
+in the random shim; worth fixing at the source).
 
 Historical note (the original bucket-C framing, now resolved):
 

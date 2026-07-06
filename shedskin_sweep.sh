@@ -34,7 +34,10 @@ for d in "$ROOT"/shedskin_examples/*/; do
   bd="$OUTDIR/$name"; mkdir -p "$bd"
   cp -r "$d"* "$bd/" 2>/dev/null
   out=$(cd "$bd" && timeout "$TIMEOUT" "$PYC" -D "$ROOT" "$name.py" 2>&1)
-  first=$(printf '%s\n' "$out" | grep -m1 -iE "fail|error|unresolved|abort|assert" | head -c 220)
+  rc=$?
+  first=$(printf '%s\n' "$out" | grep -m1 -iE "fail|error|unresolved|abort|assert|illegal|has no type|syntax" | head -c 220)
+  if [ -z "$first" ] && [ "$rc" -eq 124 ]; then first="(compile timeout ${TIMEOUT}s)"; fi
+  if [ -z "$first" ] && [ "$rc" -ge 128 ]; then first="(crash: signal $((rc - 128)))"; fi
   if [ -z "$first" ] && [ -f "$bd/$name.c" ]; then
     printf '%s\tCOMPILED_C\t\n' "$name" >> "$RES"; compiled=$((compiled+1))
   else
