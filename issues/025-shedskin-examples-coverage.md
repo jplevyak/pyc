@@ -303,11 +303,10 @@ re-run individually to classify.)
    this error. Test `tests/destructuring_targets.py`.
 6. **D** — grammar fixes, one construct at a time (~24 examples,
    the largest remaining bucket).
-7. **type resolution** — the deepest and the real gate to the first
-   *green* example: `unresolved call` / `has no type` / `_CG_any`
-   (void\*) in generated C (~19 examples, incl. mandelbrot/neural1/
-   chull which reach codegen but emit invalid C). Best as a vertical
-   slice driving one small example (mandelbrot) to compile+run.
+7. **type resolution** — the deepest bucket and the real gate to the
+   first *green* example: `unresolved call` / `has no type` /
+   `_CG_any` (void\*) in generated C (~19 examples). Investigated via
+   the mandelbrot vertical slice 2026-07; findings below.
 8. **crashes** — `if1_send` assert (amaze + others), `coerce_immediate`
    assert, and segfaults newly exposed past the import wall
    (pystone, tictactoe). A compiler shouldn't crash on input.
@@ -316,6 +315,47 @@ Newly-surfaced non-module blockers after clearing imports +
 destructuring: `open()`/file I/O (softrender), generator
 expressions (sat, sudoku5; issue 014), FA convergence timeouts
 (fysphun).
+
+### Type-resolution investigation — mandelbrot vertical slice (2026-07)
+
+**Root cause of the `_CG_any`-in-generated-C failures: loop-carried
+numeric type unification.** mandelbrot does
+`zi = 0; zr = 0; while True: ...; zr = zr2 - zi2 + cr; zi = temp +
+temp + ci`. `zr`/`zi` are **int on loop entry** (the `0`) and
+**float after the first iteration**, so the loop-head phi merges
+`{int, float}`. That union has no single concrete C type, so
+concretization emits `_CG_any` (void\*) for the variable and codegen
+then does `(_CG_any)<double>` — a double-to-void\* cast, which is
+invalid C (and invalid LLVM IR). Minimal repro:
+`x = 0; while ...: x = x * 2.0 + 1.0`. (A *non*-loop
+`z = 0; z = 1.5; z*z` is fine — SSU separates the two defs; only the
+loop back-edge forces a genuine union.)
+
+**Promoting the type is necessary but NOT sufficient — coercion
+insertion is the hard part.** I prototyped the promotion:
+`make_LUB_type` (currently the default identity in `ifa.h`, unridden
+by pyc) reducing an all-numeric `Type_SUM` via `coerce_num`
+(`{int,float}->float`), plus relaxing the `BOXING` type-violation
+guard (`mixed_basics` in fa.cc) for all-numeric sets. That makes the
+variable's *type* float and the pyc→C step succeed, but it is
+unsound: the int values flowing in (the initial `0`) are never
+**coerced** to float, so at runtime the dispatch for `zr * 2.0`
+finds no matching function ("matching function not found") and the
+LLVM backend rejects the IR. Reverted as fragile.
+
+**What a real fix needs:** insert an int→float conversion where an
+int value reaches a variable/phi whose resolved type is float — the
+classic shedskin-style numeric unification with **coercion at merge
+points** (the loop-head phi), done as a post-convergence IR
+transform (pyc's FA is forward, so it can't just propagate
+float-ness backward to the `0` initializer during inference). The
+`P_prim_coerce` primitive already exists; the missing piece is a
+pass that inserts it at the numeric-union joins the promotion
+identifies. This is a substantial feature and the true gate to the
+first green example — worth its own issue. The other type-resolution
+symptoms (`unresolved call`, `has no type`) are a mix of this same
+numeric-union problem surfacing at a call and the bucket-A
+first-class-function-in-field gap.
 
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
