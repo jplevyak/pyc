@@ -144,19 +144,56 @@ as a raw string via `make_symbol`). Regression test:
 most to bucket C (imports), `go` to bucket E (the `if1_send`
 crash), `sudoku5` to D (generator expressions).
 
-### C. `build_import_if1` assertion `m' failed` — 24 examples (import resolution abort)
+### C. missing-module imports — ~40 examples (investigated 2026-07; crash fixed, coverage blocked on a module subsystem)
 
-`ant brainfuck chull fysphun genetic genetic2 kanoodle kmeanspp
-mandelbrot mandelbrot2 minilight msp_ss neural2 othello2 pygasus
-pystone quameon richards rubik2 sieve softrender sudoku1 tarsalzp
-voronoi`
+After the bucket-B fixes this grew to ~40 examples (B's examples
+flowed in). The imports needed, by frequency: `time` (32,
+mostly benchmark timing), `random` (13), `math` (12), `sys` (6),
+`copy` (5), then a long tail (`struct`, `itertools`, `functools`,
+`colorsys`, `array`, `re`, `getopt`, plus quameon's local
+submodules). None are provided by pyc.
 
-Largest bucket, but a hard `assert(m)` abort in import lowering
-(a module resolves to null). Fixing it turns aborts into the
-*next* real error rather than immediately producing working
-binaries, so it's high-count but not high-yield until B/A are
-also addressed. Worth converting the assert into a diagnostic
-early regardless (aborts hide whatever follows).
+**Crash fixed (committed).** `build_import_if1` did `assert(m)` on
+the module `get_module` returns, which is null for any unfound
+module — so an `import time` aborted the whole compiler with
+SIGABRT. Replaced with a `fail()` diagnostic naming the module and
+line.
+
+**Why coverage is still blocked — a two-layer subsystem gap, NOT a
+quick win.** I prototyped stdlib shims (a `pyc_lib/` on the search
+path with `math.py` calling libc via `__pyc_c_call__`) and found
+the shims can't be used, because **pyc cannot call functions from
+an imported module at all** — even a trivial local
+`import mymod; mymod.double(21)` fails with `'mymod' has no type`,
+and `from mymod import double; double(21)` fails too. The import
+machinery (`build_import_syms`) loads a module's *symbols* but
+never binds the imported names into the importing scope; only the
+builtin `__pyc__` module is wired in (via the single
+`import_scope` call at `python_ifa_build_syms.cc:1007`). The
+existing `tests/module_import.py` only ever imports for a side
+effect (`print(__name__)`), so this was never exercised. Two
+distinct capabilities are missing, both needed since the corpus
+uses both styles (≈55 `import X` vs ≈30 `from X import Y`):
+  1. `from X import Y` — bind `Y` (a module symbol) into the
+     current scope. The more tractable half: a flat-namespace
+     merge like the builtin module already gets.
+  2. `import X; X.attr` — needs **module objects**: `X` bound to a
+     value whose attribute access resolves module members. A real
+     feature (module-as-value + `.` dispatch), the dominant style.
+
+On top of that, each stdlib module needs a shim with runtime
+support: `math` maps cleanly to libc (`__pyc_c_call__(float,
+"sqrt", ...)`, correct); `time`/`random` need primitives and are
+nondeterministic (so timing/PRNG examples can't have exact-match
+goldens); `copy.deepcopy` is hard under static typing.
+
+The prototype (search-path entry + `pyc_lib/math.py`) was reverted
+as non-functional; the crash fix stands. **Recommended:** treat
+"module import + module objects" as its own issue — it's the real
+unlock here and also what bucket A's `import sys` cases need — and
+land it before writing shims. Then `math` (correct, libc-backed)
+is the first shim; `time`/`random`/`sys` follow with the caveat
+that their examples become compile-only (no exact-output goldens).
 
 ### D. syntax errors — ~25 examples (DParser grammar gaps)
 
@@ -184,12 +221,20 @@ re-run individually to classify.)
 1. ~~**B (`redefined as local`)**~~ — DONE, 2026-07: 18 → 0. Two
    root causes, both fixed (comprehension target-binding order +
    attribute names resolved as variables); see bucket B.
-2. **A (`unresolved call`)** — 7 examples one dispatch from a
-   full run; core operators.
-3. **C** — first make the import path emit a diagnostic instead
-   of `assert(m)`, then work the resolution gap.
-4. **D** — grammar fixes, one construct at a time.
-5. **E** — the lone deep crash.
+2. **A (`unresolved call`)** — investigated 2026-07: not "one
+   dispatch away." Fixed two real keyword-argument bugs along the
+   way; remaining blockers are first-class functions in struct
+   fields and higher-order builtins. See bucket A.
+3. ~~**C** (make the import path a diagnostic, not `assert(m)`)~~ —
+   crash DONE, 2026-07. Actual coverage blocked on a module-import
+   subsystem (module objects + cross-module name binding) plus
+   per-module shims; treat as its own issue. See bucket C.
+4. **module import + module objects** — the real unlock for C (and
+   bucket A's `import sys`): `import X; X.attr` and
+   `from X import Y` for user/library modules. Prerequisite for any
+   stdlib shim.
+5. **D** — grammar fixes, one construct at a time.
+6. **E** — the lone deep crash.
 
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
