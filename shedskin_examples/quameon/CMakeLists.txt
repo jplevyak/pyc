@@ -1,0 +1,31 @@
+add_shedskin_product(
+    SYS_MODULES
+        math
+        random
+        sys
+        time
+    APP_MODULES
+        box_bc
+        coulomb
+        fermion
+        jastrow/__init__
+        jastrow/base_jastrow
+        jastrow/const_jastrow
+        jastrow/simple_pade
+        observables/__init__
+        observables/ee_dist
+        observables/en_dist
+        observables/observable_base
+        orbital/__init__
+        orbital/atomic_sto
+        orbital/atomic_sto_primitive
+        orbital/create_orbital
+        orbital/lcao
+        orbital/orbital_base
+        qmc_loop
+        stats/__init__
+        stats/average
+        stats/histogram
+        sum_jastrow
+        wave_func
+)

@@ -1,0 +1,21 @@
+add_shedskin_product(
+    SYS_MODULES
+        math
+        random
+        re
+        sys
+        time
+    APP_MODULES
+        ml/__init__
+        ml/camera
+        ml/entry
+        ml/image
+        ml/raytracer
+        ml/scene
+        ml/spatialindex
+        ml/surfacepoint
+        ml/triangle
+        ml/vector3f
+    DATA
+        cornellbox.txt
+)
