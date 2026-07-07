@@ -268,7 +268,7 @@ test-dparse test_dparse: $(PYC)
 
 clean-tests:
 	rm -rf tests/build tests/__pycache__ tests/pyc_compat.py tests/*.dSYM
-	rm -f  tests/*.out tests/*.py.c tests/*.py.s tests/*.ll tests/*.bak
+	rm -f  tests/*.out tests/*.py.c tests/*.py.s tests/*.ll tests/*.bak tests/*.o tests/*.d
 	@# Stale binaries from old in-place test runs: any executable with a .py twin.
 	@for f in tests/*; do \
 	  if [ -f "$$f" ] && [ -x "$$f" ] && [ -e "$$f.py" ]; then rm -f "$$f"; fi; \
@@ -301,11 +301,15 @@ diffifa:
 
 clean: clean-tests
 	rm -f *.o *.d core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
-	rm -f *.py.c *.py.s *.out *.bak *.ll
+	rm -f *.py.c *.py.s *.out *.bak *.ll *.txt *.log *.ir out_class out_dyn out_mc baseline
+	rm -f *.g.d_parser.cc *.g.d_parser.h *.g.d_parser.d
 	rm -rf *.dSYM
-	@# Stale binaries from one-off runs in root: any executable with a .py twin.
-	@for f in *; do \
+	@# Stale binaries from one-off runs in root and shedskin: any executable with a .py twin.
+	@for f in * shedskin_examples/*/*; do \
 	  if [ -f "$$f" ] && [ -x "$$f" ] && [ -e "$$f.py" ] && [ "$$f" != "pyc" ]; then rm -f "$$f"; fi; \
+	done
+	@for f in shedskin_examples/*/*.dSYM; do \
+	  if [ -d "$$f" ]; then rm -rf "$$f"; fi; \
 	done
 	$(MAKE) -C $(IFA_DIR) clean
 

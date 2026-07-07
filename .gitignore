@@ -139,3 +139,12 @@ __pycache__/
 /8.py
 /9
 /9.py
+
+# Debugging and Output Cruft
+*.txt
+*.log
+*.ir
+out_class
+out_dyn
+out_mc
+baseline
