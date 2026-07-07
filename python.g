@@ -455,19 +455,7 @@ stringprefix ::= 'r' | 'R' | 'u' | 'U'
                | 'b' | 'B' | 'br' | 'bR' | 'Br' | 'BR' | 'rb' | 'rB' | 'Rb' | 'RB'
                | 'f' | 'F' | 'fr' | 'fR' | 'Fr' | 'FR' | 'rf' | 'rF' | 'Rf' | 'RF';
 escapeseq ::= "\\[^]";
-NUMBER ::= integer | floatnumber | imagnumber;
-integer ::= decimalinteger | octinteger | hexinteger | bininteger;
-decimalinteger ::= nonzerodigit digit* | '0';
-octinteger ::= '0' ('o' | 'O') octdigit+;
-hexinteger ::= '0' ('x' | 'X') hexdigit+;
-bininteger ::= '0' ('b' | 'B') bindigit+;
-floatnumber ::= pointfloat | exponentfloat;
-pointfloat ::= intpart? fraction | intpart '.';
-exponentfloat ::= (intpart | pointfloat) exponent;
-intpart ::= digit+;
-fraction ::= "." digit+;
-exponent ::= ("e" | "E") ("+" | "-")? digit+;
-imagnumber ::= (floatnumber | intpart) ("j" | "J");
+NUMBER: "(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|([0-9]*.[0-9]+|[0-9]+.)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+|[0-9]+)[jJ]?" $term -1;
 nonzerodigit ::= "[1-9]";
 digit ::= "[0-9]";
 octdigit ::= "[0-7]";
@@ -511,6 +499,11 @@ _ : {
         case '#': p++; while (*p && *p != '\n') p++; break;
         case ' ': p++; if (i >= 0) i++; break;
         case '\t': p++; if (i >= 0) i = (i + 7) & ~7; break;
+        case '\r': p++; break;
+        case '\\': 
+          if (p[1] == '\n') { loc->line++; p += 2; break; }
+          if (p[1] == '\r' && p[2] == '\n') { loc->line++; p += 3; break; }
+          goto Ldone;
         case '\n': if (i >= 0 || pg->implicit_line_joining) { loc->line++; p++; i = 0; break; }
                      // else fall through
         default: goto Ldone;
