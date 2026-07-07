@@ -20,6 +20,31 @@ extern D_Symbol d_symbols_python[];
   int py_next_indent(struct D_Parser *p);
   int dparser_python_user_size = sizeof(D_ParseNode_User);
   int dparser_python_globals_size = sizeof(D_ParseNode_Globals);
+
+  int python_scan_nl(d_loc_t *loc, unsigned char *op_assoc, int *op_priority) {
+    char *p = loc->s;
+    int matched = 0;
+    while (1) {
+      if (*p == '\r' && p[1] == '\n') { loc->line++; p += 2; matched = 1; continue; }
+      if (*p == '\n') { loc->line++; p++; matched = 1; continue; }
+      
+      char *q = p;
+      while (*q == ' ' || *q == '\t') q++;
+      if (*q == '\r' && q[1] == '\n') { loc->line++; p = q + 2; continue; }
+      if (*q == '\n') { loc->line++; p = q + 1; continue; }
+      if (*q == '#') {
+        while (*q && *q != '\n') q++;
+        p = q;
+        continue;
+      }
+      break;
+    }
+    if (matched) {
+      loc->s = p;
+      return 1;
+    }
+    return 0;
+  }
 }
 
 ${declare longest_match}
@@ -422,7 +447,7 @@ yield_expr: 'yield' testlist? {
 
 /* additional material from http://www.python.org/doc/current/ref/grammar.txt */
 
-NL: '\n';
+NL: ${scan python_scan_nl};
 INDENT: [ if (!python_indent(&$g)) return -1; ] ;
 DEDENT: [ if (!python_dedent(&$g)) return -1; ] ;
 MATCH_KW: "[a-zA-Z_][a-zA-Z0-9_]*" $term -1 [ if ($n.end - $n.start_loc.s != 5 || strncmp($n.start_loc.s, "match", 5)) return -1; ] {
@@ -499,13 +524,16 @@ _ : {
         case '#': p++; while (*p && *p != '\n') p++; break;
         case ' ': p++; if (i >= 0) i++; break;
         case '\t': p++; if (i >= 0) i = (i + 7) & ~7; break;
-        case '\r': p++; break;
         case '\\': 
           if (p[1] == '\n') { loc->line++; p += 2; break; }
           if (p[1] == '\r' && p[2] == '\n') { loc->line++; p += 3; break; }
           goto Ldone;
-        case '\n': if (i >= 0 || pg->implicit_line_joining) { loc->line++; p++; i = 0; break; }
-                     // else fall through
+        case '\n':
+          if (pg->implicit_line_joining) { loc->line++; p++; i = 0; break; }
+          goto Ldone;
+        case '\r':
+          if (p[1] == '\n' && pg->implicit_line_joining) { loc->line++; p += 2; i = 0; break; }
+          goto Ldone;
         default: goto Ldone;
       }
     }
