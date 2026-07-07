@@ -318,15 +318,25 @@ re-run individually to classify.)
      coerced a string operand in a mixed op (`str == int`). Now it
      bails to a runtime op. Test `tests/const_str_compare.py`.
    Remaining: the pystone/tictactoe **segfaults** are a deep FA
-   display-setup bug. Traced to `make_AVar(Proc1, Proc1_es)` during
-   top-edge setup where `Proc1_es.display.n == 0` but a module-level
-   function (nesting_depth 1) referencing a sibling
-   (pystone's Proc1..8 call each other) needs `display[0]`. A
-   per-consumer guard (fall back to GLOBAL_CONTOUR) just moves the
-   crash to the next display reader -- the entry set is genuinely
-   built with an empty display when it should have `display[0]`, so
-   the fix is in the display setup itself (make_entry_set / the
-   top-edge path), not a guard. Left open.
+   split-lifecycle bug (dug in fully 2026-07). The crashing entry set
+   (`make_AVar(Proc1, es#N)` first) has `display.n == 0`, **`edges ==
+   0`**, and `es->split` set -- an **emptied split ES**: all its
+   edges were moved away by a further split, but it is still being
+   analyzed. Because it never went through (or was un-done from)
+   `set_entry_set`, none of its per-ES state is populated -- display,
+   `rets`, and `args` are all empty. Fixing one symptom just exposes
+   the next: a `make_AVar` guard that walks `es->split` for a display
+   removes the `make_AVar` OOB (fa.cc:218), and the crash then moves
+   to `analyze_edge` (fa.cc:2498) dereferencing `ee->to->rets[i]` on
+   the same empty ES. So a guard is whack-a-mole; the real fix is in
+   the **split machinery** (`split_edges` / `check_split` /
+   `make_entry_set`): an ES whose edges are all split away must be
+   removed from the worklist and not analyzed (or the split must fully
+   re-`set_entry_set` the ES before it is enqueued). That is a
+   substantial, risky change to core FA convergence. Left open, but
+   now precisely located: emptied split ES analyzed ->
+   `make_AVar`:218 (display) then `analyze_edge`:2498 (rets), both on
+   an ES with `edges==0 && split!=null`.
 
 Newly-surfaced non-module blockers after clearing imports +
 destructuring: `open()`/file I/O (softrender), generator
