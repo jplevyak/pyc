@@ -308,6 +308,19 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
       if (promote_field(cs, i)) again = true;
     }
   }
+  // (3) Numeric-confluence coercion (issue 025 numeric
+  // unification): a variable whose converged type mixes a numeric
+  // constant with a wider numeric (`x = 0` meeting a float in a
+  // loop or branch join) gets the Go/Dart untyped-constant
+  // treatment -- annotate the AVar so the re-run materializes the
+  // constant in the wider type at that flow point (0 -> 0.0).
+  // Flow- and contour-sensitive (per AVar); int-only contours of
+  // the same code keep int. NOTE the deliberate CPython
+  // divergence, inherent to static typing without boxing: on a
+  // path where the variable would still hold the original int at
+  // runtime (e.g. the loop never ran), it now holds the float
+  // (prints 0.0, not 0) -- the shedskin-style compromise.
+  if (fa_coerce_numeric_confluences(type_violations)) again = true;
   return again;
 }
 
