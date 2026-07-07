@@ -526,18 +526,23 @@ Corpus effect: "has no type" 28 -> 23; **ant** joins the compiled
 list (3 total: ant, mandelbrot, neural2); collatz compiles+runs to
 its next error (line 65).
 
-**Pre-existing soundness bug found while testing** (NOT from this
-batch -- reproduced builtin-free): a program with two functions
-that append-build lists of DIFFERENT tuple types, one indexed and
-one iterated, segfaults at runtime -- `__list_iter__::__next__`
-returns null on the first iteration (`t16 = 0x0`) despite
-`__pyc_more__` saying go; compile is clean. Minimal repro: mkints
-(list of (int,int), indexed) + mkstrs (list of (int,str), iterated
-via for-unpack). Suspect: the shared `__list_iter__` record /
-list-representation divergence between the two clones. This is why
-`tests/builtins_batch.py` and `tests/zip_builtin.py` keep zip and
-enumerate in separate tests. Worth its own issue -- it will bite
-any program combining two tuple-list producers.
+**Pre-existing soundness bug found while testing -- FIXED 2026-07**
+(reproduced builtin-free): a program with two functions that
+append-build lists of DIFFERENT tuple types, one indexed and one
+iterated, segfaulted at runtime with a CLEAN compile
+(`__list_iter__::__next__` returned null on the first iteration).
+Root cause, traced through the generated C: the two grown lists
+concretize as the GENERIC `_CG_list`, whose shared element sym's
+type is the program-wide union of element types. With one tuple
+type that's a record (size resolves); with 2+ it's a `Type_SUM`
+with **no compile-time size**, and `P_prim_sizeof_element` emitted
+`0` -- so `list::append` called `_CG_list_resize(list, 0, n)`, the
+storage never grew, and reads returned null. The elements of a
+SUM-of-records are all boxed pointers, so both emitters (cg.cc and
+cg_emit_llvm.cc's `emit_send_sizeof`) now emit pointer size for
+that case. Verified on the builtin-free repro and the original
+zip+enumerate trigger, both backends
+(`tests/tuple_list_mix.py`).
 
 Remaining in the bucket (~23): missing I/O builtins (`open` 18
 uses, `input` 4 -- need file objects / stdin), `sys.stdout/stderr`
