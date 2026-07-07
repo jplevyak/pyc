@@ -70,6 +70,13 @@ class range:
     x = self.i
     self.i += self.s
     return x
+  def __pyc_tolist__(self):
+    # list(range(...)) -- see the list() intercept in
+    # python_ifa_build_if1.cc (issue 025).
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
 
 def len(x):
   return x.__len__()
@@ -107,3 +114,108 @@ def isinstance(obj, ci):
 
 def issubclass(c1, c2):
   return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))
+
+# ---- issue 025 "has no type" bucket: previously-missing builtins ----
+# Pure-Python implementations. Py3 returns lazy iterators from
+# zip/map/filter/enumerate/reversed; these return lists (shedskin-
+# style divergence) -- equivalent under iteration and list().
+
+def zip(a, b):
+  r = []
+  n = len(a)
+  nb = len(b)
+  if nb < n:
+    n = nb
+  i = 0
+  while i < n:
+    r.append((a[i], b[i]))
+    i = i + 1
+  return r
+
+def enumerate(seq):
+  r = []
+  i = 0
+  for x in seq:
+    r.append((i, x))
+    i = i + 1
+  return r
+
+def sum(seq):
+  # int seed + float elements resolves to float via the numeric
+  # unification (AVar::num_coerce).
+  t = 0
+  for x in seq:
+    t = t + x
+  return t
+
+# min/max support both call forms via the default-None + `is None`
+# narrowing pattern (each call arity/type gets its own EntrySet
+# contour; the dead branch is pruned by nil narrowing).
+def min(a, b=None):
+  if b is None:
+    m = a[0]
+    for x in a:
+      if x < m:
+        m = x
+    return m
+  if b < a:
+    return b
+  return a
+
+def max(a, b=None):
+  if b is None:
+    m = a[0]
+    for x in a:
+      if x > m:
+        m = x
+    return m
+  if b > a:
+    return b
+  return a
+
+def reversed(seq):
+  r = []
+  i = len(seq) - 1
+  while i >= 0:
+    r.append(seq[i])
+    i = i - 1
+  return r
+
+def pow(a, b):
+  return a ** b
+
+def round(x):
+  # Simple form only (round(x) -> int). Uses libc round: half-away-
+  # from-zero, a documented divergence from Py3 banker's rounding.
+  return int(__pyc_c_call__(float, "round", float, float(x)))
+
+def map(f, seq):
+  r = []
+  for x in seq:
+    r.append(f(x))
+  return r
+
+def filter(f, seq):
+  r = []
+  for x in seq:
+    if f(x):
+      r.append(x)
+  return r
+
+def sorted(seq):
+  r = []
+  for x in seq:
+    r.append(x)
+  i = 1
+  while i < len(r):
+    x = r[i]
+    j = i - 1
+    while j >= 0 and r[j] > x:
+      r[j + 1] = r[j]
+      j = j - 1
+    r[j + 1] = x
+    i = i + 1
+  return r
+
+def repr(x):
+  return x.__repr__()

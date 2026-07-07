@@ -3,6 +3,7 @@
 #include "python_parse.h"
 
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx);
+static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx);
 
 static char *pyda_trim(const char *s) {
   if (!s) return nullptr;
@@ -495,6 +496,22 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       return 1;
     }
   }
+  // issue 025 "has no type" bucket: list(iterable) -- `list` is a
+  // builtin primitive type with no __init__ that accepts an
+  // iterable, so `list(range(n))` (collatz's first statement) fell
+  // through to the generic constructor path and produced nothing.
+  // Same shape as the str(x) intercept above: dispatch to a
+  // __pyc_tolist__ method on the argument (defined on range / list /
+  // tuple / str in the builtin module).
+  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "list")) {
+    PycSymbol *list_cls = make_PycSymbol(ctx, "list", PYC_USE);
+    if (list_cls && f == list_cls->sym) {
+      PycAST *a0 = getAST(pos_args[0], ctx);
+      ast->rval = new_sym(ast);
+      call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
+      return 1;
+    }
+  }
   // issues/022: zero-arg builtin-type constructor calls (int(), float(),
   // bool(), str(), list(), tuple()) all fail identically. Root cause: the
   // generic class-instantiation lowering (clone prototype + call __init__,
@@ -743,9 +760,15 @@ static void build_list_comp_pyda(PyDAST *list_for, Vec<PyDAST *> &elts, PycAST *
   if1_gen(if1, &before, i_ast->code);
   if1_send(if1, &before, 2, 1, sym___iter__, i_ast->rval, iter)->ast = ast;
   call_method(&cond, ast, iter, sym___pyc_more__, cond_var, 0);
-  if (t->code) if1_gen(if1, &body, t->code);
   call_method(&body, ast, iter, sym___next__, tmp, 0);
-  if1_move(if1, &body, tmp, t->sym, ast);
+  // General target path: handles `[... for (i, c) in zip(...)]`
+  // tuple unpacking, same as PY_for_stmt (issue 025 "has no type"
+  // bucket -- collatz line 39). The old raw move into t->sym was
+  // null for tuple targets; the old `if1_gen(t->code)` for a tuple
+  // target emitted a spurious make-tuple over unbound names (the
+  // non-tuple branch of emit_assign_to_target still gens a->code).
+  (void)t;
+  emit_assign_to_target(target, tmp, &body, ast, ctx);
   build_list_comp_inner_pyda(next_iter, elts, ast, &body, ctx, accum_method);
   if1_loop(if1, code, if1_alloc_label(if1), if1_alloc_label(if1), cond_var, before, cond, next, body, ast);
 }
@@ -907,10 +930,10 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
 }
 
 // Assign an already-computed value Sym `val` to the (already-built)
-// target `tgt`. Handles simple names, attribute targets (`self.x`),
-// subscript targets (`a[i]`), and arbitrarily nested tuple/list
-// targets, recursing on each element.
-static void emit_assign_to_target(PyDAST *tgt, Sym *val, PycAST *ast, PycCompiler &ctx) {
+// target `tgt`, emitting into `code`. Handles simple names,
+// attribute targets (`self.x`), subscript targets (`a[i]`), and
+// arbitrarily nested tuple/list targets, recursing on each element.
+static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx) {
   PycAST *a = getAST(tgt, ctx);
   if (tgt->kind == PY_tuple || tgt->kind == PY_testlist || tgt->kind == PY_exprlist) {
     // Destructuring: pull out val[j] and assign it to element j. The
@@ -923,24 +946,24 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, PycAST *ast, PycCompile
     // frontier: attribute / subscript / nested targets).
     for (int j = 0; j < tgt->children.n; j++) {
       Sym *item = new_sym(ast);
-      call_method(&ast->code, ast, val, sym___getitem__, item, 1, int64_constant(j));
-      emit_assign_to_target(tgt->children[j], item, ast, ctx);
+      call_method(code, ast, val, sym___getitem__, item, 1, int64_constant(j));
+      emit_assign_to_target(tgt->children[j], item, code, ast, ctx);
     }
   } else {
-    if1_gen(if1, &ast->code, a->code);
+    if1_gen(if1, code, a->code);
     if (a->is_member)
-      if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, val, (ast->rval = new_sym(ast)))
+      if1_send(if1, code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, val, (ast->rval = new_sym(ast)))
           ->ast = ast;
     else if (a->is_object_index)
       if1_add_send_arg(if1, find_send(a->code), val);
     else
-      if1_move(if1, &ast->code, val, a->sym);
+      if1_move(if1, code, val, a->sym);
   }
 }
 
 static void build_if1_assign_target(PyDAST *tgt, PycAST *v, PycAST *ast, PycCompiler &ctx) {
   build_if1_pyda(tgt, ctx);  // build the whole target tree once
-  emit_assign_to_target(tgt, v->rval, ast, ctx);
+  emit_assign_to_target(tgt, v->rval, &ast->code, ast, ctx);
 }
 
 static void build_if1_with_items(PyDAST *stmt_node, int item_idx, PycCompiler &ctx, PycAST *ast) {
@@ -1345,16 +1368,21 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // children: [target, iter, PY_suite, PY_else_clause?]
       build_if1_pyda(n->children[1], ctx);  // iter
       build_if1_pyda(n->children[0], ctx);  // target
-      PycAST *t = getAST(n->children[0], ctx);
       PycAST *i_ast = getAST(n->children[1], ctx);
       Sym *iter = new_sym(ast), *tmp = new_sym(ast), *tmp2 = new_sym(ast);
       if1_gen(if1, &ast->code, i_ast->code);
-      if1_gen(if1, &ast->code, t->code);
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i_ast->rval, iter)->ast = ast;
       Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
       call_method(&cond, ast, iter, sym___pyc_more__, tmp, 0);
       call_method(&body, ast, iter, sym___next__, tmp2, 0);
-      if1_move(if1, &body, tmp2, t->sym, ast);
+      // Assign the __next__ result through the general target path:
+      // handles `for i, c in zip(...)` tuple unpacking (and attribute
+      // / subscript targets) instead of a raw move into t->sym, which
+      // is null for a tuple target (issue 025 "has no type" bucket --
+      // collatz's `for (i, c) in zip(...)`). The old unconditional
+      // `if1_gen(t->code)` is gone with it: for a tuple target that
+      // code was a spurious make-tuple over the not-yet-bound names.
+      emit_assign_to_target(n->children[0], tmp2, &body, ast, ctx);
       ctx.loop_depth++;
       build_if1_suite_pyda(n->children[2], &body, ctx);
       ctx.loop_depth--;

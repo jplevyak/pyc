@@ -42,6 +42,12 @@ class list:
       if x == item:
         return True
     return False
+  def __pyc_tolist__(self):
+    # list(xs) copies -- see the list() intercept (issue 025).
+    r = []
+    for x in self:
+      r.append(x)
+    return r
   def __add__(self, l):
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, l),
                           "_CG_list_add",

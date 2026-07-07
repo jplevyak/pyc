@@ -497,6 +497,54 @@ The other type-resolution symptoms (`unresolved call`, `has no
 type`) are a mix of this same numeric-union problem surfacing at a
 call and the bucket-A first-class-function-in-field gap.
 
+### "has no type" bucket — builtins batch (2026-07)
+
+Dug the 28-example `'X' has no type` bucket: it is dominated by
+**missing builtins** (an undefined name types as nothing and poisons
+everything downstream). Landed:
+
+- **12 pure-Python builtins** in `__pyc__/05_builtins.py`: `zip`,
+  `enumerate`, `sum`, `min`, `max`, `reversed`, `pow`, `round`,
+  `map`, `filter`, `sorted`, `repr`. zip/map/filter/enumerate/
+  reversed return LISTS (shedskin-style divergence from Py3
+  iterators; equivalent under iteration). min/max support both the
+  two-arg and sequence forms via the **default-None + `is None`
+  narrowing pattern** (verified: each call shape gets its own ES
+  contour and nil narrowing prunes the dead branch -- plain-function
+  arity overloading and *args do NOT work, tested). `sum` of floats
+  rides the numeric unification (int seed -> float).
+- **`list(iterable)`** via a frontend intercept (same shape as the
+  existing `str(x)` one) dispatching to `__pyc_tolist__`, defined on
+  `range` and `list`. `list(range(n))` was collatz's first blocker.
+- **Tuple unpacking in for/comprehension targets**: `for i, c in
+  zip(...)` (statement and comprehension forms) went through raw
+  moves into a null tuple sym; both now route through
+  `emit_assign_to_target` (the destructuring fix's recursive
+  helper, generalized to take the emission stream).
+
+Corpus effect: "has no type" 28 -> 23; **ant** joins the compiled
+list (3 total: ant, mandelbrot, neural2); collatz compiles+runs to
+its next error (line 65).
+
+**Pre-existing soundness bug found while testing** (NOT from this
+batch -- reproduced builtin-free): a program with two functions
+that append-build lists of DIFFERENT tuple types, one indexed and
+one iterated, segfaults at runtime -- `__list_iter__::__next__`
+returns null on the first iteration (`t16 = 0x0`) despite
+`__pyc_more__` saying go; compile is clean. Minimal repro: mkints
+(list of (int,int), indexed) + mkstrs (list of (int,str), iterated
+via for-unpack). Suspect: the shared `__list_iter__` record /
+list-representation divergence between the two clones. This is why
+`tests/builtins_batch.py` and `tests/zip_builtin.py` keep zip and
+enumerate in separate tests. Worth its own issue -- it will bite
+any program combining two tuple-list producers.
+
+Remaining in the bucket (~23): missing I/O builtins (`open` 18
+uses, `input` 4 -- need file objects / stdin), `sys.stdout/stderr`
+file objects, dict/set methods (`keys`, `values`, `items`,
+`get`...), and genuine inference gaps (timsort's
+first-class-function-in-field, etc.).
+
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
 (and running), promote the stable ones into `test_pyc.py` with
