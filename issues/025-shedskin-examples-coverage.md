@@ -301,8 +301,30 @@ re-run individually to classify.)
    swaps), and nested targets now works (recursive assign in
    `build_if1_assign_target`). Cleared fysphun/softrender/sat off
    this error. Test `tests/destructuring_targets.py`.
-6. **D** — grammar fixes, one construct at a time (~24 examples,
-   the largest remaining bucket).
+6. **D — grammar/scanner** — INVESTIGATED 2026-07. Down to 8
+   examples (module/destructuring/etc. fixes advanced the rest):
+   astar, mao, neural1, path_tracing, plcfrs, rdb, solitaire,
+   voronoi2. These are subtle DParser scanner/GLR issues, not simple
+   missing grammar rules, and fixing them won't reach a *green*
+   example on its own (downstream blockers remain). Concrete finding:
+   an **exponent float immediately followed by `]`** fails to parse
+   (mao's `> 1.0e-17:`... actually the `]` case in path_tracing's
+   `V3(0.0, 10e6, 0.0)` lists). Minimal repro: `z = [1e5]` FAILS but
+   `z = [1e5 ]` (one space) PARSES; `{1e5}`, `(1e5)`, `1e5,`, `1e5;`
+   all parse -- only `<expfloat>]` with no separating space fails.
+   `[1.5]` (no exponent), `[10]`, `[0x1f]` all parse, so it is
+   specific to the exponent part (`[eE][+-]?[0-9]+`) abutting `]`. It
+   is NOT the number regex: DParser treats the `.` in the NUMBER rule
+   as a literal dot already (origin rejects `1x5`), so escaping it to
+   `\.` is a no-op. This is a genuine DParser scanner/longest-match
+   vs GLR ambiguity at the `]` boundary and needs dedicated
+   DParser-scanner work (grammar changes require a slow
+   make_dparser regeneration). The triple-quoted-string cases
+   (solitaire, plcfrs, rdb) do NOT reproduce with minimal triple
+   strings (embedded `"`, `|`, `<`, `:` all parse) -- something more
+   specific in those files; astar/neural1/voronoi2 are separate
+   constructs. Left open; low ROI relative to the type-resolution and
+   split-lifecycle work.
 7. **type resolution** — the deepest bucket and the real gate to the
    first *green* example: `unresolved call` / `has no type` /
    `_CG_any` (void\*) in generated C (~19 examples). Investigated via
