@@ -267,7 +267,7 @@ test-dparse test_dparse: $(PYC)
 	fi
 
 clean-tests:
-	rm -rf tests/build tests/__pycache__ tests/pyc_compat.py
+	rm -rf tests/build tests/__pycache__ tests/pyc_compat.py tests/*.dSYM
 	rm -f  tests/*.out tests/*.py.c tests/*.py.s
 	@# Stale binaries from old in-place test runs: any executable with a .py twin.
 	@for f in tests/*; do \
@@ -301,6 +301,12 @@ diffifa:
 
 clean: clean-tests
 	rm -f *.o *.d core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
+	rm -f *.py.c *.py.s *.out
+	rm -rf *.dSYM
+	@# Stale binaries from one-off runs in root: any executable with a .py twin.
+	@for f in *; do \
+	  if [ -f "$$f" ] && [ -x "$$f" ] && [ -e "$$f.py" ] && [ "$$f" != "pyc" ]; then rm -f "$$f"; fi; \
+	done
 	$(MAKE) -C $(IFA_DIR) clean
 
 realclean: clean
