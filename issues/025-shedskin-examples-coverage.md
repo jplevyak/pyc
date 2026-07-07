@@ -550,6 +550,43 @@ file objects, dict/set methods (`keys`, `values`, `items`,
 `get`...), and genuine inference gaps (timsort's
 first-class-function-in-field, etc.).
 
+### First-class-function-in-field — FIXED (2026-07)
+
+The bucket-A blocker (timsort's `self.comparefn(...)`; the common
+callback pattern) is fixed at its root in `P_prim_period`
+(fa.cc). The period prim treated EVERY function-valued field as a
+method: it filtered the function part out of the direct flow
+(`type_diff` with `function_type`) and re-routed it through a
+method-binding partial application (`make_period_closure`
+capturing the object) -- so `self.cf(3, 1)` dispatched
+`cf(self, 3, 1)` and matched nothing (diagnosed by dumping the
+failing `pattern_match`: args were `[mycmp, T, 3, 1]`).
+
+The fix implements Python's actual rule -- a function found on the
+CLASS binds; a function stored as an INSTANCE attribute does not:
+
+- METHOD-like values keep the binding path: `Fun->sym->self` set
+  (real methods, capturing-def carriers) or `Sym::in` a class
+  (class-body lambdas/defs -- pyc stores class attributes as
+  prototype fields, so definition scope is the FA-visible
+  equivalent of "found on the class"). A first, blanket unbind
+  broke 62 tests; scoping by `self`-only still broke the 9
+  class-body-lambda closure tests; the definition-scope rule
+  restores all of them.
+- BARE values (module-/function-level defs stored into instance
+  attributes) flow through UNBOUND.
+
+Verified: the timsort-shape repros (ctor-kwarg function, default
+passthrough, positional store, HOF chain) all run correctly both
+backends; `tests/function_in_field.py` (direct call, read-then-
+call, polymorphic field with two stored functions, class-attr
+lambda still binding) matches CPython exactly. Suites 167/0 both
+backends; ifa-test unchanged. timsort itself now types everything
+except one deeper layer (method + kwargs + FUNCTION-VALUED DEFAULT
+`comparefn=cmp` through the default-arg wrapper) -- its
+`range_check` params stay untyped; next onion layer, distinct from
+the field gap.
+
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
 (and running), promote the stable ones into `test_pyc.py` with
