@@ -325,10 +325,40 @@ re-run individually to classify.)
    specific in those files; astar/neural1/voronoi2 are separate
    constructs. Left open; low ROI relative to the type-resolution and
    split-lifecycle work.
-7. **type resolution** — the deepest bucket and the real gate to the
-   first *green* example: `unresolved call` / `has no type` /
-   `_CG_any` (void\*) in generated C (~19 examples). Investigated via
-   the mandelbrot vertical slice 2026-07; findings below.
+7. **type resolution** — LANDED 2026-07, and it produced the
+   **first green examples: mandelbrot, nbody, neural2 compile to C
+   (0 → 3), with mandelbrot verified byte-identical to CPython at
+   runtime** (15,600 fractal lines). The working design, after the
+   three documented dead ends: a persistent per-AVar annotation
+   (`AVar::num_coerce`) set BETWEEN passes by
+   `fa_coerce_numeric_confluences` (called from
+   `PycCompiler::reanalyze`, which then `clear_results()`s so the
+   re-run re-derives flow from scratch), applied in `update_in` /
+   the permit variants as an element-wise monotone rewrite: every
+   numeric CS ≠ target maps to the target (constants to coerced
+   constants, 0 → 0.0; abstract narrows to the abstract target).
+   Flow- and contour-sensitive per (Var, contour) — an int-only
+   specialization of the same code keeps int (a source rewrite
+   could not do this; a confluence can also arise against a
+   restrict-narrowed monomorphic numeric far from any MOVE).
+   Annotation eligibility: ES-contour vars + `closure`-CS ivars
+   (pyc lowers locals through the closure frame); USER record
+   fields stay on the classtag-dispatch machinery. Two subtleties
+   that shaped the design: (a) the constant cap
+   (num_constants_per_variable) strips loop-accumulated constants
+   to abstract base types, so the annotation must map abstract
+   narrows too, and eligibility can't require a visible narrow
+   constant; (b) the violation collector skips phi-carriers
+   (only_used_by_phy_or_phi), so annotation scans all AVars
+   directly, not the BOXING violations. Deliberate CPython
+   divergence (shedskin-style, documented): on a path where the
+   variable never leaves its int initializer, it holds the float.
+   Companion fixes that completed the green examples: Python-3
+   true division (`int.__truediv__` coerces both operands to
+   float; `//` untouched; `__pyc__`'s own `__hex` switched to
+   `//`) and `str.join`. Tests: `numeric_unification`,
+   `true_division`, `str_join` — all both backends; suites 166/0,
+   ifa-test unchanged (base callback never annotates).
 8. **crashes** — PARTIALLY DONE 2026-07. Two assert crashes fixed:
    - `if1_send` assert (amaze, go, othello, sudoku3): `try`/`except`/
      `finally` were routed to the WITH-item handler, mis-lowering the

@@ -32,3 +32,12 @@ class str:
   def __format__(self, spec):
     # issues/006: PEP 3101 format-spec mini-language, see int.__format__.
     return __pyc_c_call__(str, "_CG_format_str_spec", str, self, str, spec)
+  def join(self, seq):
+    r = ""
+    first = True
+    for x in seq:
+      if not first:
+        r = r + self
+      r = r + x
+      first = False
+    return r

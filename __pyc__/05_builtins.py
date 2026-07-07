@@ -86,7 +86,8 @@ def __hex(x):
   elif x < 16:
     return chr(ord('a') + x - 10)
   else:
-    return __hex(x / 16) + __hex(x % 16)
+    # // not /: int.__truediv__ is Python-3 true division (float).
+    return __hex(x // 16) + __hex(x % 16)
 
 def hex(x):
   # Mirror bin()'s sign handling (lines 18-21).  Without this,

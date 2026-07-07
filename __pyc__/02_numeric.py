@@ -11,7 +11,15 @@ class int:
   def __mul__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
   def __truediv__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
+    # Python 3 true division: int / anything yields a float. Coerce
+    # BOTH operands so the `/` prim performs float division -- the
+    # raw prim on two ints is C integer division (__floordiv__'s
+    # job), and the LLVM emitter doesn't insert sitofp for a mixed
+    # float/int prim (fdiv double, i64 is invalid IR; same gap noted
+    # in pyc_lib/random.py). float() of a float is identity.
+    # (issue 025: made mandelbrot's `y/40 - 0.5` produce real
+    # coordinates instead of 0/-1.)
+    return __pyc_operator__(float(__pyc_clone_constants__(self)), __pyc_symbol__("/"), float(__pyc_clone_constants__(x)))
   def __mod__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
   def __pow__(self, x):
@@ -35,7 +43,8 @@ class int:
   def __imul__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
   def __itruediv__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
+    # /= is true division too (see __truediv__).
+    return __pyc_operator__(float(__pyc_clone_constants__(self)), __pyc_symbol__("/"), float(__pyc_clone_constants__(x)))
   def __imod__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
   def __ipow__(self, x):

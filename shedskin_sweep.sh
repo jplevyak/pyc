@@ -38,7 +38,7 @@ for d in "$ROOT"/shedskin_examples/*/; do
   first=$(printf '%s\n' "$out" | grep -m1 -iE "fail|error|unresolved|abort|assert|illegal|has no type|syntax" | head -c 220)
   if [ -z "$first" ] && [ "$rc" -eq 124 ]; then first="(compile timeout ${TIMEOUT}s)"; fi
   if [ -z "$first" ] && [ "$rc" -ge 128 ]; then first="(crash: signal $((rc - 128)))"; fi
-  if [ -z "$first" ] && [ -f "$bd/$name.c" ]; then
+  if [ -z "$first" ] && [ -f "$bd/$name.py.c" ]; then
     printf '%s\tCOMPILED_C\t\n' "$name" >> "$RES"; compiled=$((compiled+1))
   else
     printf '%s\tFAIL\t%s\n' "$name" "$first" >> "$RES"; failed=$((failed+1))
