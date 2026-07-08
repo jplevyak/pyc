@@ -620,6 +620,65 @@ x positional/kwargs x function/method) plus the full
 timsort()->Timsort(...)->sort(low=,high=) chain compile and run
 correctly.
 
+### "has no type" tail dig (2026-07-08)
+
+Root-caused and fixed three mechanical gaps plus one wrong-code
+parse bug found under brainfuck:
+
+1. **Comma multi-imports lost every module after the first**
+   (`import random, math, sys, time` — used by 6 of the 20 tail
+   examples). Two independent bugs: (a) both passes' collectors
+   missed the PY_testlist wrapper the grammar puts around 2+
+   dotted_as_names; (b) build_module_attributes_if1 /
+   build_if1_module_pyda re-point ctx.node at the imported
+   module's scope node without restoring, so the second module's
+   top-level code was spliced into the first module's dead PycAST
+   stream (ctx.node is the import statement whose ast->code the
+   statement loop consumes). Both fixed.
+
+2. **File objects** (the dominant tail cause, ~10/20): _CG_f*
+   helpers in pyc_c_runtime.h (+ extern decls in pyc_runtime.c for
+   the LLVM archive), `__pyc_file__` + `__file_iter__` + `open()`
+   + `input()` in __pyc__/07_file.py, sys.stdin/stdout/stderr in
+   pyc_lib/sys.py. FILE* handles smuggled through int64; failed
+   open = handle 0 = EOF/ignore-writes (no exceptions, issue 011).
+   `for line in f` works via one-line-lookahead iterator
+   (__pyc_more__ protocol). tests/file_io.py golden vs CPython.
+   Side effect: test_async_read now reaches the coroutine C
+   codegen and exposes a co_await result-typing gap (void* vs
+   _CG_string) — marked .check_fail until async lands.
+
+3. **Star imports** (`from math import *`, yopyra): '*' produces
+   no import_as_name child, so nothing was bound. Null sym now
+   means star: bind all public (non-underscore) top-level names.
+   Plus **str.__contains__** (substring by char compare; str has
+   no working slice path yet).
+
+4. **Dangling-elif GLR misparse (wrong code!)**: an outer-level
+   `elif`/`else` after a DEDENT attached to the innermost `if`, so
+   a nested if ending an elif arm silently swallowed the rest of
+   the chain — later arms unreachable at runtime, no diagnostics,
+   both backends identical (the flat if1 carried the misparse).
+   Found because brainfuck's interpreter dispatch dropped its
+   `<`/`.`/`]` arms. Fixed with speculative indent guards on
+   if_stmt/while_stmt/for_stmt clauses (same column as the opening
+   keyword). Regression: tests/dangling_elif.py (12 lines). Any
+   corpus example with this shape was silently miscompiled before.
+
+Corpus: compiled 4 -> 8 (block, neural1, oliva2, brainfuck join
+ant/astar/mandelbrot/neural2); **brainfuck's 99-bottles output is
+byte-identical to CPython** (5th fully-green). block aborts at
+runtime (also needs print(..., file=sys.stderr) kwarg); neural1
+truncates after its header (semantic gap TBD); oliva2 runs (slow;
+timed out under the sweep cap but produces correct-looking PGM).
+
+Remaining tail after these: sudoku2 hits the unique_AVar
+emptied-ES assert (same family as pystone/tictactoe); loop /
+softrender / go / pygmy / lz2 are genuine inference cases
+(optional-None fields, `x or default` idiom); rdb needs os.path/
+getopt/fnmatch; dijkstra2 needs heapq; tonyjpegdecoder crashes the
+compiler with an FPE; hq2x/rubik/rubik2/sudoku4 still to diagnose.
+
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
 (and running), promote the stable ones into `test_pyc.py` with
