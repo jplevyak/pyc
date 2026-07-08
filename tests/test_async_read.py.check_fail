@@ -1,0 +1,1 @@
+open() now resolves, so this async test reaches the coroutine C codegen, which mis-types the co_await result (void* assigned to _CG_string). Compile-fail expected until the async feature lands.

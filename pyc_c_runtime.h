@@ -339,6 +339,73 @@ inline char *_CG_str_from_float(double d) {
   return s;
 }
 
+// File I/O helpers for the library-level file object (__pyc__/07_file.py:
+// open(), read/readline/write/close, sys.std{in,out,err}, input()).
+// Handles are FILE* smuggled through int64 -- the library stores them in
+// a plain int field. A failed fopen returns 0; the library treats a zero
+// handle as an immediately-EOF/ignore-writes file rather than raising
+// (pyc has no exception model yet, issue 011).
+inline int64 _CG_fopen(char *path, char *mode) { return (int64)(intptr_t)fopen(path, mode); }
+inline int64 _CG_fstd(int64 which) { return (int64)(intptr_t)(which == 0 ? stdin : which == 1 ? stdout : stderr); }
+inline int64 _CG_fclose(int64 h) { return h ? (int64)fclose((FILE *)(intptr_t)h) : 0; }
+inline int64 _CG_fflush(int64 h) { return h ? (int64)fflush((FILE *)(intptr_t)h) : 0; }
+inline int64 _CG_fwrite_str(int64 h, char *s) {
+  if (!h) return 0;
+  return (int64)fwrite(s, 1, _CG_string_len(s), (FILE *)(intptr_t)h);
+}
+// Entire rest of the stream; NUL-safe (length-prefixed strings), so
+// binary reads ('rb') work too -- pyc has no separate bytes type.
+inline char *_CG_fread_all(int64 h) {
+  if (!h) return _CG_string_alloc(0);
+  FILE *f = (FILE *)(intptr_t)h;
+  size_t cap = 4096, len = 0;
+  char *buf = (char *)GC_MALLOC(cap);
+  size_t r;
+  while ((r = fread(buf + len, 1, cap - len, f)) > 0) {
+    len += r;
+    if (len == cap) {
+      char *nb = (char *)GC_MALLOC(cap * 2);
+      memcpy(nb, buf, len);
+      buf = nb;
+      cap *= 2;
+    }
+  }
+  char *s = _CG_string_alloc(len);
+  memcpy(s, buf, len);
+  return s;
+}
+inline char *_CG_fread_n(int64 h, int64 n) {
+  if (!h || n <= 0) return _CG_string_alloc(0);
+  char *s = _CG_string_alloc((size_t)n);
+  size_t r = fread(s, 1, (size_t)n, (FILE *)(intptr_t)h);
+  if ((int64)r == n) return s;
+  char *s2 = _CG_string_alloc(r);
+  memcpy(s2, s, r);
+  return s2;
+}
+// One line INCLUDING the trailing '\n' (CPython readline semantics);
+// empty string at EOF.
+inline char *_CG_freadline(int64 h) {
+  if (!h) return _CG_string_alloc(0);
+  FILE *f = (FILE *)(intptr_t)h;
+  size_t cap = 256, len = 0;
+  char *buf = (char *)GC_MALLOC(cap);
+  int c;
+  while ((c = fgetc(f)) != EOF) {
+    if (len == cap) {
+      char *nb = (char *)GC_MALLOC(cap * 2);
+      memcpy(nb, buf, len);
+      buf = nb;
+      cap *= 2;
+    }
+    buf[len++] = (char)c;
+    if (c == '\n') break;
+  }
+  char *s = _CG_string_alloc(len);
+  memcpy(s, buf, len);
+  return s;
+}
+
 // issues/006: PEP 3101 format-spec mini-language for f-strings
 // (`f"{x:.2f}"`, `f"{x:>10}"`, `f"{x:,}"`, etc.) and `__format__`.
 //

@@ -59,6 +59,14 @@ extern _CG_int64 _CG_FFI_Get_Int64(_CG_int64 p, _CG_int64 offset);
 extern void _CG_FFI_Set_Int64(_CG_int64 p, _CG_int64 offset, _CG_int64 val);
 extern _CG_int8 _CG_FFI_Get_Int8(_CG_int64 p, _CG_int64 offset);
 extern void _CG_FFI_Set_Int8(_CG_int64 p, _CG_int64 offset, _CG_int8 val);
+extern int64 _CG_fopen(char *path, char *mode);
+extern int64 _CG_fstd(int64 which);
+extern int64 _CG_fclose(int64 h);
+extern int64 _CG_fflush(int64 h);
+extern int64 _CG_fwrite_str(int64 h, char *s);
+extern char *_CG_fread_all(int64 h);
+extern char *_CG_fread_n(int64 h, int64 n);
+extern char *_CG_freadline(int64 h);
 
 /* Pyc list header layout macros — used by the LLVM-specific list
  * helpers below.  The header uses different macro names (_CG_list_len

@@ -1,6 +1,5 @@
 # pyc shim for the standard `sys` module (the statically-modellable
-# parts). File objects (stdin/stdout/stderr) are NOT provided yet.
-# See issue 025 bucket C.
+# parts).
 
 # No real command line is threaded through pyc, so argv is a
 # single-element list (program name only). `len(sys.argv) > 1` is
@@ -16,3 +15,9 @@ def exit(status=0):
 # compiled code: accept and ignore.
 def setrecursionlimit(n):
     return None
+
+# Std streams as file objects (__pyc_file__ is the builtin file class
+# from __pyc__/07_file.py; builtin-module names are globally visible).
+stdin = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 0))
+stdout = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 1))
+stderr = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 2))
