@@ -5,8 +5,9 @@
 # For each example <name>/<name>.py it runs `pyc -D <root> <name>.py`
 # in an isolated build dir (a copy of the example, so multi-file
 # examples and their data come along) and classifies the outcome by
-# the first diagnostic line. Build artifacts stay in the scratch dir,
-# never in the repo.
+# the first diagnostic line. Examples run in parallel (JOBS at a
+# time); each writes its own results line, concatenated at the end.
+# Build artifacts stay in the scratch dir, never in the repo.
 #
 # Usage:  ./shedskin_sweep.sh [name-substring]
 #   no arg      sweep all examples
@@ -16,21 +17,20 @@
 #   PYC       pyc binary            (default ./pyc)
 #   OUTDIR    scratch build root    (default $TMPDIR-ish under /tmp)
 #   TIMEOUT   per-example seconds   (default 60)
+#   JOBS      parallel examples     (default nproc)
 set -u
 ROOT=$(cd "$(dirname "$0")" && pwd)
 PYC=${PYC:-$ROOT/pyc}
 TIMEOUT=${TIMEOUT:-60}
 OUTDIR=${OUTDIR:-/tmp/shedskin_sweep.$$}
+JOBS=${JOBS:-$(nproc)}
 FILTER=${1:-}
 rm -rf "$OUTDIR"; mkdir -p "$OUTDIR"
-RES="$OUTDIR/results.tsv"; : > "$RES"
+RES="$OUTDIR/results.tsv"
 
-compiled=0; failed=0
-for d in "$ROOT"/shedskin_examples/*/; do
+sweep_one() {
+  local d="$1" name bd out rc first
   name=$(basename "$d")
-  py="$d$name.py"
-  [ -f "$py" ] || continue
-  [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && continue
   bd="$OUTDIR/$name"; mkdir -p "$bd"
   cp -r "$d"* "$bd/" 2>/dev/null
   out=$(cd "$bd" && python3 -c 'import subprocess,sys;
@@ -47,11 +47,24 @@ except subprocess.TimeoutExpired as e:
   if [ -z "$first" ] && [ "$rc" -eq 124 ]; then first="(compile timeout ${TIMEOUT}s)"; fi
   if [ -z "$first" ] && [ "$rc" -ge 128 ]; then first="(crash: signal $((rc - 128)))"; fi
   if [ -z "$first" ] && [ -f "$bd/$name.py.c" ]; then
-    printf '%s\tCOMPILED_C\t\n' "$name" >> "$RES"; compiled=$((compiled+1))
+    printf '%s\tCOMPILED_C\t\n' "$name" > "$bd/.result"
   else
-    printf '%s\tFAIL\t%s\n' "$name" "$first" >> "$RES"; failed=$((failed+1))
+    printf '%s\tFAIL\t%s\n' "$name" "$first" > "$bd/.result"
   fi
-done
+}
+export -f sweep_one
+export OUTDIR TIMEOUT PYC ROOT
+
+for d in "$ROOT"/shedskin_examples/*/; do
+  name=$(basename "$d")
+  [ -f "$d$name.py" ] || continue
+  [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && continue
+  printf '%s\n' "$d"
+done | xargs -P "$JOBS" -I{} bash -c 'sweep_one "$@"' _ {}
+
+cat "$OUTDIR"/*/.result | sort > "$RES"
+compiled=$(grep -c $'\tCOMPILED_C' "$RES")
+failed=$(grep -c $'\tFAIL' "$RES")
 
 echo "=== pyc -> C: $compiled compiled, $failed failed of $((compiled+failed)) ==="
 echo
