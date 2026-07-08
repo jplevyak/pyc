@@ -52,9 +52,22 @@ class object:
   def __len__(self):
     return 1
   def __pyc_to_bool__(self):
-    return __pyc_operator__(__pyc_operator__(__pyc_symbol__("!"), self.__bool__().__pyc_to_bool__()),
-                            __pyc_symbol__("&&"),
-                            self.__len__() != 0)
+    # Default truthiness: __bool__() (True unless overridden) combined
+    # with __len__() != 0 (1 unless overridden), so a class overriding
+    # either gets Python-ish behavior. The previous form negated the
+    # __bool__ operand (`(!__bool__()) && ...`), inverting truthiness
+    # for every object-derived class (issue 025).
+    if self.__bool__():
+      return self.__len__() != 0
+    return False
+  def __not__(self):
+    # `not x` sends __not__ straight at x (PY_bool_not); without this
+    # fallback a user object -- or a None|T optional-field union, the
+    # common `if not self.field:` idiom -- has no receiver and FA
+    # reports "expression has no type" (issue 025).
+    if self.__pyc_to_bool__():
+      return False
+    return True
 
 class __pyc_None_type__:
   def __bool__(self):
@@ -65,6 +78,8 @@ class __pyc_None_type__:
     return "None"
   def __pyc_to_bool__(self):
     return False
+  def __not__(self):
+    return True
   # Issue 004: None.__is__(x) is True iff x is also None.
   # Note: the __pyc_None_type__::__is__ path is rarely hit
   # in practice because the frontend (PY_CMP_IS) rewrites

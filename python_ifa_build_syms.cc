@@ -520,6 +520,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // Process body (last child = PY_suite)
       build_syms_pyda(cdef->children.last(), ctx);
       // Post-classdef: collect base classes and members
+      bool any_base = false;
       for (int i = 1; i < cdef->children.n - 1; i++) {
         PyDAST *base_ast = cdef->children[i];
         if (base_ast->kind == PY_tuple) {
@@ -527,13 +528,22 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
             Sym *base = getAST(base_ast->children[j], ctx)->sym;
             if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
             cdef_ast->sym->inherits_add(base);
+            any_base = true;
           }
         } else {
           Sym *base = getAST(base_ast, ctx)->sym;
           if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
           cdef_ast->sym->inherits_add(base);
+          any_base = true;
         }
       }
+      // Python 3: a bare `class A:` implicitly derives from object.
+      // Without this, user classes get NO base, so object-level
+      // defaults (__pyc_to_bool__, __not__, __str__, ...) never
+      // dispatch and `if a:` / `not a` on a plain instance has no
+      // type (issue 025). Builtin-module classes are exempt: they
+      // define the root hierarchy itself (object, __pyc_any_type__).
+      if (!any_base && !ctx.is_builtin()) cdef_ast->sym->inherits_add(sym_object);
       // Collect class fields into a temporary Vec, sort by
       // name, then commit to `has` in sorted order.  Direct
       // iteration over the scope map would walk the

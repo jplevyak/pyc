@@ -1552,7 +1552,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       PycAST *v = getAST(n->children[0], ctx);
       if1_gen(if1, &ast->code, v->code);
       ast->rval = new_sym(ast);
-      if1_send(if1, &ast->code, 2, 1, make_symbol("__not__"), v->rval, ast->rval)->ast = ast;
+      // Period-dispatch (call_method), not a bare selector send: the
+      // operand can be any object (`not self.field`, None|T optional
+      // unions), and only the `.` dispatch path resolves inherited
+      // methods like __pyc_any_type__.__not__. The bare selector form
+      // only ever matched bool.__not__, so `not <object>` failed at
+      // runtime with "matching function not found" (issue 025).
+      call_method(&ast->code, ast, v->rval, make_symbol("__not__"), ast->rval, 0);
       return 0;
     }
 

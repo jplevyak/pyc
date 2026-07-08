@@ -516,7 +516,10 @@ stringprefix ::= 'r' | 'R' | 'u' | 'U'
                | 'b' | 'B' | 'br' | 'bR' | 'Br' | 'BR' | 'rb' | 'rB' | 'Rb' | 'RB'
                | 'f' | 'F' | 'fr' | 'fR' | 'Fr' | 'FR' | 'rf' | 'rF' | 'Rf' | 'RF';
 escapeseq ::= "\\[^]";
-NUMBER: "(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|([0-9]*.[0-9]+|[0-9]+.)([eE](\\+|-)?[0-9]+)?|[0-9]+[eE](\\+|-)?[0-9]+|[0-9]+)[jJ]?" $term -1;
+/* Exponent sign: use the character class [-+], not (\+|-) -- DParser's
+   regex engine does not honor the \+ escape inside a group, so `1e+00`
+   failed to scan while `1e-00` worked (issue 025, nbody). */
+NUMBER: "(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|([0-9]*.[0-9]+|[0-9]+.)([eE](\+|-)?[0-9]+)?|[0-9]+[eE](\+|-)?[0-9]+|[0-9]+)[jJ]?" $term -1;
 nonzerodigit ::= "[1-9]";
 digit ::= "[0-9]";
 octdigit ::= "[0-7]";
