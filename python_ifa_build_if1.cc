@@ -1454,6 +1454,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_import_from: {
       if (n->children.n < 1) return 0;
       cchar *from_mod = n->children[0]->str_val;
+      bool any = false;
       for (int i = 1; i < n->children.n; i++) {
         PyDAST *child = n->children[i];
         if (child->kind == PY_testlist) {
@@ -1463,14 +1464,19 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               cchar *as_name = (ia->children.n > 1) ? ia->children[1]->str_val : nullptr;
               build_import_if1(const_cast<char *>(sym_name), const_cast<char *>(as_name),
                                const_cast<char *>(from_mod), ctx);
+              any = true;
             }
         } else if (child->kind == PY_import_as_name) {
           cchar *sym_name = child->children[0]->str_val;
           cchar *as_name = (child->children.n > 1) ? child->children[1]->str_val : nullptr;
           build_import_if1(const_cast<char *>(sym_name), const_cast<char *>(as_name),
                            const_cast<char *>(from_mod), ctx);
+          any = true;
         }
       }
+      // `from X import *`: no import_as_name children; still need the
+      // module's if1 built (names were bound during build_syms).
+      if (!any) build_import_if1(nullptr, nullptr, const_cast<char *>(from_mod), ctx);
       return 0;
     }
 

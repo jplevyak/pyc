@@ -216,13 +216,32 @@ finally_clause: 'finally' ':' suite {
   $$.ast = new_pyast_collect(PY_finally_clause, &$n);
 };
 
-if_stmt: 'if' test ':' suite elif_clause* else_clause? {
+if_stmt: 'if' test ':' suite elif_clause* else_clause? [
+  /* Dangling-elif/else guard: a clause belongs to this `if` only if it
+     starts at the same column. Without this, GLR happily attaches an
+     outer-level elif/else across a DEDENT to the innermost `if` (a
+     nested if as the last statement of an arm silently swallows the
+     rest of the chain). */
+  int if_ind = py_node_indent(${parser}, $n0.start_loc.s);
+  for (int i_ = 0; i_ < d_get_number_of_children(&$n4); i_++)
+    if (py_node_indent(${parser}, d_get_child(&$n4, i_)->start_loc.s) != if_ind) return -1;
+  if (d_get_number_of_children(&$n5) &&
+      py_node_indent(${parser}, d_get_child(&$n5, 0)->start_loc.s) != if_ind) return -1;
+] {
   $$.ast = new_pyast_collect(PY_if_stmt, &$n);
 };
-while_stmt: 'while' test ':' suite else_clause? {
+while_stmt: 'while' test ':' suite else_clause? [
+  int w_ind = py_node_indent(${parser}, $n0.start_loc.s);
+  if (d_get_number_of_children(&$n4) &&
+      py_node_indent(${parser}, d_get_child(&$n4, 0)->start_loc.s) != w_ind) return -1;
+] {
   $$.ast = new_pyast_collect(PY_while_stmt, &$n);
 };
-for_stmt: 'for' exprlist 'in' testlist ':' suite else_clause? {
+for_stmt: 'for' exprlist 'in' testlist ':' suite else_clause? [
+  int f_ind = py_node_indent(${parser}, $n0.start_loc.s);
+  if (d_get_number_of_children(&$n6) &&
+      py_node_indent(${parser}, d_get_child(&$n6, 0)->start_loc.s) != f_ind) return -1;
+] {
   $$.ast = new_pyast_collect(PY_for_stmt, &$n);
 };
 try_stmt: ('try' ':' suite

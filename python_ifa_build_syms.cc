@@ -84,9 +84,21 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
   if (from) {
     PycScope *modscope = m->ctx->saved_scopes.get(m->pymod);
     if (modscope) {
-      PycSymbol *y = modscope->map.get(cannonicalize_string(sym));
-      if (is_real_pycsymbol(y))
-        ctx.scope_stack.last()->map.put(cannonicalize_string(as ? as : sym), y);
+      if (!sym) {
+        // `from X import *`: bind every public (non-underscore) top-level
+        // name of X directly into the importing scope. pyc has no __all__
+        // handling; the CPython default (skip names starting with '_')
+        // is used instead.
+        form_Map(MapCharPycSymbolElem, x, modscope->map) {
+          if (x->key[0] == '_') continue;
+          if (!is_real_pycsymbol(x->value)) continue;
+          ctx.scope_stack.last()->map.put(x->key, x->value);
+        }
+      } else {
+        PycSymbol *y = modscope->map.get(cannonicalize_string(sym));
+        if (is_real_pycsymbol(y))
+          ctx.scope_stack.last()->map.put(cannonicalize_string(as ? as : sym), y);
+      }
     }
   } else {
     // `import X [as Z]`: bind Z (or X) to a module-marker symbol.
@@ -321,6 +333,7 @@ static void build_import_syms_from_pyda(PyDAST *n, PycCompiler &ctx) {
   if (n->children.n < 1) return;
   cchar *from_mod = n->children[0]->str_val;
   // Process each import_as_name
+  bool any = false;
   for (int i = 1; i < n->children.n; i++) {
     PyDAST *child = n->children[i];
     if (child->kind == PY_testlist) {
@@ -330,14 +343,19 @@ static void build_import_syms_from_pyda(PyDAST *n, PycCompiler &ctx) {
           cchar *as_name = (ia->children.n > 1) ? ia->children[1]->str_val : nullptr;
           build_import_syms(const_cast<char *>(sym_name), const_cast<char *>(as_name),
                             const_cast<char *>(from_mod), ctx);
+          any = true;
         }
     } else if (child->kind == PY_import_as_name) {
       cchar *sym_name = child->children[0]->str_val;
       cchar *as_name = (child->children.n > 1) ? child->children[1]->str_val : nullptr;
       build_import_syms(const_cast<char *>(sym_name), const_cast<char *>(as_name),
                         const_cast<char *>(from_mod), ctx);
+      any = true;
     }
   }
+  // `from X import *`: the '*' is a bare token, so no import_as_name
+  // children exist. A null sym means star (bind all public names).
+  if (!any) build_import_syms(nullptr, nullptr, const_cast<char *>(from_mod), ctx);
 }
 
 int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {

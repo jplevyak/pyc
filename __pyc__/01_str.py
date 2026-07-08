@@ -41,3 +41,20 @@ class str:
       r = r + x
       first = False
     return r
+  def __contains__(self, x):
+    # Substring search by char compare; str has no working slice path
+    # yet (the __pyc_any_type__ fallback mis-routes slices of str into
+    # index_object), so only __getitem__(int) and __eq__ are used.
+    n = len(self)
+    m = len(x)
+    if m == 0:
+      return True
+    i = 0
+    while i + m <= n:
+      j = 0
+      while j < m and self[i + j] == x[j]:
+        j += 1
+      if j == m:
+        return True
+      i += 1
+    return False
