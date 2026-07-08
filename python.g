@@ -468,14 +468,31 @@ NAME: "[a-zA-Z_][a-zA-Z0-9_]*" $term -1 {
 STRING ::= stringprefix?(shortstring | longstring);
 shortstring ::= "'" shortstringsingleitem* "'"
 | '"' shortstringdoubleitem* '"';
-longstring ::= "'''" longstringitem* "'''"
-| '"""' longstringitem* '"""';
+longstring ::= "'''" longsingleitem* "'''"
+| '"""' longdoubleitem* '"""';
 shortstringsingleitem ::= shortstringsinglechar | escapeseq;
 shortstringdoubleitem ::= shortstringdoublechar | escapeseq;
-longstringitem ::= longstringchar | escapeseq;
+/* Triple-string bodies must NOT admit a bare run of three closing
+   quotes: the old longstringitem ::= "[^\\]" | escapeseq let the body
+   swallow quote characters freely, so two triple-quoted strings in
+   one file could ALSO scan as one giant string spanning everything
+   between them. GLR carried that scanner ambiguity, and for a
+   docstring'd function followed by a deeper-nested docstring'd
+   method (timsort / rdb / solitaire / plcfrs's shape) the bogus scan
+   won and the file failed to parse (issue 025 bucket D). Standard
+   triple-string lexing instead: body chars exclude the quote; a
+   1- or 2-quote run is allowed only when followed by a non-quote
+   (or escape), so the first quote-triple always terminates. */
+longsingleitem ::= longsinglechar | escapeseq
+| "'" longsinglechar | "'" escapeseq
+| "''" longsinglechar | "''" escapeseq;
+longdoubleitem ::= longdoublechar | escapeseq
+| "\"" longdoublechar | "\"" escapeseq
+| "\"\"" longdoublechar | "\"\"" escapeseq;
 shortstringsinglechar ::= "[^\\\n\']";
 shortstringdoublechar ::= "[^\\\n\"]";
-longstringchar ::= "[^\\]";
+longsinglechar ::= "[^\\\']";
+longdoublechar ::= "[^\\\"]";
 stringprefix ::= 'r' | 'R' | 'u' | 'U'
                | 'b' | 'B' | 'br' | 'bR' | 'Br' | 'BR' | 'rb' | 'rB' | 'Rb' | 'RB'
                | 'f' | 'F' | 'fr' | 'fR' | 'Fr' | 'FR' | 'rf' | 'rF' | 'Rf' | 'RF';

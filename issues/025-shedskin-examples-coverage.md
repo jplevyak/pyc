@@ -587,6 +587,39 @@ except one deeper layer (method + kwargs + FUNCTION-VALUED DEFAULT
 `range_check` params stay untyped; next onion layer, distinct from
 the field gap.
 
+### Bucket D triple-quote parse bug — FOUND AND FIXED (2026-07)
+
+Chasing timsort's "next onion layer" bottomed out in the bucket-D
+parse bug, minimized to 9 lines: **a docstring'd function followed
+by a deeper-nested docstring'd method fails to parse** (CPython
+parses it fine; both docstrings required; any quote style; 4->8
+nesting required -- 0->4, same-depth, and deeper-then-shallower all
+parsed). Root cause in python.g: `longstringitem ::= "[^\\]"` let a
+triple-string body swallow quote characters freely, so two
+triple-quoted strings in one file could ALSO scan as one giant
+string spanning the code between them; GLR carried the scanner
+ambiguity and this nesting shape made the bogus scan win. Fix:
+standard triple-string lexing (body chars exclude the quote; 1- and
+2-quote runs allowed only before a non-quote), making the scanner
+unambiguous. Test `tests/docstring_depths.py`.
+
+Effect: syntax errors 8 -> 2 (only mao and voronoi2's distinct
+constructs remain); **astar joins the compiled set (4 total: ant,
+astar, mandelbrot, neural2)**; rdb/solitaire/plcfrs/neural1 advance
+to their imports. timsort (with its own Py3 bug patched -- see
+below) advances to missing `id()` and exception-machinery names.
+
+**timsort reclassified: invalid Python 3 as written.** CPython 3
+raises `TypeError: 'float' object cannot be interpreted as an
+integer` at line 450 (`self.tmp = list(range(ternary))` where
+`ternary = length / 2` -- Py2-era true-division bug). pyc's Py3
+division semantics are CORRECT here; the example needs an upstream
+`//` fix. The function-valued-default "onion layer" suspected
+earlier does not exist: all four minimal combinations (fn default
+x positional/kwargs x function/method) plus the full
+timsort()->Timsort(...)->sort(low=,high=) chain compile and run
+correctly.
+
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
 (and running), promote the stable ones into `test_pyc.py` with
