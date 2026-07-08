@@ -46,3 +46,17 @@ def shuffle(x):
         x[i] = x[j]
         x[j] = t
         i = i - 1
+
+def sample(population, k):
+    pool = []
+    for x in population:
+        pool.append(x)
+    
+    n = len(pool)
+    result = []
+    for i in range(k):
+        j = int(random() * float(n - i))
+        result.append(pool[j])
+        pool[j] = pool[n - i - 1]
+        
+    return result

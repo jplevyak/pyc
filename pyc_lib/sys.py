@@ -16,3 +16,13 @@ def exit(status=0):
 # compiled code: accept and ignore.
 def setrecursionlimit(n):
     return None
+
+version = "2.7.18"
+
+class _StdoutStub:
+    def write(self, s):
+        print(s)
+    def flush(self):
+        pass
+
+stdout = _StdoutStub()
