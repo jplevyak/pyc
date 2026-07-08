@@ -679,6 +679,22 @@ softrender / go / pygmy / lz2 are genuine inference cases
 getopt/fnmatch; dijkstra2 needs heapq; tonyjpegdecoder crashes the
 compiler with an FPE; hq2x/rubik/rubik2/sudoku4 still to diagnose.
 
+### Compile-timeout bucket — root-caused (2026-07-09)
+
+The five compile timeouts (fysphun, kmeanspp, pygasus, pylife,
+stereo) were FA's splitting loop failing to reach a fixed point:
+split decisions are not idempotent across passes, so ess/violation
+counts oscillate while per-pass cost grows superlinearly. Full
+analysis and the real-fix plan live in
+[../ifa/issues/033-splitter-non-idempotent-divergence.md](../ifa/issues/033-splitter-non-idempotent-divergence.md);
+the stall guard (IFA_STALL_LIMIT) mitigates it. After the guard:
+stereo COMPILES; fysphun converges to 0 violations in <1s (the
+guard un-starves the numeric-coercion reanalyze callback) and now
+fails at a void-typed-field codegen bug; kmeanspp/pylife fast-fail
+with inference diagnostics; pygasus surfaces a previously-masked
+update_display assert
+([../ifa/issues/034](../ifa/issues/034-pygasus-update-display-assert.md)).
+
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
 (and running), promote the stable ones into `test_pyc.py` with
