@@ -33,7 +33,15 @@ for d in "$ROOT"/shedskin_examples/*/; do
   [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && continue
   bd="$OUTDIR/$name"; mkdir -p "$bd"
   cp -r "$d"* "$bd/" 2>/dev/null
-  out=$(cd "$bd" && timeout "$TIMEOUT" "$PYC" -D "$ROOT" "$name.py" 2>&1)
+  out=$(cd "$bd" && python3 -c 'import subprocess,sys;
+try:
+    p = subprocess.run(sys.argv[2:], timeout=float(sys.argv[1]), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    sys.stdout.buffer.write(p.stdout)
+    sys.exit(p.returncode)
+except subprocess.TimeoutExpired as e:
+    if getattr(e, "stdout", None): sys.stdout.buffer.write(e.stdout)
+    sys.exit(124)
+' "$TIMEOUT" "$PYC" -D "$ROOT" "$name.py" 2>&1)
   rc=$?
   first=$(printf '%s\n' "$out" | grep -m1 -iE "fail|error|unresolved|abort|assert|illegal|has no type|syntax" | head -c 220)
   if [ -z "$first" ] && [ "$rc" -eq 124 ]; then first="(compile timeout ${TIMEOUT}s)"; fi

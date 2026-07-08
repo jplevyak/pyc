@@ -875,6 +875,8 @@ inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
 // _CG_prim_primitive_clone_dst above for rationale.
 #define _CG_prim_clone_dst(_dt, _src) \
   _CG_prim_primitive_clone_dst((_src), sizeof(*((_dt)0)), sizeof(*(_src)))
+#define _CG_prim_copy_dst(_dt, _src) \
+  _CG_prim_primitive_clone_dst((_src), sizeof(*((_dt)0)), sizeof(*(_src)))
 #define _CG_prim_clone_vector(_c, _v) _CG_prim_primitive_clone_vector(_c, sizeof(*(_c)), _v)
 #define _CG_prim_reply(_s, _c, _r) return _r
 #define _CG_prim_primitive(_p, _x) printf("%d\n", (unsigned int)(uintptr_t)_x);
