@@ -44,11 +44,19 @@ except subprocess.TimeoutExpired as e:
 ' "$TIMEOUT" "$PYC" -D "$ROOT" "$name.py" 2>&1)
   rc=$?
   first=$(printf '%s\n' "$out" | grep -m1 -iE "fail|error|unresolved|abort|assert|illegal|has no type|syntax" | head -c 220)
-  if [ -z "$first" ] && [ "$rc" -eq 124 ]; then first="(compile timeout ${TIMEOUT}s)"; fi
-  if [ -z "$first" ] && [ "$rc" -ge 128 ]; then first="(crash: signal $((rc - 128)))"; fi
-  if [ -z "$first" ] && [ -f "$bd/$name.py.c" ]; then
-    printf '%s\tCOMPILED_C\t\n' "$name" > "$bd/.result"
+  # Success = pyc exited 0 and emitted the C file. Diagnostics alone
+  # must not fail an example: dead-at-runtime sites compile to inline
+  # runtime asserts WITH warnings and the binary is still produced
+  # (brainfuck's never-executed tape.insert arm, for instance).
+  if [ "$rc" -eq 0 ] && [ -f "$bd/$name.py.c" ]; then
+    if [ -n "$first" ]; then
+      printf '%s\tCOMPILED_C_WARN\t%s\n' "$name" "$first" > "$bd/.result"
+    else
+      printf '%s\tCOMPILED_C\t\n' "$name" > "$bd/.result"
+    fi
   else
+    if [ "$rc" -eq 124 ]; then first="(compile timeout ${TIMEOUT}s)";
+    elif [ -z "$first" ] && [ "$rc" -ge 128 ]; then first="(crash: signal $((rc - 128)))"; fi
     printf '%s\tFAIL\t%s\n' "$name" "$first" > "$bd/.result"
   fi
 }
@@ -64,9 +72,10 @@ done | xargs -P "$JOBS" -I{} bash -c 'sweep_one "$@"' _ {}
 
 cat "$OUTDIR"/*/.result | sort > "$RES"
 compiled=$(grep -c $'\tCOMPILED_C' "$RES")
+warned=$(grep -c $'\tCOMPILED_C_WARN' "$RES")
 failed=$(grep -c $'\tFAIL' "$RES")
 
-echo "=== pyc -> C: $compiled compiled, $failed failed of $((compiled+failed)) ==="
+echo "=== pyc -> C: $compiled compiled ($warned with warnings), $failed failed of $((compiled+failed)) ==="
 echo
 echo "=== failure buckets (normalized) ==="
 cut -f3 "$RES" | sed -E "s/line [0-9]+/line N/; s/'[^']*'/'X'/g; s/[0-9]+/N/g" \
