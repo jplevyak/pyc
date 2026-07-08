@@ -300,11 +300,13 @@ static void build_comprehension_body_syms(PyDAST *n, PycCompiler &ctx) {
 static void build_import_syms_name_pyda(PyDAST *n, PycCompiler &ctx) {
   // n->kind == PY_import_name, children are PY_dotted_as_name or PY_testlist of them
   Vec<PyDAST *> names;
-  if (n->children.n == 1 && n->children[0]->kind == PY_dotted_as_name)
-    names.add(n->children[0]);
-  else
-    for (auto c : n->children.values())
-      if (c->kind == PY_dotted_as_name) names.add(c);
+  for (auto c : n->children.values()) {
+    if (c->kind == PY_dotted_as_name)
+      names.add(c);
+    else if (c->kind == PY_testlist)
+      for (auto cc : c->children.values())
+        if (cc->kind == PY_dotted_as_name) names.add(cc);
+  }
   for (auto d : names.values()) {
     // d: PY_dotted_as_name: children[0]=PY_dotted_name, children[1]=PY_name (as)
     cchar *mod_name = d->children[0]->str_val;

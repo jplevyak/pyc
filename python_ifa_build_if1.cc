@@ -31,11 +31,18 @@ static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) 
   if (!m) fail("error line %d, cannot find module '%s' (no '%s.py' on the search path; "
                "pyc does not yet provide this module)", ctx.lineno, mod, mod);
   if (!m->built_if1) {
+    // ctx.node is the import statement node whose ast->code the enclosing
+    // statement loop consumes; the module builders below re-point ctx.node
+    // at the imported module's scope node (enter_scope(PyDAST*)) without
+    // restoring, so a second import in the same statement (`import a, b`)
+    // would splice b's code into a's dead module PycAST. Restore it.
+    void *saved_node = ctx.node;
     Code **c;
     c = &getAST((PyDAST *)ctx.node, ctx)->code;
     build_module_attributes_if1(m, *m->ctx, c);
     build_if1_module_pyda(m->pymod, *m->ctx, c);
     m->built_if1 = true;
+    ctx.node = saved_node;
   }
 }
 
@@ -1429,11 +1436,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
                          const_cast<char *>(from_mod), ctx);
       };
       Vec<PyDAST *> names;
-      if (n->children.n == 1 && n->children[0]->kind == PY_dotted_as_name)
-        names.add(n->children[0]);
-      else
-        for (auto c : n->children.values())
-          if (c->kind == PY_dotted_as_name) names.add(c);
+      for (auto c : n->children.values()) {
+        if (c->kind == PY_dotted_as_name)
+          names.add(c);
+        else if (c->kind == PY_testlist)
+          for (auto cc : c->children.values())
+            if (cc->kind == PY_dotted_as_name) names.add(cc);
+      }
       for (auto d : names.values()) {
         cchar *mod_name = d->children[0]->str_val;
         cchar *as_name = (d->children.n > 1) ? d->children[1]->str_val : nullptr;
@@ -2200,6 +2209,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
 }
 
 int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code) {
+  // Imports splice the imported module's code into &getAST(ctx.node)->code
+  // (see build_import_if1), so ctx.node must be restored on the way out:
+  // without this, any import AFTER the first one (later statement or same
+  // comma-separated statement) captures the previously imported module's
+  // dead PycAST stream and its top-level code is silently dropped.
+  void *saved_node = ctx.node;
   ctx.node = mod;
   enter_scope(ctx);  // re-enters module scope created during build_syms
   for (auto c : mod->children.values()) {
@@ -2207,5 +2222,6 @@ int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code) {
     if1_gen(if1, code, getAST(c, ctx)->code);
   }
   exit_scope(ctx);
+  ctx.node = saved_node;
   return 0;
 }
