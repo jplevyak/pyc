@@ -115,16 +115,29 @@ previously-not-crashing exact-match case (`A.__init__(a)`, `a: A`,
 no subclassing) from "wrong-looking diagnostics but correct output"
 to **a SIGSEGV inside the compiler itself**:
 
+Reproduced under gdb (`gdb -batch -nx -ex "set debuginfod enabled
+off" -ex run -ex "bt 20"`), full backtrace:
+
 ```
 Program received signal SIGSEGV, Segmentation fault.
-0x... in make_AVar (v=..., es=...) at analysis/fa.cc:210
-210      return unique_AVar(v, es->display[v->sym->nesting_depth - 1]);
-#0 make_AVar ...
-#1 add_es_constraints ...
-#2 analyze_edge ...
-#3 analyze_to_convergence ...
-#4 FA::analyze ...
+0x00005555556eb545 in make_AVar (v=0x7fffe96313c0, es=0x7fffeaad2400) at analysis/fa.cc:210
+210	      return unique_AVar(v, es->display[v->sym->nesting_depth - 1]);
+#0  0x00005555556eb545 in make_AVar (v=0x7fffe96313c0, es=0x7fffeaad2400) at analysis/fa.cc:210
+#1  0x00005555556fbe59 in add_es_constraints (es=0x7fffeaad2400) at analysis/fa.cc:2485
+#2  0x00005555556f863d in analyze_edge (e_arg=0x7fffe9772e60) at analysis/fa.cc:2575
+#3  0x00005555556f1231 in analyze_to_convergence () at analysis/fa.cc:4822
+#4  0x00005555556f0ae4 in FA::analyze (this=0x7fffea11a540, top=0x7fffe9640800) at analysis/fa.cc:4851
+#5  0x00005555556a2fe2 in ifa_analyze (fn=0x7fffeecf0ff0 "exact_match.py") at ifa.cc:47
+#6  0x0000555555675fd8 in compile (fn=0x7fffeecf0ff0 "exact_match.py") at pyc.cc:99
+#7  0x00005555556765e8 in main (argc=4, argv=0x7fffffffd398) at pyc.cc:226
 ```
+
+`v`'s Sym is the method Fun's formal receiver flowing through
+`add_es_constraints`'s constraint setup for the freshly-created
+EntrySet (`es`) at the bare-call site — i.e. the crash fires while
+FA is trying to set up constraints for the very call my patch
+introduced, confirming the mechanism described above rather than an
+unrelated pre-existing fault.
 
 Root cause: a method Fun's `nesting_depth` reflects its LEXICAL
 definition context (being written inside `class A:`'s body). FA's
