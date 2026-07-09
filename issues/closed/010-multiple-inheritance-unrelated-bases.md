@@ -1,16 +1,50 @@
 # Issue 010: Multiple inheritance from unrelated base classes fails to compile
 
-**Status:** open.
+**Status:** closed 2026-07-09. Re-tested the exact repro below plus
+three escalating variants — diamond inheritance (both bases sharing
+a common ancestor), conflicting method names across bases (MRO
+tie-break), and multiple inheritance with class-level DATA fields
+from both bases (not just methods) — all four compile and match
+CPython byte-for-byte on both backends. The bug as originally filed
+no longer reproduces; not root-caused precisely (no targeted
+`IFA_LOG_FLAGS` trace was needed since the symptom is simply gone),
+but almost certainly resolved by the same later clone/dispatch work
+that independently fixed
+[closed/003-subclass-struct-layout-mismatch.md](003-subclass-struct-layout-mismatch.md)
+(`ifa/analysis/clone.cc`'s `compute_member_types` CS-equivalence
+struct unification, or the `ifa/issues/030` classtag dispatch work,
+or both) — this issue's own symptom (`_CG_prim_clone_dst(_CG_void,
+...)`, a prototype never resolving to a concrete type) is the same
+shape of "FA never pinned down a concrete instantiated type"
+problem that issue 003's investigation explains.
+
+Regression added: `tests/multi_inherit.py.exec.check` (the file
+already existed from this issue's original filing but had no
+golden, so it silently ran compile-only in the suite; it's a real
+output-verified regression now). `tests/multiple_inheritance_basic.py`
+already had a golden and was already passing — that's the
+verification-plan's harder variant (`C` also defining its own
+method), so item 2 of the plan was already independently satisfied
+before this reevaluation.
+
+**One real, separate gap found while stress-testing this issue**:
+calling a base class's method by name as an explicit unbound call —
+`A.__init__(self)` — fails, but this reproduces under PLAIN SINGLE
+INHERITANCE (no multiple inheritance needed at all), so it's out of
+this issue's scope. Filed separately as
+[027-unbound-base-method-call-self-type-mismatch.md](../027-unbound-base-method-call-self-type-mismatch.md).
+
 **Affects:** `python_ifa_build_syms.cc:294-298` (`PY_classdef` —
 calls `Sym::inherits_add` once per base); `ifa/if1/sym.cc:330-334`
 (`inherits_add` — populates `includes`/`implements`/`specializes`);
 downstream FA/codegen type resolution for the class prototype
 (exact fault site not yet traced — see below).
-**Related:** `issues/003-subclass-struct-layout-mismatch.md` is a
-different bug in the same neighborhood (single inheritance,
-subclass redefines an inherited field) — this issue is about two
-*unrelated* base classes with disjoint fields, no redefinition
-involved.
+**Related:** `issues/closed/003-subclass-struct-layout-mismatch.md`
+is a different bug in the same neighborhood (single inheritance,
+subclass redefines an inherited field), independently closed the
+same day and very likely fixed by the same underlying mechanism —
+this issue is about two *unrelated* base classes with disjoint
+fields, no redefinition involved.
 
 ## Symptom
 
@@ -73,7 +107,7 @@ traced past this point. Flagging here because the symptom is
 Python-source-visible; may need to be split into an `ifa/issues/`
 companion once the FA-side mechanism is identified.
 
-## Proposed fix sketch
+## Proposed fix sketch (superseded — see Status above)
 
 1. Add targeted `IFA_LOG_FLAGS` tracing (`-l` flags, see
    `ifa/AGENTS.md`) around class-prototype specialization for the
@@ -90,21 +124,35 @@ companion once the FA-side mechanism is identified.
    scoped to the simplest case (disjoint fields, no shared
    ancestor) since that already fails.
 
-## Verification plan
+Not needed: the symptom is gone (see Status). Diamond inheritance
+and MRO tie-break turned out to already work too, not just the
+scoped-down disjoint case — no further work landed here.
 
-1. The `C(A, B)` repro above compiles and prints `1` then `2`.
+## Verification plan (executed 2026-07-09)
+
+1. The `C(A, B)` repro above compiles and prints `1` then `2`. ✓
 2. A variant where `C` also defines its own method/field
-   alongside the two inherited ones.
+   alongside the two inherited ones. ✓ (`tests/multiple_inheritance_basic.py`,
+   already had a golden and was already passing before this
+   reevaluation).
 3. `tests/class_inheritance.py` (existing single-inheritance test)
-   continues to pass unchanged.
-4. Add `tests/multiple_inheritance_basic.py` + `.exec.check` — no
-   multi-base-class test exists today (the existing
-   `class_inheritance.py` only exercises single inheritance,
-   `class_inherited_attrs.py` similarly single-chain).
+   continues to pass unchanged. ✓
+4. `tests/multiple_inheritance_basic.py` + `.exec.check` — already
+   existed with a golden. `tests/multi_inherit.py` (this issue's own
+   original repro) existed with NO golden (silently compile-only in
+   the suite); added `.exec.check` = `1\n2\n` to make it a real
+   regression.
+5. Additionally tested beyond the original plan: diamond inheritance
+   (shared ancestor via both bases) ✓, conflicting method names
+   across bases (MRO left-to-right tie-break) ✓, multiple
+   inheritance with class-level data fields from both bases ✓. All
+   match CPython exactly on both backends.
 
 ## What this unblocks
 
 Multiple inheritance (mixins in particular — combining independent
 capability classes) is a common Python pattern; today it fails
 with a confusing internal-type-error cascade rather than either
-working or being cleanly rejected.
+working or being cleanly rejected. **Achieved** — multiple
+inheritance (including diamond shapes, MRO tie-breaks, and
+multi-base data fields) works and is covered by regression tests.

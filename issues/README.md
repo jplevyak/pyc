@@ -41,11 +41,6 @@ conventions are the same; the only difference is location.
   operand-order bug affecting *every* container type, found along
   the way. Generator expressions now fail cleanly instead of
   crashing (real support tracked with issue 014).
-- [010-multiple-inheritance-unrelated-bases.md](010-multiple-inheritance-unrelated-bases.md)
-  — `class C(A, B)` with two independent base classes fails with
-  a confusing type-inference cascade ending in a C compile error;
-  root cause only partially traced (frontend side looks
-  base-count-agnostic; likely an FA/dispatch-level gap).
 - [011-exception-handling-unimplemented.md](011-exception-handling-unimplemented.md)
   — `try`/`except`/`finally`/`raise` are entirely unimplemented
   (`fail("statement not supported")`); no exception object model
@@ -78,6 +73,14 @@ conventions are the same; the only difference is location.
   found") and silently drops the call on v2 LLVM (runs clean, no
   output). Found while stress-testing issue 003; unrelated to that
   issue's struct-layout root cause.
+- [027-unbound-base-method-call-self-type-mismatch.md](027-unbound-base-method-call-self-type-mismatch.md)
+  — Calling a base class's method by name as an explicit unbound
+  call (`A.__init__(self)`, the standard idiom for invoking a
+  specific base under multiple inheritance instead of relying on
+  `super()`/MRO chaining) fails a call-argument type check — pyc
+  rejects a subtype `C` instance where an `A` receiver is expected.
+  Reproduces under plain single inheritance; found while
+  stress-testing issue 010, unrelated to that issue's scope.
 
 ## Closed (archive)
 
@@ -96,6 +99,18 @@ commit ref recorded in each file's status line.
   NOT retired — accepted as a deliberate CPython incompatibility,
   not scheduled for a fix. A separate polymorphic method-dispatch
   crash found while stress-testing this issue is filed as 026.
+- [010](closed/010-multiple-inheritance-unrelated-bases.md) —
+  multiple inheritance from unrelated bases no longer reproduces
+  the original compile failure; also verified diamond inheritance,
+  MRO tie-break on conflicting method names, and multi-base data
+  fields all work, matching CPython on both backends. Very likely
+  fixed by the same underlying mechanism as issue 003, closed the
+  same day. Regression added: `tests/multi_inherit.py.exec.check`
+  (the test file already existed from this issue's filing but had
+  never been given a golden). A separate, unrelated gap — explicit
+  unbound base-method calls (`A.__init__(self)`) failing a type
+  check even under single inheritance — found while stress-testing
+  this issue and filed as 027.
 - [004](closed/004-is-operator-unimplemented.md) — `is`/`is not`
   now lower to identity comparison (`prim_isinstance`/`prim_is`)
   instead of an unresolved `__is__` dispatch; the follow-on
