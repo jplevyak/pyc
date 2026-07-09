@@ -23,11 +23,6 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
-- [003-subclass-struct-layout-mismatch.md](003-subclass-struct-layout-mismatch.md)
-  — Subclasses that redefine inherited fields produce C compile
-  errors ("struct has no member 'e0'"). Same root cause as the
-  existing `class_attr_mutation.py` xfail. Blocks inheritance-
-  driven polymorphism in lists.
 - [007-decorators-not-applied.md](007-decorators-not-applied.md)
   — **Largely fixed** by the split-identity rework: user-defined
   function decorators now apply (closure-wrapping, replacement,
@@ -76,12 +71,31 @@ conventions are the same; the only difference is location.
   element types anywhere fails to compile with a `BOXING`/"mixed
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
+- [026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)
+  — Polymorphic method dispatch over a union where at least one
+  class doesn't override the called method (relies purely on
+  inheritance) crashes on the C backend ("matching function not
+  found") and silently drops the call on v2 LLVM (runs clean, no
+  output). Found while stress-testing issue 003; unrelated to that
+  issue's struct-layout root cause.
 
 ## Closed (archive)
 
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [003](closed/003-subclass-struct-layout-mismatch.md) — the
+  originally-filed struct-layout-mismatch bug no longer reproduces
+  (four escalating adversarial tests pass, matching CPython
+  byte-for-byte); resolved as an emergent property of
+  `ifa/analysis/clone.cc`'s CS-equivalence struct unification, not
+  the prefix-copy fix this issue proposed. Regression added:
+  `tests/polymorphic_list.py`. The related
+  `class_attr_mutation.py.python.expect_fail` xfail (mutable
+  shared class-attribute state across subclasses) is explicitly
+  NOT retired — accepted as a deliberate CPython incompatibility,
+  not scheduled for a fix. A separate polymorphic method-dispatch
+  crash found while stress-testing this issue is filed as 026.
 - [004](closed/004-is-operator-unimplemented.md) — `is`/`is not`
   now lower to identity comparison (`prim_isinstance`/`prim_is`)
   instead of an unresolved `__is__` dispatch; the follow-on
