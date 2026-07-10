@@ -73,19 +73,29 @@ conventions are the same; the only difference is location.
   found") and silently drops the call on v2 LLVM (runs clean, no
   output). Found while stress-testing issue 003; unrelated to that
   issue's struct-layout root cause.
-- [027-unbound-base-method-call-self-type-mismatch.md](027-unbound-base-method-call-self-type-mismatch.md)
-  — Calling a base class's method by name as an explicit unbound
-  call (`A.__init__(self)`, the standard idiom for invoking a
-  specific base under multiple inheritance instead of relying on
-  `super()`/MRO chaining) fails a call-argument type check — pyc
-  rejects a subtype `C` instance where an `A` receiver is expected.
-  Reproduces under plain single inheritance; found while
-  stress-testing issue 010, unrelated to that issue's scope.
-
 ## Closed (archive)
 
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
+
+- [027](closed/027-unbound-base-method-call-self-type-mismatch.md) —
+  explicit unbound base-method calls (`Base.method(self, ...)`,
+  `A.__init__(self)`) now dispatch STATICALLY as the named class via
+  `Sym::aspect` (the super() mechanism, with `fixup_aspect` gated to
+  super-registered Syms so qualified-call aspects stay final).
+  Landed together with `@staticmethod`/`@classmethod` support: both
+  markers are recognized at class scope (definition markers, not
+  runtime decorators), staticmethods are callable through the class,
+  an instance, a subclass, and as plain values (a new
+  `Sym::is_static_method` bit routes instance reads through
+  P_prim_period's bare-value rule unbound); classmethods called
+  through a class receive the class value as `cls`, and `cls(...)`
+  constructs via the ordinary `__new__`-through-meta dispatch.
+  Tests: `unbound_base_call.py`, `static_method.py`,
+  `class_method.py`, both backends. Known first-cut limits:
+  classmethod through an instance (`a.cf()`) and bare classmethod/
+  method references without a call keep the old prototype-bound
+  behavior.
 
 - [003](closed/003-subclass-struct-layout-mismatch.md) — the
   originally-filed struct-layout-mismatch bug no longer reproduces

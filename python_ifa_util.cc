@@ -21,7 +21,12 @@ Sym *sym_ellipsis = 0, *sym_ellipsis_type = 0, *sym_declare = 0;
 #include "pyc_symbols.h"
 
 cchar *cannonical_self = 0;
-int finalized_aspect = 0;
+// Syms whose ->aspect was set by super()'s lowering and still needs
+// the deferred superclass hop in fixup_aspect (deferred because
+// dispatch_types isn't built until after if1). Aspects set anywhere
+// else -- issue 027's class-qualified static dispatch -- are FINAL
+// and deliberately not registered here.
+Vec<Sym *> super_aspect_syms;
 Vec<Sym *> builtin_functions;
 
 PycCallbacks::~PycCallbacks() {}
@@ -37,6 +42,18 @@ void PycCompiler::init() {
 }
 
 cchar *cannonicalize_string(cchar *s) { return if1_cannonicalize_string(if1, s); }
+
+// True iff a decorator's dotted_name string equals `want`, tolerating
+// trailing whitespace (DParser non-terminal str_vals can include it --
+// same reason build_import_syms rtrims module names).
+bool decorator_name_is(cchar *s, cchar *want) {
+  if (!s) return false;
+  size_t n = strlen(want);
+  if (strncmp(s, want, n)) return false;
+  for (cchar *p = s + n; *p; p++)
+    if (!isspace((unsigned char)*p)) return false;
+  return true;
+}
 
 Sym *PycSymbol::clone() { return copy()->sym; }
 
@@ -79,7 +96,9 @@ PycAST::PycAST()
       closure_cls(0),
       is_builtin(0),
       is_member(0),
-      is_object_index(0) {
+      is_object_index(0),
+      is_staticmethod(0),
+      is_classmethod(0) {
   label[0] = label[1] = 0;
 }
 

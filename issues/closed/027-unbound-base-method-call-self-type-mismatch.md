@@ -1,6 +1,33 @@
 # Issue 027: Explicit unbound base-class method call (`Base.method(self)`) fails a type check
 
-**Status:** open, root-caused 2026-07-09, **not reasonable to fix in
+**Status:** **closed 2026-07-10** — fixed via `Sym::aspect` (the
+`super()` static-dispatch mechanism), landed together with
+`@staticmethod`/`@classmethod` support. `Base.method(recv, ...)` now
+lowers to a period dispatch whose receiver flows through a temp that
+masquerades as `Base` for pattern matching (`obj->aspect = Base`)
+while keeping its concrete type — exactly `super(Base2, recv)`'s
+shape, minus the superclass hop (`fixup_aspect` now only hops the
+Syms `super`'s lowering registers in `super_aspect_syms`; qualified-
+call aspects are final). Both the subtype reproducer and the
+exact-match companion below pass on BOTH backends, byte-identical
+to CPython; regression test `tests/unbound_base_call.py`.
+
+The 2026-07-09 analysis below (kept for history) had concluded a
+same-session fix wasn't reasonable — that conclusion was based on
+the ATTEMPTED approach (bare-Fun direct call), whose FA segfault
+diagnosis remains correct and is why the ASPECT route (which never
+detaches the call from the closure/dispatch machinery) is the right
+fix. Note also: the "worse crash on the exact-match case" that
+attempt exhibited was later found to be partially confounded by a
+stale-object build (sym.h bitfield layout change without
+`make clean` — the project's known dep-tracking gap); the bare-Fun
+approach was still wrong (`make_AVar` display-chain reasoning holds),
+but crash symptoms from that session should be read with that
+caveat.
+
+Original status text follows.
+
+**Status (superseded):** open, root-caused 2026-07-09, **not reasonable to fix in
 a single session** — see "Attempted fix and why it's harder than it
 looks" below. The obvious frontend patch (resolve `ClassName.method`
 directly to the underlying Fun and call it plainly, bypassing the
@@ -20,7 +47,7 @@ relying on MRO chaining); ALSO `ifa/analysis/fa.cc`'s
 value construction happens at FA-analysis time, not in the
 frontend — see below).
 **Related:** found while stress-testing
-[closed/010-multiple-inheritance-unrelated-bases.md](closed/010-multiple-inheritance-unrelated-bases.md)
+[closed/010-multiple-inheritance-unrelated-bases.md](010-multiple-inheritance-unrelated-bases.md)
 (NOT part of that issue's scope — this reproduces under plain
 single inheritance, no multiple inheritance needed at all).
 

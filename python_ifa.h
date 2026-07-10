@@ -63,6 +63,12 @@ class PycAST : public IFAAST {
   uint32 is_builtin : 1;
   uint32 is_member : 1;
   uint32 is_object_index : 1;
+  // @staticmethod / @classmethod markers, set on a class-body
+  // funcdef's PycAST during build_syms_pyda's PY_decorated case and
+  // consumed by gen_fun_pyda (formal-list convention) and the
+  // decorator-application loop (markers are not real decorators).
+  uint32 is_staticmethod : 1;
+  uint32 is_classmethod : 1;
 
   PycAST();
 };

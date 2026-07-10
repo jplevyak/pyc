@@ -32,7 +32,7 @@ calling a base class's method by name as an explicit unbound call —
 `A.__init__(self)` — fails, but this reproduces under PLAIN SINGLE
 INHERITANCE (no multiple inheritance needed at all), so it's out of
 this issue's scope. Filed separately as
-[027-unbound-base-method-call-self-type-mismatch.md](../027-unbound-base-method-call-self-type-mismatch.md).
+[027-unbound-base-method-call-self-type-mismatch.md](027-unbound-base-method-call-self-type-mismatch.md).
 
 **Affects:** `python_ifa_build_syms.cc:294-298` (`PY_classdef` —
 calls `Sym::inherits_add` once per base); `ifa/if1/sym.cc:330-334`

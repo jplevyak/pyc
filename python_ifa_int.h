@@ -32,7 +32,7 @@ extern Sym *sym_ellipsis, *sym_ellipsis_type, *sym_declare;
 #define S(_x) extern Sym *sym_##_x;
 #include "pyc_symbols.h"
 extern cchar *cannonical_self;
-extern int finalized_aspect;
+extern Vec<Sym *> super_aspect_syms;
 extern Vec<Sym *> builtin_functions;
 
 // -- PycCompiler: combines PycCallbacks + former PycContext state --
@@ -159,6 +159,7 @@ enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 
 // From python_ifa_util.cc:
 cchar *cannonicalize_string(cchar *s);
+bool decorator_name_is(cchar *s, cchar *want);
 
 // From python_ifa_sym.cc:
 PycSymbol *new_PycSymbol(cchar *name);

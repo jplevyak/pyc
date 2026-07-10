@@ -606,12 +606,14 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     if (!n) {
       ast->rval = new_sym(ast);
       ast->rval->aspect = ctx.cls();
+      super_aspect_syms.add(ast->rval);
       if1_move(if1, &ast->code, ctx.fun()->self, ast->rval);
     } else if (n == 1) {
       PycAST *cls_ast = getAST(pos_args[0], ctx);
       if (!cls_ast->sym || cls_ast->sym->type_kind != Type_RECORD) fail("non-constant super() class");
       ast->rval = new_sym(ast);
       ast->rval->aspect = cls_ast->sym;
+      super_aspect_syms.add(ast->rval);
       if1_move(if1, &ast->code, fun_has[0], ast->rval);
     } else {
       if (n > 2) fail("bad number of arguments to builtin function 'super'");
@@ -620,6 +622,7 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       if (!a0->sym || a0->sym->type_kind != Type_RECORD) fail("non-constant super() class");
       ast->rval = new_sym(ast);
       ast->rval->aspect = a0->sym;
+      super_aspect_syms.add(ast->rval);
       if1_move(if1, &ast->code, a1->rval, ast->rval);
     }
   } else if (f == sym___pyc_symbol__) {
@@ -1007,6 +1010,21 @@ static void build_if1_with_items(PyDAST *stmt_node, int item_idx, PycCompiler &c
   call_method(&ast->code, ast, cm->rval, make_symbol("__exit__"), exit_val, 3, sym_nil, sym_nil, sym_nil);
 }
 
+// issue 027 feature: find the function stored under `name` on class
+// `cls`'s prototype, own or inherited: a has[] field whose alias is a
+// function Sym (the method-field/alias convention set in
+// build_syms_pyda's PY_funcdef/PY_decorated method branches;
+// gen_class_pyda's inherited-field copy loop relies on the same
+// links). Used by PY_power's class-qualified attribute resolution.
+static Sym *find_class_method_fn(Sym *cls, cchar *name) {
+  if (!cls || !name) return nullptr;
+  for (Sym *h : cls->has)
+    if (h && h->name && !strcmp(h->name, name) && h->alias && h->alias->is_fun) return h->alias;
+  for (Sym *inc : cls->includes)
+    if (Sym *r = find_class_method_fn(inc, name)) return r;
+  return nullptr;
+}
+
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
   if (!n) return 0;
   PycAST *ast = getAST(n, ctx);
@@ -1113,6 +1131,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           for (int di = decs.n - 1; di >= 0; di--) {
             PyDAST *dec = decs[di];
             if (dec->kind != PY_decorator || dec->children.n < 1) continue;
+            // issue 027 feature: @staticmethod/@classmethod are
+            // definition markers consumed during build_syms_pyda,
+            // not runtime decorators -- never applied.
+            if (!(dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) &&
+                (decorator_name_is(dec->children[0]->str_val, "staticmethod") ||
+                 decorator_name_is(dec->children[0]->str_val, "classmethod")))
+              continue;
             PyDAST *fname_node = dec->children[0];
             PycAST *fname_ast = getAST(fname_node, ctx);
             Sym *dval = fname_ast->rval;
@@ -1151,7 +1176,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             cur = res;
           }
         }
-        if1_move(if1, &def_ast->code, cur, def_ast->rval, ast);
+        // Marker methods (@staticmethod/@classmethod) use the method-
+        // FIELD shape (rval->alias == sym, installed via the setter
+        // emitted in build_syms_pyda) -- no variable binding, same rule
+        // as PY_funcdef's fd_is_method.
+        if (!(def_ast->rval && def_ast->rval->alias == def_ast->sym))
+          if1_move(if1, &def_ast->code, cur, def_ast->rval, ast);
         ast->rval = def_ast->rval;
         ast->code = def_ast->code;
       } else if (def->kind == PY_classdef) {
@@ -1698,6 +1728,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *cur_val = atom_ast->rval;
       bool pending_member = false;
       Sym *pending_sym = nullptr;
+      // issue 027 feature: class-qualified member state, parallel to
+      // pending_member/pending_sym. qual_cls is the class Sym `X` in
+      // `X.attr` when X is a literal class reference and attr names a
+      // method-valued prototype field; qual_fn is additionally set for
+      // an @classmethod. Consumed by the PY_call trailer; every site
+      // that consumes or flushes pending_member resets them.
+      Sym *qual_cls = nullptr, *qual_fn = nullptr;
       for (int i = 1; i < n->children.n; i++) {
         PyDAST *trailer = n->children[i];
         if (trailer->kind == PY_attribute) {
@@ -1726,8 +1763,39 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             send->partial = Partial_OK;
             cur_val = t;
             pending_member = false;
+            qual_cls = qual_fn = nullptr;
           }
           cchar *attr = trailer->children[0]->str_val;
+          // issue 027 feature: `ClassName.attr` -- class-qualified
+          // member access. When attr names a method-valued prototype
+          // field (own or inherited; the has[]/alias convention),
+          // resolve by kind:
+          //  - @staticmethod: the raw function value, fully resolved
+          //    here -- subsequent call/reference is an ordinary value
+          //    use (the value convention: as[0] == fn).
+          //  - @classmethod: remember fn + class; the PY_call trailer
+          //    injects the class VALUE as the first (cls) argument.
+          //  - regular method: remember the qualifying class; a
+          //    PY_call with an explicit receiver dispatches STATICALLY
+          //    as that class via Sym::aspect (the super() mechanism)
+          //    while the receiver keeps its concrete type
+          //    (`Base.method(self, ...)`, `Base.__init__(self)`).
+          // Data attributes (A.n) and non-call member references keep
+          // the historical prototype-period path. `->self` is only
+          // ever set on a class's own Sym (gen_class_pyda), never an
+          // instance variable, so it discriminates literal class
+          // references from values.
+          if (cur_val && cur_val->self && cur_val->type_kind == Type_RECORD) {
+            Sym *mfn = find_class_method_fn(cur_val, attr);
+            if (mfn && mfn->is_static_method) {
+              cur_val = mfn;
+              continue;
+            }
+            if (mfn) {
+              qual_cls = cur_val;
+              qual_fn = mfn->is_class_method ? mfn : nullptr;
+            }
+          }
           pending_sym = make_symbol(attr);
           pending_member = true;
         } else if (trailer->kind == PY_call) {
@@ -1753,21 +1821,61 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             cur_val = ast->rval;
             continue;
           }
+          // issue 027 feature: @classmethod called through a class --
+          // `A.make(v)` (or `B.make(v)` for an inherited make). The
+          // dispatch was resolved statically at the attribute trailer;
+          // the class VALUE the call was made through becomes the
+          // first (cls) argument, so `cls(...)` inside the body
+          // constructs the right class via the ordinary
+          // __new__-through-meta dispatch.
+          if (pending_member && qual_fn) {
+            Code *send = if1_send1(if1, &ast->code, ast);
+            if1_add_send_arg(if1, send, qual_fn);
+            if1_add_send_arg(if1, send, qual_cls);
+            for (auto a : pos_args.values()) if1_add_send_arg(if1, send, getAST(a, ctx)->rval);
+            for (int ki = 0; ki < kw_vals.n; ki++)
+              if1_add_send_arg(if1, send, getAST(kw_vals[ki], ctx)->rval, cannonicalize_string(kw_keys[ki]->str_val));
+            ast->rval = new_sym(ast);
+            if1_add_send_result(if1, send, ast->rval);
+            cur_val = ast->rval;
+            pending_member = false;
+            qual_cls = qual_fn = nullptr;
+            continue;
+          }
           Code *send = nullptr;
+          int arg_start = 0;
           if (pending_member) {
             Sym *t = new_sym(ast);
-            Sym *obj = cur_val->self ? cur_val->self : cur_val;
+            Sym *obj;
+            if (qual_cls && pos_args.n >= 1) {
+              // issue 027: qualified regular method with an explicit
+              // receiver -- `Base.method(recv, ...)`. Static dispatch
+              // as Base via Sym::aspect (the mechanism super() uses):
+              // the receiver value flows through a temp that
+              // masquerades as Base for pattern matching while keeping
+              // its concrete type. The aspect here is FINAL -- unlike
+              // super()'s, it must NOT be superclass-hopped by
+              // fixup_aspect (which now only rewrites the Syms super's
+              // lowering registers in super_aspect_syms).
+              obj = new_sym(ast);
+              obj->aspect = qual_cls;
+              if1_move(if1, &ast->code, getAST(pos_args[0], ctx)->rval, obj, ast);
+              arg_start = 1;
+            } else {
+              obj = cur_val->self ? cur_val->self : cur_val;
+            }
             Code *op = if1_send(if1, &ast->code, 4, 1, sym_operator, obj, sym_period, pending_sym, t);
             op->ast = ast;
             op->partial = Partial_OK;
             send = if1_send1(if1, &ast->code, ast);
             if1_add_send_arg(if1, send, t);
             pending_member = false;
+            qual_cls = qual_fn = nullptr;
           } else {
             send = if1_send1(if1, &ast->code, ast);
             if1_add_send_arg(if1, send, cur_val);
           }
-          for (auto a : pos_args.values()) if1_add_send_arg(if1, send, getAST(a, ctx)->rval);
+          for (int ai = arg_start; ai < pos_args.n; ai++) if1_add_send_arg(if1, send, getAST(pos_args[ai], ctx)->rval);
           // Keyword arguments: pass each value under its parameter name.
           // The IFA matcher (pattern.cc positional_to_named /
           // named_to_positional) maps these onto the callee's formals by
@@ -1795,6 +1903,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             send->partial = Partial_OK;
             cur_val = t;
             pending_member = false;
+            qual_cls = qual_fn = nullptr;
           }
           // subscriptlist or single expr
           PyDAST *sub_node = (trailer->children.n > 0) ? trailer->children[0] : nullptr;
@@ -1860,6 +1969,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             send->partial = Partial_OK;
             cur_val = t;
             pending_member = false;
+            qual_cls = qual_fn = nullptr;
           }
           build_if1_pyda(trailer, ctx);
           PycAST *rhs = getAST(trailer, ctx);

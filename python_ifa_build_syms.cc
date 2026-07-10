@@ -376,25 +376,82 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_decorated: {
       // Last child is the funcdef or classdef; earlier children are decorators
       PyDAST *def = n->children.last();
-      // Pre-scope: process decorators
-      for (int i = 0; i < n->children.n - 1; i++) build_syms_pyda(n->children[i], ctx);
+      // issue 027 feature: @staticmethod / @classmethod are definition
+      // MARKERS, not runtime decorators (pyc has no staticmethod/
+      // classmethod callables to apply). Detect them before decorator
+      // processing so the names are never resolved as variables, and
+      // record them on the def's PycAST for gen_fun_pyda (formal-list
+      // convention) and build_if1_pyda (skip in the application loop).
+      bool marker_static = false, marker_class = false;
+      for (int i = 0; i < n->children.n - 1; i++) {
+        Vec<PyDAST *> decs;
+        if (n->children[i]->kind == PY_suite)
+          for (auto c : n->children[i]->children.values()) decs.add(c);
+        else
+          decs.add(n->children[i]);
+        for (auto dec : decs.values()) {
+          if (dec->kind != PY_decorator || dec->children.n < 1) continue;
+          if (dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) continue;
+          if (decorator_name_is(dec->children[0]->str_val, "staticmethod")) marker_static = true;
+          else if (decorator_name_is(dec->children[0]->str_val, "classmethod")) marker_class = true;
+        }
+      }
+      // Pre-scope: process decorators (markers excluded -- their names
+      // intentionally resolve to nothing).
+      if (!marker_static && !marker_class)
+        for (int i = 0; i < n->children.n - 1; i++) build_syms_pyda(n->children[i], ctx);
       // Dispatch to funcdef or classdef handling
       if (def->kind == PY_funcdef) {
         PycAST *def_ast = getAST(def, ctx);
+        def_ast->is_staticmethod = marker_static;
+        def_ast->is_classmethod = marker_class && !marker_static;
         PyDAST *params = def->children[1];
         PyDAST *varargsl = (params->children.n > 0) ? params->children[0] : nullptr;
         if (varargsl)
           for (auto c : varargsl->children.values())
             if (c->kind == PY_arg_default) build_syms_pyda(c->children[1], ctx);
         PycSymbol *ps = make_PycSymbol(ctx, def->children[0]->str_val, PYC_LOCAL);
-        // issues/007: same split identity as the plain PY_funcdef
-        // case -- the public name is a variable; the internal Sym
-        // carries the closure. Decorator application then rebinds
-        // the variable (`f = d(f)`) via ordinary moves (see
-        // PY_decorated in build_if1_pyda).
-        def_ast->rval = ps->sym;
-        def_ast->sym = def_fun_pyda(def, def_ast, new_sym(def_ast, def->children[0]->str_val, 1), ctx);
-        ctx.def_internal_fn.put(def_ast->rval, def_ast->sym);
+        bool marker_method = (marker_static || marker_class) && ctx.in_class() && ctx.cls()->type_kind == Type_RECORD;
+        if (marker_method) {
+          // Method-FIELD shape (mirrors PY_funcdef's is_method branch):
+          // the public name is a class prototype field whose alias is
+          // the function, installed via a setter send. The function
+          // itself uses the VALUE convention (as[0] == fn, no self
+          // specialization -- see gen_fun_pyda), so reads of the field
+          // yield a plain callable: no receiver for @staticmethod; the
+          // caller supplies the class value for @classmethod.
+          def_ast->rval = ps->sym;
+          def_ast->sym = new_sym(def_ast, 1);
+          def_ast->rval->alias = def_ast->sym;
+          def_ast->sym = def_fun_pyda(def, def_ast, def_ast->sym, ctx);
+          def_ast->sym->is_static_method = marker_static;
+          def_ast->sym->is_class_method = def_ast->is_classmethod;
+          // Python semantics: a class body is NOT an enclosing lexical
+          // scope for functions defined in it. Marker methods flow as
+          // bare VALUES callable from any scope, and FA's make_AVar
+          // resolves a value-carried fn's outer references through the
+          // calling EntrySet's display -- which only has entries for
+          // real enclosing FUNCTIONS. With the class-scope level
+          // counted (def_fun_pyda's scope_stack depth), a staticmethod
+          // in a module-level class gets depth 2 and a call from
+          // module code indexes display[1] of an empty display
+          // (SEGFAULT -- bh's `BH.main(argv)`). Uncount the class
+          // scope; formals/locals re-derive as nesting_depth+1 at if1
+          // finalization, which runs after this.
+          def_ast->sym->nesting_depth -= 1;
+          if1_send(if1, &def_ast->code, 5, 1, sym_operator, ctx.cls()->self, sym_setter,
+                   if1_make_symbol(if1, def_ast->rval->name), def_ast->sym, new_sym(def_ast))
+              ->ast = def_ast;
+        } else {
+          // issues/007: same split identity as the plain PY_funcdef
+          // case -- the public name is a variable; the internal Sym
+          // carries the closure. Decorator application then rebinds
+          // the variable (`f = d(f)`) via ordinary moves (see
+          // PY_decorated in build_if1_pyda).
+          def_ast->rval = ps->sym;
+          def_ast->sym = def_fun_pyda(def, def_ast, new_sym(def_ast, def->children[0]->str_val, 1), ctx);
+          ctx.def_internal_fn.put(def_ast->rval, def_ast->sym);
+        }
         ast->rval = def_ast->rval;
         ast->sym = def_ast->sym;
         if (varargsl)
@@ -849,7 +906,14 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
   Sym *cls = ast->closure_cls;
-  bool is_method = in && !in->is_fun;
+  // issue 027 feature: @staticmethod/@classmethod use the VALUE
+  // convention despite living in a class body -- no receiver formal,
+  // no name-symbol dispatch placeholder. Python semantics: neither
+  // receives an instance; @classmethod's first formal (cls) is an
+  // ordinary parameter that call sites fill with the class value
+  // (dispatch is resolved statically at the class-qualified call site
+  // in build_if1_pyda, so no receiver specialization is needed).
+  bool is_method = in && !in->is_fun && !ast->is_staticmethod && !ast->is_classmethod;
   if (cls) {
     // issues/001: this nested def captures enclosing-function locals --
     // fn->self was already created and specialized against the

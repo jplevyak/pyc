@@ -141,16 +141,19 @@ static void add_primitive_transfer_functions() {
   Sym::aspect is set by the code handling builtin 'super' to
   the class whose superclass we wish to dispatch to.  Replace
   with the dispatched-to class.
+
+  Only the Syms super's lowering registered in super_aspect_syms
+  get this hop: issue 027's class-qualified static dispatch
+  (`Base.method(recv, ...)`) also sets ->aspect, but to its FINAL
+  masquerade class -- hopping those to the superclass would
+  mis-dispatch every qualified call one level up.
 */
 static void fixup_aspect() {
-  for (int x = finalized_aspect; x < if1->allsyms.n; x++) {
-    Sym *s = if1->allsyms[x];
-    if (s->aspect) {
-      if (s->aspect->dispatch_types.n < 2) fail("unable to dispatch to super of '%s'", s->aspect->name);
-      s->aspect = s->aspect->dispatch_types[1];
-    }
+  for (Sym *s : super_aspect_syms) if (s && s->aspect) {
+    if (s->aspect->dispatch_types.n < 2) fail("unable to dispatch to super of '%s'", s->aspect->name);
+    s->aspect = s->aspect->dispatch_types[1];
   }
-  finalized_aspect = if1->allsyms.n;
+  super_aspect_syms.clear();
 }
 
 void build_module_attributes_if1(PycModule *mod, PycCompiler &ctx, Code **code) {
