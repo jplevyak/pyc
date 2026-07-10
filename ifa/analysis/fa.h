@@ -414,6 +414,13 @@ struct SplitDecision : public gc {
   int stage = 0;                // FAPassStage of the split site
   MPosition *pos = nullptr;     // confluence/dispatch position (interned)
   AType *partition = nullptr;   // canonical (cannonical_atypes) filter type
+  // Full-signature hash for group splits: canonical partition
+  // ATypes over ALL positional args and rets, not just `pos` —
+  // type-value grouping is type-equality at every position, so two
+  // groups sharing the partition at `pos` can still be distinct
+  // groups (routing them together mistypes results downstream).
+  // 0 for single-position (filtered-path) keys.
+  uint sig = 0;
   int pass_made = 0;            // analysis_pass at record time (diagnostics)
   EntrySet *product = nullptr;  // ES created/selected (nullptr for CS splits)
 };
@@ -422,10 +429,11 @@ class SplitDecisionHashFns {
  public:
   static uintptr_t hash(SplitDecision *d) {
     return (uintptr_t)d->fun + combine_hash((uintptr_t)d->pos, (uintptr_t)d->partition) +
-           combine_hash((uintptr_t)d->stage, (uintptr_t)d->stage);
+           combine_hash((uintptr_t)d->stage, (uintptr_t)d->sig);
   }
   static int equal(SplitDecision *a, SplitDecision *b) {
-    return a->fun == b->fun && a->stage == b->stage && a->pos == b->pos && a->partition == b->partition;
+    return a->fun == b->fun && a->stage == b->stage && a->pos == b->pos && a->partition == b->partition &&
+           a->sig == b->sig;
   }
 };
 
@@ -530,8 +538,8 @@ class FA : public gc {
   // Reported in the -v PASS line; reset in initialize_pass.
   ChainHash<SplitDecision *, SplitDecisionHashFns> split_ledger;
   int dup_split_attempts = 0;
-  SplitDecision *ledger_find(Fun *afun, int stage, MPosition *pos, AType *partition);
-  SplitDecision *ledger_add(Fun *afun, int stage, MPosition *pos, AType *partition, EntrySet *product);
+  SplitDecision *ledger_find(Fun *afun, int stage, MPosition *pos, AType *partition, uint sig = 0);
+  SplitDecision *ledger_add(Fun *afun, int stage, MPosition *pos, AType *partition, EntrySet *product, uint sig = 0);
   // Issue 033 D6: per-Var count of stage-5 (split_for_violations)
   // split attempts. A Var whose violation drove two attempts and
   // still violates is not refinable by contour splitting; stage 5

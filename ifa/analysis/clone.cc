@@ -141,8 +141,16 @@ static int equivalent_es_pnode(PNode *n, EntrySet *a, EntrySet *b) {
   Vec<AEdge *> *vb = b->out_edge_map.get(n);
   if (!va || !vb) return 1;
   Vec<Vec<EntrySet *> *> ca, cb;
-  for (AEdge *ee : *va) ca.set_add(ee->to->equiv);
-  for (AEdge *ee : *vb) cb.set_add(ee->to->equiv);
+  // va/vb are hash-set Vecs (map_set_add) — iteration sees null
+  // holes once they grow past the linear threshold, and an edge
+  // whose ->to was nulled and never re-routed is dead; both
+  // crashed the unguarded loop (fysphun, issue 033 stage C). A
+  // live target with null equiv (ES not reached this pass) still
+  // contributes its null as a set element: it distinguishes "has
+  // an unreached target", and dropping it merges clones that must
+  // stay separate.
+  for (AEdge *ee : *va) if (ee && ee->to) ca.set_add(ee->to->equiv);
+  for (AEdge *ee : *vb) if (ee && ee->to) cb.set_add(ee->to->equiv);
   if (ca.some_disjunction(cb)) return 0;
   return 1;
 }
