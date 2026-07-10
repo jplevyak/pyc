@@ -73,6 +73,13 @@ conventions are the same; the only difference is location.
   found") and silently drops the call on v2 LLVM (runs clean, no
   output). Found while stress-testing issue 003; unrelated to that
   issue's struct-layout root cause.
+- [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
+  — `raise Exception("...")` regressed bh and richards from
+  compile-with-warn to FAIL (`'Exception' has no type`); bisected
+  to `a32a6467` (issue 027's qualified-static-dispatch commit),
+  which simultaneously fixed go and loop, so corpus bucket COUNTS
+  didn't move — compare member sets, not counts.
+
 ## Closed (archive)
 
 Closed issues live in [`closed/`](closed/) with the closing
