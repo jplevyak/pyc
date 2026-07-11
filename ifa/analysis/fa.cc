@@ -3788,6 +3788,20 @@ static EntrySet *find_or_make_filtered_entry_set(EntrySet *orig_es, Map<MPositio
 // identifies "the same grouping decision" across passes; keying on
 // one position alone merged distinct groups (int/float results
 // were mistyped in builtins_batch).
+// Returns 0 when the group has NO STABLE IDENTITY — callers must
+// then neither route nor record. Two soundness rules, both learned
+// from builtins_batch (three __str__ call sites' groups from
+// passes 0/1/2 funneled into one product that pass 3 then had to
+// split apart, do=2/3 — the int/float sum poisoning):
+//  - mirror edge_type_compatible_with_edge EXACTLY: it compares
+//    per-edge FILTER-INTERSECTED types, so the key must too, or
+//    groups the predicate distinguishes (same raw types, different
+//    match filters) collide;
+//  - the predicate treats an EMPTY intersected type as compatible
+//    with anything (a wildcard). A wildcard cannot be represented
+//    in a snapshot key — an edge whose types haven't arrived yet
+//    would match any recorded partition — so such groups are
+//    unroutable this pass.
 static uint group_signature(Vec<AEdge *> &these_edges, Fun *f) {
   uint h = 0;
   int i = 0;
@@ -3795,7 +3809,11 @@ static uint group_signature(Vec<AEdge *> &these_edges, Fun *f) {
     AType *t = fa->type_world.bottom_type;
     for (AEdge *x : these_edges) {
       AVar *a = x->args.get(p);
-      if (a) t = type_union(t, a->out->type);
+      if (!a) continue;
+      AType *flt = x->match->formal_filters.get(p);
+      AType *et = flt ? type_intersection(a->out->type, flt) : a->out->type;
+      if (!et->n) return 0;  // wildcard: no identity yet
+      t = type_union(t, et);
     }
     h += (uint)(uintptr_t)t * open_hash_primes[i++ % 256];
   }
@@ -3803,10 +3821,14 @@ static uint group_signature(Vec<AEdge *> &these_edges, Fun *f) {
   for (int r = 0; r < nrets; r++) {
     AType *t = fa->type_world.bottom_type;
     for (AEdge *x : these_edges)
-      if (r < x->rets.n && x->rets[r]->lvalue) t = type_union(t, x->rets[r]->lvalue->out->type);
+      if (r < x->rets.n && x->rets[r]->lvalue) {
+        AType *rt = x->rets[r]->lvalue->out->type;
+        if (!rt->n) return 0;  // wildcard: no identity yet
+        t = type_union(t, rt);
+      }
     h += (uint)(uintptr_t)t * open_hash_primes[i++ % 256];
   }
-  return h ? h : 1;  // 0 is reserved for single-position keys
+  return h ? h : 1;  // 0 is reserved for "no identity" / filtered-path keys
 }
 
 static bool group_display_ok(Vec<AEdge *> &these_edges, EntrySet *product, Fun *f) {
@@ -3944,7 +3966,7 @@ static bool group_display_ok(Vec<AEdge *> &these_edges, EntrySet *product, Fun *
     uint gsig = 0;
     if (!fsetters && !fmark && part != fa->type_world.bottom_type) {
       gsig = group_signature(these_edges, es->fun);
-      SplitDecision *d = fa->ledger_find(es->fun, cur_split_stage, avpos, part, gsig);
+      SplitDecision *d = gsig ? fa->ledger_find(es->fun, cur_split_stage, avpos, part, gsig) : nullptr;
       if (d && d->pass_made != analysis_pass && d->product && d->product != es &&
           group_display_ok(these_edges, d->product, es->fun)) {
         product = d->product;
@@ -3993,6 +4015,10 @@ static bool group_display_ok(Vec<AEdge *> &these_edges, EntrySet *product, Fun *
         }
         if (gproduct) {
           if (!gsig) gsig = group_signature(these_edges, es->fun);
+        }
+        // gsig == 0: the group has no stable identity this pass
+        // (wildcard types) — neither route nor record.
+        if (gproduct && gsig) {
           SplitDecision *d = fa->ledger_find(es->fun, cur_split_stage, avpos, part, gsig);
           if (!d)
             fa->ledger_add(es->fun, cur_split_stage, avpos, part, gproduct, gsig);
