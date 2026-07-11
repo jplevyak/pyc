@@ -102,6 +102,35 @@ def run_test(g, args, envs):
     if is_diff:
         return {"name": name, "status": "FAIL", "stage": "COMPILE-OUT", "msg": f"diff {envs['BUILD']}/{name}.out {check_file}", "diff": diff_out}
 
+    # Determinism gate (ifa/issues/035): compile a second time and
+    # byte-compare the generated code. Heap-layout-dependent
+    # iteration order in the compiler once made codegen — and
+    # occasionally correctness — vary between identical runs; this
+    # keeps that class of bug from returning silently. Opt out with
+    # SKIP_DET_CHECK=1.
+    if not os.environ.get("SKIP_DET_CHECK"):
+        det_base = name[:-3] if name.endswith(".py") else name
+        art = None
+        for cand in (f"{name}.c", f"{det_base}.ll"):
+            p = os.path.join(build_dir, cand)
+            if os.path.exists(p):
+                art = p
+                break
+        if art:
+            first = art + ".det1"
+            shutil.move(art, first)
+            try:
+                with open(out_path, "w") as outf:
+                    res2 = subprocess.run(cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT, timeout=args.timeout)
+            except subprocess.TimeoutExpired:
+                return {"name": name, "status": "FAIL", "stage": "DET-RECOMPILE-TIMEOUT", "msg": f"log: {envs['BUILD']}/{name}.out"}
+            if res2.returncode != rc or not os.path.exists(art):
+                return {"name": name, "status": "FAIL", "stage": "DET-RECOMPILE", "msg": "second identical compile had a different outcome"}
+            det_diff, _ = diff_files(first, art)
+            os.remove(first)
+            if det_diff:
+                return {"name": name, "status": "FAIL", "stage": "NONDET", "msg": f"generated code differs between identical compiles: {envs['BUILD']}/{os.path.basename(art)}"}
+
     # Execute
     exec_check = f"{g}.exec.check"
     if not os.path.exists(exec_check):
