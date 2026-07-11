@@ -4686,34 +4686,35 @@ static void clear_splits() {
     ++fa->stage_progress_count[(int)FAPassStage::TYPE_CONFLUENCE];
   }
   // 2) split EntrySets based on type using marks
-  // Issue 033 S5 M2: REVERTED to the original short-circuit
-  // (`if (!analyze_again)`) 2026-07-11. The "unlock stage 2
-  // unconditionally" variant was landed, verified against pyc C/LLVM
-  // 179/0, all 16 ifa-test phases, and a shedskin corpus sweep
-  // (23->25 compiled, strict superset) -- but none of those exercise
-  // a long-running, many-pass program, and it turned out to
-  // segfault fysphun.py (a shedskin corpus member, previously a
-  // clean 18-pass/0-violation convergence) partway through pass 15,
-  // deterministically, in `Vec<CreationSet*>::begin()`. Confirmed by
-  // bisection against the M1-only commit (no crash there) that this
-  // stage-2 change is the proximate cause; the precise mechanism
-  // (why a many-pass program specifically) was not pinned down
-  // before reverting -- see the issue 033 doc for what's known and
-  // the open trail for a future attempt. Lesson for next time:
-  // "safe" per the standard suite + one corpus sweep is not
-  // sufficient evidence for a change to extend_analysis; the
-  // fixtures and pyc test corpus are all short-running, and this
-  // bug only manifested many passes in on a numerically-heavy
-  // program.
-  if (!analyze_again) {
+  // Issue 033 S5 M2 (branch issue033-stage2-batching -- DO NOT MERGE
+  // as-is, see the branch note in the issue 033 doc). Unlocked
+  // unconditionally (batched with stage 1, no short-circuit between
+  // them). Landed on main and reverted TWICE: first for a real crash
+  // in fysphun.py (root-caused and fixed, see the two null-check
+  // fixes already on main this branch is built on top of); second,
+  // after that fix, for hanging pygasus -- 7+ minutes at 99.9% CPU
+  // without printing PASS 1, vs. 11.4s unbatched. Root cause of the
+  // second failure: stage 2's collection cost is disproportionately
+  // expensive (M0 measured it at 70-89% of extend time on the much
+  // smaller fysphun/kmeanspp/pylife trio) and was previously hidden
+  // by the short-circuit -- stage 2 only ran when stage 1 found
+  // NOTHING, which for a large program (pygasus discovers 904 ess /
+  // 3673 css on pass 1 alone) doesn't happen for many passes.
+  // Batching forces stage 2's full-universe collection to run on
+  // pass 1 regardless. This is exactly the cost M4 (dirty-marked
+  // collection) exists to bound -- land M4 first, then retry this
+  // branch on top of it, rather than re-attempting stage-2 batching
+  // alone a third time.
+  {
     ess0 = fa->ess.n, css0 = fa->css.n, viol0 = fa->type_violations.set_count();
     cur_split_stage = (int)FAPassStage::MARK_TYPE;
-    analyze_again = split_ess_for_mark_type(confluences);
+    int stage2 = split_ess_for_mark_type(confluences);
     fa->stage_time[(int)FAPassStage::MARK_TYPE] += stage_timer.lap();
-    if (analyze_again) {
-      record_fa_event(FAPassStage::MARK_TYPE, analyze_again, ess0, css0, viol0);
+    if (stage2) {
+      record_fa_event(FAPassStage::MARK_TYPE, stage2, ess0, css0, viol0);
       ++fa->stage_progress_count[(int)FAPassStage::MARK_TYPE];
     }
+    analyze_again |= stage2;
   }
   log(LOG_SPLITTING, "split_ess_for_mark_type %d\n", analyze_again);
   // 3) split based on setters of type
