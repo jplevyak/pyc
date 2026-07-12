@@ -851,6 +851,18 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_if(if1, &ast->code, 0, t, then_code, 0, chain, 0, 0, ast);
 }
 
+// Flatten a left-folded PY_binop('|') tree (python.g's
+// build_binop_list produces `((1 | 2) | 3)` for `1 | 2 | 3`) into
+// its leaf patterns, in source (left-to-right) order.
+static void flatten_or_pattern(PyDAST *n, Vec<PyDAST *> &out) {
+  if (n->kind == PY_binop && n->op == PY_OP_BITOR) {
+    flatten_or_pattern(n->children[0], out);
+    flatten_or_pattern(n->children[1], out);
+  } else {
+    out.add(n);
+  }
+}
+
 // Helper: build if-else chain for PY_match_stmt
 static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // children[0] = MATCH_KW, children[1] = subject (test), children[2..N-1] = case_blocks
@@ -897,16 +909,64 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       if1_gen(if1, &case_chain, case_cond_ast->code);
       if1_move(if1, &case_chain, subject_ast->rval, case_cond_ast->sym, case_ast);
       if1_gen(if1, &case_chain, case_then);
+    } else if (case_cond->kind == PY_binop && case_cond->op == PY_OP_BITOR) {
+      // Or-pattern (PEP 634): `case 1 | 2 | 3:` matches if the
+      // subject equals ANY alternative. Without this, the pattern
+      // parses as an ordinary expression -- `1 | 2` evaluates to
+      // the integer 3 via bitwise-OR, then gets compared against
+      // the subject via __eq__ like a single literal, which is
+      // "match if subject equals 3," not "match if subject equals 1
+      // or 2." That's a silent wrong-answer miscompile (issues/023),
+      // not a crash or a diagnostic.
+      //
+      // Flatten the left-folded PY_binop('|') tree, evaluate every
+      // alternative's __eq__ check unconditionally (no side effects
+      // to short-circuit around -- these are literal comparisons),
+      // and OR the per-alternative booleans together into ONE
+      // combined result before a SINGLE if1_if. (An earlier version
+      // of this fix nested one if1_if per alternative, each pointing
+      // at the same case_then Code* -- if1_flatten_code asserts a
+      // Code node is only ever reached once, so that shared-then
+      // shape isn't legal here; case_then must be referenced by
+      // exactly one if1_if, same as every other branch in this
+      // dispatch.)
+      Vec<PyDAST *> alts;
+      flatten_or_pattern(case_cond, alts);
+      Sym *combined = nullptr;
+      for (int j = 0; j < alts.n; j++) {
+        PyDAST *alt = alts.v[j];
+        if (alt->kind == PY_name)
+          fail("error line %d: or-pattern alternative '%s' is a capture/wildcard pattern -- "
+               "only literal alternatives are supported in 'case ... | ...:'",
+               ctx.lineno, alt->str_val);
+        build_if1_pyda(alt, ctx);
+        PycAST *alt_ast = getAST(alt, ctx);
+        if1_gen(if1, &case_chain, alt_ast->code);
+
+        Sym *cmp_result = new_sym(case_ast);
+        Sym *bool_result = new_sym(case_ast);
+        call_method(&case_chain, case_ast, subject_ast->rval, sym___eq__, cmp_result, 1, alt_ast->rval);
+        call_method(&case_chain, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
+
+        if (!combined) {
+          combined = bool_result;
+        } else {
+          Sym *next_combined = new_sym(case_ast);
+          call_method(&case_chain, case_ast, combined, make_symbol("__or__"), next_combined, 1, bool_result);
+          combined = next_combined;
+        }
+      }
+      if1_if(if1, &case_chain, 0, combined, case_then, 0, chain, 0, 0, case_ast);
     } else {
       build_if1_pyda(case_cond, ctx);
       PycAST *case_cond_ast = getAST(case_cond, ctx);
       if1_gen(if1, &case_chain, case_cond_ast->code);
-      
+
       Sym *cmp_result = new_sym(case_ast);
       Sym *bool_result = new_sym(case_ast);
       call_method(&case_chain, case_ast, subject_ast->rval, sym___eq__, cmp_result, 1, case_cond_ast->rval);
       call_method(&case_chain, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
-      
+
       if1_if(if1, &case_chain, 0, bool_result, case_then, 0, chain, 0, 0, case_ast);
     }
     chain = case_chain;

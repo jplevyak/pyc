@@ -1,8 +1,7 @@
 # Issue 023: Structural pattern matching (`match`/`case`, PEP 634)
 
-**Status:** open, partial. **Capture patterns fixed 2026-07-12**
-(commit — see below); or-patterns' silent miscompile, guards, and
-class/sequence/mapping patterns remain.
+**Status:** open, partial. **Capture patterns and or-patterns fixed
+2026-07-12**; guards and class/sequence/mapping patterns remain.
 **Affects:** `python.g` (grammar), `python_ifa_build_syms.cc`
 (`PY_case_block` symbol building), `python_ifa_build_if1.cc`
 (`build_match_pyda`, lowering).
@@ -63,12 +62,13 @@ compiling each shape and diffing against `python3`'s real output
   `if cond: y = 5` / `print(y)` — nothing to do with `match`/`case`,
   a gap in pyc's whole local-variable model. Not filed as its own
   issue yet.
-- **Or-patterns** (`case 1 | 2:`) — **broken, SILENT miscompile,
-  no error at all**. Because `case_block: CASE_KW test ':' suite`
-  parses the pattern as a generic expression, `1 | 2` parses as
-  ordinary bitwise-OR and gets *evaluated* (to `3`) before being
-  compared via `__eq__` — "match if subject equals 1 or 2" becomes
-  "match if subject equals 3". Confirmed concretely:
+- **Or-patterns** (`case 1 | 2:`) — **FIXED 2026-07-12**. Was a
+  silent miscompile, no error at all: because
+  `case_block: CASE_KW test ':' suite` parses the pattern as a
+  generic expression, `1 | 2` parsed as ordinary bitwise-OR and got
+  *evaluated* (to `3`) before being compared via `__eq__` — "match
+  if subject equals 1 or 2" silently became "match if subject
+  equals 3." Confirmed concretely before the fix: for
   ```python
   def test_match(val):
       match val:
@@ -78,9 +78,39 @@ compiling each shape and diffing against `python3`'s real output
               print("other")
   test_match(1); test_match(2); test_match(3)
   ```
-  real Python: `one or two` / `one or two` / `other`. pyc: `other`
-  / `other` / `one or two`. Compiles clean, runs clean, wrong
-  answer — the dangerous kind of bug, since nothing signals it.
+  real Python printed `one or two` / `one or two` / `other`; pyc
+  printed `other` / `other` / `one or two`. Compiled clean, ran
+  clean, wrong answer — the dangerous kind of bug, since nothing
+  signals it.
+
+  Fix (`build_match_pyda`, `python_ifa_build_if1.cc`): a new
+  `flatten_or_pattern` helper walks the left-folded
+  `PY_binop('|')` tree `python.g`'s `build_binop_list` produces for
+  `1 | 2 | 3` (`((1 | 2) | 3)`) into its ordered leaf patterns.
+  `build_match_pyda` gained a third branch (alongside wildcard and
+  capture): evaluate every alternative's `__eq__` check
+  unconditionally (no side effects to short-circuit around — these
+  are literal comparisons) and combine the per-alternative booleans
+  with `bool.__or__` into one combined result, then a single
+  `if1_if` on that combined boolean. (First attempt nested one
+  `if1_if` per alternative, all pointing at the same `case_then`
+  `Code*` — hit `if1_flatten_code`'s "already flattened" assert;
+  IF1 code trees require each node to be reachable exactly once, so
+  `case_then` has to be referenced by exactly one `if1_if`, same as
+  every other branch in this dispatch. The single-combined-boolean
+  restructure fixed it.) A bare name as an or-pattern alternative
+  (`case x | 1:`) fails loudly at compile time (`fail(...)`) rather
+  than silently doing the wrong thing — PEP 634 allows this in
+  principle (the capture binds from whichever alternative matched)
+  but it needs its own design (which alternative's capture wins,
+  and pyc's per-case single-pass lowering doesn't have an obvious
+  place to thread that), so it's explicitly out of scope here rather
+  than guessed at.
+
+  Verified byte-identical to `python3` for 2-way, 3-way, and
+  mixed or-pattern/capture-pattern match statements
+  (`tests/match_or.py` / `.exec.check`, executed and diffed on both
+  backends). Full suite 181/0 (180 + the new test), no regressions.
 - **Guards** (`case x if x > 10:`) — **unparseable, hard syntax
   error**. `case_block`'s grammar rule has no optional `if test`
   clause at all. At least this fails loudly and immediately.
@@ -100,12 +130,10 @@ the wildcard case already landed):
 
 - **Capture patterns — DONE** (was estimated small/one-sitting;
   held, see fix description above).
-- **Or-patterns — small-medium.** `build_match_pyda` needs to
-  recognize a `PY_binop` with `|` in pattern position and chain
-  multiple `__eq__` checks (`subject == 1 or subject == 2`) instead
-  of evaluating the OR as a value. Contained to the same function;
-  the complexity is walking/flattening a `1 | 2 | 3`-shaped pattern
-  tree, not new machinery.
+- **Or-patterns — DONE** (was estimated small-medium; held —
+  contained entirely to `build_match_pyda`, the actual complexity
+  was the `Code*`-sharing assert rather than the pattern-flattening
+  itself, see fix description above).
 - **Guards — small.** Grammar: add an optional `if test` to
   `case_block`. Lowering: AND the guard's condition into the
   generated `if1_if` condition alongside the pattern match.
@@ -115,11 +143,11 @@ the wildcard case already landed):
   equality check — comparable in scope to (likely larger than)
   issue 025's tuple-unpacking work.
 
-With capture patterns done, guards + or-patterns together are
-roughly what's left of the day's-focused-work estimate, and would
-take `match`/`case` from "silently wrong for some common cases" to
-"correct for everything except class patterns." Class patterns
-remain a genuinely separate, large undertaking.
+With capture and or-patterns done, guards is what's left of the
+day's-focused-work estimate, and would take `match`/`case` from
+"correct except for one unparseable form" to "correct for
+everything except class patterns." Class patterns remain a
+genuinely separate, large undertaking.
 
 ## Verification plan
 
@@ -127,21 +155,23 @@ remain a genuinely separate, large undertaking.
    `tests/match_capture.py` / `.exec.check`, executed (not just
    compile-checked) and diffed against real `python3` output on
    both backends.
-2. For each remaining pattern kind fixed, add a test file that
-   **executes** and is checked against real Python's output
-   (`.exec.check` or equivalent), not just a compile-only test — the
-   or-pattern bug above is exactly the kind of thing a compile-only
-   test would have missed, and this doc only found it by diffing
-   runtime output against `python3`.
-3. Once guards land, verify guard + capture interact correctly
+2. ~~Or-pattern test, executed and diffed~~ — **done**:
+   `tests/match_or.py` / `.exec.check` (2-way, 3-way, and
+   or-pattern/capture-pattern mixed in one match statement).
+3. For guards once landed, add a test file that **executes** and is
+   checked against real Python's output, not just compile-only —
+   this doc only found the or-pattern bug by diffing runtime output
+   against `python3`.
+4. Once guards land, verify guard + capture interact correctly
    (`case x if x > 10:` — `x` must be bound before the guard
    condition evaluates).
 
 ## What this unblocks
 
 Correct (not just compiling) `match`/`case` for the common literal
-+ capture + guard + or-pattern subset — real Python code using
-`match` today either fails to compile (capture patterns) or, worse,
-silently produces wrong answers (or-patterns, and any future class
-pattern use). Class/sequence/mapping pattern support is the
-remaining large piece for full PEP 634 coverage.
++ capture + or-pattern subset is now landed — real Python code
+using these forms compiles and runs correctly on both backends.
+Guards (currently a parse error) and class/sequence/mapping pattern
+support (currently unimplemented, would hit the same silent-
+miscompile trap or-patterns did) are the remaining pieces for full
+PEP 634 coverage.
