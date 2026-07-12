@@ -892,6 +892,22 @@ static Sym *eval_case_guard(PyDAST *guard, Code **code, PycAST *case_ast, PycCom
   return guard_bool;
 }
 
+// Classify a PY_number pattern node as int or float, mirroring
+// make_num_pyda's own classification exactly (duplicated rather than
+// factored out: make_num_pyda returns an already-built Sym, not a
+// yes/no answer, and this needs the answer before deciding whether to
+// build an isinstance narrowing around the literal-pattern comparison
+// at all). A literal pattern needs to know which builtin class
+// ("int" vs "float") to narrow the subject to -- see the literal
+// fallback's comment in build_pattern_match.
+static bool number_pattern_is_float(PyDAST *n) {
+  if (n->is_int) return false;
+  cchar *s = n->str_val ? n->str_val : "0";
+  for (cchar *p = s; *p; p++)
+    if (*p == '.' || *p == 'e' || *p == 'E' || *p == 'j' || *p == 'J') return true;
+  return false;
+}
+
 // Resolve a global name (a builtin class like "list"/"tuple") the
 // same way an ordinary PY_name reference to it would -- via the
 // normal scope-lookup machinery (find_PycSymbol, via
@@ -928,6 +944,23 @@ static Sym *build_isinstance_call(Sym *obj, Sym *cls, Code **code, PycAST *case_
   if1_add_send_arg(if1, send, cls);
   Sym *result = new_sym(case_ast);
   if1_add_send_result(if1, send, result);
+  return result;
+}
+
+// Read `obj.attr`'s value -- the exact "period" operator send
+// PY_power's own PY_attribute trailer handling emits when flushing a
+// pending member access (see build_if1_pyda's PY_power case), just
+// synthesized directly by string instead of walking a real
+// PY_attribute AST node. Needed by class-pattern matching to read
+// each keyword sub-pattern's target attribute (`Point(x=0, y=0)`
+// reads `.x` and `.y` off the subject) with no source-text token to
+// hang a real AST node off of -- same rationale as
+// resolve_global_class/build_isinstance_call above.
+static Sym *build_attribute_get(Sym *obj, cchar *attr, Code **code, PycAST *case_ast) {
+  Sym *result = new_sym(case_ast);
+  Code *mem = if1_send(if1, code, 4, 1, sym_operator, obj, sym_period, make_symbol(attr), result);
+  mem->ast = case_ast;
+  mem->partial = Partial_OK;
   return result;
 }
 
@@ -1033,13 +1066,22 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
     // Wildcard: always matches, no binding -- the guard alone decides.
     return guard_eval ? (*guard_eval)(code) : sym_true;
   }
-  if (pattern->kind == PY_name) {
+  if (pattern->kind == PY_name && strcmp(pattern->str_val, "None") && strcmp(pattern->str_val, "True") &&
+      strcmp(pattern->str_val, "False")) {
     // Capture pattern: always matches (irrefutable), binds subject.
     // build_syms_pyda's mark_pattern_captures already marked this
     // node PY_STORE, so getAST(pattern)->sym is a freshly created
     // PYC_LOCAL rather than an existing binding -- move the subject
     // into it, same shape as a plain `x = subject` assignment (see
     // emit_assign_to_target's simple-name branch).
+    //
+    // `None`/`True`/`False` are excluded here even though they parse
+    // as bare PY_name too (they're ordinary global constants, not
+    // syntax keywords in this grammar) -- PEP 634 treats them as
+    // literal/singleton patterns, not captures: `case None:` must
+    // only match when the subject actually IS None, not bind a new
+    // local named "None" and match unconditionally. Falls through to
+    // the literal-pattern handling below.
     build_if1_pyda(pattern, ctx);
     PycAST *pat_ast = getAST(pattern, ctx);
     if1_gen(if1, code, pat_ast->code);
@@ -1142,16 +1184,291 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
       });
     });
   }
-  // Literal pattern: build it as an ordinary expression, compare via __eq__.
+  if (pattern->kind == PY_dict) {
+    // Mapping pattern (PEP 634): `{"k1": p1, "k2": p2}` matches any
+    // mapping containing every given key, recursively matching each
+    // key's value against its sub-pattern. Keys are ordinary VALUE
+    // expressions (literals, or a value pattern like `Color.RED`),
+    // evaluated once up front -- not sub-patterns themselves
+    // (mark_pattern_captures deliberately leaves the key side
+    // untouched, mirroring PEP 634's own rule that mapping-pattern
+    // keys must be literals/value patterns, never captures).
+    //
+    // `**rest` (PEP 634's rest-of-mapping capture) isn't supported:
+    // python.g's dictorsetmaker has no `'**' NAME` alternative at all
+    // (real Python's dict-merge literal, `{**other}`, isn't a pyc
+    // feature either), so it fails to parse with an ordinary syntax
+    // error rather than reaching this code -- same "doesn't parse,
+    // so at least loud" deferral as sequence patterns' `*rest`.
+    int n_pairs = pattern->children.n / 2;
+    Vec<Sym *> keys;
+    for (int j = 0; j < n_pairs; j++) {
+      PyDAST *key = pattern->children[j * 2];
+      build_if1_pyda(key, ctx);
+      PycAST *key_ast = getAST(key, ctx);
+      if1_gen(if1, code, key_ast->code);
+      keys.add(key_ast->rval);
+    }
+    Sym *dict_cls = resolve_global_class("dict", ctx);
+    Sym *is_map = build_isinstance_call(subject, dict_cls, code, case_ast, ctx);
+
+    // Same two-level guarded_bool nesting as sequence patterns, and
+    // for the identical reason (see guarded_bool's comment):
+    // subject's type is only narrowed to dict WITHIN the outer
+    // "then" branch, and value retrieval must not run unless every
+    // key is confirmed present first (a missing key's __getitem__
+    // would be a runtime KeyError in the underlying dict, not
+    // "doesn't match").
+    return guarded_bool(is_map, code, case_ast, [&](Code **then_code) -> Sym * {
+      if (n_pairs == 0) {
+        // `case {}:` -- no keys to check, matches any mapping.
+        return guard_eval ? (*guard_eval)(then_code) : sym_true;
+      }
+      Sym *all_present = nullptr;
+      for (int j = 0; j < n_pairs; j++) {
+        Sym *has = new_sym(case_ast);
+        call_method(then_code, case_ast, subject, make_symbol("__contains__"), has, 1, keys[j]);
+        all_present = all_present ? combine_bool(all_present, has, "__and__", then_code, case_ast) : has;
+      }
+      return guarded_bool(all_present, then_code, case_ast, [&](Code **vals_code) -> Sym * {
+        Sym *combined = nullptr;
+        for (int j = 0; j < n_pairs; j++) {
+          PyDAST *val_pat = pattern->children[j * 2 + 1];
+          Sym *item = new_sym(case_ast);
+          call_method(vals_code, case_ast, subject, sym___getitem__, item, 1, keys[j]);
+          Sym *val_matched = build_pattern_match(val_pat, item, vals_code, case_ast, ctx);
+          combined = combined ? combine_bool(combined, val_matched, "__and__", vals_code, case_ast) : val_matched;
+        }
+        Sym *result = combined ? combined : sym_true;
+        if (guard_eval) {
+          Sym *g = (*guard_eval)(vals_code);
+          result = (result == sym_true) ? g : combine_bool(result, g, "__and__", vals_code, case_ast);
+        }
+        return result;
+      });
+    });
+  }
+  if (pattern->kind == PY_power && pattern->children.n == 2 && pattern->children[0]->kind == PY_name &&
+      pattern->children[1]->kind == PY_call) {
+    // Class pattern (PEP 634): `Point(x=0, y=0)` matches when the
+    // subject isinstance()s the named class AND every keyword
+    // sub-pattern matches the corresponding attribute's value.
+    // Parses via the ordinary constructor-call grammar (same trick
+    // sequence patterns use with list/tuple literals) -- with no
+    // dedicated pattern grammar, `Point(x=0, y=0)` is indistinguishable
+    // at parse time from an actual constructor call; recognizing it
+    // here, before it reaches the literal-pattern fallback below
+    // (which would build it as a real expression and construct an
+    // actual Point instance to compare via __eq__), is what makes it
+    // a pattern instead of the same silent-miscompile trap or-patterns
+    // and sequence patterns hit before their own fixes.
+    //
+    // Positional class patterns (`Point(0, 0)`, matched via
+    // `__match_args__`) are NOT supported -- pyc has no compile-time
+    // read-back of a class-body literal assignment like
+    // `__match_args__ = ("x", "y")`, unlike sequence patterns which
+    // could reuse existing `__getitem__`/`__len__` machinery wholesale.
+    // Fails loudly rather than guessing; keyword-only class patterns
+    // are PEP 634's more common, more explicit form regardless.
+    cchar *cls_name = pattern->children[0]->str_val;
+    PyDAST *call = pattern->children[1];
+    Vec<PyDAST *> kw_names, kw_pats;
+    if (call->children.n > 0) {
+      PyDAST *arglist = call->children[0];
+      for (auto arg : arglist->children.values()) {
+        if (arg->kind != PY_keyword_arg)
+          fail("error line %d: positional class pattern arguments ('%s(...)' without "
+               "'attr=pattern' keyword names) are not yet supported -- use "
+               "'%s(attr=pattern, ...)'",
+               ctx.lineno, cls_name, cls_name);
+        kw_names.add(arg->children[0]);
+        kw_pats.add(arg->children[1]);
+      }
+    }
+    Sym *cls = resolve_global_class(cls_name, ctx);
+    Sym *is_inst = build_isinstance_call(subject, cls, code, case_ast, ctx);
+
+    // Single-level guarded_bool: attribute reads (unlike sequence
+    // patterns' length-then-elements) have no second gating condition
+    // of their own -- the isinstance narrowing this branch already
+    // provides is all FA needs before type-checking `.attr` accesses
+    // against the narrowed class type.
+    return guarded_bool(is_inst, code, case_ast, [&](Code **then_code) -> Sym * {
+      Sym *combined = nullptr;
+      for (int j = 0; j < kw_names.n; j++) {
+        Sym *val = build_attribute_get(subject, kw_names[j]->str_val, then_code, case_ast);
+        Sym *sub_matched = build_pattern_match(kw_pats[j], val, then_code, case_ast, ctx);
+        combined = combined ? combine_bool(combined, sub_matched, "__and__", then_code, case_ast) : sub_matched;
+      }
+      Sym *result = combined ? combined : sym_true;
+      if (guard_eval) {
+        Sym *g = (*guard_eval)(then_code);
+        result = (result == sym_true) ? g : combine_bool(result, g, "__and__", then_code, case_ast);
+      }
+      return result;
+    });
+  }
+  if (pattern->kind == PY_name && !strcmp(pattern->str_val, "None")) {
+    // `None`/`True`/`False` singleton patterns (PEP 634) match by
+    // identity, not equality -- `case None:` must not match on some
+    // OTHER falsy-but-not-None value, and (True/False, handled
+    // separately below) `1 == True` in real Python must not make
+    // `case True:` match an int.
+    //
+    // NOT `subject.__null__()`: a method dispatch on a union
+    // receiver, confirmed empirically to crash at RUNTIME ("matching
+    // function not found") when combined with a later
+    // isinstance-narrowed pattern (`case 5:`, `case [a, b]:`, ...) in
+    // the same match -- codegen never generated a clone for one of
+    // the union's actually-reachable runtime types. Using the raw
+    // `prim_isinstance` primitive directly (the exact form the
+    // pre-existing `x is None` expression lowering just above this
+    // function already uses, specifically BECAUSE method dispatch
+    // doesn't split/narrow correctly for union receivers) does NOT
+    // fix this -- confirmed empirically to fail the identical way.
+    // This appears to be a deeper FA/codegen clone-generation gap
+    // specific to combining a NoneType-narrowing branch with a
+    // *subsequent* isinstance-narrowing branch for the same subject
+    // in a single function, not something fixable from this lowering
+    // code. build_match_pyda refuses to compile a match statement
+    // that combines `case None:` with any OTHER isinstance-narrowed
+    // pattern, rather than silently emitting code that can crash --
+    // see that check for the full explanation. This branch is only
+    // reachable when `case None:` is the ONLY narrowed pattern kind
+    // in the match (safe: `isinstance(subject, sym_nil_type)` alone,
+    // or combined only with wildcard/capture/None arms, compiles and
+    // runs correctly).
+    Sym *is_none = build_isinstance_call(subject, sym_nil_type, code, case_ast, ctx);
+    return guarded_bool(is_none, code, case_ast,
+                         [&](Code **then_code) -> Sym * { return guard_eval ? (*guard_eval)(then_code) : sym_true; });
+  }
+  if (pattern->kind == PY_name && (!strcmp(pattern->str_val, "True") || !strcmp(pattern->str_val, "False"))) {
+    // `True`/`False` singleton patterns: NOT built via the general
+    // literal path below, because that compares against
+    // `pat_ast->rval` -- for `True`/`False` that would be the raw
+    // `sym_true`/`sym_false` sentinel, which (per combine_bool's own
+    // comment, hit earlier landing sequence patterns) is a
+    // compile-time marker, not a properly-typed runtime bool
+    // instance, and fails FA type checking when passed as a method
+    // argument the same way it does as a method receiver. Sidestep
+    // entirely: once narrowed to `bool`, `case True:` is just
+    // "subject is truthy" and `case False:` is "subject is falsy" --
+    // no comparison against the sentinel needed at all.
+    //
+    bool want_true = !strcmp(pattern->str_val, "True");
+    Sym *bool_cls = resolve_global_class("bool", ctx);
+    Sym *is_bool = build_isinstance_call(subject, bool_cls, code, case_ast, ctx);
+    return guarded_bool(is_bool, code, case_ast, [&](Code **then_code) -> Sym * {
+      Sym *truthy = new_sym(case_ast);
+      call_method(then_code, case_ast, subject, sym___pyc_to_bool__, truthy, 0);
+      Sym *bool_result = truthy;
+      if (!want_true) {
+        bool_result = new_sym(case_ast);
+        call_method(then_code, case_ast, truthy, make_symbol("__not__"), bool_result, 0);
+      }
+      if (guard_eval) {
+        Sym *g = (*guard_eval)(then_code);
+        bool_result = combine_bool(bool_result, g, "__and__", then_code, case_ast);
+      }
+      return bool_result;
+    });
+  }
+  // Literal pattern: build it as an ordinary expression, compare via
+  // __eq__. Narrowed via isinstance first when the literal's own
+  // class is staticaly known (number/string) -- for the same reason
+  // sequence/mapping/class patterns need guarded_bool: FA type-checks
+  // the whole program statically, so an unconditional
+  // subject.__eq__(literal) has to type-check against subject's FULL
+  // static union (every OTHER case arm's type included, since they
+  // all flow into the same match subject) -- and cross-type __eq__
+  // dispatch (comparing an int-typed union member against a string
+  // literal, say) doesn't codegen correctly today. A match statement
+  // mixing literal types across arms (`case 1: ... case "a": ...`)
+  // hit exactly this before the narrowing was added. Patterns this
+  // can't classify (dotted value patterns like `Color.RED`) fall
+  // back to the old unconditional form -- narrower coverage than
+  // number/string, but no worse than before this fix.
   build_if1_pyda(pattern, ctx);
   PycAST *pat_ast = getAST(pattern, ctx);
   if1_gen(if1, code, pat_ast->code);
-  Sym *cmp_result = new_sym(case_ast);
-  Sym *bool_result = new_sym(case_ast);
-  call_method(code, case_ast, subject, sym___eq__, cmp_result, 1, pat_ast->rval);
-  call_method(code, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
-  if (guard_eval) bool_result = combine_bool(bool_result, (*guard_eval)(code), "__and__", code, case_ast);
-  return bool_result;
+  cchar *lit_cls_name = nullptr;
+  if (pattern->kind == PY_string) lit_cls_name = "str";
+  else if (pattern->kind == PY_number) lit_cls_name = number_pattern_is_float(pattern) ? "float" : "int";
+  auto do_compare = [&](Code **cmp_code) -> Sym * {
+    Sym *cmp_result = new_sym(case_ast);
+    Sym *bool_result = new_sym(case_ast);
+    call_method(cmp_code, case_ast, subject, sym___eq__, cmp_result, 1, pat_ast->rval);
+    call_method(cmp_code, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
+    if (guard_eval) bool_result = combine_bool(bool_result, (*guard_eval)(cmp_code), "__and__", cmp_code, case_ast);
+    return bool_result;
+  };
+  if (!lit_cls_name) return do_compare(code);
+  Sym *lit_cls = resolve_global_class(lit_cls_name, ctx);
+  Sym *is_same_type = build_isinstance_call(subject, lit_cls, code, case_ast, ctx);
+  return guarded_bool(is_same_type, code, case_ast, do_compare);
+}
+
+// Does `pattern` (or anything nested inside it -- a sequence
+// element, a mapping value, a class pattern's keyword value, an
+// or-pattern alternative) contain a `None` singleton pattern?
+// Recurses through every pattern kind build_pattern_match itself
+// recurses through, for the same reason build_match_pyda's None+
+// isinstance-narrowing check below needs it: a nested `case [None,
+// x]:` still puts a None-narrowing branch and an isinstance-
+// narrowing branch (the sequence pattern's own isinstance(subject,
+// list) check) in the same function, which is the exact shape
+// confirmed to crash at runtime -- see that check's comment.
+static bool pattern_contains_none(PyDAST *pattern) {
+  if (!pattern) return false;
+  if (pattern->kind == PY_name) return !strcmp(pattern->str_val, "None");
+  if (pattern->kind == PY_binop && pattern->op == PY_OP_BITOR)
+    return pattern_contains_none(pattern->children[0]) || pattern_contains_none(pattern->children[1]);
+  if (pattern->kind == PY_list || pattern->kind == PY_tuple) {
+    for (auto c : pattern->children.values())
+      if (pattern_contains_none(c)) return true;
+    return false;
+  }
+  if (pattern->kind == PY_dict) {
+    for (int i = 1; i < pattern->children.n; i += 2)
+      if (pattern_contains_none(pattern->children[i])) return true;
+    return false;
+  }
+  if (pattern->kind == PY_power && pattern->children.n == 2 && pattern->children[1]->kind == PY_call) {
+    PyDAST *call = pattern->children[1];
+    if (call->children.n > 0)
+      for (auto arg : call->children[0]->children.values())
+        if (arg->kind == PY_keyword_arg && pattern_contains_none(arg->children[1])) return true;
+    return false;
+  }
+  return false;
+}
+
+// Does `pattern` (or anything nested inside it) do anything besides
+// an unconditional, no-op wildcard match -- specifically: does it
+// require isinstance-based narrowing (True/False, number/string
+// literals, or a structural sequence/mapping/class pattern -- every
+// kind build_pattern_match gates behind guarded_bool/
+// build_isinstance_call), OR does it bind the subject into a fresh
+// local at all (a bare capture, or ANY structural pattern's element/
+// value/attribute sub-bindings)? Both are confirmed unsafe combined
+// with a `case None:` elsewhere in the same match -- see the
+// has_none/has_risky check below for what "unsafe" means concretely.
+// Only wildcard (`_`) and None itself come back false: combining
+// `case None:` with ONLY wildcard and/or other None arms is
+// confirmed to work fine; anything that either narrows OR binds
+// crashes once a None-narrowing branch is ALSO present.
+static bool pattern_is_risky_with_none(PyDAST *pattern) {
+  if (!pattern) return false;
+  if (pattern->kind == PY_name) {
+    if (!strcmp(pattern->str_val, "_") || !strcmp(pattern->str_val, "None")) return false;
+    return true;  // True/False (narrows), or a plain capture (binds)
+  }
+  if (pattern->kind == PY_number || pattern->kind == PY_string) return true;
+  if (pattern->kind == PY_list || pattern->kind == PY_tuple || pattern->kind == PY_dict) return true;
+  if (pattern->kind == PY_power && pattern->children.n == 2 && pattern->children[1]->kind == PY_call) return true;
+  if (pattern->kind == PY_binop && pattern->op == PY_OP_BITOR)
+    return pattern_is_risky_with_none(pattern->children[0]) || pattern_is_risky_with_none(pattern->children[1]);
+  return false;
 }
 
 // Helper: build if-else chain for PY_match_stmt
@@ -1161,6 +1478,43 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   build_if1_pyda(subject, ctx);
   PycAST *subject_ast = getAST(subject, ctx);
   if1_gen(if1, &ast->code, subject_ast->code);
+
+  // issues/023: combining a `None` pattern with almost anything else
+  // in the SAME match statement is confirmed to crash at RUNTIME
+  // ("matching function not found") -- codegen fails to generate a
+  // clone for one of the union's actually-reachable types once a
+  // None-narrowing branch is followed by EITHER a different
+  // isinstance-narrowing branch OR a capture-pattern binding for the
+  // same subject. `case None:` combined with ONLY wildcard (`_`)
+  // and/or other `None` arms is the one combination confirmed safe;
+  // everything else -- captures, literals, True/False,
+  // sequence/mapping/class patterns -- crashes. Tried three different
+  // lowerings for None's own check (a method dispatch, the
+  // ordinary-call isinstance() form, the raw prim_isinstance
+  // primitive) -- all three fail identically, so this isn't fixable
+  // from this lowering code; it looks like a deeper FA/codegen
+  // clone-generation gap. Fail loudly at compile time instead of
+  // silently emitting code that can crash -- matches this function's
+  // existing precedent (or-pattern capture alternatives, positional
+  // class patterns) of refusing unsupported combinations rather than
+  // guessing.
+  bool has_none = false, has_risky = false;
+  for (int i = 2; i < n->children.n; i++) {
+    PyDAST *case_block = n->children[i];
+    // Mirrors the case_cond indexing dance in the main loop below
+    // exactly (children.n varies with whether a guard is present).
+    PyDAST *case_cond = case_block->children.n >= 3 ? case_block->children[1] : case_block->children[0];
+    if (pattern_contains_none(case_cond)) has_none = true;
+    if (pattern_is_risky_with_none(case_cond)) has_risky = true;
+  }
+  if (has_none && has_risky)
+    fail("error line %d: this match statement combines a 'case None:' pattern with another pattern "
+         "that either binds a name or needs type narrowing -- this combination is not supported (a "
+         "known pyc code-generation limitation, not a source error): compiled code for it can crash "
+         "at runtime. 'case None:' may only be combined with a wildcard ('case _:') and/or other "
+         "'case None:' arms in the same match statement. Split it into its own match statement, or "
+         "use a guard ('case x if x is None:') instead.",
+         ctx.lineno);
 
   Code *chain = 0; // Default is do nothing
   for (int i = n->children.n - 1; i >= 2; i--) {

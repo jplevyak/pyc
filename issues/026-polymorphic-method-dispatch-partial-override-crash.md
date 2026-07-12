@@ -11,6 +11,18 @@ gap); found while stress-testing
 [closed/003-subclass-struct-layout-mismatch.md](closed/003-subclass-struct-layout-mismatch.md)
 (unrelated to that issue's struct-layout root cause — this
 reproduces with zero data fields involved, pure method dispatch).
+**Likely second manifestation:**
+[023-structural-pattern-matching.md](023-structural-pattern-matching.md)'s
+"Known limitation" section — `case None:` combined with almost any
+other `match`/`case` pattern in the same statement hits the
+identical assertion (`Assertion '!"runtime error: matching function
+not found"'`, same wording, same `cg.cc` fallback). Not confirmed
+to be the SAME root cause, but the crash's shape (a class relying
+on an inherited/generic implementation of some needed method, once
+a second narrowing branch for the same subject follows) lines up
+with this issue's own hypothesis closely enough that whoever
+root-causes one should check the other's repro too before treating
+them as separate bugs.
 
 ## Symptom
 

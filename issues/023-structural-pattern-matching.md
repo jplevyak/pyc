@@ -1,11 +1,22 @@
 # Issue 023: Structural pattern matching (`match`/`case`, PEP 634)
 
-**Status:** open, partial. **Capture patterns, or-patterns, guards,
-and sequence patterns fixed 2026-07-12**; class/mapping patterns
-remain.
-**Affects:** `python.g` (grammar), `python_ifa_build_syms.cc`
-(`PY_case_block` symbol building), `python_ifa_build_if1.cc`
-(`build_match_pyda`, lowering).
+**Status:** open, one known limitation remains. **Capture, or-,
+guard, sequence, mapping, and class patterns, plus `None`/`True`/
+`False` singleton patterns and mixed-literal-type patterns, all
+fixed 2026-07-12.** The one thing NOT fixed: `case None:` combined
+with almost any other pattern in the same match statement hits a
+deeper FA/codegen clone-generation gap (crashes at runtime) that
+looks to be outside this file's lowering code entirely --
+`build_match_pyda` refuses that specific combination at compile
+time rather than risk shipping it. See "Known limitation" below.
+**Affects:** `python.g` (grammar unchanged for this round --
+class/mapping patterns parse via the existing constructor-call/
+dict-literal grammar, same trick sequence patterns used with
+list/tuple literals), `python_ifa_build_syms.cc` (`PY_case_block`
+symbol building, `mark_pattern_captures`), `python_ifa_build_if1.cc`
+(`build_match_pyda`, `build_pattern_match`, lowering),
+`__pyc__/00_runtime.py` (unchanged in the end -- see the None
+section for why an attempted addition there was reverted).
 
 ## Current state (checked 2026-07-12 against the actual code, not assumed)
 
@@ -265,13 +276,208 @@ compiling each shape and diffing against `python3`'s real output
   b:`) — all combined in one match statement
   (`tests/match_seq.py` / `.exec.check`). Full suite 183/0 (182 +
   the new test) on both the C and LLVM backends, no regressions.
-- **Class / mapping patterns** (`case Point(x=0, y=0):`,
-  `case {"k": v}:`) — **never attempted**. Class patterns would hit
-  the identical trap sequence/or-patterns did: `Point(x=0, y=0)`
-  parses as an ordinary constructor call, constructs a real `Point`
-  instance, and compares it via `__eq__` against the subject —
-  wrong semantics, not just unimplemented, and just as silent as
-  the or-pattern bug was.
+- **Mapping patterns** (`case {"k": v, ...}:`) — **FIXED
+  2026-07-12**. Previously unimplemented: parsed as an ordinary dict
+  literal (via python.g's existing `dictorsetmaker`/`PY_dict` — no
+  grammar change needed) and compared via `__eq__` against the
+  subject. `build_pattern_match`'s new `PY_dict` branch: keys are
+  ordinary VALUE expressions (evaluated once, unconditionally --
+  PEP 634 restricts mapping-pattern keys to literals/value patterns,
+  never captures, so `mark_pattern_captures` leaves the key side
+  untouched); `isinstance(subject, dict)`, then (nested inside that,
+  same `guarded_bool` shape as sequence patterns) every key's
+  presence checked via `__contains__`, then (nested again) each
+  value retrieved via `__getitem__` and recursively matched.
+  `**rest` (PEP 634's rest-of-mapping capture) isn't supported --
+  python.g's `dictorsetmaker` has no `'**' NAME` alternative at all
+  (real Python's dict-merge literal, `{**other}`, isn't a pyc
+  feature either), so it fails to parse with an ordinary syntax
+  error, same "doesn't parse, so at least loud" deferral as sequence
+  patterns' `*rest`. Verified byte-identical to `python3` on both
+  backends: flat mapping patterns with 1-3 keys, `case {}:` matching
+  any mapping (including non-empty ones), and a guard on a mapping
+  pattern (`tests/match_map.py` / `.exec.check`).
+- **Class patterns** (`case Point(x=0, y=0):`) — **FIXED
+  2026-07-12, keyword-only**. Previously unimplemented: parsed as an
+  ordinary constructor call (via python.g's existing
+  `power`/`trailer`/`arglist` grammar — no grammar change needed),
+  constructed a REAL `Point` instance, and compared it via `__eq__`
+  against the subject — wrong semantics, not just unimplemented, and
+  just as silent as the or-pattern bug was (would have called
+  `__init__` with the WRONG argument count/types too, for anything
+  but a suspiciously-matching constructor signature).
+
+  `build_pattern_match`'s new `PY_power`-with-`PY_call` branch
+  recognizes this shape BEFORE it reaches the literal-pattern
+  fallback (the same interception point that makes or-patterns and
+  sequence patterns correct instead of silently wrong):
+  `isinstance(subject, ClassName)`, then (nested in that branch) each
+  keyword argument's name read off the subject via the exact `.attr`
+  send `PY_power`'s own attribute-trailer handling emits
+  (`build_attribute_get`, synthesized directly since there's no
+  source-text `PY_attribute` node to hang it off), recursively
+  matched against its sub-pattern. A bare dotted-name pattern with NO
+  call trailer (`case Color.RED:`, a PEP 634 *value* pattern) is
+  correctly NOT caught by this branch (it requires a `PY_call`
+  trailer specifically) and falls through to the literal fallback
+  unchanged, comparing via `__eq__` as before -- exactly the existing
+  correct behavior for value patterns, undisturbed.
+
+  **Positional class patterns are NOT supported**
+  (`case Point(0, 0):`, matched via a `__match_args__` class
+  attribute) -- fails loudly at compile time with a message pointing
+  at the keyword-only form, rather than guessing. Real PEP 634
+  attribute-name-to-position mapping needs a compile-time read-back
+  of a class-body literal assignment (`__match_args__ = ("x", "y")`)
+  that pyc has no existing machinery for (unlike sequence patterns,
+  which could reuse `__getitem__`/`__len__` already built for plain
+  unpacking) -- deferred as a separate, larger piece. Keyword-only
+  class patterns (`Point(x=0, y=0)`) are PEP 634's more common,
+  more explicit form regardless.
+
+  Verified byte-identical to `python3` on both backends: multiple
+  keyword attributes, nested class patterns (a class pattern as
+  another class pattern's attribute value, and as a mapping
+  pattern's value, and as a sequence pattern's element), a guard on
+  a class pattern, and a polymorphic fallback arm
+  (`tests/match_class.py` / `.exec.check`, plus broader combination
+  coverage exercised manually during development -- see "What this
+  unblocks" for the combined scratch repro).
+- **`None`/`True`/`False` singleton patterns** (`case None:`,
+  `case True:`) — **FIXED 2026-07-12, with one combination
+  excluded**. These parse as bare `PY_name` nodes (this grammar has
+  no keyword tokens for them -- they're ordinary global constants),
+  which means they were being caught by the EXISTING capture-pattern
+  branch (`case x:`'s handling, landed earlier in this issue) --
+  `case None:` silently became an irrefutable capture binding a
+  local literally named "None", matching UNCONDITIONALLY regardless
+  of the subject's actual value. Confirmed concretely: a match with
+  `case None: / case True: / case False: / case n:` printed "none"
+  for every input (None, True, False, 5) before this fix, since the
+  FIRST arm's capture always won. Same silent-miscompile bug class
+  as or-patterns and (now) class/mapping patterns, just never
+  exercised by earlier tests in this issue (all of which avoided
+  `None`/`True`/`False` as *patterns*, though `None` obviously
+  appears throughout pyc as an ordinary value elsewhere).
+
+  Fix: `mark_pattern_captures` and `build_pattern_match`'s
+  capture-pattern branches now explicitly exclude these three names
+  (alongside the pre-existing `_` wildcard exclusion), routing them
+  to new dedicated handling instead. `True`/`False`: NOT compared via
+  `__eq__` against the raw `sym_true`/`sym_false` sentinel --
+  confirmed empirically that fails FA type checking as a method
+  ARGUMENT the same way `combine_bool`'s own comment already
+  documents it failing as a method RECEIVER (a compile-time marker,
+  not a properly-typed runtime bool instance). Instead: narrowed via
+  `isinstance(subject, bool)`, then (nested in that branch) simply
+  "is `subject` truthy" / "is it falsy" -- once narrowed to `bool`,
+  identity and truthiness coincide, sidestepping the sentinel
+  entirely. (A same-shaped `__pyc_is_bool__()` virtual-dispatch
+  alternative was tried first, adding a new `object`/`bool`-overridden
+  method mirroring `__null__`'s existing pattern -- reverted: it
+  failed differently, confirmed via a minimal non-match/case repro
+  that calling a BRAND NEW, non-primitive-registered method directly
+  on an `int`-typed receiver fails outright, unrelated to match/case
+  -- `pyc_symbols.h`'s `S(...)`/`P(...)` dunder registry looks
+  load-bearing for which methods are dispatchable on "primitive"
+  types, and adding to it was out of scope here.)
+
+  `None`: see "Known limitation" below -- the identity check itself
+  (`isinstance(subject, sym_nil_type)`, matching the pre-existing
+  `x is None` expression lowering) works fine in isolation, but
+  triggers a deeper bug when combined with most other patterns.
+
+  Verified byte-identical to `python3` on both backends: `True`/
+  `False` mixed with int/string fallback subjects
+  (`tests/match_literal_types.py`); `None` combined with a wildcard
+  fallback across None/int/string/list subjects
+  (`tests/match_none.py`).
+- **Mixed-literal-type patterns** (`case 5: ... case "hi": ...` in
+  one match) — **FIXED 2026-07-12**, found while testing the above.
+  The EXISTING literal-pattern fallback (predates this round of
+  fixes) compared unconditionally via `__eq__`, which -- exactly
+  like sequence/mapping/class patterns before their own
+  `guarded_bool` fixes -- has to type-check against the subject's
+  FULL static union across every OTHER arm in the same match. A
+  match combining `case 5:` and `case "hi":` crashed the underlying
+  C compiler (`comparison between pointer and integer` /
+  `no matching function for call to _CG_str_eq`) once the subject
+  was polymorphic enough to include both int- and string-typed
+  arms. Fixed the same way: literal number/string patterns are now
+  narrowed via `isinstance(subject, int/float/str)` before the
+  `__eq__` comparison (int vs. float distinguished by the same
+  '.'/'e'/'E'/'j' text scan `make_num_pyda` already uses to build
+  the literal's own value, factored into `number_pattern_is_float`).
+  Patterns this can't classify (dotted value patterns like
+  `Color.RED`) keep the old unconditional form -- narrower coverage
+  than before for that one sub-case, but no worse than the
+  pre-existing behavior. Verified via `tests/match_literal_types.py`
+  and the broader `tests/match_class.py`/`match_map.py` combination
+  coverage.
+
+## Known limitation: `case None:` combined with most other patterns
+
+`case None:` may only be combined with a wildcard (`case _:`) and/or
+other `case None:` arms in the same match statement. Combined with
+ANYTHING else -- a capture (`case x:`), a literal, `True`/`False`,
+or a sequence/mapping/class pattern -- compiled code crashes at
+runtime with `Assertion '!"runtime error: matching function not
+found"'`. `build_match_pyda` detects this combination (via
+`pattern_contains_none` / `pattern_is_risky_with_none`, scanning
+every case pattern in the match) and refuses to compile it, with a
+message pointing at the workaround (split into a separate match
+statement, or use a guard: `case x if x is None:`).
+
+**Same crash signature as
+[026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)**
+(`Assertion '!"runtime error: matching function not found"'`,
+identical wording, from the same `cg.cc` `emit_send_call` fallback)
+-- filed independently before this investigation, with its own
+hypothesis: classtag dispatch only builds a branch per class that
+has its OWN override of the called method, and a class relying
+purely on an INHERITED implementation gets no branch at all.
+`__pyc_None_type__` very plausibly doesn't own-override some method
+the match/case-generated dispatch chain ends up needing once a
+second narrowing/binding branch follows it for the same subject --
+consistent with every behavior observed below. Not confirmed (issue
+026's own root cause isn't confirmed either, per its "hypothesis,
+not yet root-caused" heading), but similar enough that this is
+almost certainly the SAME bug wearing a different repro, not a
+second independent one -- worth checking first if either gets
+picked up.
+
+This was investigated in real depth, not just noticed and shelved.
+Confirmed:
+- The crash is NOT specific to which mechanism `case None:`'s own
+  check uses -- three different lowerings were tried (a
+  `subject.__null__()` method dispatch; the ordinary-call
+  `isinstance(subject, sym_nil_type)` form every other pattern kind
+  here uses; the raw `prim_isinstance` primitive send, the EXACT
+  form the pre-existing `x is None` expression lowering already uses
+  successfully) -- all three fail identically once combined with
+  another reachable case.
+- The crash is NOT specific to isinstance-narrowed patterns
+  specifically -- `case None: / case x:` (a plain CAPTURE fallback,
+  no narrowing at all) crashes too, at the point `x`'s binding MOVE
+  runs.
+- The crash IS specific to whether the OTHER case does anything
+  besides an unconditional no-op match -- `case None: / case _:`
+  (wildcard, no binding) compiles and runs correctly regardless of
+  how many distinct runtime types the subject spans.
+- A plain (non-match/case) `if val is None: ... elif isinstance(val,
+  int): ...` compiles and runs correctly -- so this isn't a general
+  "None-typed union member" limitation in pyc, it's specific to
+  something about the CHAIN of nested `if1_if`s `build_match_pyda`
+  generates for a multi-arm match statement.
+
+This points at a genuine FA/codegen clone-generation gap (failing to
+generate a specialized clone for one of the union's actually-
+reachable runtime types once a None-narrowing branch precedes
+another narrowing-or-binding branch for the same subject in one
+function) rather than anything fixable from this file's lowering
+code. Worth a dedicated `ifa/issues/` entry if pursued further --
+not filed as of this writing, since the compile-time refusal here
+keeps it from being a correctness hazard in the meantime.
 
 ## Effort estimate per piece
 
@@ -299,24 +505,43 @@ the wildcard case already landed):
   rather than after it) took as much time as the feature itself.
   Star patterns (`case [a, *rest]:`) explicitly deferred, matching
   issue 024's extended-unpacking gap).
-- **Class / mapping patterns — large, a small compiler feature in
-  its own right** (matches the original filing's own framing).
-  Mapping patterns need key-existence + value-recursion (structurally
-  similar to what sequence patterns just landed, minus the
-  length-equality check, plus a `**rest` capture form). Class
-  patterns need real attribute binding (`Point(x=0, y=0)`'s
-  positional/keyword sub-patterns matched against `__match_args__`/
-  named attributes) — comparable in scope to (likely larger than)
-  issue 025's tuple-unpacking work, and is the one PEP 634 pattern
-  kind pyc has no adjacent precedent for at all (no existing
-  attribute-destructuring lowering to crib from, unlike sequence
-  patterns which could reuse `__getitem__`/iteration machinery
-  already built for plain unpacking).
+- **Mapping patterns — DONE** (was bundled with class patterns as
+  "large, a small compiler feature in its own right" — held on
+  size/shape: key-existence + value-recursion turned out to be a
+  direct structural echo of sequence patterns' isinstance/length/
+  element nesting, minus the length check, plus a per-key
+  `__contains__` fold. `**rest` explicitly deferred, matching
+  sequence patterns' `*rest` deferral).
+- **Class patterns — DONE, keyword-only** (positional patterns via
+  `__match_args__` deferred — see the fix description above for why:
+  no existing compile-time class-body-literal read-back to build on,
+  unlike sequence patterns' reuse of `__getitem__`/`__len__`).
+  Comparable in scope to issue 025's tuple-unpacking work as
+  estimated, though the actual mechanism (an isinstance check plus
+  N independent attribute reads) turned out simpler than
+  `__match_args__`-based positional matching would have been.
+- **`None`/`True`/`False` singleton patterns — DONE, with the
+  `None`-combination limitation described above.** Not originally
+  called out as a separate estimate line (folded into "capture
+  patterns" implicitly, since they're both bare-`PY_name` shapes) —
+  in hindsight should have been: finding that `case None:` was
+  silently swallowed by the capture-pattern branch, diagnosing why
+  `True`/`False` can't compare against the raw `sym_true`/`sym_false`
+  sentinel, and the None+isinstance-narrowing crash investigation
+  together took longer than either mapping or class patterns.
+- **Mixed-literal-type patterns — DONE**, not part of the original
+  filing at all — a latent bug in the PRE-EXISTING literal-pattern
+  fallback (predates this issue's 2026-07-12 round entirely), found
+  only because testing class/mapping patterns required combining
+  several literal types in one match statement for the first time.
 
-With capture, or-patterns, guards, and sequence patterns done,
-class/mapping patterns are the only piece left, taking `match`/
-`case` from "correct for everything except class/mapping patterns"
-(now) to full PEP 634 coverage.
+With capture, or-patterns, guards, sequence, mapping, and class
+patterns, plus singleton and mixed-literal-type patterns, all done,
+`match`/`case` covers all of PEP 634 except positional class
+patterns (`Point(0, 0)` via `__match_args__`) and the two
+star-capture forms (`case [a, *rest]:`, `case {**rest}:`) — three
+narrow, individually-scoped, explicitly-deferred gaps — plus the
+one `None`-combination runtime limitation documented above.
 
 ## Verification plan
 
@@ -338,13 +563,32 @@ class/mapping patterns are the only piece left, taking `match`/
    subjects; tuple-literal syntax; nested sequence patterns;
    or-pattern-as-element; guard-on-sequence-pattern — all on both
    backends).
+5. ~~Mapping-pattern test, executed and diffed~~ — **done**:
+   `tests/match_map.py` / `.exec.check` (1-3 key patterns, `case {}:`,
+   a guard on a mapping pattern, polymorphic fallback).
+6. ~~Class-pattern test, executed and diffed~~ — **done**:
+   `tests/match_class.py` / `.exec.check` (multiple keyword
+   attributes, a guard on a class pattern, polymorphic fallback;
+   nesting with mapping/sequence/class patterns exercised manually
+   during development, see the class-pattern fix description above).
+7. ~~Singleton (`None`/`True`/`False`) and mixed-literal-type test,
+   executed and diffed~~ — **done**: `tests/match_literal_types.py`
+   (`True`/`False` mixed with int/string/list subjects, plus
+   int/float/string literal patterns all in one match) and
+   `tests/match_none.py` (`None` combined with a wildcard fallback
+   across None/int/string/list subjects — the one combination
+   confirmed safe).
 
 ## What this unblocks
 
 Correct (not just compiling) `match`/`case` for literal + capture +
-or-pattern + guard + sequence-pattern is now landed — real Python
-code using these forms compiles and runs correctly on both
-backends. Class/mapping pattern support (currently unimplemented,
-would hit the same silent-miscompile trap or-patterns/sequence
-patterns did before their fixes) is the one remaining piece for
-full PEP 634 coverage.
+or-pattern + guard + sequence + mapping + class patterns, plus
+singleton (`None`/`True`/`False`) patterns and mixed-literal-type
+matches, is now landed — real Python code using these forms compiles
+and runs correctly on both backends. What remains: positional class
+patterns, the two star-capture forms (all three narrow and
+explicitly deferred, not silent traps -- they fail to parse or fail
+loudly at compile time), and the `case None:`-combination runtime
+limitation (also a loud compile-time refusal, not a silent trap).
+None of PEP 634's pattern KINDS are unimplemented anymore; what's
+left is refinement within kinds already landed.

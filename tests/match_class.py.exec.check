@@ -1,0 +1,6 @@
+origin
+on y-axis at 5
+diagonal: 3
+point: 3 4
+circle r= 7
+other: 42

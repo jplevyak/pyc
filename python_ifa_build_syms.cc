@@ -150,7 +150,15 @@ static void mark_store(PyDAST *n) {
 static void mark_pattern_captures(PyDAST *n) {
   if (!n) return;
   if (n->kind == PY_name) {
-    if (strcmp(n->str_val, "_") != 0) n->ctx = PY_STORE;
+    // `_` (wildcard) and `None`/`True`/`False` (PEP 634 singleton
+    // patterns, matched by identity -- see build_pattern_match's
+    // literal-pattern handling) are excluded: they parse as bare
+    // PY_name too (ordinary global constants in this grammar, not
+    // keywords), but must stay ordinary reads, not become a fresh
+    // local binding.
+    if (strcmp(n->str_val, "_") != 0 && strcmp(n->str_val, "None") != 0 && strcmp(n->str_val, "True") != 0 &&
+        strcmp(n->str_val, "False") != 0)
+      n->ctx = PY_STORE;
     return;
   }
   if (n->kind == PY_binop && n->op == PY_OP_BITOR) {
@@ -164,6 +172,35 @@ static void mark_pattern_captures(PyDAST *n) {
   }
   if (n->kind == PY_list || n->kind == PY_tuple) {
     for (auto c : n->children.values()) mark_pattern_captures(c);
+    return;
+  }
+  if (n->kind == PY_dict) {
+    // Mapping pattern (`{"k": v, ...}`, python.g's flat PY_dict shape:
+    // children alternate key/value). Only the VALUE side is a
+    // sub-pattern that can bind -- the key side is an ordinary value
+    // expression (a literal or a value pattern like `Color.RED`),
+    // deliberately left untouched here so it falls through to the
+    // generic recurse below as a normal read, same as any other
+    // expression position.
+    for (int i = 0; i + 1 < n->children.n; i += 2) mark_pattern_captures(n->children[i + 1]);
+    return;
+  }
+  if (n->kind == PY_power && n->children.n == 2 && n->children[1]->kind == PY_call) {
+    // Class pattern (`ClassName(attr=pat, ...)`, parsed as an ordinary
+    // constructor-call-shaped PY_power/PY_call by build_pattern_match).
+    // Only keyword sub-patterns' VALUES can bind -- the class name and
+    // the keyword names themselves (`attr` in `attr=pat`) are left
+    // untouched, same rationale as PY_dict's keys above: they fall
+    // through to the generic recurse as ordinary reads, exactly like
+    // an ordinary call's keyword-argument names already do (ordinary
+    // `foo(x=1)` calls resolve `x` the same harmless way -- see
+    // tests/keyword_args.py).
+    PyDAST *call = n->children[1];
+    if (call->children.n > 0) {
+      PyDAST *arglist = call->children[0];
+      for (auto arg : arglist->children.values())
+        if (arg->kind == PY_keyword_arg) mark_pattern_captures(arg->children[1]);
+    }
     return;
   }
   // Literal pattern (number/string/etc.): nothing to bind.

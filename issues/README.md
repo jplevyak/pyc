@@ -67,22 +67,30 @@ conventions are the same; the only difference is location.
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
 - [023-structural-pattern-matching.md](023-structural-pattern-matching.md)
-  — `match`/`case` further along than originally filed: literal,
-  wildcard, capture (`case x:`), or-patterns (`case 1 | 2:`), guards
-  (`case x if cond:`), and now sequence patterns (`case [a, b]:`,
-  `case (1, x):`, including nested and or-pattern elements) all work
-  (**fixed 2026-07-12**), verified against real `python3` output on
-  both backends. Or-patterns had been a **silent miscompile**
-  (evaluated as bitwise-OR then compared, no error at all); guards
-  were an unparseable syntax error (no grammar rule). Sequence
-  patterns needed a recursive-matcher rewrite and surfaced two
-  general lessons: FA type-checks the whole program statically, so
-  `__len__`/`__getitem__` calls need genuine nested `if1_if` control
-  flow (not a flat boolean fold) to narrow the subject's type within
-  a branch; and a guard must be evaluated *inside* that same nesting
-  (not appended afterward) or it can read bindings FA can't prove
-  are live. Class/mapping patterns (`case Point(x=0, y=0):`,
-  `case {"k": v}:`) remain — full PEP 634 coverage's last piece.
+  — `match`/`case` now covers every PEP 634 pattern KIND: literal,
+  wildcard, capture, or-patterns, guards, sequence, mapping, class,
+  and `None`/`True`/`False` singleton patterns all work (**fixed
+  2026-07-12**), verified against real `python3` output on both
+  backends. Or-patterns and class patterns had both been **silent
+  miscompiles** (parsed as an ordinary expression/constructor call
+  and compared via `__eq__`, no error at all); so had `None`/`True`/
+  `False` (silently caught by the capture-pattern branch, matching
+  unconditionally regardless of the subject's actual value) and
+  mixed-literal-type matches (`case 5: ... case "hi":` crashed the
+  underlying C compiler). Sequence/mapping/class patterns share one
+  lesson: FA type-checks the whole program statically, so a
+  structural check's element/attribute access needs genuine nested
+  `if1_if` control flow (not a flat boolean fold) to narrow the
+  subject's type within a branch, and a guard must be evaluated
+  *inside* that same nesting, not appended afterward. **One
+  remaining limitation**: `case None:` combined with almost any
+  OTHER pattern in the same match crashes at runtime (`"matching
+  function not found"`) — likely the same root cause as
+  [026](026-polymorphic-method-dispatch-partial-override-crash.md);
+  `build_match_pyda` refuses the combination at compile time rather
+  than risk shipping it. Positional class patterns
+  (`Point(0, 0)`) and `*rest`/`**rest` captures remain explicitly
+  deferred (fail to parse or fail loudly, not silent traps).
 - [026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)
   — Polymorphic method dispatch over a union where at least one
   class doesn't override the called method (relies purely on
