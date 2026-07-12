@@ -883,6 +883,20 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     // Support wildcard `case _:` as default
     if (case_cond->kind == PY_name && !strcmp(case_cond->str_val, "_")) {
       if1_gen(if1, &case_chain, case_then);
+    } else if (case_cond->kind == PY_name) {
+      // Capture pattern (PEP 634): a bare, non-wildcard NAME always
+      // matches (irrefutable) and binds the subject's value to it.
+      // build_syms_pyda's PY_case_block handling already marked this
+      // node PY_STORE, so getAST(case_cond)->sym is a freshly created
+      // PYC_LOCAL rather than an existing binding -- move the subject
+      // into it before running the case body, same shape as a plain
+      // `x = subject` assignment (see emit_assign_to_target's simple-
+      // name branch).
+      build_if1_pyda(case_cond, ctx);
+      PycAST *case_cond_ast = getAST(case_cond, ctx);
+      if1_gen(if1, &case_chain, case_cond_ast->code);
+      if1_move(if1, &case_chain, subject_ast->rval, case_cond_ast->sym, case_ast);
+      if1_gen(if1, &case_chain, case_then);
     } else {
       build_if1_pyda(case_cond, ctx);
       PycAST *case_cond_ast = getAST(case_cond, ctx);

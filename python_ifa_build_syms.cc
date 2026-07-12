@@ -766,7 +766,33 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_with_stmt:
     case PY_with_item:
     case PY_match_stmt:
-    case PY_case_block:
+      goto generic_recurse;
+
+    case PY_case_block: {
+      // children[1] is the case pattern (python.g: `case_block:
+      // CASE_KW test ':' suite` -- children[0] is the CASE_KW
+      // marker node build_match_pyda's own indexing dance already
+      // has to account for). A bare, non-wildcard NAME in pattern
+      // position is a PEP 634 capture pattern: it always matches
+      // and binds the subject to a NEW local of that name (shadows
+      // any same-named outer binding -- capture patterns never
+      // compare against an existing value, only dotted/attribute
+      // patterns like `Color.RED` do that, and those aren't
+      // implemented yet either). Mark it PY_STORE, the same way
+      // assignment targets and `for` loop variables are marked
+      // (mark_store, above), so build_syms_pyda's own PY_name case
+      // creates a fresh PYC_LOCAL instead of failing to resolve an
+      // undefined USE. Wildcard `_` intentionally left alone (no
+      // binding) -- build_match_pyda already special-cases it.
+      if (n->children.n > 1) {
+        PyDAST *pattern = n->children[1];
+        if (pattern && pattern->kind == PY_name && strcmp(pattern->str_val, "_") != 0)
+          mark_store(pattern);
+      }
+      goto generic_recurse;
+    }
+
+    generic_recurse:
     case PY_bool_or:
     case PY_bool_and:
     case PY_bool_not:

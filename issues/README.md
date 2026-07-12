@@ -67,14 +67,14 @@ conventions are the same; the only difference is location.
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
 - [023-structural-pattern-matching.md](023-structural-pattern-matching.md)
-  — `match`/`case` further along than originally filed: literal
-  patterns and wildcard work. Capture patterns (`case x:`) hard
-  fail to compile; or-patterns (`case 1 | 2:`) **silently
-  miscompile** (evaluated as bitwise-OR then compared, no error at
-  all) — the same trap class/sequence/mapping patterns would hit
-  too. Guards fail to parse (no grammar rule). Capture is the
-  in-progress fix (small, highest-value); class patterns remain a
-  separate large undertaking.
+  — `match`/`case` further along than originally filed: literal,
+  wildcard, and (**fixed 2026-07-12**) capture patterns
+  (`case x:`) all work, verified against real `python3` output.
+  Remaining: or-patterns (`case 1 | 2:`) **silently miscompile**
+  (evaluated as bitwise-OR then compared, no error at all) — the
+  same trap class/sequence/mapping patterns would hit too. Guards
+  fail to parse (no grammar rule). Class patterns remain a separate
+  large undertaking.
 - [026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)
   — Polymorphic method dispatch over a union where at least one
   class doesn't override the called method (relies purely on

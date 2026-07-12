@@ -1,7 +1,8 @@
 # Issue 023: Structural pattern matching (`match`/`case`, PEP 634)
 
-**Status:** open, partial — further along than this doc previously
-said, but with an active silent-miscompile bug (see below).
+**Status:** open, partial. **Capture patterns fixed 2026-07-12**
+(commit — see below); or-patterns' silent miscompile, guards, and
+class/sequence/mapping patterns remain.
 **Affects:** `python.g` (grammar), `python_ifa_build_syms.cc`
 (`PY_case_block` symbol building), `python_ifa_build_if1.cc`
 (`build_match_pyda`, lowering).
@@ -22,27 +23,46 @@ compiling each shape and diffing against `python3`'s real output
   (literal + wildcard only) and passes.
 - **Wildcard** (`case _:`) — **working**.
 - **Capture patterns** (`case x:`, PEP 634's most common
-  form — bind the subject to a new name) — **broken, hard compile
-  error**. `build_syms_pyda`'s `PY_case_block` case
-  (`python_ifa_build_syms.cc:768-769`) falls into the generic
-  "recurse all children as expression reads" bucket alongside
-  `PY_if_stmt`/`PY_with_stmt`/etc. — it never treats a case
-  pattern's bare name as a new binding the way an assignment target
-  or a `for` loop variable is treated. `build_match_pyda` only
-  special-cases the literal wildcard `_`
-  (`case_cond->kind == PY_name && !strcmp(case_cond->str_val, "_")`);
-  any other bare name falls through to the "evaluate as an
-  expression, compare via `__eq__`" path. Repro:
-  ```python
-  def test_match(val):
-      match val:
-          case 1:
-              print("one")
-          case x:
-              print("other:", x)
-  ```
-  fails to compile: `x` never gets a type ("expression has no
-  type"), and codegen dies with `use of undeclared label`.
+  form — bind the subject to a new name) — **FIXED 2026-07-12**.
+  Was broken with a hard compile error: `build_syms_pyda`'s
+  `PY_case_block` case (`python_ifa_build_syms.cc:768-769`) fell
+  into the generic "recurse all children as expression reads"
+  bucket alongside `PY_if_stmt`/`PY_with_stmt`/etc. — it never
+  treated a case pattern's bare name as a new binding the way an
+  assignment target or a `for` loop variable is treated, and
+  `build_match_pyda` only special-cased the literal wildcard `_`;
+  any other bare name fell through to "evaluate as an expression,
+  compare via `__eq__`," failing on the undefined reference.
+
+  Fix, mirroring the existing assignment-target/for-loop pattern
+  exactly: `PY_case_block` is now split out of the generic-recurse
+  bucket in `build_syms_pyda` — a bare, non-wildcard `PY_name` in
+  pattern position gets `mark_store`'d (same helper assignment
+  targets use), so it becomes a fresh `PYC_LOCAL` instead of an
+  unresolved use. `build_match_pyda` gained a second branch
+  (alongside the existing wildcard one): a bare-name pattern always
+  matches (irrefutable) and, before running the case body, moves
+  the subject's value into the newly bound local — the same shape
+  as a plain `x = subject` assignment
+  (`emit_assign_to_target`'s simple-name branch). Verified
+  byte-identical to `python3` (`tests/match_capture.py` /
+  `.exec.check`, executed and diffed, not just compile-checked, on
+  both backends); full suite 180/0 (179 + the new test), no
+  regressions.
+
+  **Known caveat, NOT fixed here, pre-existing and general (not
+  match/case-specific)**: pyc has no runtime check for reading an
+  uninitialized local. `case 1: ...; case x: print(x)` correctly
+  scopes `x` as function-local (matching Python's "assigned anywhere
+  in the function ⇒ local everywhere" rule — confirmed the fixed
+  capture pattern does NOT fall back to a same-named outer/global on
+  the branches where it isn't itself taken), but reading `x` on a
+  path where it was never actually assigned reads garbage stack
+  memory instead of erroring (real Python raises
+  `UnboundLocalError`). Reproduces identically with a plain
+  `if cond: y = 5` / `print(y)` — nothing to do with `match`/`case`,
+  a gap in pyc's whole local-variable model. Not filed as its own
+  issue yet.
 - **Or-patterns** (`case 1 | 2:`) — **broken, SILENT miscompile,
   no error at all**. Because `case_block: CASE_KW test ':' suite`
   parses the pattern as a generic expression, `1 | 2` parses as
@@ -78,13 +98,8 @@ Sizing based on the codebase's own precedent for similar binding /
 lowering additions (assignment-target destructuring in issue 025,
 the wildcard case already landed):
 
-- **Capture patterns — small, roughly one sitting.** One more case
-  in two existing dispatch functions (`build_syms_pyda`'s
-  `PY_case_block`, `build_match_pyda`), following the same
-  "bare name = new local binding" pattern the codebase already uses
-  for assignment targets and `for` loop variables. Highest-value
-  fix: it's the single most common match/case form and the first
-  thing anyone writing straightforward match code hits.
+- **Capture patterns — DONE** (was estimated small/one-sitting;
+  held, see fix description above).
 - **Or-patterns — small-medium.** `build_match_pyda` needs to
   recognize a `PY_binop` with `|` in pattern position and chain
   multiple `__eq__` checks (`subject == 1 or subject == 2`) instead
@@ -100,22 +115,24 @@ the wildcard case already landed):
   equality check — comparable in scope to (likely larger than)
   issue 025's tuple-unpacking work.
 
-Doing capture + guards + or-patterns together is roughly a day's
-focused work and would take `match`/`case` from "silently wrong for
-common cases" to "correct for everything except class patterns."
-Class patterns remain a genuinely separate, large undertaking.
+With capture patterns done, guards + or-patterns together are
+roughly what's left of the day's-focused-work estimate, and would
+take `match`/`case` from "silently wrong for some common cases" to
+"correct for everything except class patterns." Class patterns
+remain a genuinely separate, large undertaking.
 
 ## Verification plan
 
-1. ~~match/case: minimal literal+capture pattern test~~ — literal
-   covered by `tests/match_basic.py`; capture still needs a test
-   once fixed (below).
-2. For each pattern kind fixed, add a test file that **executes**
-   and is checked against real Python's output (`.exec.check` or
-   equivalent), not just a compile-only test — the or-pattern bug
-   above is exactly the kind of thing a compile-only test would
-   have missed, and this doc only found it by diffing runtime
-   output against `python3`.
+1. ~~match/case: minimal literal+capture pattern test~~ — **done**:
+   `tests/match_capture.py` / `.exec.check`, executed (not just
+   compile-checked) and diffed against real `python3` output on
+   both backends.
+2. For each remaining pattern kind fixed, add a test file that
+   **executes** and is checked against real Python's output
+   (`.exec.check` or equivalent), not just a compile-only test — the
+   or-pattern bug above is exactly the kind of thing a compile-only
+   test would have missed, and this doc only found it by diffing
+   runtime output against `python3`.
 3. Once guards land, verify guard + capture interact correctly
    (`case x if x > 10:` — `x` must be bound before the guard
    condition evaluates).
