@@ -2,7 +2,7 @@
 #
 # Runs on every push and pull request:
 # - Build pyc with USE_LLVM=1 so both backends are compiled in.
-# - Standard test suite (make test → ./ifa --test + IR fixtures + ./test_pyc).
+# - Standard test suite (make test → ./ifa --test + IR fixtures + ./test_pyc.py).
 # - `make test_llvm` — the V-language LLVM backend smoke test.
 # - LLVM-backend pyc e2e via the PYC_FLAGS hook: floors the pass
 #   count at the current baseline (see step comment).
@@ -78,7 +78,7 @@ jobs:
 
       - name: Unit tests + IR fixtures + e2e (make test)
         # `make test` chains test-unit (./ifa --test), test-ir, and
-        # test-e2e (./test_pyc). The C backend is the default and
+        # test-e2e (./test_pyc.py). The C backend is the default and
         # the production path; this step is the primary gate.
         run: make test
 
@@ -89,9 +89,9 @@ jobs:
         # starts failing again, that's the first place to look.
         run: make -C ifa test_llvm
 
-      - name: LLVM-backend pyc e2e (PYC_FLAGS=-b ./test_pyc)
+      - name: LLVM-backend pyc e2e (PYC_FLAGS=-b ./test_pyc.py)
         # PYC_FLAGS=-b prepends `-b` (the LLVM backend selector) to
-        # every pyc invocation inside test_pyc. The LLVM backend
+        # every pyc invocation inside test_pyc.py. The LLVM backend
         # doesn't yet handle method dispatch through closures
         # (phase 3.5 of ifa/codegen/CODEGEN_PLAN.md), so most pyc
         # tests fail to compile. Rather than gate CI on parity that
@@ -103,7 +103,7 @@ jobs:
         run: |
           LLVM_BASELINE_PASS=37
           set -o pipefail
-          PYC_FLAGS=-b ./test_pyc 2>&1 | tee /tmp/llvm_e2e.log | tail -20 || true
+          PYC_FLAGS=-b ./test_pyc.py 2>&1 | tee /tmp/llvm_e2e.log | tail -20 || true
           passed=$(grep -E '^  passed' /tmp/llvm_e2e.log | awk '{print $2}')
           echo "LLVM-backend pyc e2e: passed=${passed} (baseline=${LLVM_BASELINE_PASS})"
           if [ -z "$passed" ]; then
