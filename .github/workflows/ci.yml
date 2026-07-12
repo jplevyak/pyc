@@ -27,6 +27,25 @@ jobs:
       # picks it up automatically. The C backend remains the
       # default at runtime.
       USE_LLVM: 1
+      # Ubuntu 24.04's unversioned `clang`/`llvm`/`llvm-config`
+      # packages resolve to LLVM 18, whose C++20 coroutine ABI
+      # (llvm.coro.end's exact intrinsic surface, in particular)
+      # differs enough from what the LLVM backend targets that async
+      # tests fail to compile under it. Pin the whole job to LLVM 20
+      # (a real stable release, not apt.llvm.org's unstable trunk
+      # snapshots) via versioned packages + explicit compiler/
+      # llvm-config env vars, rather than relying on whatever
+      # `clang`/`llvm-config` happen to resolve to by default.
+      CC: clang-20
+      CXX: clang++-20
+      LLVM_CONFIG: /usr/bin/llvm-config-20
+      # PYC_LLVM_CXX: the LLVM backend's own compiler invocation (used
+      # at pyc *runtime* to turn its emitted .ll into an object file/
+      # executable, separate from the CXX above which builds pyc
+      # itself) -- must match CXX/LLVM_CONFIG or the coroutine IR pyc
+      # emits (matching LLVM 20's intrinsic signatures) gets fed to a
+      # differently-versioned clang++ and fails the same way.
+      PYC_LLVM_CXX: clang++-20
 
     steps:
       - name: Checkout pyc
@@ -34,17 +53,17 @@ jobs:
 
       - name: Install system packages
         run: |
-          # Both Makefiles discover LLVM via `llvm-config`. The `llvm`
-          # meta-package installs the `/usr/bin/llvm-config` symlink
-          # that points at the distro's default LLVM version; `llvm-dev`
-          # ships the headers and `libLLVM*` archives. `clang` is used
-          # both to compile pyc and to compile pyc's emitted code.
+          # Versioned clang-20/llvm-20 packages (see the job env
+          # comment above for why: the unversioned `clang`/`llvm`
+          # packages resolve to LLVM 18 on ubuntu-24.04, which the
+          # LLVM backend's coroutine codegen isn't compatible with).
+          # `llvm-20-dev` ships the headers and `libLLVM*` archives.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
-            clang \
-            llvm \
-            llvm-dev \
+            clang-20 \
+            llvm-20 \
+            llvm-20-dev \
             libgc-dev \
             libpcre3-dev \
             python3 \
@@ -63,8 +82,8 @@ jobs:
 
       - name: Print toolchain versions
         run: |
-          clang++ --version
-          llvm-config --version
+          $CXX --version
+          $LLVM_CONFIG --version
           make --version | head -1
           python3 --version
           make_dparser --help 2>&1 | head -1 || true
