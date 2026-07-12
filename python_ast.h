@@ -30,7 +30,7 @@ enum PyASTKind {
   PY_while_stmt, PY_for_stmt,
   PY_try_stmt, PY_except_clause, PY_except_handler, PY_finally_clause,
   PY_with_stmt, PY_with_item,
-  PY_match_stmt, PY_case_block,
+  PY_match_stmt, PY_case_block, PY_case_guard,
   PY_match_kw, PY_case_kw,
   // Expressions
   PY_ternary,

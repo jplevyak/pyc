@@ -68,13 +68,15 @@ conventions are the same; the only difference is location.
   method (`_keys[i] == key`) isn't specialized per key type.
 - [023-structural-pattern-matching.md](023-structural-pattern-matching.md)
   — `match`/`case` further along than originally filed: literal,
-  wildcard, capture (`case x:`), and (both **fixed 2026-07-12**)
-  or-patterns (`case 1 | 2:`) all work, verified against real
-  `python3` output on both backends. Or-patterns had been a
-  **silent miscompile** (evaluated as bitwise-OR then compared, no
-  error at all) — the same trap class/sequence/mapping patterns
-  would hit too. Remaining: guards fail to parse (no grammar rule);
-  class patterns remain a separate large undertaking.
+  wildcard, capture (`case x:`), or-patterns (`case 1 | 2:`), and
+  guards (`case x if cond:`) all work now (**fixed 2026-07-12**),
+  verified against real `python3` output on both backends.
+  Or-patterns had been a **silent miscompile** (evaluated as
+  bitwise-OR then compared, no error at all); guards were an
+  unparseable syntax error (no grammar rule). Class/sequence/
+  mapping patterns (`case Point(x=0, y=0):`, `case [a, b]:`) remain
+  a separate large undertaking — full PEP 634 coverage's last
+  piece.
 - [026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)
   — Polymorphic method dispatch over a union where at least one
   class doesn't override the called method (relies purely on

@@ -1,7 +1,8 @@
 # Issue 023: Structural pattern matching (`match`/`case`, PEP 634)
 
-**Status:** open, partial. **Capture patterns and or-patterns fixed
-2026-07-12**; guards and class/sequence/mapping patterns remain.
+**Status:** open, partial. **Capture patterns, or-patterns, and
+guards fixed 2026-07-12**; class/sequence/mapping patterns remain
+(the one genuinely large piece).
 **Affects:** `python.g` (grammar), `python_ifa_build_syms.cc`
 (`PY_case_block` symbol building), `python_ifa_build_if1.cc`
 (`build_match_pyda`, lowering).
@@ -111,9 +112,50 @@ compiling each shape and diffing against `python3`'s real output
   mixed or-pattern/capture-pattern match statements
   (`tests/match_or.py` / `.exec.check`, executed and diffed on both
   backends). Full suite 181/0 (180 + the new test), no regressions.
-- **Guards** (`case x if x > 10:`) — **unparseable, hard syntax
-  error**. `case_block`'s grammar rule has no optional `if test`
-  clause at all. At least this fails loudly and immediately.
+- **Guards** (`case x if x > 10:`) — **FIXED 2026-07-12**. Was
+  unparseable (`case_block`'s grammar rule had no optional
+  `if test` clause at all — a hard syntax error, at least a loud
+  failure rather than a silent one).
+
+  Grammar (`python.g`): added a named `case_guard: 'if' test`
+  sub-rule (mirroring `elif_clause`/`else_clause`'s existing
+  "named clause" convention) and made it optional in `case_block`:
+  `CASE_KW test case_guard? ':' suite`. New `PY_case_guard`
+  `PyASTKind` (`python_ast.h`).
+
+  Lowering (`build_match_pyda`): a guard is located by scanning
+  `case_block`'s children for a `PY_case_guard` kind
+  (`find_case_guard`) rather than by position — this codebase's
+  existing `case_block` child-indexing is already order-fragile
+  (the pre-existing `children.n == 3` / `>= 4` / else dance for
+  locating the pattern and suite), and a guard shifts child counts
+  around further; scanning by kind sidesteps needing to reason about
+  every combination. A new `eval_case_guard` helper evaluates the
+  guard's condition into a boolean Sym (or returns `nullptr` if
+  there's no guard, so every call site can treat "no guard" and
+  "guard present" uniformly). Threaded through all four pattern
+  branches:
+  - wildcard/capture (previously unconditional matches): if a guard
+    is present, wrap `case_then` in an `if1_if` gated on just the
+    guard (the pattern itself always matches, so the guard alone
+    decides) instead of the previous unconditional `if1_gen`.
+  - literal/or-pattern (already compute a match boolean): AND the
+    guard's boolean into the existing match boolean via
+    `bool.__and__` before the `if1_if`.
+
+  For the capture case specifically, the guard is evaluated *after*
+  the capture's bind — `case x if x > 10:` needs `x` bound before
+  the guard can reference it, and `build_syms_pyda`'s existing
+  generic-recurse over `case_block`'s children (which visits the
+  pattern, marked `PY_STORE`, before the guard) already gets the
+  symbol ordering right without needing its own guard-specific
+  handling.
+
+  Verified byte-identical to `python3` across guards combined with
+  every other pattern kind in one match statement — literal,
+  or-pattern, capture, and `case _ if cond:` — on both backends
+  (`tests/match_guard.py` / `.exec.check`). Full suite 182/0 (181 +
+  the new test), no regressions.
 - **Class / sequence / mapping patterns** (`case Point(x=0, y=0):`,
   `case [a, b]:`, `case {"k": v}:`) — **never attempted**. Would
   hit the identical trap as or-patterns: `Point(x=0, y=0)` parses
@@ -134,20 +176,20 @@ the wildcard case already landed):
   contained entirely to `build_match_pyda`, the actual complexity
   was the `Code*`-sharing assert rather than the pattern-flattening
   itself, see fix description above).
-- **Guards — small.** Grammar: add an optional `if test` to
-  `case_block`. Lowering: AND the guard's condition into the
-  generated `if1_if` condition alongside the pattern match.
+- **Guards — DONE** (was estimated small; held — the grammar
+  addition was as small as expected, the lowering ended up
+  touching all four pattern branches rather than one shared spot,
+  but each touch was mechanical, see fix description above).
 - **Class / sequence / mapping patterns — large, a small compiler
   feature in its own right** (matches the original filing's own
   framing). Needs real destructuring and attribute binding, not an
   equality check — comparable in scope to (likely larger than)
   issue 025's tuple-unpacking work.
 
-With capture and or-patterns done, guards is what's left of the
-day's-focused-work estimate, and would take `match`/`case` from
-"correct except for one unparseable form" to "correct for
-everything except class patterns." Class patterns remain a
-genuinely separate, large undertaking.
+With capture, or-patterns, and guards done, class/sequence/mapping
+patterns are the only piece left, taking `match`/`case` from
+"correct for everything except class patterns" (now) to full PEP
+634 coverage.
 
 ## Verification plan
 
@@ -158,20 +200,18 @@ genuinely separate, large undertaking.
 2. ~~Or-pattern test, executed and diffed~~ — **done**:
    `tests/match_or.py` / `.exec.check` (2-way, 3-way, and
    or-pattern/capture-pattern mixed in one match statement).
-3. For guards once landed, add a test file that **executes** and is
-   checked against real Python's output, not just compile-only —
-   this doc only found the or-pattern bug by diffing runtime output
-   against `python3`.
-4. Once guards land, verify guard + capture interact correctly
-   (`case x if x > 10:` — `x` must be bound before the guard
-   condition evaluates).
+3. ~~Guard test, executed and diffed~~ — **done**:
+   `tests/match_guard.py` / `.exec.check` (guards combined with
+   literal, or-pattern, capture, and wildcard patterns, including
+   `case x if x > 10:` verifying the capture-before-guard binding
+   order).
 
 ## What this unblocks
 
 Correct (not just compiling) `match`/`case` for the common literal
-+ capture + or-pattern subset is now landed — real Python code
-using these forms compiles and runs correctly on both backends.
-Guards (currently a parse error) and class/sequence/mapping pattern
-support (currently unimplemented, would hit the same silent-
-miscompile trap or-patterns did) are the remaining pieces for full
-PEP 634 coverage.
++ capture + or-pattern + guard subset is now landed — real Python
+code using these forms compiles and runs correctly on both
+backends. Class/sequence/mapping pattern support (currently
+unimplemented, would hit the same silent-miscompile trap
+or-patterns did before this round of fixes) is the one remaining
+piece for full PEP 634 coverage.

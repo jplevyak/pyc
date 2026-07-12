@@ -863,6 +863,34 @@ static void flatten_or_pattern(PyDAST *n, Vec<PyDAST *> &out) {
   }
 }
 
+// A case_block's optional guard (`case PATTERN if test:`) shows up
+// as a PY_case_guard child somewhere among CASE_KW/pattern/suite --
+// found by kind, not position, since this codebase's PyDAST child
+// indexing for case_block is already order-fragile (see the
+// children.n == 3 / >= 4 / else dance in build_match_pyda) and a
+// guard shifts child counts around further.
+static PyDAST *find_case_guard(PyDAST *case_block) {
+  for (auto c : case_block->children.values())
+    if (c && c->kind == PY_case_guard) return c;
+  return nullptr;
+}
+
+// Evaluate a case_guard's `if test` condition (python.g:
+// `case_guard: 'if' test`) into a boolean Sym, appending its code
+// to *code. Returns nullptr if there's no guard, so callers can
+// treat "no guard" and "guard present" uniformly by just checking
+// the return value.
+static Sym *eval_case_guard(PyDAST *guard, Code **code, PycAST *case_ast, PycCompiler &ctx) {
+  if (!guard || !guard->children.n) return nullptr;
+  PyDAST *cond = guard->children[guard->children.n - 1];
+  build_if1_pyda(cond, ctx);
+  PycAST *cond_ast = getAST(cond, ctx);
+  if1_gen(if1, code, cond_ast->code);
+  Sym *guard_bool = new_sym(case_ast);
+  call_method(code, case_ast, cond_ast->rval, sym___pyc_to_bool__, guard_bool, 0);
+  return guard_bool;
+}
+
 // Helper: build if-else chain for PY_match_stmt
 static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // children[0] = MATCH_KW, children[1] = subject (test), children[2..N-1] = case_blocks
@@ -891,10 +919,20 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       case_suite = case_block->children[1];
     }
     build_if1_suite_pyda(case_suite, &case_then, ctx);
-    
+    PyDAST *guard = find_case_guard(case_block);
+
     // Support wildcard `case _:` as default
     if (case_cond->kind == PY_name && !strcmp(case_cond->str_val, "_")) {
-      if1_gen(if1, &case_chain, case_then);
+      Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx);
+      if (!guard_bool) {
+        if1_gen(if1, &case_chain, case_then);
+      } else {
+        // `case _ if guard:` -- the pattern itself always matches,
+        // so the guard alone decides; unlike a bare `case _:`, this
+        // is refutable and falls through to `chain` when the guard
+        // is false.
+        if1_if(if1, &case_chain, 0, guard_bool, case_then, 0, chain, 0, 0, case_ast);
+      }
     } else if (case_cond->kind == PY_name) {
       // Capture pattern (PEP 634): a bare, non-wildcard NAME always
       // matches (irrefutable) and binds the subject's value to it.
@@ -903,12 +941,19 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       // PYC_LOCAL rather than an existing binding -- move the subject
       // into it before running the case body, same shape as a plain
       // `x = subject` assignment (see emit_assign_to_target's simple-
-      // name branch).
+      // name branch). The guard (if any) is evaluated AFTER the
+      // binding -- `case x if x > 10:` needs `x` bound before the
+      // guard can reference it.
       build_if1_pyda(case_cond, ctx);
       PycAST *case_cond_ast = getAST(case_cond, ctx);
       if1_gen(if1, &case_chain, case_cond_ast->code);
       if1_move(if1, &case_chain, subject_ast->rval, case_cond_ast->sym, case_ast);
-      if1_gen(if1, &case_chain, case_then);
+      Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx);
+      if (!guard_bool) {
+        if1_gen(if1, &case_chain, case_then);
+      } else {
+        if1_if(if1, &case_chain, 0, guard_bool, case_then, 0, chain, 0, 0, case_ast);
+      }
     } else if (case_cond->kind == PY_binop && case_cond->op == PY_OP_BITOR) {
       // Or-pattern (PEP 634): `case 1 | 2 | 3:` matches if the
       // subject equals ANY alternative. Without this, the pattern
@@ -956,6 +1001,14 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
           combined = next_combined;
         }
       }
+      // Guard (if any): AND it into the pattern's own match result --
+      // `case 1 | 2 if cond:` only matches when both the pattern AND
+      // the guard hold.
+      if (Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx)) {
+        Sym *anded = new_sym(case_ast);
+        call_method(&case_chain, case_ast, combined, make_symbol("__and__"), anded, 1, guard_bool);
+        combined = anded;
+      }
       if1_if(if1, &case_chain, 0, combined, case_then, 0, chain, 0, 0, case_ast);
     } else {
       build_if1_pyda(case_cond, ctx);
@@ -967,6 +1020,13 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       call_method(&case_chain, case_ast, subject_ast->rval, sym___eq__, cmp_result, 1, case_cond_ast->rval);
       call_method(&case_chain, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
 
+      // Guard (if any): AND it into the literal's own match result --
+      // `case 1 if cond:` only matches when both hold.
+      if (Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx)) {
+        Sym *anded = new_sym(case_ast);
+        call_method(&case_chain, case_ast, bool_result, make_symbol("__and__"), anded, 1, guard_bool);
+        bool_result = anded;
+      }
       if1_if(if1, &case_chain, 0, bool_result, case_then, 0, chain, 0, 0, case_ast);
     }
     chain = case_chain;

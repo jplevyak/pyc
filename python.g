@@ -198,7 +198,11 @@ match_stmt: MATCH_KW test ':' NL INDENT case_block+ DEDENT {
   $$.ast = new_pyast_collect(PY_match_stmt, &$n);
 };
 
-case_block: CASE_KW test ':' suite {
+case_guard: 'if' test {
+  $$.ast = new_pyast_collect(PY_case_guard, &$n);
+};
+
+case_block: CASE_KW test case_guard? ':' suite {
   $$.ast = new_pyast_collect(PY_case_block, &$n);
 };
 
