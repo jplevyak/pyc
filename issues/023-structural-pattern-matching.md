@@ -1,8 +1,8 @@
 # Issue 023: Structural pattern matching (`match`/`case`, PEP 634)
 
-**Status:** open, partial. **Capture patterns, or-patterns, and
-guards fixed 2026-07-12**; class/sequence/mapping patterns remain
-(the one genuinely large piece).
+**Status:** open, partial. **Capture patterns, or-patterns, guards,
+and sequence patterns fixed 2026-07-12**; class/mapping patterns
+remain.
 **Affects:** `python.g` (grammar), `python_ifa_build_syms.cc`
 (`PY_case_block` symbol building), `python_ifa_build_if1.cc`
 (`build_match_pyda`, lowering).
@@ -156,13 +156,122 @@ compiling each shape and diffing against `python3`'s real output
   or-pattern, capture, and `case _ if cond:` — on both backends
   (`tests/match_guard.py` / `.exec.check`). Full suite 182/0 (181 +
   the new test), no regressions.
-- **Class / sequence / mapping patterns** (`case Point(x=0, y=0):`,
-  `case [a, b]:`, `case {"k": v}:`) — **never attempted**. Would
-  hit the identical trap as or-patterns: `Point(x=0, y=0)` parses
-  as an ordinary constructor call, constructs a real `Point`
+- **Sequence patterns** (`case [a, b]:`, `case (1, x):`) —
+  **FIXED 2026-07-12**. Previously unimplemented: `[a, b]` parsed
+  as an ordinary list-literal expression and got compared via
+  `__eq__` against the subject — wrong semantics (a list literal
+  containing unbound names `a`/`b` would have failed to even
+  compile), same trap class as the or-pattern and class/mapping
+  bugs.
+
+  This landed alongside a structural rewrite of the matcher: the
+  previous `build_match_pyda` had one flat, non-recursive dispatch
+  (wildcard / capture / or-pattern / literal, each a top-level `if`
+  in the function) with a matching flat boolean-AND-fold for
+  combining sub-results. Sequence patterns need real recursion —
+  each element is itself an arbitrary pattern, including another
+  sequence pattern — so the dispatch moved into a new
+  `build_pattern_match(pattern, subject, code, case_ast, ctx,
+  guard_eval=nullptr) -> Sym*` that calls itself for: or-pattern
+  alternatives, and (new) sequence-pattern elements.
+  `build_match_pyda` is now a thin per-case-block driver that calls
+  `build_pattern_match` once per case and wires the returned
+  boolean into an `if1_if`/chain, same shape as before.
+
+  Sequence-pattern matching itself
+  (`build_pattern_match`'s `PY_list`/`PY_tuple` branch): `isinstance(subject,
+  list) or isinstance(subject, tuple)` (PEP 634 explicitly excludes
+  str/bytes even though they support `__len__`/`__getitem__` too —
+  `case [a, b]:` must not match `"hi"`), then `len(subject) ==
+  n_elts`, then a recursive `build_pattern_match` call per element
+  against `subject[j]`, AND-folded together. Star patterns
+  (`case [a, *rest]:`) are not supported yet — same underlying
+  grammar gap as issue 024's extended-unpacking assignment targets
+  — deferred as a follow-on.
+
+  Symbol-table side (`python_ifa_build_syms.cc`): a new
+  `mark_pattern_captures` walks the SAME pattern-tree shape
+  `build_pattern_match` recurses over (wildcard exclusion,
+  or-pattern alternatives, sequence-pattern elements) and
+  `mark_store`s every bare-name capture it finds, replacing the
+  existing (capture-only) handling in `PY_case_block`'s
+  `build_syms_pyda` case. Needed its own function rather than
+  reusing `mark_store` directly because `mark_store` doesn't
+  recurse into `PY_list` (only `PY_tuple`/`testlist`/`exprlist`/
+  `fpdef`/`fplist`), so `case [a, b]:`'s list-syntax elements
+  wouldn't have gotten bound by the existing helper.
+
+  **Two real bugs found and fixed while landing this, both
+  general lessons beyond match/case:**
+
+  1. **FA type-checks the whole program statically, not per-runtime-
+     branch.** The first working version emitted
+     `subject.__len__()`/`subject.__getitem__(j)`
+     *unconditionally* (only their boolean *results* were
+     AND-folded into the overall match boolean) — this compiled
+     and ran correctly for a subject that was always a list, but a
+     polymorphic call site (`match val: case [a, b]: ... case x:
+     ...` called with both a list and an int) failed with
+     "expression has no type": FA has to type-check `__len__`/
+     `__getitem__` against `subject`'s *full static union type*
+     (`list | int`) across the whole program, not just within the
+     runtime branch where the type actually matched, and `int`
+     doesn't implement those methods. Fixed with a new
+     `guarded_bool(cond, code, case_ast, build_then)` helper that
+     builds *genuine nested* `if1_if` control flow (as opposed to a
+     flat boolean AND-fold) so FA's existing isinstance-narrowing
+     logic can narrow `subject`'s static type *within* the "then"
+     branch before type-checking the length/element-access calls
+     against it. Sequence-pattern matching now nests two levels of
+     `guarded_bool`: outer gated on the isinstance check, inner
+     gated on the length check, elements matched (recursively)
+     inside the inner one.
+  2. **Guards evaluated outside a pattern's own nested control flow
+     can read bindings that only conditionally exist.** Found via
+     `case [a, b] if a > b:`: the guard's `a > b` failed to
+     type-check (`unresolved call '__gt__'`, "'a' has no type")
+     because the previous design evaluated every case's guard
+     *after* `build_pattern_match` returned, in the flat outer code
+     stream — but `a`/`b`'s bindings now only happen *inside* the
+     nested `guarded_bool` "then" branches added for bug 1 above
+     (only reached once isinstance+length checks already passed).
+     Reading them from outside that nesting is exactly the
+     "reference a binding FA can't prove is live on this path"
+     problem, just surfacing as a hard type error here instead of
+     silently reading garbage (contrast with issue 039's
+     uninitialized-read case, where the same class of gap produces
+     UB instead of a diagnostic). Fixed by threading the guard down
+     *into* `build_pattern_match` as an optional callback
+     (`guard_eval`), invoked by each pattern kind at the exact point
+     its own match — and any bindings it made — are established:
+     for capture/literal/or-patterns (flat, unconditional bindings)
+     this coincides with "right after `build_pattern_match`
+     returns," same as before; for sequence patterns it's now
+     *inside* the innermost `guarded_bool` "then" branch, evaluated
+     exactly once, only along the path where the pattern already
+     matched — which also fixed a latent double-evaluation-adjacent
+     correctness issue: the guard is now only evaluated when the
+     pattern structurally matched, matching real Python's short-
+     circuit semantics, rather than always running regardless of
+     match outcome.
+
+  Verified byte-identical to `python3`, on both backends, for: flat
+  sequence patterns (`case [a, b]:`, `case [a, b, c]:`, `case []:`)
+  mixed with a polymorphic capture fallback (list/int/str subjects
+  — confirming str is correctly excluded); tuple-literal pattern
+  syntax (`case (1, x):`); nested sequence patterns (`case [[a, b],
+  c]:`); or-pattern as a sequence-pattern element (`case [1 | 2,
+  y]:`); and a guard on a sequence pattern (`case [a, b] if a >
+  b:`) — all combined in one match statement
+  (`tests/match_seq.py` / `.exec.check`). Full suite 183/0 (182 +
+  the new test) on both the C and LLVM backends, no regressions.
+- **Class / mapping patterns** (`case Point(x=0, y=0):`,
+  `case {"k": v}:`) — **never attempted**. Class patterns would hit
+  the identical trap sequence/or-patterns did: `Point(x=0, y=0)`
+  parses as an ordinary constructor call, constructs a real `Point`
   instance, and compares it via `__eq__` against the subject —
   wrong semantics, not just unimplemented, and just as silent as
-  the or-pattern bug.
+  the or-pattern bug was.
 
 ## Effort estimate per piece
 
@@ -180,16 +289,34 @@ the wildcard case already landed):
   addition was as small as expected, the lowering ended up
   touching all four pattern branches rather than one shared spot,
   but each touch was mechanical, see fix description above).
-- **Class / sequence / mapping patterns — large, a small compiler
-  feature in its own right** (matches the original filing's own
-  framing). Needs real destructuring and attribute binding, not an
-  equality check — comparable in scope to (likely larger than)
-  issue 025's tuple-unpacking work.
+- **Sequence patterns — DONE** (was estimated large, bundled with
+  class/mapping patterns as "a small compiler feature in its own
+  right" — held on size: the recursive-matcher refactor plus the
+  isinstance/length/element-binding lowering was the bulk of it, but
+  the two bugs found while landing it (FA's whole-program static
+  typing needing genuine nested control flow to narrow within a
+  branch; guards needing to be evaluated inside that same nesting
+  rather than after it) took as much time as the feature itself.
+  Star patterns (`case [a, *rest]:`) explicitly deferred, matching
+  issue 024's extended-unpacking gap).
+- **Class / mapping patterns — large, a small compiler feature in
+  its own right** (matches the original filing's own framing).
+  Mapping patterns need key-existence + value-recursion (structurally
+  similar to what sequence patterns just landed, minus the
+  length-equality check, plus a `**rest` capture form). Class
+  patterns need real attribute binding (`Point(x=0, y=0)`'s
+  positional/keyword sub-patterns matched against `__match_args__`/
+  named attributes) — comparable in scope to (likely larger than)
+  issue 025's tuple-unpacking work, and is the one PEP 634 pattern
+  kind pyc has no adjacent precedent for at all (no existing
+  attribute-destructuring lowering to crib from, unlike sequence
+  patterns which could reuse `__getitem__`/iteration machinery
+  already built for plain unpacking).
 
-With capture, or-patterns, and guards done, class/sequence/mapping
-patterns are the only piece left, taking `match`/`case` from
-"correct for everything except class patterns" (now) to full PEP
-634 coverage.
+With capture, or-patterns, guards, and sequence patterns done,
+class/mapping patterns are the only piece left, taking `match`/
+`case` from "correct for everything except class/mapping patterns"
+(now) to full PEP 634 coverage.
 
 ## Verification plan
 
@@ -205,13 +332,19 @@ patterns are the only piece left, taking `match`/`case` from
    literal, or-pattern, capture, and wildcard patterns, including
    `case x if x > 10:` verifying the capture-before-guard binding
    order).
+4. ~~Sequence-pattern test, executed and diffed~~ — **done**:
+   `tests/match_seq.py` / `.exec.check` (flat sequence patterns with
+   capture/wildcard/literal elements against polymorphic list/int/str
+   subjects; tuple-literal syntax; nested sequence patterns;
+   or-pattern-as-element; guard-on-sequence-pattern — all on both
+   backends).
 
 ## What this unblocks
 
-Correct (not just compiling) `match`/`case` for the common literal
-+ capture + or-pattern + guard subset is now landed — real Python
+Correct (not just compiling) `match`/`case` for literal + capture +
+or-pattern + guard + sequence-pattern is now landed — real Python
 code using these forms compiles and runs correctly on both
-backends. Class/sequence/mapping pattern support (currently
-unimplemented, would hit the same silent-miscompile trap
-or-patterns did before this round of fixes) is the one remaining
-piece for full PEP 634 coverage.
+backends. Class/mapping pattern support (currently unimplemented,
+would hit the same silent-miscompile trap or-patterns/sequence
+patterns did before their fixes) is the one remaining piece for
+full PEP 634 coverage.

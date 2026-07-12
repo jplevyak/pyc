@@ -68,15 +68,21 @@ conventions are the same; the only difference is location.
   method (`_keys[i] == key`) isn't specialized per key type.
 - [023-structural-pattern-matching.md](023-structural-pattern-matching.md)
   — `match`/`case` further along than originally filed: literal,
-  wildcard, capture (`case x:`), or-patterns (`case 1 | 2:`), and
-  guards (`case x if cond:`) all work now (**fixed 2026-07-12**),
-  verified against real `python3` output on both backends.
-  Or-patterns had been a **silent miscompile** (evaluated as
-  bitwise-OR then compared, no error at all); guards were an
-  unparseable syntax error (no grammar rule). Class/sequence/
-  mapping patterns (`case Point(x=0, y=0):`, `case [a, b]:`) remain
-  a separate large undertaking — full PEP 634 coverage's last
-  piece.
+  wildcard, capture (`case x:`), or-patterns (`case 1 | 2:`), guards
+  (`case x if cond:`), and now sequence patterns (`case [a, b]:`,
+  `case (1, x):`, including nested and or-pattern elements) all work
+  (**fixed 2026-07-12**), verified against real `python3` output on
+  both backends. Or-patterns had been a **silent miscompile**
+  (evaluated as bitwise-OR then compared, no error at all); guards
+  were an unparseable syntax error (no grammar rule). Sequence
+  patterns needed a recursive-matcher rewrite and surfaced two
+  general lessons: FA type-checks the whole program statically, so
+  `__len__`/`__getitem__` calls need genuine nested `if1_if` control
+  flow (not a flat boolean fold) to narrow the subject's type within
+  a branch; and a guard must be evaluated *inside* that same nesting
+  (not appended afterward) or it can read bindings FA can't prove
+  are live. Class/mapping patterns (`case Point(x=0, y=0):`,
+  `case {"k": v}:`) remain — full PEP 634 coverage's last piece.
 - [026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)
   — Polymorphic method dispatch over a union where at least one
   class doesn't override the called method (relies purely on

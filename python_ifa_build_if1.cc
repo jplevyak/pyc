@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "python_parse.h"
+#include <functional>
 
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx);
 static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx);
@@ -891,6 +892,268 @@ static Sym *eval_case_guard(PyDAST *guard, Code **code, PycAST *case_ast, PycCom
   return guard_bool;
 }
 
+// Resolve a global name (a builtin class like "list"/"tuple") the
+// same way an ordinary PY_name reference to it would -- via the
+// normal scope-lookup machinery (find_PycSymbol, via
+// make_PycSymbol's PYC_USE path), just invoked directly by string
+// instead of parsing a PY_name node. Needed by sequence-pattern
+// matching, which has to reference `list`'s class Sym for an
+// isinstance check with no corresponding source-text token to hang
+// a real AST node off of.
+static Sym *resolve_global_class(cchar *name, PycCompiler &ctx) {
+  PycSymbol *s = make_PycSymbol(ctx, name, PYC_USE);
+  if (!s) fail("error line %d: cannot resolve builtin '%s' needed for pattern matching", ctx.lineno, name);
+  return s->sym;
+}
+
+// Call the real `isinstance(obj, cls)` builtin (__pyc__/05_builtins.py)
+// as an ordinary plain function call -- if1_send1 + if1_add_send_arg,
+// the same shape build_if1_pyda's own PY_call trailer uses for any
+// non-method callee. Deliberately NOT the raw `sym_primitive`
+// isinstance send `x is None` uses (python_ifa_build_if1.cc's
+// PY_compare handling): that form is tied to FA's isinstance-based
+// type-narrowing, which expects the send to sit directly in an
+// if-condition position. Sequence-pattern matching needs to combine
+// several isinstance/length/element checks with bool.__and__/__or__
+// before the actual if1_if, and the raw primitive form breaks
+// (confirmed empirically -- "illegal call argument" FA errors) once
+// composed that way. The ordinary-call form is exactly what a real
+// `isinstance(x, list) or isinstance(x, tuple)` in user source
+// already compiles to, so it's proven to compose correctly.
+static Sym *build_isinstance_call(Sym *obj, Sym *cls, Code **code, PycAST *case_ast, PycCompiler &ctx) {
+  Sym *iso_fn = resolve_global_class("isinstance", ctx);
+  Code *send = if1_send1(if1, code, case_ast);
+  if1_add_send_arg(if1, send, iso_fn);
+  if1_add_send_arg(if1, send, obj);
+  if1_add_send_arg(if1, send, cls);
+  Sym *result = new_sym(case_ast);
+  if1_add_send_result(if1, send, result);
+  return result;
+}
+
+// Build `if cond: result = build_then(&then_code) else: result =
+// sym_false`, appending the whole if1_if into *code and returning
+// the fresh `result` Sym.
+//
+// This is NOT the same as combine_bool's flat AND-fold, and the
+// difference matters: FA analyzes the WHOLE program statically, not
+// per-runtime-branch. A check that's unconditionally *emitted* --
+// even if its result only ever gets AND-folded and effectively
+// ignored once a prior check already failed -- still has to
+// type-check against the subject's full, unnarrowed static type.
+// Concretely: if `subject`'s type at this match arm is a union like
+// `list | int` (because some OTHER case in the same match statement
+// only matches when subject is an int), unconditionally emitting
+// `subject.__len__()` fails FA type checking for the int member,
+// even though that call's result is only ever ANDed into a boolean
+// that's never read when the preceding isinstance check is false.
+// Gating it behind a REAL if1_if narrows `subject`'s type within
+// the "then" branch (the same narrowing mechanism `x is None`
+// relies on -- see resolve_global_class's comment), so __len__/
+// __getitem__ only ever need to type-check against the narrowed
+// list/tuple type, not the full union. Used for every structural
+// pattern (sequence pattern today; mapping/class patterns will need
+// the identical shape).
+static Sym *guarded_bool(Sym *cond, Code **code, PycAST *case_ast,
+                          const std::function<Sym *(Code **)> &build_then) {
+  Sym *result = new_sym(case_ast);
+  Code *then_code = 0;
+  Sym *then_val = build_then(&then_code);
+  if1_move(if1, &then_code, then_val, result, case_ast);
+  Code *else_code = 0;
+  if1_move(if1, &else_code, sym_false, result, case_ast);
+  if1_if(if1, code, 0, cond, then_code, 0, else_code, 0, 0, case_ast);
+  return result;
+}
+
+// Combine two boolean Syms with a bool method (__and__/__or__),
+// producing a fresh result Sym. Small helper since build_pattern_match
+// folds several of these per pattern kind.
+//
+// `sym_true` (the canonical always-matches sentinel build_pattern_match
+// returns for wildcard/capture patterns, matching build_match_pyda's
+// own pointer-comparison short-circuit) is NOT a properly-typed
+// runtime bool instance -- it's a compile-time marker. Calling
+// .__and__/.__or__ ON it directly fails FA type checking ("illegal
+// call argument"). Short-circuit around it algebraically instead
+// (X and True == X; X or True == True) so it's never used as a
+// method-dispatch receiver or argument -- this is exactly why
+// build_pattern_match returns sym_true in the first place, so every
+// caller that folds multiple sub-results together needs to respect
+// it, not just the top-level build_match_pyda caller.
+static Sym *combine_bool(Sym *a, Sym *b, cchar *method_name, Code **code, PycAST *case_ast) {
+  bool is_and = !strcmp(method_name, "__and__");
+  if (a == sym_true) return is_and ? b : sym_true;
+  if (b == sym_true) return is_and ? a : sym_true;
+  Sym *r = new_sym(case_ast);
+  call_method(code, case_ast, a, make_symbol(method_name), r, 1, b);
+  return r;
+}
+
+// -------------------------------------------------------------
+// Recursive pattern matcher (PEP 634's match/case).
+//
+// Returns a boolean Sym: does `pattern` match `subject`? Any
+// bindings the pattern introduces (captures; sequence-pattern
+// element captures) are emitted as MOVEs into *code as a side
+// effect, targeting whatever PYC_LOCAL symbol build_syms_pyda's
+// mark_pattern_captures already created for each bare name in the
+// pattern (see PY_case_block's symbol-building case).
+//
+// The canonical `sym_true` Sym is returned directly (not a freshly
+// computed boolean) for wildcard and capture patterns, so callers
+// can special-case "irrefutable, no check needed at all" by
+// pointer-comparing the result against sym_true rather than
+// emitting a redundant `if1_if` on a value that's always true.
+//
+// Every pattern kind this function doesn't recognize as a
+// structural pattern (sequence: PY_list/PY_tuple; or-pattern:
+// PY_binop '|') falls through to literal-pattern handling: build it
+// as an ordinary expression and compare via __eq__ -- PEP 634's own
+// rule for literal/value patterns.
+//
+// `guard_eval`, when non-null, is the case's `if cond:` guard
+// (already bound to a specific case_block by the caller), evaluated
+// via the callback exactly once -- at the point THIS call
+// establishes its own match, in whatever Code* scope that happens
+// to be. This matters because sequence patterns build genuine
+// nested if1_if control flow (see guarded_bool below): their
+// element bindings only exist along the path where isinstance/
+// length checks already passed, so a guard referencing those
+// bindings (`case [a, b] if a > b:`) must be evaluated INSIDE that
+// same nested "then" branch, not appended afterward in the flat
+// outer code stream where FA can't prove `a`/`b` are defined.
+// Recursive calls (or-pattern alternatives, sequence-pattern
+// elements) always pass guard_eval=nullptr -- the guard applies
+// once to the whole top-level pattern, not per sub-pattern.
+// -------------------------------------------------------------
+static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycAST *case_ast, PycCompiler &ctx,
+                                 const std::function<Sym *(Code **)> *guard_eval = nullptr) {
+  if (pattern->kind == PY_name && !strcmp(pattern->str_val, "_")) {
+    // Wildcard: always matches, no binding -- the guard alone decides.
+    return guard_eval ? (*guard_eval)(code) : sym_true;
+  }
+  if (pattern->kind == PY_name) {
+    // Capture pattern: always matches (irrefutable), binds subject.
+    // build_syms_pyda's mark_pattern_captures already marked this
+    // node PY_STORE, so getAST(pattern)->sym is a freshly created
+    // PYC_LOCAL rather than an existing binding -- move the subject
+    // into it, same shape as a plain `x = subject` assignment (see
+    // emit_assign_to_target's simple-name branch).
+    build_if1_pyda(pattern, ctx);
+    PycAST *pat_ast = getAST(pattern, ctx);
+    if1_gen(if1, code, pat_ast->code);
+    if1_move(if1, code, subject, pat_ast->sym, case_ast);
+    return guard_eval ? (*guard_eval)(code) : sym_true;
+  }
+  if (pattern->kind == PY_binop && pattern->op == PY_OP_BITOR) {
+    // Or-pattern (PEP 634): `1 | 2 | 3` matches if the subject
+    // matches ANY alternative. Without this, the pattern parses as
+    // an ordinary expression -- `1 | 2` evaluates to the integer 3
+    // via bitwise-OR, then gets compared against the subject via
+    // __eq__ like a single literal ("match if subject equals 3,"
+    // not "match if subject equals 1 or 2") -- a silent wrong-
+    // answer miscompile, not a crash or a diagnostic.
+    Vec<PyDAST *> alts;
+    flatten_or_pattern(pattern, alts);
+    Sym *combined = nullptr;
+    for (int j = 0; j < alts.n; j++) {
+      PyDAST *alt = alts.v[j];
+      if (alt->kind == PY_name)
+        fail("error line %d: or-pattern alternative '%s' is a capture/wildcard pattern -- "
+             "only literal alternatives are supported in 'case ... | ...:'",
+             ctx.lineno, alt->str_val);
+      Sym *alt_matched = build_pattern_match(alt, subject, code, case_ast, ctx);
+      combined = combined ? combine_bool(combined, alt_matched, "__or__", code, case_ast) : alt_matched;
+    }
+    // Guard applies once, to the whole or-pattern's match result --
+    // not per-alternative (see build_pattern_match's guard_eval doc).
+    if (guard_eval) combined = combine_bool(combined, (*guard_eval)(code), "__and__", code, case_ast);
+    return combined;
+  }
+  if (pattern->kind == PY_list || pattern->kind == PY_tuple) {
+    // Sequence pattern (PEP 634): `[a, b]` / `(a, b)` matches any
+    // list or tuple of the same length, binding each element to its
+    // sub-pattern (which may itself be any pattern kind, including
+    // a nested sequence pattern -- this recurses).
+    //
+    // Star patterns (`case [a, *rest]:`) are not yet supported --
+    // same underlying grammar gap as issue 024's `a, *b = ...`
+    // extended-unpacking assignment targets, which also doesn't
+    // parse today. Left for a follow-on.
+    int n_elts = pattern->children.n;
+
+    // isinstance(subject, list) or isinstance(subject, tuple) --
+    // sequence patterns match list/tuple-like values, NOT str/bytes
+    // (which also support __len__/__getitem__ but PEP 634
+    // explicitly excludes them: `case [a, b]:` must not match the
+    // 2-character string "hi").
+    Sym *list_cls = resolve_global_class("list", ctx);
+    Sym *tuple_cls = resolve_global_class("tuple", ctx);
+    Sym *is_list = build_isinstance_call(subject, list_cls, code, case_ast, ctx);
+    Sym *is_tuple = build_isinstance_call(subject, tuple_cls, code, case_ast, ctx);
+    Sym *is_seq = combine_bool(is_list, is_tuple, "__or__", code, case_ast);
+
+    // The length check and per-element __getitem__/recursive match
+    // all go inside guarded_bool's "then" branch: subject's type is
+    // only narrowed to list/tuple WITHIN a branch actually gated on
+    // is_seq (a real if1_if, not a flat AND-fold) -- see
+    // guarded_bool's comment for why that distinction is required,
+    // not just a style preference. isinstance() itself doesn't need
+    // this gating (it's polymorphic over any subject type, unlike
+    // __len__/__getitem__), so is_list/is_tuple/is_seq above stay
+    // unconditional.
+    return guarded_bool(is_seq, code, case_ast, [&](Code **then_code) -> Sym * {
+      // len(subject) == n_elts -- via __len__ directly (mirrors
+      // __pyc__/05_builtins.py's `def len(x): return x.__len__()`)
+      // rather than resolving "len" as a free-function reference.
+      Sym *len_result = new_sym(case_ast);
+      call_method(then_code, case_ast, subject, make_symbol("__len__"), len_result, 0);
+      Sym *len_eq = new_sym(case_ast);
+      call_method(then_code, case_ast, len_result, sym___eq__, len_eq, 1, int64_constant(n_elts));
+      Sym *len_bool = new_sym(case_ast);
+      call_method(then_code, case_ast, len_eq, sym___pyc_to_bool__, len_bool, 0);
+
+      // Per-element recursive match, ALSO nested inside its own
+      // guarded_bool -- subject[j] must not be emitted unconditionally
+      // either, for the identical reason the length check needed
+      // gating (an element sub-pattern can itself be a further
+      // sequence pattern needing its own subject to be narrowed).
+      return guarded_bool(len_bool, then_code, case_ast, [&](Code **elems_code) -> Sym * {
+        Sym *combined = nullptr;
+        for (int j = 0; j < n_elts; j++) {
+          PyDAST *elt = pattern->children[j];
+          Sym *item = new_sym(case_ast);
+          call_method(elems_code, case_ast, subject, sym___getitem__, item, 1, int64_constant(j));
+          Sym *elt_matched = build_pattern_match(elt, item, elems_code, case_ast, ctx);
+          combined = combined ? combine_bool(combined, elt_matched, "__and__", elems_code, case_ast) : elt_matched;
+        }
+        Sym *result = combined ? combined : sym_true; // `case []:` -- zero elements, nothing to check
+        // Guard evaluated HERE, inside the innermost "then" branch --
+        // this is the only point where every element binding this
+        // pattern makes is actually established, which is exactly
+        // where a guard referencing them (`case [a, b] if a > b:`)
+        // needs to run. See build_pattern_match's guard_eval doc.
+        if (guard_eval) {
+          Sym *g = (*guard_eval)(elems_code);
+          result = (result == sym_true) ? g : combine_bool(result, g, "__and__", elems_code, case_ast);
+        }
+        return result;
+      });
+    });
+  }
+  // Literal pattern: build it as an ordinary expression, compare via __eq__.
+  build_if1_pyda(pattern, ctx);
+  PycAST *pat_ast = getAST(pattern, ctx);
+  if1_gen(if1, code, pat_ast->code);
+  Sym *cmp_result = new_sym(case_ast);
+  Sym *bool_result = new_sym(case_ast);
+  call_method(code, case_ast, subject, sym___eq__, cmp_result, 1, pat_ast->rval);
+  call_method(code, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
+  if (guard_eval) bool_result = combine_bool(bool_result, (*guard_eval)(code), "__and__", code, case_ast);
+  return bool_result;
+}
+
 // Helper: build if-else chain for PY_match_stmt
 static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // children[0] = MATCH_KW, children[1] = subject (test), children[2..N-1] = case_blocks
@@ -898,14 +1161,14 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   build_if1_pyda(subject, ctx);
   PycAST *subject_ast = getAST(subject, ctx);
   if1_gen(if1, &ast->code, subject_ast->code);
-  
+
   Code *chain = 0; // Default is do nothing
   for (int i = n->children.n - 1; i >= 2; i--) {
     PyDAST *case_block = n->children[i];
     PyDAST *case_cond = case_block->children[1];
     PyDAST *case_suite = case_block->children[2];
     PycAST *case_ast = getAST(case_block, ctx);
-    
+
     Code *case_chain = 0;
     Code *case_then = 0;
     if (case_block->children.n == 3) {
@@ -921,117 +1184,34 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     build_if1_suite_pyda(case_suite, &case_then, ctx);
     PyDAST *guard = find_case_guard(case_block);
 
-    // Support wildcard `case _:` as default
-    if (case_cond->kind == PY_name && !strcmp(case_cond->str_val, "_")) {
-      Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx);
-      if (!guard_bool) {
-        if1_gen(if1, &case_chain, case_then);
-      } else {
-        // `case _ if guard:` -- the pattern itself always matches,
-        // so the guard alone decides; unlike a bare `case _:`, this
-        // is refutable and falls through to `chain` when the guard
-        // is false.
-        if1_if(if1, &case_chain, 0, guard_bool, case_then, 0, chain, 0, 0, case_ast);
-      }
-    } else if (case_cond->kind == PY_name) {
-      // Capture pattern (PEP 634): a bare, non-wildcard NAME always
-      // matches (irrefutable) and binds the subject's value to it.
-      // build_syms_pyda's PY_case_block handling already marked this
-      // node PY_STORE, so getAST(case_cond)->sym is a freshly created
-      // PYC_LOCAL rather than an existing binding -- move the subject
-      // into it before running the case body, same shape as a plain
-      // `x = subject` assignment (see emit_assign_to_target's simple-
-      // name branch). The guard (if any) is evaluated AFTER the
-      // binding -- `case x if x > 10:` needs `x` bound before the
-      // guard can reference it.
-      build_if1_pyda(case_cond, ctx);
-      PycAST *case_cond_ast = getAST(case_cond, ctx);
-      if1_gen(if1, &case_chain, case_cond_ast->code);
-      if1_move(if1, &case_chain, subject_ast->rval, case_cond_ast->sym, case_ast);
-      Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx);
-      if (!guard_bool) {
-        if1_gen(if1, &case_chain, case_then);
-      } else {
-        if1_if(if1, &case_chain, 0, guard_bool, case_then, 0, chain, 0, 0, case_ast);
-      }
-    } else if (case_cond->kind == PY_binop && case_cond->op == PY_OP_BITOR) {
-      // Or-pattern (PEP 634): `case 1 | 2 | 3:` matches if the
-      // subject equals ANY alternative. Without this, the pattern
-      // parses as an ordinary expression -- `1 | 2` evaluates to
-      // the integer 3 via bitwise-OR, then gets compared against
-      // the subject via __eq__ like a single literal, which is
-      // "match if subject equals 3," not "match if subject equals 1
-      // or 2." That's a silent wrong-answer miscompile (issues/023),
-      // not a crash or a diagnostic.
-      //
-      // Flatten the left-folded PY_binop('|') tree, evaluate every
-      // alternative's __eq__ check unconditionally (no side effects
-      // to short-circuit around -- these are literal comparisons),
-      // and OR the per-alternative booleans together into ONE
-      // combined result before a SINGLE if1_if. (An earlier version
-      // of this fix nested one if1_if per alternative, each pointing
-      // at the same case_then Code* -- if1_flatten_code asserts a
-      // Code node is only ever reached once, so that shared-then
-      // shape isn't legal here; case_then must be referenced by
-      // exactly one if1_if, same as every other branch in this
-      // dispatch.)
-      Vec<PyDAST *> alts;
-      flatten_or_pattern(case_cond, alts);
-      Sym *combined = nullptr;
-      for (int j = 0; j < alts.n; j++) {
-        PyDAST *alt = alts.v[j];
-        if (alt->kind == PY_name)
-          fail("error line %d: or-pattern alternative '%s' is a capture/wildcard pattern -- "
-               "only literal alternatives are supported in 'case ... | ...:'",
-               ctx.lineno, alt->str_val);
-        build_if1_pyda(alt, ctx);
-        PycAST *alt_ast = getAST(alt, ctx);
-        if1_gen(if1, &case_chain, alt_ast->code);
-
-        Sym *cmp_result = new_sym(case_ast);
-        Sym *bool_result = new_sym(case_ast);
-        call_method(&case_chain, case_ast, subject_ast->rval, sym___eq__, cmp_result, 1, alt_ast->rval);
-        call_method(&case_chain, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
-
-        if (!combined) {
-          combined = bool_result;
-        } else {
-          Sym *next_combined = new_sym(case_ast);
-          call_method(&case_chain, case_ast, combined, make_symbol("__or__"), next_combined, 1, bool_result);
-          combined = next_combined;
-        }
-      }
-      // Guard (if any): AND it into the pattern's own match result --
-      // `case 1 | 2 if cond:` only matches when both the pattern AND
-      // the guard hold.
-      if (Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx)) {
-        Sym *anded = new_sym(case_ast);
-        call_method(&case_chain, case_ast, combined, make_symbol("__and__"), anded, 1, guard_bool);
-        combined = anded;
-      }
-      if1_if(if1, &case_chain, 0, combined, case_then, 0, chain, 0, 0, case_ast);
+    // `case PATTERN if cond:` only matches when both the pattern AND
+    // the guard hold. The guard is threaded INTO build_pattern_match
+    // (rather than evaluated afterward here) so it runs exactly at
+    // the point the pattern's own match -- and any bindings it
+    // makes -- are established: trivial for capture patterns (whose
+    // binding is unconditional, so "afterward, in this same flat
+    // code stream" and "right where the binding happened" coincide),
+    // but load-bearing for sequence patterns, whose element bindings
+    // only exist along a nested if1_if's "then" branch (see
+    // guarded_bool) -- `case [a, b] if a > b:` needs `a > b`
+    // evaluated inside that branch, not after it.
+    std::function<Sym *(Code **)> guard_fn;
+    const std::function<Sym *(Code **)> *guard_ptr = nullptr;
+    if (guard) {
+      guard_fn = [&](Code **gcode) -> Sym * { return eval_case_guard(guard, gcode, case_ast, ctx); };
+      guard_ptr = &guard_fn;
+    }
+    Sym *matched = build_pattern_match(case_cond, subject_ast->rval, &case_chain, case_ast, ctx, guard_ptr);
+    if (matched == sym_true) {
+      // Irrefutable pattern (wildcard or capture) with no guard --
+      // run unconditionally, no check needed at all.
+      if1_gen(if1, &case_chain, case_then);
     } else {
-      build_if1_pyda(case_cond, ctx);
-      PycAST *case_cond_ast = getAST(case_cond, ctx);
-      if1_gen(if1, &case_chain, case_cond_ast->code);
-
-      Sym *cmp_result = new_sym(case_ast);
-      Sym *bool_result = new_sym(case_ast);
-      call_method(&case_chain, case_ast, subject_ast->rval, sym___eq__, cmp_result, 1, case_cond_ast->rval);
-      call_method(&case_chain, case_ast, cmp_result, sym___pyc_to_bool__, bool_result, 0);
-
-      // Guard (if any): AND it into the literal's own match result --
-      // `case 1 if cond:` only matches when both hold.
-      if (Sym *guard_bool = eval_case_guard(guard, &case_chain, case_ast, ctx)) {
-        Sym *anded = new_sym(case_ast);
-        call_method(&case_chain, case_ast, bool_result, make_symbol("__and__"), anded, 1, guard_bool);
-        bool_result = anded;
-      }
-      if1_if(if1, &case_chain, 0, bool_result, case_then, 0, chain, 0, 0, case_ast);
+      if1_if(if1, &case_chain, 0, matched, case_then, 0, chain, 0, 0, case_ast);
     }
     chain = case_chain;
   }
-  
+
   if1_gen(if1, &ast->code, chain);
 }
 

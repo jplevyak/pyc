@@ -1,0 +1,9 @@
+nested: 1 2 3
+tuple-lit-first: 99
+or-first: 50
+descending pair: 5 3
+pair: 3 5
+triple: 7 8 9
+empty
+other: 42
+other: hi

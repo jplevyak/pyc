@@ -135,6 +135,40 @@ static void mark_store(PyDAST *n) {
     for (auto c : n->children.values()) mark_store(c);
 }
 
+// Recursively mark every bare, non-wildcard NAME reachable through
+// capture position in a match/case PATTERN as PY_STORE. Mirrors
+// build_if1_pyda's build_pattern_match traversal exactly (wildcard/
+// capture/or-pattern/sequence/literal) -- a capture pattern can
+// appear nested inside a sequence pattern (`case [a, b]:` binds
+// BOTH `a` and `b`), not just at the pattern's top level. Deliberately
+// NOT reusing mark_store: it doesn't know about the wildcard `_`
+// exclusion (a pattern's `_` must NOT become a binding, matching
+// build_pattern_match treating it as a no-op), doesn't recurse into
+// PY_list (only PY_tuple/testlist/exprlist/fpdef/fplist), and would
+// happily (and wrongly, for a pattern) mark an or-pattern's or a
+// literal pattern's non-name expression as if it were an lvalue.
+static void mark_pattern_captures(PyDAST *n) {
+  if (!n) return;
+  if (n->kind == PY_name) {
+    if (strcmp(n->str_val, "_") != 0) n->ctx = PY_STORE;
+    return;
+  }
+  if (n->kind == PY_binop && n->op == PY_OP_BITOR) {
+    // Or-pattern: build_pattern_match rejects a capture/wildcard
+    // alternative outright (fail()), so there's nothing to mark --
+    // but recurse anyway rather than assume, in case that
+    // restriction is ever relaxed.
+    mark_pattern_captures(n->children[0]);
+    mark_pattern_captures(n->children[1]);
+    return;
+  }
+  if (n->kind == PY_list || n->kind == PY_tuple) {
+    for (auto c : n->children.values()) mark_pattern_captures(c);
+    return;
+  }
+  // Literal pattern (number/string/etc.): nothing to bind.
+}
+
 // Set up function scope for pyda path
 static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   fn->in = ctx.scope_stack.last()->in;
@@ -770,25 +804,24 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
 
     case PY_case_block: {
       // children[1] is the case pattern (python.g: `case_block:
-      // CASE_KW test ':' suite` -- children[0] is the CASE_KW
-      // marker node build_match_pyda's own indexing dance already
-      // has to account for). A bare, non-wildcard NAME in pattern
-      // position is a PEP 634 capture pattern: it always matches
-      // and binds the subject to a NEW local of that name (shadows
-      // any same-named outer binding -- capture patterns never
-      // compare against an existing value, only dotted/attribute
-      // patterns like `Color.RED` do that, and those aren't
-      // implemented yet either). Mark it PY_STORE, the same way
-      // assignment targets and `for` loop variables are marked
-      // (mark_store, above), so build_syms_pyda's own PY_name case
-      // creates a fresh PYC_LOCAL instead of failing to resolve an
-      // undefined USE. Wildcard `_` intentionally left alone (no
-      // binding) -- build_match_pyda already special-cases it.
-      if (n->children.n > 1) {
-        PyDAST *pattern = n->children[1];
-        if (pattern && pattern->kind == PY_name && strcmp(pattern->str_val, "_") != 0)
-          mark_store(pattern);
-      }
+      // CASE_KW test case_guard? ':' suite` -- children[0] is the
+      // CASE_KW marker node build_match_pyda's own indexing dance
+      // already has to account for). Recursively mark every bare,
+      // non-wildcard NAME reachable through capture position as
+      // PY_STORE -- mirrors build_match_pyda/build_pattern_match's
+      // own traversal exactly (wildcard/capture/or-pattern/sequence/
+      // literal), since a capture pattern can appear nested inside
+      // a sequence pattern (`case [a, b]:` binds BOTH `a` and `b`),
+      // not just at the top level. A capture pattern's name always
+      // matches and binds the subject to a NEW local (shadows any
+      // same-named outer binding -- capture patterns never compare
+      // against an existing value; only dotted/attribute patterns
+      // like `Color.RED` do that, and those aren't implemented yet
+      // either). Mark it PY_STORE, the same way assignment targets
+      // and `for` loop variables are marked (mark_store, above), so
+      // build_syms_pyda's own PY_name case creates a fresh
+      // PYC_LOCAL instead of failing to resolve an undefined USE.
+      if (n->children.n > 1) mark_pattern_captures(n->children[1]);
       goto generic_recurse;
     }
 
