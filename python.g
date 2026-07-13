@@ -410,7 +410,21 @@ sliceop: ':' test? {
 exprlist: expr (',' expr)* ','? {
   $$.ast = pass_or_collect(1, PY_exprlist, &$n, $0.ast);
 };
-testlist: test (',' test)* ','? {
+// issues/024: extended iterable unpacking assignment targets
+// (`a, *b = [1, 2, 3]`, `*a, b = ...`, `a, *b, c = ...`, PEP 3132).
+// star_expr/testlist_item are ONLY reachable through testlist, i.e.
+// expr_stmt's target AND value positions (assignment's chained
+// `('=' testlist)*` doesn't distinguish target vs. final-value
+// syntactically) -- a star as the final RHS value (`x = *a, b`,
+// real Python's separate star-tuple-building use) parses but is
+// rejected at lowering (build_if1_pyda's PY_star_expr case only
+// handles the assignment-target use; issue 024 is scoped to
+// targets, matching its own filing).
+star_expr: '*' expr {
+  $$.ast = new_pyast(PY_star_expr, &$n, $1.ast);
+};
+testlist_item: test | star_expr;
+testlist: testlist_item (',' testlist_item)* ','? {
   $$.ast = pass_or_collect2(1, 2, PY_tuple, &$n, $0.ast);
 };
 dictorsetmaker:
@@ -764,6 +778,7 @@ Ldone:;
       "testlist", "exprlist",
       "comp_for", "comp_if", "list_for", "list_if",
       "subscriptlist",
+      "star_expr",
     };
     if (k < 0 || k >= PY_MAX) return "?";
     return names[k];

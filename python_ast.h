@@ -54,6 +54,7 @@ enum PyASTKind {
   PY_comp_for, PY_comp_if,
   PY_list_for, PY_list_if,
   PY_subscriptlist,
+  PY_star_expr,
   PY_MAX
 };
 

@@ -130,6 +130,12 @@ static void mark_store(PyDAST *n) {
   if (!n) return;
   if (n->kind == PY_name) { n->ctx = PY_STORE; return; }
   if (n->kind == PY_power) { n->ctx = PY_STORE; return; }
+  // issues/024: `a, *b = [1, 2, 3]` -- a starred sub-target still
+  // binds a name (or attribute/subscript/nested-tuple target), just
+  // to a list slice instead of a single element (see
+  // emit_assign_to_target). Recurse into its own inner target the
+  // same way every other wrapper kind here does.
+  if (n->kind == PY_star_expr) { mark_store(n->children[0]); return; }
   if (n->kind == PY_fpdef || n->kind == PY_fplist || n->kind == PY_tuple || n->kind == PY_testlist ||
       n->kind == PY_exprlist)
     for (auto c : n->children.values()) mark_store(c);

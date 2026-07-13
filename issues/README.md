@@ -105,6 +105,24 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [024](closed/024-extended-iterable-unpacking.md) — extended
+  iterable unpacking assignment targets (`a, *b = [1, 2, 3]`,
+  PEP 3132): new `star_expr`/`testlist_item` grammar (`testlist`,
+  used by `expr_stmt`'s targets), `mark_store` and
+  `emit_assign_to_target` both recurse through a `PY_star_expr`
+  wrapper. Leading/trailing targets bind positionally as before; the
+  star target binds a NEW list (always a list, even from a tuple
+  source) built by a hand-rolled runtime loop. Bare star target and
+  multiple stars both fail loudly with CPython's own error wording.
+  Known gaps, not silent traps: nested parenthesized tuple targets
+  (`x, (y, *z) = ...`) and `for`-loop targets don't parse (separate
+  grammar rules, not extended — out of this issue's stated scope).
+  Found and filed separately while landing this: a pre-existing,
+  unrelated FA bug where an empty list literal sharing a method
+  clone with a non-empty, differently-element-typed list fails to
+  type-check — [ifa/issues/040](../ifa/issues/040-empty-list-shared-clone-type-inference.md).
+  Test: `tests/star_unpack.py`, both backends.
+
 - [026](closed/026-polymorphic-method-dispatch-partial-override-crash.md)
   — polymorphic method dispatch over a union where at least one
   class doesn't override the called method (relies purely on

@@ -1613,19 +1613,85 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
 // arbitrarily nested tuple/list targets, recursing on each element.
 static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx) {
   PycAST *a = getAST(tgt, ctx);
+  if (tgt->kind == PY_star_expr)
+    // issues/024: PEP 3132 requires a starred target to appear
+    // INSIDE a list/tuple target (`a, *b = ...`) -- a bare `*b = x`
+    // is a SyntaxError in real Python (testlist's own grammar can't
+    // tell the difference: a single-element target list passes
+    // through unwrapped, same as a non-star single target does).
+    // Message matches CPython's own wording for this exact case.
+    fail("error line %d: starred assignment target must be in a list or tuple", ctx.lineno);
   if (tgt->kind == PY_tuple || tgt->kind == PY_testlist || tgt->kind == PY_exprlist) {
-    // Destructuring: pull out val[j] and assign it to element j. The
-    // element may itself be a name, attribute, subscript, or a further
-    // nested tuple -- recursion covers all of them. The previous code
-    // required the tuple's own sym and moved val[j] straight into the
-    // element's rval, which only worked for plain-name elements, so
-    // `self.x, self.y = ...` and `a[i], a[j] = ...` failed with
-    // "illegal destructuring" (issue 025 illegal-destructuring
-    // frontier: attribute / subscript / nested targets).
+    int star_idx = -1;
     for (int j = 0; j < tgt->children.n; j++) {
+      if (tgt->children[j]->kind != PY_star_expr) continue;
+      if (star_idx >= 0)
+        fail("error line %d: multiple starred expressions in assignment", ctx.lineno);
+      star_idx = j;
+    }
+    if (star_idx < 0) {
+      // Destructuring: pull out val[j] and assign it to element j. The
+      // element may itself be a name, attribute, subscript, or a further
+      // nested tuple -- recursion covers all of them. The previous code
+      // required the tuple's own sym and moved val[j] straight into the
+      // element's rval, which only worked for plain-name elements, so
+      // `self.x, self.y = ...` and `a[i], a[j] = ...` failed with
+      // "illegal destructuring" (issue 025 illegal-destructuring
+      // frontier: attribute / subscript / nested targets).
+      for (int j = 0; j < tgt->children.n; j++) {
+        Sym *item = new_sym(ast);
+        call_method(code, ast, val, sym___getitem__, item, 1, int64_constant(j));
+        emit_assign_to_target(tgt->children[j], item, code, ast, ctx);
+      }
+      return;
+    }
+    // issues/024: extended iterable unpacking (PEP 3132) --
+    // `a, *b = val`, `*a, b = val`, `a, *b, c = val`. Leading targets
+    // (before the star) bind val[0..n_leading-1] positionally, same
+    // as the non-star case; trailing targets (after the star) bind
+    // the LAST n_trailing elements, positionally from the end (so
+    // they're correct regardless of how many elements the star
+    // itself ends up consuming); the star target binds a NEW list
+    // (PEP 3132: always a list, even when val is a tuple/other
+    // sequence -- unlike a plain slice, which would preserve val's
+    // own type) holding everything in between. No length-mismatch
+    // validation (real Python raises ValueError for "not enough
+    // values to unpack") -- matches this function's own pre-existing
+    // non-star behavior, which never bounds-checks `val[j]` either.
+    int n_leading = star_idx;
+    int n_trailing = tgt->children.n - star_idx - 1;
+    for (int j = 0; j < n_leading; j++) {
       Sym *item = new_sym(ast);
       call_method(code, ast, val, sym___getitem__, item, 1, int64_constant(j));
       emit_assign_to_target(tgt->children[j], item, code, ast, ctx);
+    }
+    Sym *len_val = new_sym(ast);
+    call_method(code, ast, val, make_symbol("__len__"), len_val, 0);
+    Sym *limit = new_sym(ast);
+    call_method(code, ast, len_val, make_symbol("__sub__"), limit, 1, int64_constant(n_trailing));
+    Sym *star_list = new_sym(ast);
+    if1_send(if1, code, 3, 1, sym_primitive, sym_make, sym_list, star_list)->ast = ast;
+    // idx = n_leading; while idx < limit: star_list.append(val[idx]); idx = idx + 1
+    Sym *idx = new_sym(ast);
+    Code *before = 0, *cond = 0, *body = 0;
+    if1_move(if1, &before, int64_constant(n_leading), idx, ast);
+    Sym *cond_var = new_sym(ast);
+    call_method(&cond, ast, idx, make_symbol("__lt__"), cond_var, 1, limit);
+    Sym *item = new_sym(ast);
+    call_method(&body, ast, val, sym___getitem__, item, 1, idx);
+    Sym *append_result = new_sym(ast);
+    call_method(&body, ast, star_list, sym_append, append_result, 1, item);
+    Sym *next_idx = new_sym(ast);
+    call_method(&body, ast, idx, make_symbol("__add__"), next_idx, 1, int64_constant(1));
+    if1_move(if1, &body, next_idx, idx, ast);
+    if1_loop(if1, code, if1_alloc_label(if1), if1_alloc_label(if1), cond_var, before, cond, 0, body, ast);
+    emit_assign_to_target(tgt->children[star_idx]->children[0], star_list, code, ast, ctx);
+    for (int k = 0; k < n_trailing; k++) {
+      Sym *tidx = new_sym(ast);
+      call_method(code, ast, limit, make_symbol("__add__"), tidx, 1, int64_constant(k));
+      Sym *titem = new_sym(ast);
+      call_method(code, ast, val, sym___getitem__, titem, 1, tidx);
+      emit_assign_to_target(tgt->children[star_idx + 1 + k], titem, code, ast, ctx);
     }
   } else {
     if1_gen(if1, code, a->code);
@@ -2755,6 +2821,25 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       for (auto c : n->children.values()) if1_add_send_arg(if1, send, getAST(c, ctx)->rval);
       ast->rval = new_sym(ast);
       if1_add_send_result(if1, send, ast->rval);
+      return 0;
+    }
+
+    case PY_star_expr: {
+      // issues/024: `*b` inside an assignment-target tuple (`a, *b =
+      // ...`). Only meaningful there -- emit_assign_to_target handles
+      // the actual binding (a list slice, not a single element) by
+      // recognizing this node among a tuple target's children
+      // directly, unwrapping to children[0]. This case exists so the
+      // ENCLOSING PY_tuple's own build_if1_pyda pass (which walks
+      // every child, including this one, to build its -- for a
+      // target, unused -- "make tuple from targets" send) has
+      // something to build: it just recurses into the real inner
+      // target, exactly like a plain (non-star) element would.
+      build_if1_pyda(n->children[0], ctx);
+      PycAST *inner = getAST(n->children[0], ctx);
+      if1_gen(if1, &ast->code, inner->code);
+      ast->rval = inner->rval;
+      ast->sym = inner->sym;
       return 0;
     }
 
