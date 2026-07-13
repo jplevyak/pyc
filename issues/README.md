@@ -85,19 +85,14 @@ conventions are the same; the only difference is location.
   *inside* that same nesting, not appended afterward. **One
   remaining limitation**: `case None:` combined with almost any
   OTHER pattern in the same match crashes at runtime (`"matching
-  function not found"`) — likely the same root cause as
-  [026](026-polymorphic-method-dispatch-partial-override-crash.md);
+  function not found"`) — same assertion text as closed issue 026,
+  but ruled out as the same bug once 026 was root-caused: this one
+  is dispatch over a union of PRIMITIVE/boxed types
+  (`None|int|float`), not 026's class-method classtag gap.
   `build_match_pyda` refuses the combination at compile time rather
-  than risk shipping it. Positional class patterns
-  (`Point(0, 0)`) and `*rest`/`**rest` captures remain explicitly
-  deferred (fail to parse or fail loudly, not silent traps).
-- [026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)
-  — Polymorphic method dispatch over a union where at least one
-  class doesn't override the called method (relies purely on
-  inheritance) crashes on the C backend ("matching function not
-  found") and silently drops the call on v2 LLVM (runs clean, no
-  output). Found while stress-testing issue 003; unrelated to that
-  issue's struct-layout root cause.
+  than risk shipping it. Positional class patterns (`Point(0, 0)`)
+  and `*rest`/`**rest` captures remain explicitly deferred (fail to
+  parse or fail loudly, not silent traps).
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected
@@ -109,6 +104,26 @@ conventions are the same; the only difference is location.
 
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
+
+- [026](closed/026-polymorphic-method-dispatch-partial-override-crash.md)
+  — polymorphic method dispatch over a union where at least one
+  class doesn't override the called method (relies purely on
+  inheritance) crashed on the C backend ("matching function not
+  found") and silently dropped the call on v2 LLVM (ran clean, no
+  output). Root cause: FA types such a method's `self` formal as a
+  `Type_SUM` (union) Sym covering every inheriting class, but the
+  classtag dispatch construction (both backends) and the shared
+  method-pointer-slot registry (`codegen_common.cc`) only knew how
+  to read a single concrete class's own fields, never recursed into
+  a union's members. Fixed in all three places; two regressions
+  surfaced and were fixed along the way (a non-union self arg's slot
+  getting mis-resolved per `CreationSet`, and a class with its own
+  override losing to a DIFFERENT candidate's looser union match) —
+  `tests/poly_dispatch_low.py` / `poly_dispatch_high.py`
+  (pre-existing) caught both. New test:
+  `tests/poly_dispatch_partial_override.py`. Found while
+  stress-testing issue 003; unrelated to that issue's struct-layout
+  root cause.
 
 - [027](closed/027-unbound-base-method-call-self-type-mismatch.md) —
   explicit unbound base-method calls (`Base.method(self, ...)`,

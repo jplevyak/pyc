@@ -51,7 +51,8 @@ found in the corpus; not planned.
 A separate, pre-existing polymorphic METHOD dispatch bug was found
 while stress-testing this issue (unrelated to struct layout — zero
 data fields involved) and filed separately:
-[../026-polymorphic-method-dispatch-partial-override-crash.md](../026-polymorphic-method-dispatch-partial-override-crash.md).
+[026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)
+(closed 2026-07-13, fixed).
 
 **Affects:** `python_ifa_build_syms.cc` (`gen_class_pyda` —
 class-attribute slot assignment); C backend (`ifa/codegen/cg.cc`

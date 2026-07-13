@@ -428,23 +428,24 @@ every case pattern in the match) and refuses to compile it, with a
 message pointing at the workaround (split into a separate match
 statement, or use a guard: `case x if x is None:`).
 
-**Same crash signature as
-[026-polymorphic-method-dispatch-partial-override-crash.md](026-polymorphic-method-dispatch-partial-override-crash.md)**
-(`Assertion '!"runtime error: matching function not found"'`,
-identical wording, from the same `cg.cc` `emit_send_call` fallback)
--- filed independently before this investigation, with its own
-hypothesis: classtag dispatch only builds a branch per class that
-has its OWN override of the called method, and a class relying
-purely on an INHERITED implementation gets no branch at all.
-`__pyc_None_type__` very plausibly doesn't own-override some method
-the match/case-generated dispatch chain ends up needing once a
-second narrowing/binding branch follows it for the same subject --
-consistent with every behavior observed below. Not confirmed (issue
-026's own root cause isn't confirmed either, per its "hypothesis,
-not yet root-caused" heading), but similar enough that this is
-almost certainly the SAME bug wearing a different repro, not a
-second independent one -- worth checking first if either gets
-picked up.
+**Ruled out as the same bug as (closed)
+[026-polymorphic-method-dispatch-partial-override-crash.md](closed/026-polymorphic-method-dispatch-partial-override-crash.md)**
+(identical assertion text, `Assertion '!"runtime error: matching
+function not found"'`) -- that was the leading hypothesis when both
+issues were open at once, but 026 has since been root-caused and
+fixed (a `Type_SUM`-typed receiver formal for a method reached only
+through class inheritance, e.g. a subclass with no override of its
+own). With that fix landed, this limitation was re-tested directly
+(temporarily bypassing the compile-time refusal below) and STILL
+crashes, identically, with `PYC_DBG_DISPATCH=1` showing the failure
+is in `__str__` dispatch (from `print()` formatting the
+capture-bound fallback variable) over a subject typed
+`None | int | float` -- none of which carry a classtag
+(`int`/`float`/`None` are primitive/system types, not
+`Type_RECORD`), so this is dispatch over a union of PRIMITIVE/BOXED
+types, a completely different mechanism from 026's class-method
+classtag gap. Genuinely a separate, still-open problem -- see 026's
+own "Ruled out" section for the cross-check.
 
 This was investigated in real depth, not just noticed and shelved.
 Confirmed:
@@ -470,11 +471,11 @@ Confirmed:
   something about the CHAIN of nested `if1_if`s `build_match_pyda`
   generates for a multi-arm match statement.
 
-This points at a genuine FA/codegen clone-generation gap (failing to
-generate a specialized clone for one of the union's actually-
-reachable runtime types once a None-narrowing branch precedes
-another narrowing-or-binding branch for the same subject in one
-function) rather than anything fixable from this file's lowering
+This points at a genuine codegen gap -- dispatching a method call
+(here, `__str__`, needed by `print()`) on a subject whose type spans
+several PRIMITIVE/boxed basic types (`None`/`int`/`float`/...), none
+of which carry the classtag mechanism issue 026's classtag dispatch
+relies on -- rather than anything fixable from this file's lowering
 code. Worth a dedicated `ifa/issues/` entry if pursued further --
 not filed as of this writing, since the compile-time refusal here
 keeps it from being a correctness hazard in the meantime.
