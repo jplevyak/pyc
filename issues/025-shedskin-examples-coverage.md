@@ -369,26 +369,67 @@ re-run individually to classify.)
    - `coerce_immediate` assert (sudoku2): `fold_constant` numerically
      coerced a string operand in a mixed op (`str == int`). Now it
      bails to a runtime op. Test `tests/const_str_compare.py`.
-   Remaining: the pystone/tictactoe **segfaults** are a deep FA
-   split-lifecycle bug (dug in fully 2026-07). The crashing entry set
-   (`make_AVar(Proc1, es#N)` first) has `display.n == 0`, **`edges ==
-   0`**, and `es->split` set -- an **emptied split ES**: all its
-   edges were moved away by a further split, but it is still being
-   analyzed. Because it never went through (or was un-done from)
-   `set_entry_set`, none of its per-ES state is populated -- display,
-   `rets`, and `args` are all empty. Fixing one symptom just exposes
-   the next: a `make_AVar` guard that walks `es->split` for a display
-   removes the `make_AVar` OOB (fa.cc:218), and the crash then moves
-   to `analyze_edge` (fa.cc:2498) dereferencing `ee->to->rets[i]` on
-   the same empty ES. So a guard is whack-a-mole; the real fix is in
-   the **split machinery** (`split_edges` / `check_split` /
-   `make_entry_set`): an ES whose edges are all split away must be
-   removed from the worklist and not analyzed (or the split must fully
-   re-`set_entry_set` the ES before it is enqueued). That is a
-   substantial, risky change to core FA convergence. Left open, but
-   now precisely located: emptied split ES analyzed ->
-   `make_AVar`:218 (display) then `analyze_edge`:2498 (rets), both on
-   an ES with `edges==0 && split!=null`.
+   **The "signal 117" (SIGSEGV) family fully dug into and resolved
+   2026-07-14** — it turned out to be FOUR unrelated bugs sharing an
+   exit code (amaze, othello2, othello3, pystone, score4, tictactoe,
+   voronoi2):
+   - **pystone: the bare/unpopulated split-ES crash** (the
+     "emptied split ES" previously located above — the earlier
+     `edges == 0` reading was close but not exact). Root cause:
+     `split_edges` (`ifa/analysis/fa.cc`, the dispatch splitter)
+     re-pointed an edge's `->to` at a `find_or_make_filtered_entry_set`
+     product with a **bare assignment** instead of `set_entry_set` —
+     and those products are BARE EntrySets (filters + split lineage
+     only; no display/args/rets, which only `set_entry_set`
+     populates). `analyze_edge`'s `make_entry_set` early-returns on a
+     non-null `->to`, so nothing ever repaired it; the first
+     `make_AVar(formal, es)` indexed the empty display OOB and
+     deref'd garbage. Fixed by routing both `split_edges` paths
+     through the full re-entry recipe `apply_entry_set_split` already
+     uses (null `to`, clear stale per-edge `filtered_args`, remove
+     from the old ES's edge set, `set_entry_set`). pystone compiles;
+     score4/othello2 progressed past FA to downstream stages.
+   - **amaze/tictactoe/voronoi2 (+ rdb, msp_ss): inheriting from
+     undefined `Exception`** — resolved, see `ifa/issues/042` (real
+     builtin `Exception` class in `__pyc__/08_exception.py` + clean
+     "base is not a class" frontend error).
+   - **othello2: break-label scoping miscompile** —
+     `PY_for_stmt`/`PY_while_stmt` (`python_ifa_build_syms.cc`)
+     overwrote the enclosing scope's `lbreak`/`lcontinue` and never
+     restored them, so a `break`/`continue` AFTER a nested loop (but
+     inside an outer one) bound to the INNER loop's label — lowering
+     to a goto placed directly after its own target label: an
+     infinite loop at runtime and a no-path-to-exit CFG region that
+     crashed the dominator build (`ifa/optimize/dom.cc`
+     `df_traversal`, null Dom). Fixed with save/restore (also
+     restored before a loop's `else_clause`, whose break/continue
+     belong to the outer loop, and clean errors for break/continue
+     outside any loop). Regression test
+     `tests/break_after_inner_loop.py` (both backends). Dominator
+     construction additionally prunes universe-escaping edges as
+     defense-in-depth, and `PNode::dom/rdom` are now explicitly
+     null-initialized.
+   - **othello3: scanner indent-stack overflow** — the
+     `PythonGlobals::indent_stack` tape (pushes definitive in the
+     scanner, pops speculative in GLR reduction code, so discarded
+     branches leak entries and high-water grows with file size)
+     overflowed its fixed 1024 slots on the 23k-line file and
+     scribbled until SIGSEGV. Now 64k entries + a clean parse-error
+     guard at the push site (`python.g` / `python_parse.h`).
+   - **score4: codegen null deref on FA-misspecialized container
+     method** — `P_prim_sizeof_element` (`ifa/codegen/cg.cc`)
+     deref'd `t->element` null when FA specialized `list.__add__`
+     with an `int64` right operand (`board[y][0] + board[y][1]` on a
+     list-of-lists — the type-resolution imprecision family below).
+     Now a clean internal error with location. The underlying FA
+     imprecision remains open (same family as the `_CG_any` /
+     "expression has no type" items).
+   After these fixes none of the seven segfault: pystone compiles;
+   othello3 stops at generator expressions (issue 008/014); score4
+   stops at the new clean internal error; amaze/tictactoe/othello2/
+   voronoi2 reach FA-diagnostics/generated-C failures in the known
+   type-resolution family (`_CG_any` operands, undeclared labels from
+   no-type branches).
 
 Newly-surfaced non-module blockers after clearing imports +
 destructuring: `open()`/file I/O (softrender), generator
