@@ -13,7 +13,17 @@ struct PyParseNode { PyDAST *ast; };
 struct PythonGlobals : public Globals {
   IF1 *if1;
   int errors;
-  int indent_stack[1024];
+  // Indent-tracking tape for the scanner/GLR indent-dedent protocol
+  // (python.g: python_whitespace pushes, python_indent/python_dedent
+  // pop from *speculative* reduction code). Pushes are definitive
+  // but pops ride speculation, so discarded GLR branches leak
+  // entries and the high-water mark grows with file size, not
+  // nesting depth -- 1024 overflowed (silently, then SIGSEGV) on
+  // shedskin's othello3.py at 23k lines / ~3.3k indent transitions;
+  // 2048 already sufficed. Sized generously because the cost is one
+  // per-parse struct; python.g's push site fail()s cleanly if a
+  // pathological input ever exhausts even this.
+  int indent_stack[65536];
   int *current_indent;
   int implicit_line_joining;
   PyDAST *root_ast;  // set by file_input grammar action

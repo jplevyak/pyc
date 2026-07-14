@@ -609,6 +609,16 @@ _ : {
 Ldone:;
       if (i >= 0 && !pg->implicit_line_joining && *p != '\n')
         if (i != pg->current_indent[-1]) {
+          // Pushes are definitive (scanner), pops are speculative
+          // (python_indent/python_dedent reduction code), so
+          // discarded GLR branches leak entries -- the tape's
+          // high-water mark scales with file size. Overflow used to
+          // scribble past the struct and SIGSEGV a few thousand
+          // derefs later (othello3.py, 23k lines, at the old 1024
+          // size); fail with a real message instead.
+          if (pg->current_indent >= &pg->indent_stack[sizeof(pg->indent_stack) / sizeof(pg->indent_stack[0])])
+            fail("parse error line %d: indent tracking stack overflow (file too large/complex for indent_stack, "
+                 "see python_parse.h)", loc->line);
           *pg->current_indent++ = i;
         }
       loc->s = p;
