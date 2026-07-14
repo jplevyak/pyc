@@ -23,6 +23,18 @@ static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) 
   char *mod = from ? from : sym;
   if (!strcmp(mod, "pyc_compat")) return;
   PycModule *m = get_module(mod, ctx);
+  // Mirror build_import_syms' dotted-import fallback: `import os.path`
+  // with no `os.path.py` on the search path resolves to the `os`
+  // module (see build_import_syms for the rationale).
+  if (!m && !from) {
+    char *dot = strchr(mod, '.');
+    if (dot) {
+      char *top = (char *)GC_malloc(dot - mod + 1);
+      memcpy(top, mod, dot - mod);
+      top[dot - mod] = 0;
+      m = get_module(top, ctx);
+    }
+  }
   // build_import_syms only registers a module if it found <mod>.py on
   // the search path; a missing module (typically an unshimmed stdlib
   // module -- time/random/math/sys/copy/...) left `m` null and this
@@ -1817,6 +1829,68 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if (closure_cls) {
         Sym *inst = build_closure_instance_pyda(closure_cls, ast, &ast->code, ctx);
         if1_move(if1, &ast->code, inst, ast->rval, ast);
+      } else if (!fd_is_method && ast->rval != ast->sym && ast->sym->is_generator) {
+        // issues/014: `ast->sym` is the coroutine body (yields become
+        // co_yield in cg.cc; its C return type is forced to a raw
+        // int64 handle there too, regardless of what FA infers here).
+        // Calling it directly would hand the caller a raw handle, not
+        // something with __iter__/__pyc_more__/__next__ -- so the
+        // PUBLIC name is bound to a small synthesized wrapper Fun
+        // instead (same "public name != internal Fun" split already
+        // used for ordinary defs, one level further): call the
+        // coroutine body, wrap its handle result in a
+        // __pyc_generator__ instance, return that. This keeps
+        // PY_for_stmt's generic __iter__/__pyc_more__/__next__
+        // dispatch (python_ifa_build_if1.cc PY_for_stmt) completely
+        // unmodified -- `for v in gen():` just sees an ordinary
+        // object of an ordinary class.
+        //
+        // Positional-only argument forwarding: ast->sym->has (set by
+        // if1_closure -- see gen_fun_pyda) is exactly the array
+        // gen_fun_pyda built it from -- has[0] is the coroutine
+        // body's own "value convention" placeholder (as.add(fn), see
+        // gen_fun_pyda's plain-def branch), has[1..] the real
+        // parameters, in order, already correctly built by the
+        // ordinary build_syms/build_if1 pipeline (get_syms_args_pyda)
+        // including whatever type constraints the user's annotations
+        // gave them. The wrapper doesn't need its own copies of those
+        // constraints -- it's a pure passthrough, so type checking
+        // still happens where it already did, at this call site
+        // against ast->sym's real formal pattern. Fresh Syms (not
+        // ast->sym's own) because a formal Sym is tied to the Fun
+        // it was built for; sharing identity across two Funs wasn't
+        // risked here. *args/**kwargs/defaults/keyword-only are not
+        // handled yet -- has[i] with i>0 is assumed to be a plain
+        // positional formal for every i (true for the shape
+        // get_syms_args_pyda builds today; see its PY_star_arg /
+        // PY_dstar_arg / PY_arg_default handling for what a fuller
+        // version of this would need to mirror).
+        Sym *wrapper = new_fun(ast);
+        wrapper->nesting_depth = ast->sym->nesting_depth;
+        Vec<Sym *> wrapper_formals;
+        for (int i = 1; i < ast->sym->has.n; i++) wrapper_formals.add(new_sym(ast));
+        Code *wbody = 0;
+        Code *call_send = if1_send1(if1, &wbody, ast);
+        if1_add_send_arg(if1, call_send, ast->sym);
+        for (Sym *wf : wrapper_formals.values()) if1_add_send_arg(if1, call_send, wf);
+        Sym *handle_result = new_sym(ast);
+        if1_add_send_result(if1, call_send, handle_result);
+        int lvl = 0;
+        PycSymbol *gen_cls_ps = find_PycSymbol(ctx, cannonicalize_string("__pyc_generator__"), &lvl);
+        if (!gen_cls_ps || !gen_cls_ps->sym)
+          fail("error line %d, internal: __pyc_generator__ not found (issues/014)", ctx.lineno);
+        Code *ctor_send = if1_send1(if1, &wbody, ast);
+        if1_add_send_arg(if1, ctor_send, gen_cls_ps->sym);
+        if1_add_send_arg(if1, ctor_send, handle_result);
+        Sym *gen_inst = new_sym(ast);
+        if1_add_send_result(if1, ctor_send, gen_inst);
+        if1_move(if1, &wbody, gen_inst, wrapper->ret, ast);
+        if1_send(if1, &wbody, 4, 0, sym_primitive, sym_reply, wrapper->cont, wrapper->ret)->ast = ast;
+        Vec<Sym *> was;
+        was.add(wrapper);
+        for (Sym *wf : wrapper_formals.values()) was.add(wf);
+        if1_closure(if1, wrapper, wbody, was.n, was.v);
+        if1_move(if1, &ast->code, wrapper, ast->rval, ast);
       } else if (!fd_is_method && ast->rval != ast->sym) {
         // rval == sym is the legacy direct binding (non-RECORD
         // class-body defs) -- no variable to bind.
@@ -2036,7 +2110,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_gen(if1, &ast->code, val->code);
         if1_move(if1, &ast->code, val->rval, ctx.fun()->ret, ast);
       } else
-        if1_move(if1, &ast->code, sym_nil, ctx.fun()->ret, ast);
+        // issues/014: keep a bare `return` inside a generator body
+        // consistent with gen_fun_pyda's int64-typed default reply
+        // (see its comment) -- both exit paths must agree on the
+        // Fun's inferred return type.
+        if1_move(if1, &ast->code, ctx.fun()->is_generator ? int64_constant(0) : sym_nil, ctx.fun()->ret, ast);
       
       // Emit cleanups for all active with statements in this function
       for (int i = ctx.with_stack.n - 1; i >= 0; i--) {
@@ -2892,7 +2970,29 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
-    case PY_yield_stmt:
+    case PY_yield_stmt: {
+      // issues/014: `yield expr` as a statement. children: [expr]
+      // (testlist) or none (`yield` alone yields None). Lowered via a
+      // "yield" primitive send exactly mirroring PY_await_expr's
+      // "await" primitive below -- codegen (cg.cc, is_generator)
+      // turns it into `co_yield <value>;`. The send's own result slot
+      // (whatever a `.send(v)` delivers) genuinely has no consumer
+      // here -- `yield foo` as a bare statement discards it just like
+      // real Python does; PY_yield_expr below is the form that reads
+      // it (`x = yield foo`).
+      Sym *yval = sym_nil;
+      if (n->children.n > 0) {
+        build_if1_pyda(n->children[0], ctx);
+        PycAST *val_ast = getAST(n->children[0], ctx);
+        if1_gen(if1, &ast->code, val_ast->code);
+        yval = val_ast->rval;
+      }
+      Sym *unused = new_sym(ast);
+      Code *send = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), yval, unused);
+      send->ast = ast;
+      return 0;
+    }
+
     case PY_raise_stmt:
     case PY_try_stmt: {
       // Exception handling is unimplemented (issue 011), but a `try`
@@ -3071,7 +3171,32 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       fail("error line %d, generator expressions not yet supported (see issues/008, issues/014)", ctx.lineno);
       return -1;
 
-    case PY_yield_expr:
+    case PY_yield_expr: {
+      // issues/014: `yield expr` as an expression (`x = yield foo`).
+      // Same "yield" primitive send as PY_yield_stmt above, but this
+      // form's own value is consumed by the caller -- real Python
+      // gives it whatever a subsequent `.send(v)` provides (None for
+      // a plain `next()`/`__pyc_more__`-driven advance). cg.cc's
+      // P_prim_yield now assigns the send's real result Sym here
+      // (`yval_result`) instead of the old hardcoded `sym_nil`, wired
+      // through to `co_yield`'s own expression value (see
+      // pyc_c_runtime.h's yield_awaiter) -- this is what makes
+      // `.send()` observable inside the generator body at all.
+      Sym *yval = sym_nil;
+      if (n->children.n > 0) {
+        build_if1_pyda(n->children[0], ctx);
+        PycAST *val_ast = getAST(n->children[0], ctx);
+        if1_gen(if1, &ast->code, val_ast->code);
+        yval = val_ast->rval;
+      }
+      Sym *yval_result = new_sym(ast);
+      Code *send = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), yval, yval_result);
+      send->ast = ast;
+      ast->rval = yval_result;
+      ast->sym = ast->rval;
+      return 0;
+    }
+
     case PY_slice:
     case PY_subscriptlist:
     case PY_dotted_name:

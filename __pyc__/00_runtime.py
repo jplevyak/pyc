@@ -111,6 +111,13 @@ class bool:
       return False
     else:
       return True
+  def __eq__(self, x):
+    if (self):
+      return x
+    else:
+      return not x
+  def __ne__(self, x):
+    return not self.__eq__(x)
   def __str__(self):
     if (self):
       return "True"

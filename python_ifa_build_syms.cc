@@ -73,6 +73,32 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
     }
     m = get_module(mod, ctx);
   }
+  // Plain dotted import with no matching file for the full dotted
+  // name (e.g. `import os.path`): pyc has no real package hierarchy,
+  // so fall back to the top-level component. This matches CPython's
+  // own binding behavior for this form (only the top package name is
+  // bound) and lets pyc_lib modules that already expose a submodule
+  // as a plain attribute (os.py's `path = _os_path()`) work as-is.
+  char *bind_mod = mod;
+  if (!m && !from) {
+    char *dot = strchr(mod, '.');
+    if (dot) {
+      char *top = (char *)GC_malloc(dot - mod + 1);
+      memcpy(top, mod, dot - mod);
+      top[dot - mod] = 0;
+      m = get_module(top, ctx);
+      if (!m) {
+        for (auto p : ctx.search_path->values()) {
+          if (file_exists(p, "/__init__.py")) continue;
+          if (!is_regular_file(p, "/", top, ".py")) continue;
+          import_file(top, p, ctx);
+          break;
+        }
+        m = get_module(top, ctx);
+      }
+      if (m) bind_mod = top;
+    }
+  }
   if (!m) return;  // module not found; build_import_if1 emits the diagnostic
   // `from X import Y [as Z]`: bind the module's symbol Y into the
   // importing scope under Z (or Y). The module's symbols were fully
@@ -105,7 +131,7 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
     // Modules are compile-time namespaces here, not runtime values,
     // so `X.attr` is resolved to the module member at build_if1 time
     // (see PY_power). The marker itself never flows as a value.
-    cchar *bind = cannonicalize_string(as ? as : mod);
+    cchar *bind = cannonicalize_string(as ? as : bind_mod);
     PycSymbol *marker = new_PycSymbol(bind, ctx);
     marker->sym->is_module = 1;
     marker->sym->nesting_depth = 0;
@@ -212,10 +238,28 @@ static void mark_pattern_captures(PyDAST *n) {
   // Literal pattern (number/string/etc.): nothing to bind.
 }
 
+// issues/014: a function is a generator iff its OWN body contains a
+// `yield` statement/expression anywhere -- no separate keyword, unlike
+// `async def`. Recurse through the funcdef's children (params, body,
+// decorators) but stop at any nested function/class boundary: a yield
+// inside a nested def/lambda/class belongs to THAT scope, not this one.
+static bool pyda_contains_yield(PyDAST *n) {
+  if (!n) return false;
+  if (n->kind == PY_yield_stmt || n->kind == PY_yield_expr) return true;
+  if (n->kind == PY_funcdef || n->kind == PY_lambda || n->kind == PY_classdef) return false;
+  for (auto c : n->children.values())
+    if (pyda_contains_yield(c)) return true;
+  return false;
+}
+
 // Set up function scope for pyda path
 static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   fn->in = ctx.scope_stack.last()->in;
   fn->is_async = n->is_async;
+  if (n->kind == PY_funcdef) {
+    for (auto c : n->children.values())
+      if (pyda_contains_yield(c)) { fn->is_generator = 1; break; }
+  }
   new_fun(ast, fn);
   ctx.node = n;
   if (n->kind == PY_classdef)
@@ -1003,7 +1047,43 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       if1_gen(if1, &body, getAST(body_node, ctx)->code);
     }
   }
-  if1_move(if1, &body, sym_nil, fn->ret, ast);
+  // issues/014: a generator body's reply value is never the user's --
+  // it's the raw coroutine-handle int the synthesized wrapper (see
+  // build_if1_pyda's PY_funcdef) reads to construct a
+  // __pyc_generator__. Give it an int64-typed default here (instead
+  // of None) so FA infers an int return type for this Fun regardless
+  // of which exit path (fall-through or bare `return`, see
+  // PY_return_stmt) is taken; codegen (cg.cc, is_generator) replaces
+  // the actual reply mechanics with co_yield/co_return and ignores
+  // this value's runtime content entirely.
+  //
+  // MUST NOT be a literal FA constant (int64_constant(0), tried
+  // first): FA faithfully propagates a constant reply value through
+  // every caller, including the synthesized wrapper -- collapsing
+  // the wrapper's "call the coroutine body, read its handle" step to
+  // the same fake constant everywhere downstream (observed:
+  // __pyc_generator__.handle always 0 at runtime, never the real
+  // handle). Routed through an opaque C call instead (the same IF1
+  // shape __pyc_c_call__ produces from Python source, see PY_power's
+  // sym___pyc_c_call__ case above) so FA anchors the type without
+  // believing it knows the value.
+  Sym *default_ret;
+  if (fn->is_generator) {
+    int lvl = 0;
+    PycSymbol *int_cls_ps = find_PycSymbol(ctx, cannonicalize_string("int"), &lvl);
+    Sym *type_arg = (int_cls_ps && int_cls_ps->sym) ? int_cls_ps->sym : sym_int64;
+    Code *placeholder_send = if1_send1(if1, &body, ast);
+    if1_add_send_arg(if1, placeholder_send, sym_primitive);
+    if1_add_send_arg(if1, placeholder_send, sym___pyc_c_call__);
+    if1_add_send_arg(if1, placeholder_send, type_arg);
+    if1_add_send_arg(if1, placeholder_send, make_string("_CG_generator_placeholder_return"));
+    default_ret = new_sym(ast);
+    if1_add_send_result(if1, placeholder_send, default_ret);
+    placeholder_send->rvals.v[2]->is_fake = 1;
+  } else {
+    default_ret = sym_nil;
+  }
+  if1_move(if1, &body, default_ret, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;

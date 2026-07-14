@@ -115,6 +115,104 @@ inline void* _CG_run_coro(_CG_Coroutine coro) {
   return coro.handle.promise().value;
 }
 
+// Generator support (issues/014): a Python generator function is
+// compiled as a C++20 coroutine, same family as _CG_Coroutine above,
+// but driven synchronously by __next__/__pyc_more__/.send() (pyc's
+// existing iterator protocol, see __pyc__/07_file.py's __file_iter__)
+// instead of an event loop -- no awaiter chain, no _CG_event_loop_*
+// calls. _CG_generator_advance/_CG_generator_send are the only entry
+// points: each resumes the coroutine once (unless already done, where
+// resuming would be UB) and reports whether a value is now available.
+// Callers must always pair one advance()/send() with at most one
+// _CG_generator_value() read before the next advance()/send() --
+// __pyc_generator__ (09_generator.py) tracks this with its own
+// "primed" flag so both the __pyc_more__-then-__next__ alternation
+// PY_for_stmt's lowering does, and bare repeated __next__()/.send()
+// calls with no __pyc_more__ in between, stay one-for-one.
+//
+// `sent`: the value delivered to a paused `x = yield foo` expression
+// by the *next* resume. A plain advance (bare next()) delivers None
+// (nullptr); .send(v) delivers v. yield_value's returned awaiter's
+// await_resume() is what `co_yield expr`'s own expression value
+// becomes in the coroutine body -- previously this returned void
+// (std::suspend_always's await_resume()), which is why `x = yield
+// foo` used to be hardcoded to None at the frontend (PY_yield_expr)
+// with no way to actually deliver a sent value; the custom
+// yield_awaiter below is what makes that real.
+struct _CG_Generator {
+  struct promise_type {
+    void* value = nullptr;
+    void* sent = nullptr;
+
+    struct yield_awaiter {
+      promise_type* p;
+      bool await_ready() const noexcept { return false; }
+      void await_suspend(std::coroutine_handle<>) const noexcept {}
+      void* await_resume() const noexcept { return p->sent; }
+    };
+
+    _CG_Generator get_return_object() {
+      return _CG_Generator{std::coroutine_handle<promise_type>::from_promise(*this)};
+    }
+    std::suspend_always initial_suspend() { return {}; }
+    std::suspend_always final_suspend() noexcept { return {}; }
+
+    template<typename T>
+    yield_awaiter yield_value(T v) { value = (void*)(uintptr_t)v; return yield_awaiter{this}; }
+    void return_void() {}
+    void unhandled_exception() {}
+  };
+
+  std::coroutine_handle<promise_type> handle;
+};
+
+// int64 in/out at this boundary, matching every other opaque-handle
+// runtime helper (_CG_fopen/_CG_fclose et al. smuggle a FILE* through
+// int64 the same way) -- __pyc_c_call__ sites deal in plain int64,
+// never a raw pointer or C++ type. `int64`'s typedef comes later in
+// this header (outside the __cplusplus coroutine block above), so
+// `long long` is used directly here rather than reordering the file.
+inline bool _CG_generator_advance(long long raw_handle) {
+  auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
+  if (h.done()) return false;
+  h.promise().sent = nullptr;
+  h.resume();
+  return !h.done();
+}
+
+// .send(v): like _CG_generator_advance, but delivers `v` as the
+// value of the paused `yield` expression being resumed into, instead
+// of None. Calling .send() on a not-yet-started generator (no paused
+// yield to deliver into yet) is the same UB-if-done guard as advance
+// -- real Python raises a TypeError for that specific case, which
+// pyc has no exception model to express (issue 011); left unchecked,
+// matching every other iterator's past-exhaustion behavior here.
+inline bool _CG_generator_send(long long raw_handle, long long value) {
+  auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
+  if (h.done()) return false;
+  h.promise().sent = (void*)(uintptr_t)value;
+  h.resume();
+  return !h.done();
+}
+
+inline long long _CG_generator_value(long long raw_handle) {
+  auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
+  return (long long)(uintptr_t)h.promise().value;
+}
+
+// issues/014: a coroutine body's default/fall-through reply value is
+// never meant to be observed (cg.cc's is_generator handling emits a
+// bare `co_return;`, ignoring it) -- it only exists so FA infers an
+// int return type for the Fun. A literal FA constant there gets
+// constant-folded all the way through a caller (the synthesized
+// wrapper, see python_ifa_build_if1.cc's PY_funcdef case), collapsing
+// the real, dynamic coroutine handle to the same fake value
+// everywhere. Routing the placeholder through a genuine opaque C call
+// (built via the same IF1 shape __pyc_c_call__ produces, see
+// gen_fun_pyda) keeps it int64-typed without FA believing it knows
+// the value.
+inline long long _CG_generator_placeholder_return() { return 0; }
+
 struct _CG_Await_Net_Read {
   int fd;
   bool await_ready() const noexcept { return false; }

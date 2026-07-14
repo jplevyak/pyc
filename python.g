@@ -111,6 +111,18 @@ expr_stmt: testlist (augassign testlist | ('=' testlist)*) {
   else if ($$.ast->children.n >= 2)
     $$.ast->kind = PY_assign;
 }
+| testlist '=' yield_expr {
+  // issues/014: `x = yield foo` -- the RHS-of-assignment form
+  // `.send()` delivers into. testlist's own '=' alternative above
+  // can't reach this: `testlist` doesn't include yield_expr (mirrors
+  // how the grammar already carves out a separate `LP yield_expr RP`
+  // alternative in `atom` rather than folding yield_expr into
+  // testlist generally). PY_assign's build_if1_pyda/build_syms_pyda
+  // handling (python_ifa_build_if1.cc / python_ifa_build_syms.cc) is
+  // already fully generic over its value child's kind, so no
+  // downstream change was needed once this shape can parse.
+  $$.ast = new_pyast(PY_assign, &$n, $0.ast, $2.ast);
+}
 | testlist ':' test ('=' testlist)? {
   PyDAST *val = dig_pyast(d_get_child(&$n, 3));
   if (val)

@@ -140,6 +140,24 @@ class tuple:
     return True
   def __ne__(self, t):
     return not self.__eq__(t)
+  def __lt__(self, t):
+    lt = __pyc_clone_constants__(len(t))
+    lself = __pyc_clone_constants__(len(self))
+    n = lself if lself < lt else lt
+    for i in range(n):
+      a = self[i]
+      b = t[i]
+      if a < b:
+        return True
+      if b < a:
+        return False
+    return lself < lt
+  def __le__(self, t):
+    return not t.__lt__(self)
+  def __gt__(self, t):
+    return t.__lt__(self)
+  def __ge__(self, t):
+    return not self.__lt__(t)
   def __str__(self):
     n = len(self)
     x = "("

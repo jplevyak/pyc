@@ -41,6 +41,24 @@ class str:
       r = r + x
       first = False
     return r
+  def lower(self):
+    r = ""
+    for c in self:
+      o = ord(c)
+      if o >= 65 and o <= 90:
+        r = r + chr(o + 32)
+      else:
+        r = r + c
+    return r
+  def upper(self):
+    r = ""
+    for c in self:
+      o = ord(c)
+      if o >= 97 and o <= 122:
+        r = r + chr(o - 32)
+      else:
+        r = r + c
+    return r
   def __contains__(self, x):
     # Substring search by char compare; str has no working slice path
     # yet (the __pyc_any_type__ fallback mis-routes slices of str into

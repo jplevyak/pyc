@@ -1,0 +1,5 @@
+issues/014: generators target the C++20-coroutine C backend only
+(this spike's explicit scope). The LLVM backend has no is_generator
+handling in cg_emit_llvm.cc and pyc_runtime.c has no
+_CG_generator_advance/_CG_generator_value/_CG_prim_yield -- link
+failure expected on `pyc -b` until the LLVM fast-follow lands.
