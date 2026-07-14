@@ -697,20 +697,35 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       if (n != cdef) ast->rval = ast->sym = cdef_ast->sym;
       // Process body (last child = PY_suite)
       build_syms_pyda(cdef->children.last(), ctx);
-      // Post-classdef: collect base classes and members
+      // Post-classdef: collect base classes and members.
+      // A base must already BE a class here (classdefs are processed
+      // in program order, so a legal base's type_kind is set by the
+      // time a subclass names it). An unresolved or non-class name
+      // (e.g. inheriting from a builtin pyc doesn't define) yields a
+      // plain Type_NONE Sym; letting inherits_add wire that into the
+      // hierarchy plants a meta_type-less sym that
+      // build_type_hierarchy later derefs as null -- the
+      // amaze/tictactoe/voronoi2 SIGSEGV family (ifa/issues/042).
+      // Fail cleanly instead.
+      auto check_base = [&](Sym *base) {
+        if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
+        if (!base->type_kind && !base->is_constant)
+          fail("error line %d, base '%s' of class '%s' is not a class (undefined, or not a type)", ctx.lineno,
+               base->name ? base->name : "<anonymous>", cdef_ast->sym->name);
+      };
       bool any_base = false;
       for (int i = 1; i < cdef->children.n - 1; i++) {
         PyDAST *base_ast = cdef->children[i];
         if (base_ast->kind == PY_tuple) {
           for (int j = 0; j < base_ast->children.n; j++) {
             Sym *base = getAST(base_ast->children[j], ctx)->sym;
-            if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
+            check_base(base);
             cdef_ast->sym->inherits_add(base);
             any_base = true;
           }
         } else {
           Sym *base = getAST(base_ast, ctx)->sym;
-          if (!base) fail("error line %d, base not found for class '%s'", ctx.lineno, cdef_ast->sym->name);
+          check_base(base);
           cdef_ast->sym->inherits_add(base);
           any_base = true;
         }
@@ -783,18 +798,36 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       for (auto c : n->children.values()) make_PycSymbol(ctx, c->str_val, PYC_NONLOCAL);
       return 0;
 
+    // Loops don't push a scope, so lcontinue/lbreak live in the
+    // ENCLOSING function scope's slots -- they must be saved and
+    // restored around the loop's own subtree, or every statement
+    // AFTER a nested loop (but still inside an outer one) resolves
+    // break/continue to the inner loop's labels. othello2's
+    // vs_cpu_ugi hit exactly that: a `break` meant for the outer
+    // `while` (as a sibling after an inner `for`) bound to the inner
+    // for's break label -- the label it is placed straight after --
+    // lowering to a goto-to-self infinite loop (a CFG region with no
+    // path to exit, which then crashed the dominator build; see
+    // ifa/optimize/dom.cc). Restore also runs BEFORE the loop's
+    // else_clause: Python's for/while-else runs after the loop, and
+    // break/continue inside it belong to the OUTER loop.
     case PY_for_stmt:
+    case PY_while_stmt: {
+      Label *save_continue = ctx.lcontinue(), *save_break = ctx.lbreak();
       ctx.lcontinue() = ast->label[0] = if1_alloc_label(if1);
       ctx.lbreak() = ast->label[1] = if1_alloc_label(if1);
-      mark_store(n->children[0]);
-      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      if (n->kind == PY_for_stmt) mark_store(n->children[0]);
+      for (auto c : n->children.values()) {
+        if (c->kind == PY_else_clause) {
+          ctx.lcontinue() = save_continue;
+          ctx.lbreak() = save_break;
+        }
+        build_syms_pyda(c, ctx);
+      }
+      ctx.lcontinue() = save_continue;
+      ctx.lbreak() = save_break;
       return 0;
-
-    case PY_while_stmt:
-      ctx.lcontinue() = ast->label[0] = if1_alloc_label(if1);
-      ctx.lbreak() = ast->label[1] = if1_alloc_label(if1);
-      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
-      return 0;
+    }
 
     case PY_assign:
       for (int i = 0; i < n->children.n - 1; i++) mark_store(n->children[i]);
@@ -864,8 +897,14 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       build_import_syms_from_pyda(n, ctx);
       return 0;
 
-    case PY_continue_stmt: ast->label[0] = ctx.lcontinue(); return 0;
-    case PY_break_stmt:    ast->label[0] = ctx.lbreak(); return 0;
+    case PY_continue_stmt:
+      if (!ctx.lcontinue()) fail("error line %d, 'continue' not properly in loop", ctx.lineno);
+      ast->label[0] = ctx.lcontinue();
+      return 0;
+    case PY_break_stmt:
+      if (!ctx.lbreak()) fail("error line %d, 'break' outside loop", ctx.lineno);
+      ast->label[0] = ctx.lbreak();
+      return 0;
     case PY_return_stmt:
       ast->label[0] = ctx.lreturn();
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);
