@@ -63,7 +63,118 @@ and no IF1-level construct for "this send may transfer control to
 a handler" in the current IR — this is a from-scratch subsystem,
 not a small gap.
 
-## Proposed fix sketch
+## Design alternatives analyzed (2026-07-15) — supersedes the sketch below
+
+State that changed since filing: exception CLASSES now exist
+(`__pyc__/08_exception.py`, the full standard hierarchy); `try`
+no longer fails (body + else/finally build, except handlers
+skipped); `raise` evaluates its expression and falls through. The
+generated code is compiled as C++23 (`Makefile.cg`, clang++, NO
+`-fno-exceptions`), already contains C++20 coroutines
+(async/generators), and pyc's iterator protocol does NOT use
+StopIteration (no hot-path exception tax to design around).
+
+### A. Native C++ exceptions (what shedskin does)
+
+`raise` → `throw (obj*)`; `try` → C++ `try/catch` + isinstance
+dispatch in the handler.
+- Happy path: zero cost (Itanium table-based unwinding). Throw:
+  expensive (unwinder + RTTI), fine for exceptional paths.
+- C backend: moderate work. GC'd, destructor-free generated code is
+  actually favorable (no exception-safety/RAII concerns).
+- **LLVM backend: a large project** — every potentially-throwing
+  call becomes `invoke` with landingpads, personality function,
+  typeinfo plumbing. Nothing exists for it today.
+- Coroutines: propagation across resume boundaries routes through
+  `promise_type::unhandled_exception()` — workable but subtle,
+  interacts with the issue-014 generator machinery.
+- FA: the throw MECHANISM doesn't remove any analysis work — FA
+  still needs handler CFG edges and exception-value typing to
+  compile `except X as e:` at all. Native EH just makes the FA
+  precision unable to buy anything (tables are free regardless).
+
+### B. setjmp/longjmp
+
+- Per-`try` happy-path cost (register save + handler-stack
+  push/pop).
+- **Disqualifying hazard**: locals modified between `setjmp` and
+  `longjmp` are indeterminate unless `volatile` — with `-O3` on
+  generated code full of locals, that is a standing miscompile
+  class (or a blanket-volatile optimization kill).
+- `longjmp` across suspended C++20 coroutine frames is broken.
+- Right answer for a pure-C89 backend circa 2005; wrong here.
+
+### C. Exception slot + explicit checks, FA-gated (recommended)
+
+`raise` stores the exception object into a per-thread slot and
+branches (to the local handler if one encloses, else the
+function-exit propagate path); after each call **that FA proves can
+raise**, codegen emits `if (unlikely(_CG_exc_pending)) goto
+Lhandler_or_propagate;`.
+
+Why this fits pyc specifically:
+- **IFA compatibility is maximal.** try/except lowers to ordinary
+  IF1 labels/gotos — real CFG edges through the existing
+  Code_LABEL/GOTO/IF vocabulary, no new IR concept — so SSU,
+  dominators, liveness, and the (issue-033-fragile) splitter all
+  work unchanged. The handler's exception var is typed by ordinary
+  flow along those edges from the raise sites that reach it.
+  `except X as e:` matching IS `isinstance` — the existing
+  RP_IsInstanceOf restrict-predicate narrowing does the per-clause
+  binding and dead-clause pruning with zero new machinery.
+- **Whole-program can-raise gating** is where pyc's architecture
+  pays uniquely: a monotone per-Fun (even per-EntrySet-clone) bit —
+  same shape as the existing `fun_returns_value` — seeded by
+  `raise` statements, propagated over call edges. Most clones in
+  shedskin-style code provably cannot raise → NO check emitted →
+  the happy path is literally untouched for them. Neither A nor B
+  can convert that whole-program knowledge into anything.
+- **Backend-uniform**: one compare+branch works identically in the
+  C and LLVM emitters; nothing new in either. The slot survives
+  coroutine suspension; generators check after resume.
+- Raise cost: store + one branch per propagated frame — beats
+  unwinding for the shallow propagation typical of Python
+  error-handling; loses only for very deep propagation of frequent
+  exceptions, which pyc's protocol design already avoids
+  (no StopIteration iteration).
+- Cost honestly stated: one predictable branch per can-raise call
+  site plus the propagate-path code, only inside the raising
+  subgraph.
+
+### D. Handler-continuation passing (CPS)
+
+Hidden handler-continuation argument on every call. Invasive across
+IR/ABI/codegen; incompatible with the direct-call codegen shape.
+Dismissed.
+
+### Recommendation
+
+**C, framed so the backend mechanism stays swappable**: land the
+FA/IF1 layer (explicit handler edges, can-raise bit, slot
+semantics) as THE design, with flag-checks as the emission strategy
+in both backends. If profiling ever shows check overhead that
+matters, the C backend can swap emission to native throw/catch
+under the SAME analysis (A and C share the FA layer entirely; only
+the emission differs) — that keeps today's cost low and the
+analysis story singular.
+
+Staged plan:
+1. can-raise FA bit + `raise` lowering + intra-function
+   `try/except:` (single bare handler) — replaces the current
+   silent raise-fallthrough with real control flow.
+2. Cross-function propagation (the check-after-call emission,
+   gated on callee can-raise).
+3. Typed clauses + `except X as e:` binding via RP_IsInstanceOf
+   narrowing; clause order = first-match dispatch.
+4. `finally` (code duplication first — matches the existing
+   lowering style), bare re-raise from the slot.
+5. Follow-ons: upgrade `__pyc_assert_fail__` to raise
+   AssertionError; make runtime helpers (index/key errors) raise
+   instead of trap ONLY where FA sees an enclosing handler.
+
+---
+
+## Original fix sketch (superseded by the analysis above)
 
 This is the largest of the "missing core feature" issues filed in
 this batch; a real implementation needs decisions at multiple
