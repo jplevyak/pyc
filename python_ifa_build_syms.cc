@@ -1302,7 +1302,22 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
       // constructor call fails to resolve ("'t' has no type"). A null
       // param name (e.g. *args) degrades to an unnamed formal as before.
       // issue 025 bucket A: timsort's `Timsort(list_, comparefn=comparefn)`.
-      for (int i = 2; i < init_sym->has.n; i++) as.add(new_sym(ast, init_sym->has[i]->name));
+      //
+      // Also propagate clone_for_constants from the __init__ param to
+      // the wrapper formal: constant-driven contour separation must
+      // start at __new__ (where the instance CS is created via
+      // sym_clone -- one CS per __new__ contour), or every caller's
+      // constants merge in one shared __new__ ES and the per-constant
+      // __init__ clones all write into the SAME instance CS, unioning
+      // the fields anyway. Issue 040/043: `range(0, 0)` vs
+      // `range(0, 2)` from list.__str__'s per-receiver clones must
+      // produce distinct range CSs so `self.i < self.j` folds false
+      // for the empty clone and its dead loop body is pruned.
+      for (int i = 2; i < init_sym->has.n; i++) {
+        Sym *wf = new_sym(ast, init_sym->has[i]->name);
+        wf->clone_for_constants = init_sym->has[i]->clone_for_constants;
+        as.add(wf);
+      }
       body = 0;
       Sym *t = new_sym(ast);
       if (!cls->is_vector)

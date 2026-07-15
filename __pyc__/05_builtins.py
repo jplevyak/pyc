@@ -51,6 +51,17 @@ class range:
   i = 0
   j = 0
   s = 1
+  # NOTE: __pyc_clone_constants__ on these ctor params was tried for
+  # issues 040/043 (fold `range(0, 0)` loop headers per constant) and
+  # REVERTED: per-constant ctor contours and per-constant range CSs
+  # do form (with gen_class_pyda's __new__ formal propagation), but
+  # __pyc_more__/__next__ still merge into one EntrySet over the
+  # union of receiver CSs, and __next__'s `self.i += self.s` then
+  # widens EVERY receiver's `i` field -- so `i < j` cannot fold even
+  # per-CS. The fix needs receiver-CS-directed method cloning as a
+  # precision move (issue 033 splitter territory); the flags alone
+  # just added clone pressure (pygasus FA ~50s -> ~66s) for zero
+  # corpus effect.
   def __init__(self, aj):
     self.j = aj
     return self;
