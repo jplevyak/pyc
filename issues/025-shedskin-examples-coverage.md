@@ -805,6 +805,72 @@ unchanged from round 4; the round's value is the two fixed FA bugs,
 the new-issue filings, and the corrected taxonomy (cross-product
 imprecision, not empty containers, is the live inference gap).
 
+### The "has no type" bucket grouped by root cause (2026-07-15)
+
+All 28 bucket members' full diagnostics collected and classified.
+First-warning variable names are cascade VICTIMS (e.g. `'ll' has no
+type` is `list.__eq__`'s local; `'lt'` is `tuple.__lt__`'s) -- the
+groups below are by best-evidence ROOT, with confidence labels.
+Micro-repros verified with 10-line standalone programs.
+
+**R1 -- missing sequence operations (mechanical, pure-Python
+fixable; each VERIFIED by micro-repro):**
+
+- `n * [x]` / reflected multiplication: `int.__mul__` doesn't match
+  a list/tuple right operand and `list.__rmul__`/`__imul__` are
+  `pass` stubs; pyc has no reflected-operator fallback. Micro:
+  `print(3 * [0])` fails to compile. Members: **rubik2, tictactoe**
+  (first blocker, verified from source: `20*[0]`, `edge*[0]`), plus
+  **hq2x, sudoku2** (grep-attributed, deeper in their chains).
+- `list.extend` missing -- AND IT SILENTLY NO-OPS today (unknown
+  method on a known class warns and drops: `a=[1]; a.extend([2,3]);
+  print(a)` prints `[1]` -- the pisang/voronoi2 silent-miscompile
+  shape again). Members: **softrender** (first blocker), **chull,
+  hq2x, rdb** (grep-attributed).
+- `reversed(range(n))`: `reversed` indexes its argument;
+  `range.__getitem__` doesn't exist. Micro: runtime abort ("getter
+  not resolved"). Member: **linalg** (first blocker).
+- Tuple concatenation/repetition: `(1, 2) + (None,) * 3` fails
+  (tuple.__add__/__mul__ missing -- tuples are fixed-arity
+  structs, so these need CONSTANT-length folding at the frontend or
+  FA level, not a runtime loop). Member: **chess** (first blocker:
+  its `setup` board literal is exactly this shape).
+- `copy.deepcopy` on containers: the shim aliases deepcopy to the
+  shallow `copy` prim; genetic2 deep-copies a genome list. Member:
+  **genetic2** (SUSPECT -- first-diag + shim inspection, no micro).
+
+NOT a root (verified working): nested tuple unpacking
+`a, (b, c) = f()` -- pygmy's first-line suspect compiles and runs
+correctly in isolation.
+
+**R2 -- heterogeneous unions / BOXING mixes (deep FA; the
+ifa/issues/043 cross-product family):** explicit `has mixed basic
+types` warnings name the mix. Members: **pygasus** (int64/str --
+its `val`/`x` memory-bus values), **hq2x** (int64/str, second root
+besides R1), **rubik** (list/tuple/int64/str/face in ONE union),
+**pygmy** (tuple/int64/float64/str/vec). These need the
+cross-product measurement + issue 030-style tagged dispatch or
+better splitting; no quick fix.
+
+**R3 -- dict-with-object-keys / heapq / cross-product (deep,
+verified for dijkstra2 earlier):** **dijkstra2**, and likely
+**sudoku2/sudoku4** (Norvig-style dict/set solvers; sudoku2 also in
+R1 via `n*[x]`).
+
+**R4 -- unattributed cascades (first diagnostic is a victim inside
+builtin code or a call-tree tail; each needs its own dig):**
+**amaze, block, chaos, mastermind2, neural1, othello2, pylife, rdb
+(beyond extend), sha, sudoku1, timsort, tonyjpegdecoder, voronoi2,
+yopyra.** Known non-blocking context: othello2's diagnostics sit in
+possible_moves' int-bit tricks; timsort's in merge_at; voronoi2's
+PriorityQueue was diagnosed pre-045 as genuine inference gaps.
+
+**Suggested attack order by leverage:** R1's four verified ops
+(mechanical, ~4 first-blockers plus 4 second-blockers, and the
+extend silent no-op is a correctness hole regardless); then the R2
+cross-product measurement (043's open item) before any deep FA
+work; R4 one example at a time afterward.
+
 ### "has no type" tail dig (2026-07-08)
 
 Root-caused and fixed three mechanical gaps plus one wrong-code
