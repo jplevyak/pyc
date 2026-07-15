@@ -140,6 +140,11 @@ class __base_iter__:
   thestr = None
   position = 0
   slen = 0
+  def __iter__(self):
+    # Iterators are self-iterable (Python protocol) -- lets
+    # `for x in it:` consume an already-made iterator (functools
+    # .reduce, issue 025).
+    return self
   def __init__(self, s):
     self.thestr = s
     self.slen = len(s)

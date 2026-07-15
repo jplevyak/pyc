@@ -1,6 +1,11 @@
 class __list_iter__:
   thelist = None
   position = 0
+  def __iter__(self):
+    # Iterators are self-iterable (Python protocol) -- lets
+    # `for x in it:` consume an already-made iterator (functools
+    # .reduce, issue 025).
+    return self
   def __init__(self, l):
     self.thelist = l
   def __pyc_more__(self):
@@ -90,10 +95,25 @@ class list:
                          int, l + 1)
     tmp.__setitem__(l, x)
     return tmp
-  def index(self, index, start=0, end=0):
-    pass
-  def count(self, l):
-    pass
+  def index(self, x):
+    # Returns -1 when absent instead of raising ValueError (no
+    # exception model, issue 011).
+    n = len(self)
+    i = 0
+    while i < n:
+      if self[i] == x:
+        return i
+      i += 1
+    return -1
+  def count(self, x):
+    n = len(self)
+    c = 0
+    i = 0
+    while i < n:
+      if self[i] == x:
+        c += 1
+      i += 1
+    return c
   def reverse(self):
     i = 0
     j = len(self) - 1
@@ -157,6 +177,11 @@ class list:
 class __tuple_iter__:
   thetuple = None
   position = 0
+  def __iter__(self):
+    # Iterators are self-iterable (Python protocol) -- lets
+    # `for x in it:` consume an already-made iterator (functools
+    # .reduce, issue 025).
+    return self
   def __init__(self, t):
     self.thetuple = t
   def __pyc_more__(self):

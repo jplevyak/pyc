@@ -188,21 +188,37 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   Sym *fn = new_fun(ast);
   fn->nesting_depth = f->sym->nesting_depth;
   Vec<Sym *> as;
-  int n = f->sym->has.n - default_args.n;
+  // The positions to default are exactly `default_args` -- NOT
+  // necessarily a contiguous tail. A keyword argument can provide a
+  // LATER positional while an earlier default goes unfilled
+  // (`pack(circles, damping=0.1, exclude=None)` called as
+  // `pack([c], exclude=c)` defaults position 3 but receives position
+  // 4). The old tail-based construction (forward the first
+  // has.n - defaults.n positions, append defaults) silently SWAPPED
+  // arguments in that case: the kwarg's value landed in the
+  // defaulted slot and the wrong default landed in the kwarg's slot
+  // (issue 025, circle.py: damping bound to a Circle). The matcher's
+  // contract (pattern.cc fixup_maps_for_defaults) is: wrapper
+  // formals = the non-defaulted positions in original order,
+  // compacted; the inner send re-expands them around the default
+  // expressions at their true positions.
+  Vec<MPosition *> defaults_set;
+  defaults_set.set_union(default_args);
   MPosition pos;
   pos.push(1);
   Code *body = 0;
   Sym *ret = new_sym(ast);
   Code *send = if1_send(if1, &body, 0, 1, ret);
   send->ast = ast;
-  for (int i = 0; i < n; i++) {
-    Sym *a = new_sym(ast);
-    as.add(a);
-    if1_add_send_arg(if1, send, a);
-    pos.inc();
-  }
-  for (int i = 0; i < default_args.n; i++) {
-    if1_add_send_arg(if1, send, ((PycAST *)f->default_args.get(cannonicalize_mposition(pos)))->sym);
+  for (int i = 0; i < f->sym->has.n; i++) {
+    MPosition *cp = cannonicalize_mposition(pos);
+    if (defaults_set.set_in(cp)) {
+      if1_add_send_arg(if1, send, ((PycAST *)f->default_args.get(cp))->sym);
+    } else {
+      Sym *a = new_sym(ast);
+      as.add(a);
+      if1_add_send_arg(if1, send, a);
+    }
     pos.inc();
   }
   if1_move(if1, &body, ret, fn->ret, ast);

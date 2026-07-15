@@ -2,6 +2,11 @@ class __dict_iter__:
   _keys = []
   _len = 0
   _pos = 0
+  def __iter__(self):
+    # Iterators are self-iterable (Python protocol) -- lets
+    # `for x in it:` consume an already-made iterator (functools
+    # .reduce, issue 025).
+    return self
   def __init__(self, keys, n):
     self._keys = keys
     self._len = n

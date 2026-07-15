@@ -42,6 +42,11 @@ class __pyc_file__:
 class __file_iter__:
   thefile = None
   nextline = ""
+  def __iter__(self):
+    # Iterators are self-iterable (Python protocol) -- lets
+    # `for x in it:` consume an already-made iterator (functools
+    # .reduce, issue 025).
+    return self
   def __init__(self, f):
     self.thefile = f
     self.nextline = f.readline()

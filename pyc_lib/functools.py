@@ -1,13 +1,14 @@
-class _empty_initializer:
-    pass
+# pyc shim for functools. reduce uses the default-None + is-None
+# narrowing pattern (see __pyc__/05_builtins.py min/max) instead of
+# CPython's private sentinel class -- a class-object default is
+# untypable for pyc today. reduce(f, seq, None) as an EXPLICIT
+# initializer is therefore indistinguishable from the 2-arg form
+# (nobody in the corpus does that).
 
-def reduce(function, iterable, initializer=_empty_initializer):
+def reduce(function, iterable, initializer=None):
     it = iter(iterable)
-    if initializer is _empty_initializer:
-        try:
-            value = next(it)
-        except StopIteration:
-            raise TypeError("reduce() of empty sequence with no initial value")
+    if initializer is None:
+        value = next(it)
     else:
         value = initializer
     for element in it:

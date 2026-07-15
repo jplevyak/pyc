@@ -85,3 +85,143 @@ class str:
         return True
       i += 1
     return False
+  def __pyc_substr__(self, i, j):
+    # self[i:j] by char concat -- same no-slice-path caveat as
+    # __contains__ above. O(j-i) concats; fine for corpus-scale
+    # correctness, optimize via a _CG helper if it ever matters.
+    r = ""
+    k = i
+    while k < j:
+      r = r + self[k]
+      k += 1
+    return r
+  def strip(self):
+    # Whitespace-only form (no chars argument -- the corpus's one
+    # `.strip(x)` call stays unsupported for now).
+    n = len(self)
+    i = 0
+    while i < n and (self[i] == " " or self[i] == "\t" or self[i] == "\n" or self[i] == "\r"):
+      i += 1
+    j = n
+    while j > i and (self[j - 1] == " " or self[j - 1] == "\t" or self[j - 1] == "\n" or self[j - 1] == "\r"):
+      j -= 1
+    return self.__pyc_substr__(i, j)
+  def split(self, sep=None):
+    # sep=None: runs of whitespace, no empty tokens (Python
+    # semantics). String sep: split on every occurrence, empty
+    # tokens included. No maxsplit. NOTE calling BOTH forms in one
+    # program hits the two-default-shapes contour union (issue 025
+    # round-3 notes) -- one form per program.
+    r = []
+    n = len(self)
+    if sep is None:
+      i = 0
+      while i < n:
+        while i < n and (self[i] == " " or self[i] == "\t" or self[i] == "\n" or self[i] == "\r"):
+          i += 1
+        j = i
+        while j < n and not (self[j] == " " or self[j] == "\t" or self[j] == "\n" or self[j] == "\r"):
+          j += 1
+        if j > i:
+          r.append(self.__pyc_substr__(i, j))
+        i = j
+      return r
+    m = len(sep)
+    if m == 0:
+      r.append(self)
+      return r
+    i = 0
+    start = 0
+    while i + m <= n:
+      k = 0
+      while k < m and self[i + k] == sep[k]:
+        k += 1
+      if k == m:
+        r.append(self.__pyc_substr__(start, i))
+        i += m
+        start = i
+      else:
+        i += 1
+    r.append(self.__pyc_substr__(start, n))
+    return r
+  def startswith(self, prefix):
+    n = len(self)
+    m = len(prefix)
+    if m > n:
+      return False
+    i = 0
+    while i < m:
+      if self[i] != prefix[i]:
+        return False
+      i += 1
+    return True
+  def endswith(self, suffix):
+    n = len(self)
+    m = len(suffix)
+    if m > n:
+      return False
+    i = 0
+    while i < m:
+      if self[n - m + i] != suffix[i]:
+        return False
+      i += 1
+    return True
+  def find(self, sub):
+    n = len(self)
+    m = len(sub)
+    i = 0
+    while i + m <= n:
+      j = 0
+      while j < m and self[i + j] == sub[j]:
+        j += 1
+      if j == m:
+        return i
+      i += 1
+    return -1
+  def replace(self, old, new):
+    n = len(self)
+    m = len(old)
+    if m == 0:
+      return self
+    r = ""
+    i = 0
+    while i < n:
+      k = 0
+      if i + m <= n:
+        while k < m and self[i + k] == old[k]:
+          k += 1
+      if k == m:
+        r = r + new
+        i += m
+      else:
+        r = r + self[i]
+        i += 1
+    return r
+  def count(self, sub):
+    n = len(self)
+    m = len(sub)
+    if m == 0:
+      return n + 1
+    c = 0
+    i = 0
+    while i + m <= n:
+      k = 0
+      while k < m and self[i + k] == sub[k]:
+        k += 1
+      if k == m:
+        c += 1
+        i += m
+      else:
+        i += 1
+    return c
+  def isdigit(self):
+    n = len(self)
+    if n == 0:
+      return False
+    i = 0
+    while i < n:
+      o = ord(self[i])
+      if o < 48 or o > 57:
+        return False
+      i += 1
+    return True

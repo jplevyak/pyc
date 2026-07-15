@@ -129,6 +129,17 @@ def hash(x):
   # self-consistency within one run.
   return x.__hash__()
 
+def iter(x):
+  # issue 025: functools.reduce (pisang) and voronoi2 call these.
+  return x.__iter__()
+
+def next(it):
+  # pyc iterators' __next__ self-advances (list/base/generator
+  # iterators all do), so plain delegation is correct. Calling past
+  # exhaustion is undefined (no StopIteration -- issue 011), same as
+  # every other pyc iterator.
+  return it.__next__()
+
 # ---- issue 025 "has no type" bucket: previously-missing builtins ----
 # Pure-Python implementations. Py3 returns lazy iterators from
 # zip/map/filter/enumerate/reversed; these return lists (shedskin-

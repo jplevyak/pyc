@@ -726,6 +726,53 @@ and voronoi2 stops at its pre-existing PriorityQueue inference gaps
 (no-type branches → undeclared C labels). An honest fail replacing a
 silent miscompile.
 
+### Deep-resolution dig, round 4 (2026-07-15)
+
+**Silent-miscompile compiler bug found and fixed: a keyword argument
+past an unfilled default swapped arguments.**
+`PycCompiler::default_wrapper` assumed defaulted positions form a
+contiguous TAIL (forward the first `has.n - defaults.n` positions,
+append default expressions at the end). A kwarg can provide a LATER
+positional while an EARLIER default goes unfilled — circle.py's
+`pack([c], exclude=c)` with `pack(circles, damping=0.1,
+exclude=None)` defaults position 3 but supplies position 4 — and the
+tail construction then bound `damping <- the Circle` and `exclude <-
+None`, silently. The matcher's own contract
+(pattern.cc `fixup_maps_for_defaults`: wrapper formals = the
+non-defaulted positions in original order, compacted) was never what
+the wrapper built. Now the wrapper's inner send interleaves forwarded
+formals and default expressions at their true positions, driven by
+the exact `default_args` position set. **circle compiles CLEAN and
+joins the compiled set** — its float×Circle "union" was never an
+inference weakness at all, just this mis-binding. Test
+`tests/kwarg_past_default.py` (both backends).
+
+**str/list method batch** (each some example's blocker; split was
+referenced by 12 bucket examples, strip by 7):
+`str.strip/split(sep=None)/startswith/endswith/find/replace/count/
+isdigit` (pure-Python, char-compare based — str still has no real
+slice path, see `__pyc_substr__`), real `list.index/count`
+(replacing `pass` stubs; index returns -1 when absent, no exception
+model). `iter()`/`next()` builtins; all builtin iterator classes are
+now self-iterable (`__iter__: return self` — Python's iterator
+protocol; lets `for x in it:` consume an existing iterator);
+`functools.reduce` rewritten pyc-style (default-None narrowing
+instead of CPython's sentinel-class default, which is untypable
+here).
+
+**Sweep honesty correction:** resolving previously-missing methods
+converted 4 more silent miscompiles into visible failures (pisang,
+sudoku4, hq2x, rdb — like voronoi2 last round). Verified: pisang's
+old "compiled" binary aborts at startup (`bad getter`), it was never
+functional. Sweep counts: compiled 26 -> 22 by the numbers, but the
+delta is fake-compiles becoming honest fails plus circle's genuine
+join; "has no type" 29 -> 26.
+
+Remaining bucket roots sampled: dijkstra2 needs dict-with-object-keys
++ heapq-of-tuples + empty-dict element inference (deep); pisang's
+next layer is module-level `if __name__` globals feeding
+comprehension chains; chess/rubik/sudoku3 unsampled.
+
 ### "has no type" tail dig (2026-07-08)
 
 Root-caused and fixed three mechanical gaps plus one wrong-code
