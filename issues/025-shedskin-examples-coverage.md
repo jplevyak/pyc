@@ -773,6 +773,38 @@ Remaining bucket roots sampled: dijkstra2 needs dict-with-object-keys
 next layer is module-level `if __name__` globals feeding
 comprehension chains; chess/rubik/sudoku3 unsampled.
 
+### FA-precision round (2026-07-15, ifa/issues/043/044/045)
+
+Chased the "empty-container inference" theory from the round-4
+notes to ground; outcome recorded across three ifa issues:
+
+- **[ifa/issues/043](../ifa/issues/043-empty-container-inference-options.md)**:
+  the empty-container-element premise is FALSE — FA's union flow
+  already populates empty siblings' element types; every candidate
+  repro compiles clean today. The dijkstra2-family dict failure is a
+  **union cross-product dead combination** (`op(A, B)` pairings that
+  never co-occur at runtime), a distinct, still-open shape whose
+  bucket share is unmeasured.
+- **[ifa/issues/044](../ifa/issues/044-mixed-length-tuple-list-len-miscompile.md)**
+  (NEW, silent wrong output): mixed-length list literals in one
+  container print phantom elements (`[[3], [1, 2]]` →
+  `[[3, 0], [1, 2, 0]]`) — len over a union of different-length
+  tuple-list CSs. Open; ranked above further bucket work.
+- **[ifa/issues/045](../ifa/issues/045-receiver-cs-method-cloning.md)**
+  (LANDED): receiver-CS-directed method cloning as a precision move
+  (opt-in `clone_methods_per_cs`, first user `range`). **Fixes
+  ifa/issues/040** (`k=[]; print(k)` next to a non-empty list) and
+  the branch-merged-receiver shape; also fixed a latent
+  `build_call_dominators` SIGSEGV and made `__pyc_clone_constants__`
+  on ctor params actually work through `__new__`/default wrappers.
+  Corpus-neutral at the example level (the 040 shape is no example's
+  FIRST blocker); suites 196/0 + 17/0.
+
+Sweep state after the round: 22 compiled / 77, "has no type" 26 —
+unchanged from round 4; the round's value is the two fixed FA bugs,
+the new-issue filings, and the corrected taxonomy (cross-product
+imprecision, not empty containers, is the live inference gap).
+
 ### "has no type" tail dig (2026-07-08)
 
 Root-caused and fixed three mechanical gaps plus one wrong-code
