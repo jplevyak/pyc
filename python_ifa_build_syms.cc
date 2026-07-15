@@ -1071,6 +1071,25 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     for (auto c : varargsl->children.values())
       if (c->kind == PY_arg_default) {
         PycAST *a = getAST(c->children[1], ctx);
+        // A literal default (None/True/False/number/string: no
+        // computation code, constant rval) is referenced directly --
+        // no global, no initializing MOVE. The MOVE lands in the
+        // stream where the `def` executes, which for a METHOD is the
+        // class body's ___init___ closure -- and gen_class_pyda only
+        // CALLS that closure for Type_RECORD classes. For the core
+        // non-record builtins (list, tuple, str, ...) it never runs,
+        // so the default global stayed bottom in FA and any call
+        // relying on the default died with NOTYPE inside
+        // default_wrapper's forwarding send (issue 025:
+        // `[3,1,2].sort()` failed while `.sort(None, False)` worked).
+        // Computed defaults (e.g. `size=-1`, a negate send) keep the
+        // global+MOVE path: they genuinely need def-time evaluation,
+        // which non-record-builtin methods simply can't have today.
+        if (!a->code && a->rval && (a->rval->is_constant || a->rval->is_symbol || a->rval == sym_nil ||
+                                    a->rval == sym_true || a->rval == sym_false)) {
+          a->sym = a->rval;
+          continue;
+        }
         if1_gen(if1, &ast->code, a->code);
         Sym *g = new_sym(ast, 1);
         a->sym = g;

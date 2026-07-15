@@ -13,8 +13,17 @@ class str:
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __iter__(self):
     return __base_iter__(self)
+  def __pyc_tolist__(self):
+    # list("abc") -> ["a", "b", "c"] -- see the list() intercept in
+    # python_ifa_build_if1.cc (issue 025; block.py's first blocker).
+    r = []
+    for c in self:
+      r.append(c)
+    return r
   def __mul__(self, l):
     return __pyc_c_call__(str, "_CG_string_mult", str, self, int, l)
+  def __hash__(self):
+    return __pyc_c_call__(int, "_CG_str_hash", str, self)
   def __eq__(self, x):
     return __pyc_c_call__(bool, "_CG_str_eq", str, self, str, x)
   def __ne__(self, x):

@@ -115,6 +115,20 @@ def isinstance(obj, ci):
 def issubclass(c1, c2):
   return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))
 
+def id(x):
+  # Identity as int64: the address for heap objects, the value bits
+  # for unboxed scalars (diverges from CPython's every-value-is-an-
+  # object identity; fine for the id(a) == id(b) idiom -- issue 025:
+  # timsort, pylife).
+  return __pyc_primitive__(__pyc_symbol__("id"), x)
+
+def hash(x):
+  # Dispatches to __hash__ (defined on str and int today -- issue
+  # 025: sudoku1/sudoku2). Deterministic across runs, unlike
+  # CPython's seeded str hashing; programs only rely on
+  # self-consistency within one run.
+  return x.__hash__()
+
 # ---- issue 025 "has no type" bucket: previously-missing builtins ----
 # Pure-Python implementations. Py3 returns lazy iterators from
 # zip/map/filter/enumerate/reversed; these return lists (shedskin-
@@ -203,6 +217,16 @@ def filter(f, seq):
   return r
 
 def sorted(seq):
+  # NOTE deliberately NO key=/reverse= parameters (use
+  # list.sort(key=, reverse=) instead, 04_sequence.py): merely ADDING
+  # defaulted params here -- even unused, and regardless of whether
+  # the default is inlined or global -- routes sorted() calls through
+  # a default_wrapper, and that extra Fun shifted the FA splitter's
+  # trajectory enough that builtins_batch's sum() stopped getting
+  # per-call-site contours (its int result printed as float bits).
+  # The issue 033/040 split-order fragility; revisit when that has a
+  # real fix.
+  # `<`-only comparison, same contract note as list.sort.
   r = []
   for x in seq:
     r.append(x)
@@ -210,7 +234,7 @@ def sorted(seq):
   while i < len(r):
     x = r[i]
     j = i - 1
-    while j >= 0 and r[j] > x:
+    while j >= 0 and x < r[j]:
       r[j + 1] = r[j]
       j = j - 1
     r[j + 1] = x

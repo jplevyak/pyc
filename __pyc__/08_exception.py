@@ -21,3 +21,80 @@ class Exception(object):
     self.args = args
   def __str__(self):
     return self.args
+
+# The standard exception hierarchy's commonly-referenced classes
+# (issue 025's "has no type" bucket: an undefined name types as
+# nothing and poisons everything downstream -- bh referenced
+# SystemExit, tonyjpegdecoder/chaos ValueError, msp_ss KeyError/
+# NotImplementedError, rubik RuntimeError, softrender/timsort
+# IndexError, sudoku3 AssertionError, voronoi2 StopIteration, ...).
+# Flat where CPython nests (LookupError/ArithmeticError subtleties
+# don't matter without except-clause matching, issue 011); IOError
+# is aliased to OSError as in Python 3.
+
+class BaseException(object):
+  args = ""
+  def __init__(self, args=""):
+    self.args = args
+  def __str__(self):
+    return self.args
+
+class SystemExit(BaseException):
+  pass
+
+class KeyboardInterrupt(BaseException):
+  pass
+
+class StopIteration(Exception):
+  pass
+
+class ArithmeticError(Exception):
+  pass
+
+class ZeroDivisionError(ArithmeticError):
+  pass
+
+class OverflowError(ArithmeticError):
+  pass
+
+class AssertionError(Exception):
+  pass
+
+class AttributeError(Exception):
+  pass
+
+class LookupError(Exception):
+  pass
+
+class IndexError(LookupError):
+  pass
+
+class KeyError(LookupError):
+  pass
+
+class NameError(Exception):
+  pass
+
+class NotImplementedError(Exception):
+  pass
+
+class OSError(Exception):
+  pass
+
+class RuntimeError(Exception):
+  pass
+
+class TypeError(Exception):
+  pass
+
+class ValueError(Exception):
+  pass
+
+# Py3 aliases OSError; subclasses here (class-alias assignment is a
+# separate, untested shape in the builtin module, and the difference
+# is unobservable without except-clause matching).
+class IOError(OSError):
+  pass
+
+class EnvironmentError(OSError):
+  pass

@@ -661,6 +661,71 @@ x positional/kwargs x function/method) plus the full
 timsort()->Timsort(...)->sort(low=,high=) chain compile and run
 correctly.
 
+### "has no type" bucket dig, round 3 (2026-07-14)
+
+Swept at 31 examples in the bucket; landed one real compiler bug fix
+plus a batch of missing builtins; ended at 29 with ~8 examples
+advanced past their first blocker (bh past SystemExit to a real
+`__ne__` dispatch gap; block past `list(str)`; lz2, sudoku1, timsort,
+tonyjpegdecoder each one layer deeper; circle past `list.sort(key=)`
+to a float×Circle union; msp_ss past `Exception`).
+
+**Compiler bug found and fixed: default arguments on methods of
+non-record builtin classes never worked.** `a.sort()` silently
+no-opped while `a.sort(None, False)` worked. Root cause:
+`gen_fun_pyda` initializes each default's global (`g <- <default>`
+MOVE) in the code stream where the `def` executes — for a method
+that is the class body, which `gen_class_pyda` wraps into the class's
+`___init___` closure and only CALLS for `Type_RECORD` classes.
+`list`/`tuple`/`str` are core non-record builtins, so their methods'
+default globals stayed bottom in FA and every defaulted call died
+with NOTYPE inside `default_wrapper`'s forwarding send (invisible
+until now because no non-record builtin method with defaults was ever
+called relying on them — `list.index` was a `pass` stub). Fix:
+literal defaults (None/True/False/number/string — no computation
+code) skip the global+MOVE entirely and are referenced directly.
+Computed defaults (`size=-1`) keep the old path, which non-record
+builtin methods still can't use. Test `tests/list_sort_builtins.py`
+(both backends).
+
+**Builtins/stdlib landed:** the standard exception-class hierarchy
+(`__pyc__/08_exception.py`: BaseException, SystemExit, ValueError,
+KeyError, IndexError, RuntimeError, NotImplementedError,
+StopIteration, AssertionError, OSError/IOError, TypeError, ...);
+`id()` (new `P_prim_id` primitive end-to-end: prim_data, FA transfer
+anchoring int64, C `(_CG_int64)(uintptr_t)`, LLVM
+ptrtoint/zext/bitcast); `hash()` dispatching `__hash__` (str via new
+FNV-1a `_CG_str_hash` — deterministic across runs, unlike CPython's
+seeded hashing; int pre-existing); `list("abc")` via
+`str.__pyc_tolist__`; `list.sort(key=None, reverse=False)` (stable
+insertion sort, `<`-only comparisons per CPython's `__lt__`-only
+contract — voronoi2's Site has only `__lt__`) and `list.reverse()`;
+`sorted` kept `<`-only.
+
+**Two FA split-order fragilities found and dodged (issue 033/040
+family, documented for the eventual real fix):**
+1. Merely ADDING `key=None, reverse=False` parameters to `sorted` —
+   even unused, and regardless of whether the default is inlined or
+   a global — routes its calls through a `default_wrapper`, and that
+   one extra Fun shifted the splitter's trajectory enough that
+   `builtins_batch`'s `sum()` lost its per-call-site contours (int
+   result printed as float bits: the int64/float64 ret union with no
+   boxing). `sorted` deliberately stays 1-parameter; use
+   `list.sort(key=, reverse=)` instead.
+2. TWO different default-subset shapes of one method in one program
+   (`a.sort()` + `b.sort(reverse=True)`, or None-key + lambda-key)
+   union at the method's contours and abort at runtime with
+   "matching function not found" on an `_CG_any` argument. One shape
+   per program works fully.
+
+Sweep: compiled 26 → 25 — voronoi2 moved from compiled-with-warnings
+to FAIL, but its prior "compiled" state silently SKIPPED
+`self.__sites.sort()` (the method didn't exist; the call warned and
+no-opped), so the site list was never sorted — now the sort resolves
+and voronoi2 stops at its pre-existing PriorityQueue inference gaps
+(no-type branches → undeclared C labels). An honest fail replacing a
+silent miscompile.
+
 ### "has no type" tail dig (2026-07-08)
 
 Root-caused and fixed three mechanical gaps plus one wrong-code

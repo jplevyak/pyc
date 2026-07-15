@@ -1067,6 +1067,15 @@ inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
 #define _CG_prim_notequal(_a, _op, _b) ((_a) != (_b))
 inline _CG_bool _CG_str_eq(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) == 0); }
 inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) != 0); }
+// str.__hash__ (issue 025: hash() builtin). FNV-1a, masked positive:
+// deterministic across runs (unlike CPython's SipHash with
+// PYTHONHASHSEED randomization) -- programs only rely on
+// self-consistency within one run.
+inline long long _CG_str_hash(const char *s) {
+  unsigned long long h = 14695981039346656037ULL;
+  for (; *s; s++) h = (h ^ (unsigned char)*s) * 1099511628211ULL;
+  return (long long)(h & 0x7fffffffffffffffULL);
+}
 inline _CG_bool _CG_str_lt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) < 0); }
 inline _CG_bool _CG_str_le(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) <= 0); }
 inline _CG_bool _CG_str_gt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) > 0); }

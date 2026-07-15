@@ -49,6 +49,7 @@ extern char *_CG_chr(int x);
 extern int  _CG_ord(char *x);
 extern _CG_bool _CG_str_eq(const char *a, const char *b);
 extern _CG_bool _CG_str_ne(const char *a, const char *b);
+extern long long _CG_str_hash(const char *s);
 extern _CG_bool _CG_str_lt(const char *a, const char *b);
 extern _CG_bool _CG_str_le(const char *a, const char *b);
 extern _CG_bool _CG_str_gt(const char *a, const char *b);

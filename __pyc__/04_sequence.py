@@ -94,6 +94,55 @@ class list:
     pass
   def count(self, l):
     pass
+  def reverse(self):
+    i = 0
+    j = len(self) - 1
+    while i < j:
+      t = self[i]
+      self[i] = self[j]
+      self[j] = t
+      i += 1
+      j -= 1
+    return None
+  def sort(self, key=None, reverse=False):
+    # Stable insertion sort (matches Python's stability guarantee;
+    # reverse=True flips the comparison rather than reversing after,
+    # which is what Python's stability under reverse means). The
+    # key-is-None branches keep each call contour monomorphic via
+    # nil narrowing (same pattern as min/max in 05_builtins.py) --
+    # `key(x)`'s type never unions with the element type. Issue 025:
+    # circle.py's `circles.sort(key=lambda c: c.offset())` was its
+    # first blocker.
+    # Comparisons use ONLY `<` (CPython's sort contract: elements
+    # need just __lt__ -- voronoi2's Site defines __lt__/__eq__ and
+    # nothing else, and pyc has no reflected-operator fallback).
+    n = len(self)
+    i = 1
+    while i < n:
+      x = self[i]
+      j = i - 1
+      if key is None:
+        if reverse:
+          while j >= 0 and self[j] < x:
+            self[j + 1] = self[j]
+            j = j - 1
+        else:
+          while j >= 0 and x < self[j]:
+            self[j + 1] = self[j]
+            j = j - 1
+      else:
+        kx = key(x)
+        if reverse:
+          while j >= 0 and key(self[j]) < kx:
+            self[j + 1] = self[j]
+            j = j - 1
+        else:
+          while j >= 0 and kx < key(self[j]):
+            self[j + 1] = self[j]
+            j = j - 1
+      self[j + 1] = x
+      i = i + 1
+    return None
   def __str__(self):
     x = "["
     for k in range(0,len(self)):
