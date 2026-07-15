@@ -187,6 +187,10 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   PycAST *ast = (PycAST *)f->ast;
   Sym *fn = new_fun(ast);
   fn->nesting_depth = f->sym->nesting_depth;
+  // ifa/issues/045: hard per-constant contour separation
+  // (entry_set_compatibility) keys on the MATCHED Fun's sym; calls
+  // relying on defaults match the wrapper, so it must carry the flag.
+  fn->clone_methods_per_cs = f->sym->clone_methods_per_cs;
   Vec<Sym *> as;
   // The positions to default are exactly `default_args` -- NOT
   // necessarily a contiguous tail. A keyword argument can provide a
@@ -216,6 +220,12 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
       if1_add_send_arg(if1, send, ((PycAST *)f->default_args.get(cp))->sym);
     } else {
       Sym *a = new_sym(ast);
+      // Inherit clone_for_constants from the wrapped formal:
+      // edge_constant_compatible_with_entry_set reads the flag off
+      // the MATCHED fun's formal syms, which for a defaulted call are
+      // these wrapper formals (ifa/issues/045).
+      Sym *orig = f->arg_syms.get(cp);
+      if (orig) a->clone_for_constants = orig->clone_for_constants;
       as.add(a);
       if1_add_send_arg(if1, send, a);
     }

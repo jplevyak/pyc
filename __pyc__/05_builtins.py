@@ -51,24 +51,24 @@ class range:
   i = 0
   j = 0
   s = 1
-  # NOTE: __pyc_clone_constants__ on these ctor params was tried for
-  # issues 040/043 (fold `range(0, 0)` loop headers per constant) and
-  # REVERTED: per-constant ctor contours and per-constant range CSs
-  # do form (with gen_class_pyda's __new__ formal propagation), but
-  # __pyc_more__/__next__ still merge into one EntrySet over the
-  # union of receiver CSs, and __next__'s `self.i += self.s` then
-  # widens EVERY receiver's `i` field -- so `i < j` cannot fold even
-  # per-CS. The fix needs receiver-CS-directed method cloning as a
-  # precision move (issue 033 splitter territory); the flags alone
-  # just added clone pressure (pygasus FA ~50s -> ~66s) for zero
-  # corpus effect.
+  # __pyc_clone_constants__ on the ctor params does three things via
+  # gen_class_pyda + ifa/issues/045: per-constant __new__ contours
+  # (the flags propagate to the wrapper formals), per-constant range
+  # CSs, AND per-receiver-CS method contours (the class gets
+  # clone_methods_per_cs, so __pyc_more__/__next__ split per CS in
+  # the PER_CS_RECEIVER precision stage). Together `self.i < self.j`
+  # folds per clone: an empty receiver's range(0, 0) loop header
+  # folds false and its dead body is never type-checked (issue 040:
+  # `k=[]; print(k)` next to a non-empty list used to NOTYPE inside
+  # list.__str__'s loop). The flags WITHOUT the method-split stage
+  # were measured useless -- see issue 040's trace.
   def __init__(self, aj):
-    self.j = aj
+    self.j = __pyc_clone_constants__(aj)
     return self;
   def __init__(self, ai, aj, ak = 1):
-    self.i = ai
-    self.j = aj
-    self.s = ak
+    self.i = __pyc_clone_constants__(ai)
+    self.j = __pyc_clone_constants__(aj)
+    self.s = __pyc_clone_constants__(ak)
     return self
   def __pyc_more__(self):
     if self.s >= 0:

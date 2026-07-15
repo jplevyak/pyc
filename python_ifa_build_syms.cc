@@ -1316,6 +1316,19 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
       for (int i = 2; i < init_sym->has.n; i++) {
         Sym *wf = new_sym(ast, init_sym->has[i]->name);
         wf->clone_for_constants = init_sym->has[i]->clone_for_constants;
+        // A constant-cloned ctor param also marks the CLASS for
+        // per-receiver-CS method contours (ifa/issues/045), plus the
+        // __new__ wrapper and __init__ Fun syms for HARD per-constant
+        // contour separation (entry_set_compatibility): the
+        // per-constant instance CSs this creates are only useful if
+        // the class's methods split per CS too -- otherwise shared
+        // method contours write through the union and widen every
+        // sibling's fields (issue 040's range trace).
+        if (wf->clone_for_constants) {
+          cls->clone_methods_per_cs = 1;
+          fn->clone_methods_per_cs = 1;
+          init_sym->clone_methods_per_cs = 1;
+        }
         as.add(wf);
       }
       body = 0;
