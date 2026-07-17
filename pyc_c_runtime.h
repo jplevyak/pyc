@@ -345,6 +345,14 @@ static _CG_TypeObject _CG_type_nil_type = { PYC_TAG_NIL, "nil_type" };
 static _CG_TypeObject _CG_type_object = { PYC_TAG_OBJECT, "object" };
 static _CG_TypeObject _CG_type_any = { PYC_TAG_ANY, "any" };
 
+// issue 011: the None-check route (isinstance(x, NoneType), what
+// `x is None` lowers to) stays a simple null test. A real-class
+// check against a record's classtag is NOT expressible as a single
+// comparison here (a class can have subclasses whose classtag
+// differs by identity) -- cg.cc/cg_emit_llvm.cc emit a compile-time
+// disjunction over the class's implementors (FA's own subclass set,
+// same one fa.cc's constant-folding isinstance uses) directly at the
+// call site instead of calling through this macro for that case.
 #define _CG_prim_isinstance(obj, type_obj) ((type_obj) == &_CG_type_nil_type ? ((void*)(obj) == NULL) : 0)
 
 /*

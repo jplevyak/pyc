@@ -34,12 +34,24 @@ extern Sym *sym_ellipsis, *sym_ellipsis_type, *sym_declare;
 extern cchar *cannonical_self;
 extern Vec<Sym *> super_aspect_syms;
 extern Vec<Sym *> builtin_functions;
+extern bool pyc_program_has_raise;
 
 // -- PycCompiler: combines PycCallbacks + former PycContext state --
 
 struct WithCleanup {
   Sym *cm_rval;
   int loop_depth;
+};
+
+// issue 011 (exception handling, option C): a lexically-enclosing
+// `try` in the CURRENT function. `raise` and the post-call
+// pending-exception checks jump to the innermost frame whose fun
+// matches ctx.fun(); frames of enclosing FUNCTIONS are unreachable
+// by goto (a raise in a nested def propagates by returning, and the
+// caller's post-call check routes it here).
+struct PycTryFrame {
+  Label *dispatch;
+  Sym *fun;
 };
 
 class PycCompiler : public PycCallbacks {
@@ -74,6 +86,11 @@ class PycCompiler : public PycCallbacks {
   // `X.attr` to the module's member symbol at compile time (modules
   // are compile-time-known namespaces, not runtime objects).
   Map<Sym *, PycModule *> module_syms;
+
+  // issue 011 (exception handling, option C):
+  Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)
+  Vec<Sym *> handler_exc;      // innermost handler's saved exception temp (bare re-raise)
+  Label *module_unhandled;     // per-module unhandled-exception block, lazily allocated
 
   // --- Accessors (formerly PycContext methods) ---
   bool is_builtin() { return mod->is_builtin; }

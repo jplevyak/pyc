@@ -1050,6 +1050,93 @@ static Sym *build_isinstance_call(Sym *obj, Sym *cls, Code **code, PycAST *case_
   return result;
 }
 
+// ---- issue 011: exception handling (option C) ----
+//
+// The whole mechanism is expressed in ordinary IF1 -- a
+// builtin-module global slot (`__pyc_exc__`, __pyc__/08_exception.py)
+// plus labels/gotos/isinstance -- so FA, SSU, the splitter, and BOTH
+// backends handle it with no new IR concept or emitter change.
+// `raise` stores the exception object into the slot and jumps; every
+// user call is followed (only when pyc_program_has_raise) by
+// `if __pyc_exc__ is not None: goto <transfer>`, which is how an
+// exception unwinds through intermediate frames: the raising callee
+// returns via its return label WITHOUT touching its return variable,
+// and each caller's post-call check re-routes before the dead result
+// is used.
+
+static Sym *exc_slot(PycCompiler &ctx) {
+  PycSymbol *g = make_PycSymbol(ctx, "__pyc_exc__", PYC_USE);
+  if (!g) fail("error line %d, builtin __pyc_exc__ not found", ctx.lineno);
+  return g->sym;
+}
+
+// Where a pending exception transfers to from this lexical point:
+// the innermost same-function try's dispatch block, else the
+// function's return label (the caller's post-call check continues
+// the unwind), else the module's lazily-created unhandled block.
+// Null => no legal goto target (class body, lambda): callers skip
+// the check or fail.
+static Label *exc_transfer_target(PycCompiler &ctx) {
+  if (ctx.try_stack.n && ctx.try_stack.last().fun == ctx.fun()) return ctx.try_stack.last().dispatch;
+  if (ctx.fun()) return ctx.lreturn();
+  if (ctx.scope_stack.n == 1) {  // module toplevel
+    if (!ctx.module_unhandled) ctx.module_unhandled = if1_alloc_label(if1);
+    return ctx.module_unhandled;
+  }
+  return nullptr;
+}
+
+// Jump to an exception-transfer target. fn->ret is left UNDEFINED on
+// this edge when it targets this function's own return label AND
+// the function has (so far, in build order) at least one explicit
+// `return`: the escaping value is dead regardless (every caller
+// checks the slot before ever reading a returned value), and adding
+// a def here would manufacture a real {result, nil} union that FA
+// dutifully propagates -- a caller's own `print(f())`-style use can
+// then fail to find a live dispatch match (why this isn't
+// unconditional). But `reply` reads fn->ret unconditionally right
+// after the label, so a function whose ENTIRE body raises (no
+// `return` ANYWHERE, e.g. __pyc_assert_fail__) leaves fn->ret with
+// ZERO reaching defs when this is left undefined too -- an
+// untraceable "expression has no type" FA violation (no other def
+// exists to make it a union with, so the sym_nil move here is safe:
+// it's not an ADDED arm, it's the function's ONLY possible type,
+// exactly matching what gen_fun_pyda's own dead fall-through tail
+// would have produced had anything actually reached it).
+// fun_returns_value is a build-order flag (set by PY_return_stmt,
+// python_ifa_build_if1.cc): a raise built BEFORE the function's only
+// return statement still sees it false and takes the move, same
+// remaining imprecision as any single-pass frontend decision.
+static void goto_exc_target(Code **code, PycAST *ast, PycCompiler &ctx, Label *target) {
+  if (ctx.fun() && target == ctx.lreturn() && !ctx.fun()->fun_returns_value && !ctx.fun()->is_generator)
+    if1_move(if1, code, sym_nil, ctx.fun()->ret, ast);
+  if1_goto(if1, code, target)->ast = ast;
+}
+
+// Emit `if __pyc_exc__ is not None: goto <transfer>` -- the
+// post-call pending-exception check. The slot read mirrors the
+// module-data-var load shape (cell -> fresh temp, ifa/issues/031);
+// the not-None test is the raw prim_isinstance-vs-nil form the
+// `x is None` lowering uses, sitting directly in if-condition
+// position as FA's narrowing machinery expects.
+static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx) {
+  if (!pyc_program_has_raise || ctx.is_builtin()) return;
+  Label *target = exc_transfer_target(ctx);
+  if (!target) return;
+  Sym *t = new_sym(ast);
+  if1_move(if1, code, exc_slot(ctx), t, ast);
+  Sym *cond = new_sym(ast);
+  if1_send(if1, code, 4, 1, sym_primitive, make_symbol("isinstance"), t, sym_nil_type, cond)->ast = ast;
+  Code *ifc = if1_if_goto(if1, code, cond, ast);
+  Label *Lprop = if1_alloc_label(if1);
+  Label *Lfollow = if1_alloc_label(if1);
+  if1_if_label_false(if1, ifc, Lprop, ast);    // pending -> propagate stub
+  if1_if_label_true(if1, ifc, Lfollow, ast);   // None -> fall through
+  if1_label(if1, code, ast, Lprop);
+  goto_exc_target(code, ast, ctx, target);
+  if1_label(if1, code, ast, Lfollow);
+}
+
 // Read `obj.attr`'s value -- the exact "period" operator send
 // PY_power's own PY_attribute trailer handling emits when flushing a
 // pending member access (see build_if1_pyda's PY_power case), just
@@ -2855,6 +2942,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             ast->rval = new_sym(ast);
             if1_add_send_result(if1, send, ast->rval);
             cur_val = ast->rval;
+            emit_exc_check(&ast->code, ast, ctx);  // issue 011
             pending_member = false;
             qual_cls = qual_fn = nullptr;
             continue;
@@ -2911,6 +2999,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           ast->rval = new_sym(ast);
           if1_add_send_result(if1, send, ast->rval);
           cur_val = ast->rval;
+          // issue 011: the pending-exception check after every user
+          // call (plain and method) is what propagates a raise
+          // through intermediate frames. Builtin intercepts skipped
+          // via the `continue`s above; prim/operator dunder sends
+          // (a+b etc.) are not checked -- v1 scope, see the issue.
+          emit_exc_check(&ast->code, ast, ctx);
         } else if (trailer->kind == PY_subscript) {
           // Flush pending member
           if (pending_member) {
@@ -3198,33 +3292,226 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
-    case PY_raise_stmt:
+    case PY_raise_stmt: {
+      // issue 011 (option C): store the exception into the slot and
+      // jump -- enclosing try dispatch, function return label (the
+      // caller's post-call check continues the unwind), or the
+      // module's unhandled block. The goto to the return label
+      // deliberately bypasses the fall-through nil move into fn->ret
+      // (gen_fun_pyda's tail), so the exceptional path contributes
+      // NOTHING to the return type: the caller never reads the dead
+      // result because its check fires first.
+      Sym *exc = nullptr;
+      if (n->children.n) {
+        build_if1_pyda(n->children[0], ctx);
+        PycAST *v = getAST(n->children[0], ctx);
+        if1_gen(if1, &ast->code, v->code);
+        exc = v->rval;
+        // `raise Cls` (a bare class reference, Type_RECORD at build
+        // time): instantiate with no args, matching CPython.
+        if (exc && exc->type_kind == Type_RECORD) {
+          Code *send = if1_send1(if1, &ast->code, ast);
+          if1_add_send_arg(if1, send, exc);
+          exc = new_sym(ast);
+          if1_add_send_result(if1, send, exc);
+        }
+        // `raise X from Y`: Y is evaluated; chaining isn't modeled.
+        if (n->children.n > 1) {
+          build_if1_pyda(n->children[1], ctx);
+          if1_gen(if1, &ast->code, getAST(n->children[1], ctx)->code);
+        }
+      } else {
+        // bare `raise`: re-raise the innermost handler's exception
+        // (the dispatch block saved it before clearing the slot).
+        if (!ctx.handler_exc.n) fail("error line %d, bare 'raise' outside an except handler", ctx.lineno);
+        exc = ctx.handler_exc.last();
+      }
+      if1_move(if1, &ast->code, exc, exc_slot(ctx), ast);
+      Label *target = exc_transfer_target(ctx);
+      if (!target) fail("error line %d, 'raise' not supported in this context (class body/lambda)", ctx.lineno);
+      goto_exc_target(&ast->code, ast, ctx, target);
+      return 0;
+    }
+
     case PY_try_stmt: {
-      // Exception handling is unimplemented (issue 011), but a `try`
-      // must not crash the compiler. It was routed to the WITH-item
-      // handler (build_if1_with_items) along with `with` -- which
-      // mis-lowered the try body into null rvals and aborted if1_send
-      // (e.g. amaze/go/othello/sudoku3: a method call inside `try`).
-      // Build the try body plus the else/finally clauses (the normal
-      // control flow) so the happy path compiles and runs; skip the
-      // except handlers. Children: body suite, except_handler*,
-      // else_clause?, finally_clause?.
-      for (PyDAST *c : n->children.values()) {
-        if (c->kind == PY_except_handler || c->kind == PY_except_clause) continue;
-        // else_clause / finally_clause wrap a suite; build that suite.
-        PyDAST *blk = ((c->kind == PY_else_clause || c->kind == PY_finally_clause) && c->children.n)
-                          ? c->children.last()
-                          : c;
+      // issue 011 (option C). Layout (all ordinary labels/gotos):
+      //     <body>            raises/checks inside goto Ldispatch
+      //     <else-suite>      exceptions here go to Lresume (finally)
+      //     goto Lresume
+      //   Ldispatch:
+      //     t = __pyc_exc__
+      //     clause chain: isinstance(t, X)? -> clear slot, bind
+      //       `as e`, run handler (its exceptions go to Lresume),
+      //       goto Lresume
+      //     (no clause matched: fall into Lresume, slot still set)
+      //   Lresume:
+      //     <finally-suite>
+      //     if __pyc_exc__ is not None: goto <outer transfer>
+      // The single post-finally check makes finally run exactly once
+      // on every path (normal, handled, unmatched, handler-raise)
+      // with NO code duplication: paths that must keep unwinding
+      // simply arrive at Lresume with the slot still set. A
+      // handler-less try/finally points the body's dispatch straight
+      // at Lresume for the same reason.
+      // Children: body suite, except_handler*, else_clause?,
+      // finally_clause?.
+      PyDAST *body = n->children[0];
+      Vec<PyDAST *> handlers;
+      PyDAST *elsec = nullptr, *finallyc = nullptr;
+      for (int i = 1; i < n->children.n; i++) {
+        PyDAST *c = n->children[i];
+        if (c->kind == PY_except_handler) handlers.add(c);
+        else if (c->kind == PY_else_clause) elsec = c;
+        else if (c->kind == PY_finally_clause) finallyc = c;
+      }
+      // No finally: once every clause is exhausted at runtime, the
+      // exception WILL keep propagating -- but FA can't prove that
+      // "no class matched" fallthrough dead the way it can for a
+      // raise/handler local to this function's own body, because the
+      // slot's type is a whole-program union threaded across call
+      // boundaries (unlike a direct in-body raise, where FA tracks
+      // the exact CS). Landing this dead-at-runtime-but-not-provably-
+      // dead-in-IR edge on Lresume merges a spurious extra type arm
+      // into whatever the try's OTHER (live) exits define -- observed
+      // as a `print(f())`-style caller's dispatch failing to find a
+      // match on a Var codegen never assigned a concrete type,
+      // exactly the goto_exc_target class of bug, but from THIS edge
+      // instead. So without a finally, route the fallthrough straight
+      // to the outer transfer target (bypassing Lresume, and with it
+      // the post-check below) instead of merging it into the try's
+      // normal-completion exit at all.
+      bool has_finally = finallyc && finallyc->children.n;
+      Label *Lresume = if1_alloc_label(if1);
+      Label *Ldispatch = handlers.n ? if1_alloc_label(if1) : Lresume;
+      ctx.try_stack.add(PycTryFrame{Ldispatch, ctx.fun()});
+      build_if1_pyda(body, ctx);
+      ctx.try_stack.n--;
+      if1_gen(if1, &ast->code, getAST(body, ctx)->code);
+      // Resolved once try_stack excludes this try's own frame (popped
+      // after body above): exactly where anything that can no longer
+      // be handled AT THIS try goes next -- the unmatched-dispatch
+      // fallthrough below, AND (no finally: see goto_exc_target) a
+      // raise from inside the else-clause or a handler body, which
+      // likewise has nowhere further to go at this level. Routing
+      // those straight here instead of through Lresume keeps
+      // goto_exc_target's def-less escape edge terminal -- landing
+      // it on Lresume, a merge point OTHER edges (normal completion,
+      // a matched handler) also feed with real values, is what made
+      // codegen's phy reconstruction invent a value from garbage for
+      // the escape edge (a bare re-raise after a handler ran hit
+      // this). With a finally, these fall through to Lresume as
+      // before: finally must run once regardless of which edge got
+      // here, so it can't be skipped the way the dead-in-practice
+      // unmatched-dispatch edge can.
+      Label *escape = has_finally ? nullptr : exc_transfer_target(ctx);
+      Label *raise_in_clause_target = has_finally || !escape ? Lresume : escape;
+      if (elsec && elsec->children.n) {
+        PyDAST *blk = elsec->children.last();
+        ctx.try_stack.add(PycTryFrame{raise_in_clause_target, ctx.fun()});
         build_if1_pyda(blk, ctx);
+        ctx.try_stack.n--;
         if1_gen(if1, &ast->code, getAST(blk, ctx)->code);
       }
+      bool ended_bare = false;
+      if (handlers.n) {
+        if1_goto(if1, &ast->code, Lresume);
+        if1_label(if1, &ast->code, ast, Ldispatch);
+        Sym *t = new_sym(ast);
+        if1_move(if1, &ast->code, exc_slot(ctx), t, ast);
+        ctx.handler_exc.add(t);
+        for (int hi = 0; hi < handlers.n; hi++) {
+          PyDAST *h = handlers[hi];
+          PyDAST *cl = h->children[0];  // PY_except_clause
+          PyDAST *hbody = h->children.last();
+          bool bare = (cl->children.n == 0);
+          Label *Lnext = bare ? nullptr : if1_alloc_label(if1);
+          if (!bare) {
+            // `except X:` or `except (X, Y):` -- first isinstance
+            // match wins; the true-branch entry into the handler is
+            // what narrows t (and so the `as e` binding).
+            Vec<PyDAST *> cls_nodes;
+            if (cl->children[0]->kind == PY_tuple)
+              for (auto c : cl->children[0]->children.values()) cls_nodes.add(c);
+            else
+              cls_nodes.add(cl->children[0]);
+            Label *Lmatch = if1_alloc_label(if1);
+            for (int ci = 0; ci < cls_nodes.n; ci++) {
+              build_if1_pyda(cls_nodes[ci], ctx);
+              if1_gen(if1, &ast->code, getAST(cls_nodes[ci], ctx)->code);
+              // Raw sym_primitive isinstance send, NOT
+              // build_isinstance_call's ordinary-call form: that form
+              // routes through isinstance()'s own Python-level
+              // wrapper (__pyc__/05_builtins.py), a single function
+              // FA can (and, empirically, does once two DIFFERENT
+              // classes are ever checked anywhere in the program --
+              // e.g. one try/except AssertionError plus another
+              // try/except ValueError) generalize into ONE shared
+              // clone taking a runtime class value, rather than a
+              // separate monomorphic clone per distinct class arg --
+              // __pyc_clone_constants__'s clone_for_constants marking
+              // doesn't reliably prevent this sharing across call
+              // sites. cg.cc's/cg_emit_llvm.cc's isinstance emission
+              // reads the class arg's Sym identity directly (not its
+              // runtime value), so emitting the send here directly
+              // (this exact call site, never shared with any other)
+              // keeps the class arg a genuine compile-time constant
+              // every time, regardless of what else the program
+              // checks elsewhere.
+              Sym *c = new_sym(ast);
+              if1_send(if1, &ast->code, 4, 1, sym_primitive, make_symbol("isinstance"), t,
+                       getAST(cls_nodes[ci], ctx)->rval, c)->ast = ast;
+              Code *ifc = if1_if_goto(if1, &ast->code, c, ast);
+              if1_if_label_true(if1, ifc, Lmatch, ast);
+              if1_if_label_false(if1, ifc, if1_label(if1, &ast->code, ast), ast);
+            }
+            if1_goto(if1, &ast->code, Lnext);
+            if1_label(if1, &ast->code, ast, Lmatch);
+          }
+          if1_move(if1, &ast->code, sym_nil, exc_slot(ctx), ast);
+          if (cl->children.n == 2 && cl->children[1]->kind == PY_name) {
+            PycAST *nm = getAST(cl->children[1], ctx);
+            if1_move(if1, &ast->code, t, nm->sym, ast);
+          }
+          ctx.try_stack.add(PycTryFrame{raise_in_clause_target, ctx.fun()});
+          build_if1_pyda(hbody, ctx);
+          ctx.try_stack.n--;
+          if1_gen(if1, &ast->code, getAST(hbody, ctx)->code);
+          if1_goto(if1, &ast->code, Lresume);
+          if (Lnext) if1_label(if1, &ast->code, ast, Lnext);
+          if (bare) { ended_bare = true; break; }  // matches everything; later clauses dead
+        }
+        ctx.handler_exc.pop();
+        // Every clause exhausted without a match: propagate straight
+        // to escape (see the comment above `escape`'s declaration),
+        // never touching Lresume -- unless a bare handler already
+        // guarantees there's no such edge, or a finally needs to run
+        // first (then this falls into Lresume as before, WITH the
+        // slot still set, which is exactly what the post-finally
+        // check below is for).
+        if (!ended_bare && escape) goto_exc_target(&ast->code, ast, ctx, escape);
+      }
+      if1_label(if1, &ast->code, ast, Lresume);
+      if (has_finally) {
+        PyDAST *blk = finallyc->children.last();
+        build_if1_pyda(blk, ctx);  // finally's own exceptions -> outer
+        if1_gen(if1, &ast->code, getAST(blk, ctx)->code);
+      }
+      // NOT skippable just because the unmatched-dispatch edge was
+      // rerouted above: a handler body (or else-clause) can ITSELF
+      // raise -- including a bare re-raise, which targets exactly
+      // this Lresume while building the handler body (try_stack's
+      // temporary {Lresume, fun} frame) -- landing here with the
+      // slot genuinely pending. That's real, intentional control
+      // flow (unlike the unmatched-dispatch edge, which is dead at
+      // runtime whenever it can't be proven so), so it always needs
+      // this check to keep propagating.
+      emit_exc_check(&ast->code, ast, ctx);
       return 0;
     }
     case PY_except_clause:
     case PY_except_handler:
     case PY_finally_clause:
-      // Reached only if built standalone (the try handler above skips
-      // except handlers and inlines finally); no-op defensively.
+      // Built inline by the PY_try_stmt case above; no-op defensively.
       return 0;
     case PY_with_stmt: {
       build_if1_with_items(n, 0, ctx, ast);
@@ -3246,10 +3533,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_assert_stmt: {
-      // children: [cond] or [cond, msg]. No exception model exists yet
-      // (issues/011), so this lowers to `if not cond:
-      // __pyc_assert_fail__(msg)` -- an abort, not a catchable
-      // AssertionError. The message expression is only built inside the
+      // children: [cond] or [cond, msg], lowered to `if not cond:
+      // __pyc_assert_fail__(msg)`. __pyc_assert_fail__ now raises a
+      // real AssertionError (issue 011); this call is built directly
+      // (if1_send1 + if1_add_send_arg) rather than through the
+      // general PY_call trailer, so it needs its own post-call
+      // emit_exc_check -- without one the raise would set the slot
+      // and then silently fall through to cont_label instead of
+      // propagating. The message expression is only built inside the
       // false branch (not evaluated eagerly before the check), matching
       // real Python's `assert cond, msg` never evaluating `msg` unless
       // the assertion fails.
@@ -3278,6 +3569,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_add_send_arg(if1, send, fail_fn->sym);
       if1_add_send_arg(if1, send, msg_val);
       if1_add_send_result(if1, send, new_sym(ast));
+      emit_exc_check(&ast->code, ast, ctx);
       if1_label(if1, &ast->code, ast, cont_label);
       return 0;
     }
@@ -3425,6 +3717,22 @@ int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code) {
   for (auto c : mod->children.values()) {
     build_if1_pyda(c, ctx);
     if1_gen(if1, code, getAST(c, ctx)->code);
+  }
+  // issue 011: the module's unhandled-exception block, reached by
+  // module-level raises/checks with no enclosing try. Placed after
+  // the module's statements behind a skip-goto so normal completion
+  // falls through to the next module's code.
+  if (ctx.module_unhandled) {
+    PycAST *mast = getAST(mod, ctx);
+    Label *skip = if1_alloc_label(if1);
+    if1_goto(if1, code, skip);
+    if1_label(if1, code, mast, ctx.module_unhandled);
+    Sym *uh = resolve_global_class("__pyc_unhandled_exception__", ctx);
+    Code *send = if1_send1(if1, code, mast);
+    if1_add_send_arg(if1, send, uh);
+    if1_add_send_result(if1, send, new_sym(mast));
+    if1_label(if1, code, mast, skip);
+    ctx.module_unhandled = nullptr;
   }
   exit_scope(ctx);
   ctx.node = saved_node;

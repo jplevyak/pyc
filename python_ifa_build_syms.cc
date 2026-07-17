@@ -252,6 +252,27 @@ static bool pyda_contains_yield(PyDAST *n) {
   return false;
 }
 
+// issue 011: same shape as pyda_contains_yield, scanning for ANY
+// `return` (bare or with a value -- both provide a def for fn->ret,
+// see return_stmt's build_if1_pyda case) anywhere in this function's
+// OWN body. Needed BEFORE the body is built (not discoverable
+// mid-build the way PY_return_stmt's own `fun_returns_value = 1`
+// side effect works): a `raise` textually BEFORE the function's only
+// `return` -- the common early-exit-guard shape, `if bad: raise
+// X(); return normal_value` -- must already know a later return
+// exists so goto_exc_target doesn't manufacture a {result, nil}
+// union fn->ret never actually has (found via risky()-shaped tests
+// in tests/exception_basic.py/exception_propagation.py breaking when
+// this was instead a build-order-dependent flag check).
+static bool pyda_contains_return(PyDAST *n) {
+  if (!n) return false;
+  if (n->kind == PY_return_stmt) return true;
+  if (n->kind == PY_funcdef || n->kind == PY_lambda || n->kind == PY_classdef) return false;
+  for (auto c : n->children.values())
+    if (pyda_contains_return(c)) return true;
+  return false;
+}
+
 // Set up function scope for pyda path
 static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   fn->in = ctx.scope_stack.last()->in;
@@ -259,6 +280,8 @@ static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   if (n->kind == PY_funcdef) {
     for (auto c : n->children.values())
       if (pyda_contains_yield(c)) { fn->is_generator = 1; break; }
+    for (auto c : n->children.values())
+      if (pyda_contains_return(c)) { fn->fun_returns_value = 1; break; }
   }
   new_fun(ast, fn);
   ctx.node = n;
@@ -910,17 +933,47 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);
       return 0;
 
+    case PY_raise_stmt:
+      // issue 011: arm the exception machinery program-wide (the
+      // post-call pending checks) only when some USER module
+      // actually raises -- exception-free programs build byte-
+      // identical IF1. Deliberately excludes the builtin module: it
+      // always contains __pyc_assert_fail__'s own `raise` (loaded
+      // for every program regardless of whether user code ever calls
+      // assert), which would otherwise permanently arm every
+      // compilation and defeat the gate (confirmed empirically --
+      // scoping tests' symbol-resolution traces picked up
+      // __pyc_exc__/__pyc_unhandled_exception__ lookups with no
+      // exception-handling code anywhere in the source). PY_assert_stmt
+      // below arms it instead, exactly when user code can actually
+      // reach that raise.
+      if (!ctx.is_builtin()) pyc_program_has_raise = true;
+      goto generic_recurse;
+
+    case PY_except_clause:
+      // issue 011: `except X as e` -- e is a fresh local binding
+      // (STORE), not a use; unmarked, the generic recursion would
+      // resolve it as a load of an undefined name.
+      if (n->children.n == 2 && n->children[1]->kind == PY_name) mark_store(n->children[1]);
+      goto generic_recurse;
+
+    case PY_assert_stmt:
+      // issue 011: `assert` lowers to a call to __pyc_assert_fail__,
+      // which raises AssertionError -- arms the same gate a direct
+      // `raise` would, for the same reason (builtin-module raises
+      // excluded above; this is the point where a USER module
+      // becomes reachable to one).
+      if (!ctx.is_builtin()) pyc_program_has_raise = true;
+      goto generic_recurse;
+
     case PY_expr_stmt:
     case PY_pass_stmt:
     case PY_del_stmt:
-    case PY_raise_stmt:
     case PY_yield_stmt:
-    case PY_assert_stmt:
     case PY_if_stmt:
     case PY_elif_clause:
     case PY_else_clause:
     case PY_try_stmt:
-    case PY_except_clause:
     case PY_except_handler:
     case PY_finally_clause:
     case PY_with_stmt:
@@ -1396,10 +1449,32 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_new, cls, proto)->ast = ast;
     if1_send(if1, &ast->code, 2, 1, fn, proto, new_sym(ast))->ast = ast;
   }
-  // Find __init__ in the class scope
+  // Find __init__: own scope first, else inherited. A `pass`-only
+  // subclass has no OWN scope entry -- this used to fall straight to
+  // the trivial "return self" synthesis below regardless of an
+  // inherited __init__, so the __new__ wrapper built its formal-
+  // parameter list (below, from init_sym->has) with ZERO parameters
+  // beyond self: a real inherited __init__'s args were silently
+  // dropped at every call site (`Derived("hi")` compiled but
+  // "hi" reached nothing, msg defaulting instead). The actual
+  // dispatch already goes through the polymorphic __init__ selector
+  // send (below) and correctly resolves to the inherited
+  // implementation via the `includes` copy-into-`has` above --
+  // only the wrapper's PARAMETER LIST needed the real Sym.
   PycSymbol *init_fun = ctx.scope_stack.last()->map.get(sym___init__->name);
   Sym *init_sym = init_fun ? init_fun->sym->alias : 0;
-  if (!init_fun) {
+  if (!init_sym) {
+    for (int i = 0; i < cls->includes.n && !init_sym; i++) {
+      Sym *inc = cls->includes[i];
+      for (int j = 0; j < inc->has.n; j++) {
+        if (inc->has[j]->name == sym___init__->name && inc->has[j]->alias && inc->has[j]->alias->is_fun) {
+          init_sym = inc->has[j]->alias;
+          break;
+        }
+      }
+    }
+  }
+  if (!init_sym) {
     init_sym = fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;
     fn->self = new_sym(ast);

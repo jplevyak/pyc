@@ -98,3 +98,25 @@ class IOError(OSError):
 
 class EnvironmentError(OSError):
   pass
+
+# issue 011 (option C): the pending-exception slot. `raise` stores
+# the exception instance here and jumps (to the enclosing try's
+# dispatch block, the function's return label so the caller's
+# post-call check picks it up, or the module's unhandled block);
+# except-dispatch reads it, matches clauses with isinstance, and
+# clears it on entering a handler. Deliberately an ordinary
+# IF1-visible builtin-module global rather than a hidden C cell:
+# FA sees every raise site's store, so the slot's type is the union
+# of the classes the program actually raises (plus None), and
+# `except X as e:` binding narrows through the standard isinstance
+# machinery with zero new analysis concepts.
+__pyc_exc__ = None
+
+# Reached when a pending exception escapes module-level code (or a
+# module-level `raise` has no enclosing try). Mirrors
+# __pyc_assert_fail__'s print+exit shape.
+def __pyc_unhandled_exception__():
+    e = __pyc_exc__
+    if e is not None:
+        print("Unhandled exception: " + e.__str__())
+    exit(1)

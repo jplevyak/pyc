@@ -28,6 +28,10 @@ cchar *cannonical_self = 0;
 // and deliberately not registered here.
 Vec<Sym *> super_aspect_syms;
 Vec<Sym *> builtin_functions;
+// issue 011: set during build_syms when ANY module contains a
+// `raise` statement; gates the post-call pending-exception checks so
+// exception-free programs build byte-identical IF1.
+bool pyc_program_has_raise = false;
 
 PycCallbacks::~PycCallbacks() {}
 
@@ -39,6 +43,7 @@ void PycCompiler::init() {
   mod = package = 0;
   modules = 0;
   search_path = 0;
+  module_unhandled = 0;
 }
 
 cchar *cannonicalize_string(cchar *s) { return if1_cannonicalize_string(if1, s); }

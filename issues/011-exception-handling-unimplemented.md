@@ -1,6 +1,60 @@
 # Issue 011: Exception handling (`try`/`except`/`finally`/`raise`) is unimplemented
 
-**Status:** open.
+**Status:** IMPLEMENTED 2026-07-17 (option C: exception slot +
+explicit checks). `raise`/`try`/`except`/`else`/`finally`, typed
+clauses (`except X as e:`, tuple forms), bare re-raise, and
+cross-function propagation all work on both backends. Landing it
+surfaced and fixed FOUR pre-existing, unrelated bugs:
+
+1. **`_CG_prim_isinstance` was a stub** (`pyc_c_runtime.h`) — only
+   handled the `isinstance(x, NoneType)` case; any check against a
+   real class hard-coded `0` (always False). Never noticed before
+   because nothing previously forced isinstance() against a
+   non-constant-foldable value to reach codegen at all. Fixed:
+   `cg.cc`/`cg_emit_llvm.cc` now emit a compile-time disjunction over
+   the checked class's `implementors` set (the same one
+   `ifa/analysis/fa.cc`'s own constant-folding uses) instead of
+   calling through the macro for that case.
+2. **`pass`-only subclasses got the wrong `__pyc_tag`** and silently
+   dropped constructor arguments meant for an inherited `__init__`
+   (`class Foo(Exception): pass` — the overwhelmingly common shape
+   for user exception classes). Root cause: `gen_class_pyda`'s
+   `__new__`-wrapper only looked up `__init__` in the class's own
+   lexical scope, falling to a trivial "return self" synthesis
+   whenever a subclass didn't define its own — losing the real
+   parameter list even though the *dispatch* already resolved
+   correctly through inheritance. Fixed in
+   `python_ifa_build_syms.cc`'s `gen_class_pyda` (searches
+   `cls->includes` before synthesizing).
+3. **`build_isinstance_call`'s shared, clonable `isinstance()`
+   wrapper** (`__pyc__/05_builtins.py`) gets generalized by FA into
+   ONE polymorphic clone (runtime class arg) once the program checks
+   more than one distinct class anywhere — silently breaking
+   per-class dispatch. Fixed by emitting the raw `sym_primitive`
+   isinstance send directly at each `except` clause's own call site
+   instead (never shared).
+4. A function whose entire body is an unconditional `raise` (no
+   other `return`) left `fn->ret` with zero reaching definitions,
+   surfacing as an untraceable "expression has no type" FA violation.
+   Fixed with a syntactic pre-scan (`pyda_contains_return`, mirrors
+   the existing `pyda_contains_yield` generator detection) so
+   `goto_exc_target` knows — before the body is built — whether this
+   is the function's only possible exit.
+
+Verified: `tests/exception_basic.py`, `tests/exception_propagation.py`,
+`tests/exception_assert.py` (deterministic, both backends); suites
+203/0 × 2 backends; unit 58/0; IR 20/0. `__pyc_assert_fail__` now
+raises a catchable `AssertionError(msg)` instead of print+exit
+(`tests/assert_fail.py` updated to match).
+
+Not done (out of scope for this pass, no corpus need yet): runtime
+helpers (index/key errors) raising instead of trapping — issue 011's
+staged-plan item 5; a memo/identity cache isn't needed since
+exceptions aren't deep-copied.
+
+Original report follows.
+
+**Status (original):** open.
 **Affects:** `python_ifa_build_if1.cc:1261-1269` (`build_if1_pyda`
 — `PY_raise_stmt`, `PY_try_stmt`, `PY_except_clause`,
 `PY_except_handler`, `PY_finally_clause` all hit the same

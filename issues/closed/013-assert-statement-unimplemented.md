@@ -1,7 +1,13 @@
 # Issue 013: `assert` statement is unimplemented
 
-**Status:** fixed (minimal version — see "What landed"; the
-faithful/catchable version still depends on issue 011).
+**Status:** fixed (minimal version — see "What landed" — UPGRADED
+2026-07-17: issue 011 landed, so `__pyc_assert_fail__` now raises a
+real, catchable `AssertionError(msg)` instead of print+exit(1); see
+issue 011 for the exception-handling implementation and the bugs it
+flushed out along the way. `tests/assert_fail.py`'s exec.check
+updated to match — an unhandled failed assertion now prints
+"Unhandled exception: ..." via `__pyc_unhandled_exception__` rather
+than "AssertionError: ...").
 **Affects:** `python_ifa_build_if1.cc` (`PY_assert_stmt` in
 `build_if1_pyda`); `__pyc__/05_builtins.py` (new
 `__pyc_assert_fail__` helper); `ifa/codegen/cg_emit_llvm.cc` (fixed
