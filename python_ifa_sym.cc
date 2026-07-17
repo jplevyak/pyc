@@ -400,6 +400,20 @@ PycSymbol *find_PycSymbol(PycCompiler &ctx, cchar *name, int *level, int *type) 
   for (; i >= end; i--) {
     bool top = i == ctx.scope_stack.n - 1;
     PycScope *s = i >= 0 ? ctx.scope_stack[i] : ctx.imports.v[-i - 1];
+    // Python scoping: a CLASS body is not an enclosing scope for the
+    // functions defined in it -- from inside a method, a bare name
+    // skips the class's bindings and resolves at module level (only
+    // code directly in the class body, i.e. when the class scope is
+    // the CURRENT scope, sees them). Without this skip, a method
+    // named like an imported module shadowed the module inside every
+    // sibling method: genetic2's `import copy` + `Individual.copy()`
+    // made `copy.deepcopy(...)` inside Individual.copy resolve
+    // `copy` to the METHOD, untyping the whole call chain (pyc
+    // issues/025). Guards: i > 0 keeps the module scope (whose
+    // enter_scope also lands in the `cls` branch) walkable; the
+    // is_module test keeps imported-module scopes walkable if one
+    // ever appears mid-stack.
+    if (!top && i > 0 && s->in && s->in == s->cls && !s->in->is_module) continue;
     if ((l = s->map.get(name))) {
       if (l == NONLOCAL_USE || l == NONLOCAL_DEF) {
         if (top) xtype = (l == NONLOCAL_DEF) ? EXPLICITLY_MARKED : IMPLICITLY_MARKED;

@@ -81,6 +81,25 @@ class range:
     x = self.i
     self.i += self.s
     return x
+  def __len__(self):
+    # issue 025 R1 "missing sequence ops": reversed(range(n)) needs
+    # len()+__getitem__ on range (reversed() is index-based); range
+    # had neither, so reversed(range(...)) aborted at runtime
+    # ("getter not resolved" -- linalg's first blocker). CPython's
+    # exact range-length formula (ceil((j-i)/s) with the sign split
+    # so // stays floor division towards the right answer).
+    if self.s > 0:
+      if self.j <= self.i:
+        return 0
+      return (self.j - self.i - 1) // self.s + 1
+    else:
+      if self.j >= self.i:
+        return 0
+      return (self.i - self.j - 1) // (-self.s) + 1
+  def __getitem__(self, idx):
+    if idx < 0:
+      idx = idx + self.__len__()
+    return self.i + idx * self.s
   def __pyc_tolist__(self):
     # list(range(...)) -- see the list() intercept in
     # python_ifa_build_if1.cc (issue 025).
@@ -187,25 +206,58 @@ def sum(seq):
 # min/max support both call forms via the default-None + `is None`
 # narrowing pattern (each call arity/type gets its own EntrySet
 # contour; the dead branch is pruned by nil narrowing).
-def min(a, b=None):
+# min/max: the key-is-None branches keep each call contour
+# monomorphic via nil narrowing (same pattern as list.sort in
+# 04_sequence.py) -- in a key= contour the keyless comparison branch
+# is dead, so elements never need __lt__/__gt__ of their own
+# (genetic2's `max(self.population, key=fitness)` was its post-FA
+# first blocker: `key` had no formal to bind to, the call didn't
+# match, and the untyped result cascaded into a codegen assert).
+def min(a, b=None, key=None):
   if b is None:
+    if key is None:
+      m = a[0]
+      for x in a:
+        if x < m:
+          m = x
+      return m
     m = a[0]
+    km = key(m)
     for x in a:
-      if x < m:
+      kx = key(x)
+      if kx < km:
         m = x
+        km = kx
     return m
-  if b < a:
+  if key is None:
+    if b < a:
+      return b
+    return a
+  if key(b) < key(a):
     return b
   return a
 
-def max(a, b=None):
+def max(a, b=None, key=None):
   if b is None:
+    if key is None:
+      m = a[0]
+      for x in a:
+        if x > m:
+          m = x
+      return m
     m = a[0]
+    km = key(m)
     for x in a:
-      if x > m:
+      kx = key(x)
+      if kx > km:
         m = x
+        km = kx
     return m
-  if b > a:
+  if key is None:
+    if b > a:
+      return b
+    return a
+  if key(b) > key(a):
     return b
   return a
 

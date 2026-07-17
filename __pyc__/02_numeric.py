@@ -9,6 +9,11 @@ class int:
   def __sub__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
   def __mul__(self, x):
+    # n * [x] / n * (x,): int has no primitive multiply against a
+    # sequence, so reflect to the sequence's __rmul__ (issue 025 R1
+    # "missing sequence ops" -- rubik2/tictactoe's `20*[0]`/`edge*[0]`).
+    if isinstance(x, list):
+      return x.__rmul__(self)
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
   def __truediv__(self, x):
     # Python 3 true division: int / anything yields a float. Coerce

@@ -173,6 +173,81 @@ static void emit_in_pyda(Code **code, PycAST *ast, Sym *item, Sym *container, in
   }
 }
 
+// Parse a PY_number PyDAST node as a decimal/hex/octal integer
+// literal. Mirrors the int-literal branch of make_num_pyda further
+// below: the grammar doesn't reliably populate is_int/int_val (see
+// that function's comment), so this re-parses str_val directly.
+// Returns false for float/imaginary literals or a non-PY_number
+// node.
+static bool try_int_literal(PyDAST *n, long *out) {
+  if (!n || n->kind != PY_number) return false;
+  const char *s = n->str_val;
+  if (!s) return false;
+  for (const char *p = s; *p; p++)
+    if (*p == '.' || *p == 'e' || *p == 'E' || *p == 'j' || *p == 'J') return false;
+  char *end;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) *out = strtol(s + 2, &end, 16);
+  else if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') *out = strtol(s + 1, &end, 8);
+  else *out = strtol(s, &end, 10);
+  return true;
+}
+
+// issue 025 R1 "tuple concatenation/repetition": tuples are
+// fixed-arity structs, so `tup1 + tup2` / `tup * n` have no general
+// runtime implementation (each length is a distinct struct type,
+// unlike list/str). When every length involved is known at COMPILE
+// time -- literal tuples combined via `+` and `*` against an
+// integer literal, any nesting depth (chess.py's board-setup
+// literal is exactly this shape) -- the whole expression can be
+// flattened into a single tuple literal instead, sidestepping the
+// missing runtime op entirely.
+//
+// Collects the flattened element list into `out` and returns true
+// when `n` matches this shape; returns false (leaving normal
+// __add__/__mul__ dispatch to run and fail as before, e.g. for a
+// non-constant repeat count or a tuple + non-tuple) otherwise.
+// Element PyDAST* pointers may repeat in `out` -- Python's `expr *
+// n` evaluates expr's tuple ONCE and repeats REFERENCES to its
+// already-computed elements, it does not re-execute the element
+// expressions -- callers must build_if1_pyda each DISTINCT pointer
+// exactly once (first-occurrence order) and then reference its rval
+// for every position it appears at.
+static bool try_fold_tuple_arity(PyDAST *n, Vec<PyDAST *> &out) {
+  if (!n) return false;
+  if (n->kind == PY_tuple) {
+    for (auto c : n->children.values()) out.add(c);
+    return true;
+  }
+  if (n->kind != PY_binop) return false;
+  if (n->op == PY_OP_ADD) {
+    Vec<PyDAST *> l, r;
+    if (!try_fold_tuple_arity(n->children[0], l)) return false;
+    if (!try_fold_tuple_arity(n->children[1], r)) return false;
+    for (auto c : l.values()) out.add(c);
+    for (auto c : r.values()) out.add(c);
+    return true;
+  }
+  if (n->op == PY_OP_MUL) {
+    Vec<PyDAST *> base;
+    PyDAST *count_side = nullptr;
+    if (try_fold_tuple_arity(n->children[0], base)) {
+      count_side = n->children[1];
+    } else {
+      Vec<PyDAST *> base2;
+      if (!try_fold_tuple_arity(n->children[1], base2)) return false;
+      base = base2;
+      count_side = n->children[0];
+    }
+    long reps;
+    if (!try_int_literal(count_side, &reps)) return false;
+    if (reps < 0) reps = 0;
+    for (long i = 0; i < reps; i++)
+      for (auto c : base.values()) out.add(c);
+    return true;
+  }
+  return false;
+}
+
 // Make a number constant from a PyDAST PY_number node
 static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
   // Parse str_val since is_int/int_val/float_val may not be set from grammar
@@ -531,6 +606,22 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
       return 1;
     }
+  }
+  // tuple(iterable): a dynamic-length tuple cannot be a real pyc
+  // tuple (fixed-arity structs -- the same constraint behind the
+  // literal-only tuple +/* folding, issues/025 R1 item 4), so it
+  // returns a LIST via the same __pyc_tolist__ dispatch as list().
+  // Established compromise: zip/map/filter/enumerate/reversed
+  // already return lists; indexing/iteration/len are identical,
+  // printing/hashing differ. First users: genetic2's
+  // `node.args = tuple([TreeNode() ...])`, chess's
+  // `tuple(range(...))` board lines. (`tuple` resolves to the
+  // ifa-core sym_tuple directly, unlike list's scoped class sym.)
+  if (f == sym_tuple && pos_args.n == 1) {
+    PycAST *a0 = getAST(pos_args[0], ctx);
+    ast->rval = new_sym(ast);
+    call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
+    return 1;
   }
   // issues/022: zero-arg builtin-type constructor calls (int(), float(),
   // bool(), str(), list(), tuple()) all fail identically. Root cause: the
@@ -2363,15 +2454,43 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         ast->rval = v->rval;
         return 0;
       }
+      // BOOLEAN CONTEXT: when the and/or feeds an if/while/elif
+      // condition (or `not`, or another and/or that itself feeds
+      // one), Python's operand-VALUE result is unobservable -- only
+      // its truthiness is consumed -- so the result var can be the
+      // per-operand __pyc_to_bool__ BOOL instead of the operand
+      // value. The value form unions every operand's type with bool
+      // in one var ({nil, list, bool} for the ubiquitous
+      // `if node.args and <test>:` optional-field idiom), and that
+      // union is both un-layout-able (1-byte bool vs 8-byte
+      // pointers: clone.cc "mismatched field sizes" via the
+      // partial-application closure) and needlessly polymorphic.
+      // genetic2's get_random_node/crossover guards were the
+      // motivating case (pyc issues/025).
+      auto in_boolean_context = [](PyDAST *nn) {
+        for (PyDAST *p = nn->parent; p; nn = p, p = p->parent) {
+          if ((p->kind == PY_if_stmt || p->kind == PY_while_stmt || p->kind == PY_elif_clause) &&
+              p->children.n && p->children[0] == nn)
+            return true;
+          if (p->kind == PY_bool_not) return true;
+          if (p->kind == PY_bool_and || p->kind == PY_bool_or) continue;  // keep walking up
+          return false;
+        }
+        return false;
+      };
+      bool bool_ctx = in_boolean_context(n);
       ast->label[0] = if1_alloc_label(if1);
       ast->rval = new_sym(ast);
       for (int i = 0; i < nc - 1; i++) {
         build_if1_pyda(n->children[i], ctx);
         PycAST *v = getAST(n->children[i], ctx);
         if1_gen(if1, &ast->code, v->code);
-        if1_move(if1, &ast->code, v->rval, ast->rval);
         Sym *t = new_sym(ast);
         call_method(&ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
+        if (bool_ctx)
+          if1_move(if1, &ast->code, t, ast->rval);
+        else
+          if1_move(if1, &ast->code, v->rval, ast->rval);
         Code *ifcode = if1_if_goto(if1, &ast->code, t, ast);
         if (is_and) {
           if1_if_label_false(if1, ifcode, ast->label[0]);
@@ -2384,7 +2503,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       build_if1_pyda(n->children[nc - 1], ctx);
       PycAST *v = getAST(n->children[nc - 1], ctx);
       if1_gen(if1, &ast->code, v->code);
-      if1_move(if1, &ast->code, v->rval, ast->rval, ast);
+      if (bool_ctx) {
+        Sym *t = new_sym(ast);
+        call_method(&ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
+        if1_move(if1, &ast->code, t, ast->rval, ast);
+      } else {
+        if1_move(if1, &ast->code, v->rval, ast->rval, ast);
+      }
       if1_label(if1, &ast->code, ast, ast->label[0]);
       return 0;
     }
@@ -2512,11 +2637,91 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
 
     case PY_binop: {
       // children: [left, right] with op in n->op
+      if (n->op == PY_OP_ADD || n->op == PY_OP_MUL) {
+        Vec<PyDAST *> flat;
+        if (try_fold_tuple_arity(n, flat)) {
+          Vec<PyDAST *> uniq;
+          for (auto c : flat.values())
+            if (!uniq.in(c)) uniq.add(c);
+          for (auto c : uniq.values()) {
+            build_if1_pyda(c, ctx);
+            if1_gen(if1, &ast->code, getAST(c, ctx)->code);
+          }
+          Code *send = if1_send1(if1, &ast->code, ast);
+          if1_add_send_arg(if1, send, sym_primitive);
+          if1_add_send_arg(if1, send, sym_make);
+          if1_add_send_arg(if1, send, sym_tuple);
+          for (auto c : flat.values()) if1_add_send_arg(if1, send, getAST(c, ctx)->rval);
+          ast->rval = new_sym(ast);
+          if1_add_send_result(if1, send, ast->rval);
+          return 0;
+        }
+      }
       build_if1_pyda(n->children[0], ctx);
       build_if1_pyda(n->children[1], ctx);
       PycAST *lv = getAST(n->children[0], ctx);
       PycAST *rv = getAST(n->children[1], ctx);
       if1_gen(if1, &ast->code, lv->code);
+      // `fmt % args` with a CONSTANT format string: pre-convert each
+      // %s argument through __str__ (full method dispatch) before the
+      // __mod__ send. The __pyc_format_string__ primitive passes args
+      // RAW into C varargs, so a %s spec receiving an int64/float64
+      // strlen'd the scalar (segfault: genetic2's
+      // `"Epoch: %s, best fitness: %s" % (epoch, fitness)`) and an
+      // object could never print its __str__. %d/%f/etc. args stay
+      // raw (matching specs already work). Non-constant formats keep
+      // the old path. For a literal arg tuple, the conversions are
+      // emitted BEFORE the tuple's own make send and the make's args
+      // are swapped in place (building a second tuple would leave the
+      // original het-tuple make dead but diagnosed).
+      if (n->op == PY_OP_MOD && lv->rval && lv->rval->type == sym_string && lv->rval->constant) {
+        Vec<char> convs;  // conversion char per % spec, in order
+        for (cchar *p = lv->rval->constant; *p; p++) {
+          if (*p != '%') continue;
+          p++;
+          if (*p == '%') continue;                            // literal %%
+          while (*p && (strchr("-+ #0", *p) || (*p >= '0' && *p <= '9') || *p == '.')) p++;
+          if (*p) convs.add(*p);
+        }
+        if (convs.n && n->children[1]->kind == PY_tuple && n->children[1]->children.n == convs.n) {
+          // Generate the ELEMENTS' code directly (the literal tuple's
+          // own make send is never generated, so no dead het-tuple
+          // remains to diagnose), stringify the %s members, then make
+          // a fresh arg tuple from the converted values.
+          for (auto c : n->children[1]->children.values())
+            if1_gen(if1, &ast->code, getAST(c, ctx)->code);
+          Vec<Sym *> argv;
+          for (int i = 0; i < convs.n; i++) {
+            Sym *av = getAST(n->children[1]->children[i], ctx)->rval;
+            if (convs[i] == 's') {
+              Sym *sv = new_sym(ast);
+              call_method(&ast->code, ast, av, sym___str__, sv, 0);
+              argv.add(sv);
+            } else {
+              argv.add(av);
+            }
+          }
+          Code *send = if1_send1(if1, &ast->code, ast);
+          if1_add_send_arg(if1, send, sym_primitive);
+          if1_add_send_arg(if1, send, sym_make);
+          if1_add_send_arg(if1, send, sym_tuple);
+          for (Sym *av : argv) if1_add_send_arg(if1, send, av);
+          Sym *targs = new_sym(ast);
+          if1_add_send_result(if1, send, targs);
+          ast->rval = new_sym(ast);
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), lv->rval, targs, ast->rval)->ast = ast;
+          return 0;
+        }
+        if (convs.n == 1 && convs[0] == 's' && n->children[1]->kind != PY_tuple) {
+          // Single non-tuple %s argument.
+          if1_gen(if1, &ast->code, rv->code);
+          Sym *sv = new_sym(ast);
+          call_method(&ast->code, ast, rv->rval, sym___str__, sv, 0);
+          ast->rval = new_sym(ast);
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), lv->rval, sv, ast->rval)->ast = ast;
+          return 0;
+        }
+      }
       if1_gen(if1, &ast->code, rv->code);
       ast->rval = new_sym(ast);
       if1_send(if1, &ast->code, 3, 1, map_pyop_to_operator(n->op), lv->rval, rv->rval, ast->rval)->ast = ast;

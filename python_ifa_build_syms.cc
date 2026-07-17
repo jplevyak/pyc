@@ -1221,6 +1221,45 @@ void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   if1_closure(if1, fn, body, as.n, as.v);
 }
 
+// issues/029 helper: collect the names of instance fields assigned as
+// `self.NAME = ...` (or augmented / tuple-unpacked) anywhere in a
+// class body's AST. Instance fields are NOT in cls->has at build time
+// -- FA promotes them lazily (promote_field) as accesses are analyzed
+// -- but the synthesized __deepcopy__ needs the field list BEFORE
+// analysis, and for pyc's Python subset (no setattr) the stores are
+// fully visible syntactically. `self` by name: pyc code (and the
+// corpus) uses the conventional receiver name; a method receiver
+// named otherwise just leaves its stores un-deep-copied (shallow,
+// the pre-029 behavior).
+static void collect_self_store_fields(PyDAST *n, Vec<cchar *> &fields) {
+  if (!n) return;
+  // NB PY_augassign doubles as the 0-children OPERATOR node inside
+  // an augassign statement (python.g) -- only the statement form has
+  // a target to inspect.
+  if ((n->kind == PY_assign || n->kind == PY_augassign) && n->children.n > 1) {
+    int ntgt = (n->kind == PY_assign) ? n->children.n - 1 : 1;
+    auto add_if_self_attr = [&](PyDAST *tgt) {
+      if (tgt && tgt->kind == PY_power && tgt->children.n == 2 && tgt->children[0]->kind == PY_name &&
+          tgt->children[0]->str_val && !strcmp(tgt->children[0]->str_val, "self") &&
+          tgt->children[1]->kind == PY_attribute && tgt->children[1]->children.n &&
+          tgt->children[1]->children[0]->str_val)
+        {
+          cchar *cn = if1_cannonicalize_string(if1, tgt->children[1]->children[0]->str_val);
+          if (!fields.in(cn)) fields.add(cn);  // insertion order (layout-relevant), not set/hash order
+        }
+    };
+    for (int i = 0; i < ntgt; i++) {
+      PyDAST *tgt = n->children[i];
+      if (tgt && (tgt->kind == PY_tuple || tgt->kind == PY_testlist || tgt->kind == PY_exprlist)) {
+        for (auto c : tgt->children.values()) add_if_self_attr(c);
+      } else {
+        add_if_self_attr(tgt);
+      }
+    }
+  }
+  for (auto c : n->children.values()) collect_self_store_fields(c, fields);
+}
+
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
@@ -1251,6 +1290,96 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     } else {
       if1_gen(if1, &body, getAST(body_node, ctx)->code);
     }
+  }
+  // issues/029: synthesize a recursive __deepcopy__ for every record
+  // class that doesn't define its own. The class's data layout is
+  // fully known here (build_syms discovered every `self.x = ...`
+  // member in pass 1), so the method is exactly what a user would
+  // write by hand: shallow-clone self, then re-point each DATA
+  // member (methods -- has-entries whose alias is a fun, including
+  // the prototype's method-pointer slots -- are skipped, same
+  // discriminator as the `includes` copy loop above) at
+  // member.__deepcopy__(). Field recursion rides normal method
+  // dispatch: lists via list.__deepcopy__, nested records via THEIR
+  // synthesized method (each level gets a monomorphic contour via
+  // recursive-ES splitting, issues/025 R1 item 5), scalars/strings/
+  // tuples via __pyc_any_type__'s shallow fallback, None via
+  // __pyc_None_type__'s identity. FA is demand-driven: classes
+  // never deep-copied pay nothing. Three registrations make it a
+  // real method (each was independently necessary): the closure
+  // with as[0] must_implement_and_specialize'd on the selector
+  // symbol (pattern matching), a member sym in cls->has with
+  // alias = the fn (period dispatch walks has), and a prototype
+  // field-install in THIS class-body init (mirrors what a def
+  // statement's setter emits) so instances carry the method value.
+  // No memo table (v1): CPython's memo preserves shared/cyclic
+  // structure; pyc duplicates diamonds and does not terminate on
+  // cycles -- the corpus need (genetic2's genome TREES) is trees.
+  // Inherited (includes) fields are shallow-cloned but not
+  // deep-recursed (v1).
+  if (is_record && !ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, "__deepcopy__"))) {
+    // Field list = syntactic `self.NAME = ...` stores (instance
+    // fields; NOT in cls->has until FA promotes them) plus the
+    // build-time class-body data attributes already in has. Kept in
+    // FIRST-STORE SOURCE ORDER, deliberately NOT sorted: struct slot
+    // numbers follow cls->has, which promote_field appends to in FA
+    // analysis order -- with __init__ promoting fields in write
+    // order and this method promoting in ITS body order, the two
+    // must AGREE or whichever contour the (heap-order-sensitive)
+    // worklist analyzes first decides the layout: an alphabetized
+    // loop here made field/slot assignment differ across identical
+    // compiles (the determinism gate caught it on
+    // tests/deepcopy_objects.py).
+    Vec<cchar *> sorted_fields;  // source order despite the name
+    collect_self_store_fields(cdef, sorted_fields);
+    for (int i = 0; i < cls->has.n; i++) {
+      Sym *m = cls->has[i];
+      if (!m || !m->name) continue;
+      if (m->alias && m->alias->is_fun) continue;  // methods, not data
+      cchar *cn = if1_cannonicalize_string(if1, m->name);
+      if (!sorted_fields.in(cn)) sorted_fields.add(cn);
+    }
+    Sym *dcfn = new_fun(ast);
+    // One deeper than the class-body init fn, NOT ctx.scope_stack.n:
+    // during an IMPORTED module's build_if1 the importer's scopes sit
+    // under the imported module's on the stack, so scope_stack.n
+    // over-counts -- and dcfn is referenced as a VALUE inside the
+    // class-body init (the prototype install below), where a
+    // too-deep nesting_depth walks a display the init fn doesn't
+    // have (unique_AVar `es` assert on tests/from_import.py).
+    dcfn->nesting_depth = fn->nesting_depth + 1;
+    dcfn->self = new_sym(ast);
+    dcfn->self->must_implement_and_specialize(cls);
+    dcfn->self->in = dcfn;
+    Vec<Sym *> as;
+    as.add(new_sym(ast, "__deepcopy__"));
+    as[0]->must_implement_and_specialize(if1_make_symbol(if1, "__deepcopy__"));
+    dcfn->name = as[0]->name;
+    as.add(dcfn->self);
+    Code *dcbody = 0;
+    Sym *t = new_sym(ast);
+    if1_send(if1, &dcbody, 3, 1, sym_primitive, if1_make_symbol(if1, "copy"), dcfn->self, t)->ast = ast;
+    for (cchar *fname : sorted_fields) {
+      Sym *nm = if1_make_symbol(if1, fname);
+      Sym *fv = new_sym(ast);
+      if1_send(if1, &dcbody, 4, 1, sym_operator, dcfn->self, sym_period, nm, fv)->ast = ast;
+      Sym *dv = new_sym(ast);
+      call_method(&dcbody, ast, fv, if1_make_symbol(if1, "__deepcopy__"), dv, 0);
+      if1_send(if1, &dcbody, 5, 1, sym_operator, t, sym_setter, nm, dv, new_sym(ast))->ast = ast;
+    }
+    if1_move(if1, &dcbody, t, dcfn->ret);
+    if1_send(if1, &dcbody, 4, 0, sym_primitive, sym_reply, dcfn->cont, dcfn->ret)->ast = ast;
+    if1_closure(if1, dcfn, dcbody, as.n, as.v);
+    // Class-member registration + prototype install (same shapes as
+    // the inherited-method branch of the includes loop above).
+    Sym *member = new_PycSymbol("__deepcopy__")->sym;
+    member->var = new Var(member);
+    member->alias = dcfn;
+    member->in = cls;
+    cls->has.add(member);
+    if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, "__deepcopy__"), dcfn,
+             new_sym(ast))
+        ->ast = ast;
   }
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);

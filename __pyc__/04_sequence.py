@@ -7,7 +7,18 @@ class __list_iter__:
     # .reduce, issue 025).
     return self
   def __init__(self, l):
-    self.thelist = l
+    # __pyc_clone_constants__ on the ctor param puts __list_iter__ on
+    # the ifa/issues/045 clone_methods_per_cs track (same lever as
+    # range, see __pyc__/05_builtins.py): each creating contour gets
+    # its OWN iterator CS (creation_point skips split-parent CS
+    # reuse) and __pyc_more__/__next__ split per receiver CS in the
+    # PER_CS_RECEIVER stage. Without it, every `for x in lst:` in the
+    # program shares iterator CSs whose `thelist` unions ALL iterated
+    # lists, so `x` is the union of every loop's element types --
+    # which re-fused the per-recursion-level contours the
+    # recursive-ES splitting fix separates (ifa/issues/043 shape C;
+    # deepcopy over nested lists was the repro).
+    self.thelist = __pyc_clone_constants__(l)
   def __pyc_more__(self):
     return self.position < len(self.thelist)
   def __next__(self):
@@ -54,6 +65,25 @@ class list:
       r.append(x)
     return r
   def __add__(self, l):
+    # list + tuple: build the result with append loops (isinstance
+    # branch stays dead in list+list contours, same narrowing
+    # pattern as int.__mul__'s reflected dispatch). A tuple is a
+    # fixed-arity struct, not list layout, so _CG_list_add can't
+    # take it directly. Built INLINE rather than recursing through
+    # self.__add__(l.__pyc_tolist__()): the recursive form routed
+    # every list+tuple site through shared conversion contours whose
+    # merged types cross-contaminated unrelated sites' element types
+    # (two different-class list+tuple concats in one program produced
+    # union/bottom element types). Arises naturally now that dynamic
+    # tuple() returns a list (genetic2's crossover:
+    # `args[:k] + (node,) + args[k+1:]`).
+    if isinstance(l, tuple):
+      r = []
+      for k in range(len(self)):
+        r.append(self[k])
+      for k in range(len(l)):
+        r.append(l[k])
+      return r
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, l),
                           "_CG_list_add",
                           list, self,
@@ -63,15 +93,21 @@ class list:
   def __radd__(self, l):
     pass
   def __iadd__(self, l):
-    return __add__(self, l)
+    # NB self.__add__(l), not bare __add__(self, l): class bodies are
+    # not enclosing scopes for their methods (find_PycSymbol skips
+    # non-current class scopes per Python semantics -- a bare name in
+    # a method body resolves to the module, not to a sibling method).
+    return self.__add__(l)
   def __mul__(self, n):
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
                           "_CG_list_mult",
                           list, self,
                           int, n,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
-  def __rmul__(self, l):
-    pass
+  def __rmul__(self, n):
+    # `n * self` (n an int): list repetition is commutative, so reuse
+    # __mul__ (issue 025 R1 "missing sequence ops").
+    return self.__mul__(n)
   def __imul__(self, l):
     pass
 #  @must_specialize("l:list")
@@ -95,6 +131,18 @@ class list:
                          int, l + 1)
     tmp.__setitem__(l, x)
     return tmp
+  def extend(self, other):
+    # issue 025 R1 "missing sequence ops": extend was an unknown
+    # method on list -- silently warned and dropped the call rather
+    # than erroring, so `a.extend([2,3])` was a silent no-op
+    # (softrender/chull/rdb). append()'s merge_in-tagged resize
+    # mutates self's backing store in place (verified: a bare
+    # `l.append(x)` inside a helper function already mutates the
+    # caller's list with no explicit `l = l.append(x)` rebind
+    # needed), so a plain per-element append loop is enough.
+    for x in other:
+      self.append(x)
+    return None
   def index(self, x):
     # Returns -1 when absent instead of raising ValueError (no
     # exception model, issue 011).
@@ -171,6 +219,15 @@ class list:
       x += self[k].__repr__()
     x += "]"
     return x
+  def __deepcopy__(self):
+    # issues/029: element-recursive list copy. Elements dispatch
+    # their own __deepcopy__ (records: synthesized per-class;
+    # scalars/strings: the any-type shallow fallback; None:
+    # identity). Index loop per house style.
+    r = []
+    for k in range(len(self)):
+      r.append(self[k].__deepcopy__())
+    return r
   def __pyc_to_bool__(self):
     return self.__len__() != 0
 
@@ -201,8 +258,42 @@ class tuple:
     return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("len"), self))
   def __pyc_to_bool__(self):
     return self.__len__() != 0
+  def __pyc_tolist__(self):
+    # list(t) and dynamic tuple(xs) both land here via the
+    # list()/tuple() intercepts (python_ifa_build_if1.cc, issue
+    # 025). Dynamic-length tuple() returns a LIST: pyc tuples are
+    # fixed-arity structs, so tuple(iterable) can't be a true tuple
+    # -- same documented compromise as zip/map/filter/enumerate/
+    # reversed returning lists (indexing/iteration/len behave
+    # identically; printing/hashing differ).
+    #
+    # INDEX loop, not `for x in self`: a program that iterates two
+    # DIFFERENT-arity tuples shares one __tuple_iter__ CS whose
+    # folded per-arity len and prototype method-pointer slots cross
+    # wires (segfault -- pre-existing at user level too, see
+    # ifa/issues/047). Indexing (like tuple.__str__'s loop) never
+    # touches the iterator.
+    r = []
+    for k in range(len(self)):
+      r.append(self[k])
+    return r
   def __pyc_tuplify__(self):
     return self
+  def __add__(self, t):
+    # Dynamic tuple concatenation returns a LIST -- fixed-arity
+    # structs can't concatenate at runtime; the compile-time
+    # literal fold (try_fold_tuple_arity, issues/025 R1 item 4)
+    # handles `(a, b) + (c,)` shapes, this covers NAMED tuple
+    # values (chess's `queenLines = bishopLines + rookLines`).
+    # Same list-for-dynamic-tuple compromise as tuple()/zip/map.
+    # Inline index loops, not shared conversion helpers (see
+    # list.__add__'s cross-contamination note).
+    r = []
+    for k in range(len(self)):
+      r.append(self[k])
+    for k in range(len(t)):
+      r.append(t[k])
+    return r
   def __eq__(self, t):
     lt = __pyc_clone_constants__(len(t))
     lself = __pyc_clone_constants__(len(self))

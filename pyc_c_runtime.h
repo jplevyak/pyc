@@ -1042,6 +1042,19 @@ inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
   _CG_prim_primitive_clone_dst((_src), sizeof(*((_dt)0)), sizeof(*(_src)))
 #define _CG_prim_copy_dst(_dt, _src) \
   _CG_prim_primitive_clone_dst((_src), sizeof(*((_dt)0)), sizeof(*(_src)))
+// Shallow-copy a GC object whose STATIC type is a union of same-class
+// CreationSets (emitted C type _CG_any) -- no compile-time sizeof is
+// possible, but Boehm's GC_size gives the allocation's block size at
+// runtime, and copying the whole block is exactly the shallow-copy
+// semantics P_prim_copy wants (issues/029: __deepcopy__ receivers
+// unioning original+copy CSs of one class).
+inline void *_CG_prim_copy_any(void *p) {
+  if (!p) return p;
+  size_t sz = GC_size(p);
+  void *x = GC_MALLOC(sz);
+  memcpy(x, p, sz);
+  return x;
+}
 #define _CG_prim_clone_vector(_c, _v) _CG_prim_primitive_clone_vector(_c, sizeof(*(_c)), _v)
 #define _CG_prim_reply(_s, _c, _r) return _r
 #define _CG_prim_primitive(_p, _x) printf("%d\n", (unsigned int)(uintptr_t)_x);

@@ -11,6 +11,14 @@ class __pyc_any_type__:
     return self.__getitem__(slice(i,j,s))
   def __repr__(self):
     return self.__str__()
+  def __deepcopy__(self):
+    # issues/029 fallback: value types (scalars, strings) and shapes
+    # with no per-field recursion (tuples, closures) deep-copy as a
+    # shallow copy -- the copy prim is identity for scalars and a
+    # one-level struct clone otherwise. Record classes get a
+    # SYNTHESIZED recursive override (gen_class_pyda), lists a
+    # handwritten one (04_sequence.py).
+    return __pyc_primitive__(__pyc_symbol__("copy"), self)
   def __format__(self, spec):
     # issues/006: default __format__ for classes with no override.
     # CPython's object.__format__ raises TypeError for a non-empty
@@ -80,6 +88,37 @@ class __pyc_None_type__:
     return False
   def __not__(self):
     return True
+  def __deepcopy__(self):
+    # None is immutable; deepcopy is identity (also keeps the nil
+    # member of Optional[T] fields typed through the synthesized
+    # per-class __deepcopy__ recursion, issues/029).
+    return self
+  def __pyc_getslice__(self, i, j, s):
+    # Container ops on an Optional[container] field's nil member:
+    # `field[:k]` / `field[k]` where the field starts as None and is
+    # truth-guarded before use (`if node.args:` -- genetic2's
+    # crossover). The nil arm is runtime-dead behind the guard, but
+    # FA doesn't narrow attribute loads (ifa/issues/046 family), so
+    # without these the nil part of the union routes into the
+    # __pyc_any_type__ fallback and the whole expression loses its
+    # type. Returns [] (not self/None): the slice result flows into
+    # concatenation on the dead arm, and a None operand re-poisons
+    # list.__add__ (sizeof_element of non-container). CPython would
+    # raise TypeError -- pyc has no exception model (issues/011), so
+    # this is the documented degradation.
+    return []
+  # NB deliberately NO __getitem__ or __len__ stubs: every container
+  # class-body field defaulting to None (__tuple_iter__.thetuple,
+  # __list_iter__.thelist, ...) makes {nil, T} unions at THEIR uses,
+  # and a stub turns those sites into live multi-candidate dispatches
+  # program-wide -- a __getitem__ stub injected None into element
+  # unions (printing tuple element 0 became "None": the {nil,int64}
+  # str-dispatch null-tests the SCALAR, and 0 is indistinguishable
+  # from NULL), and even the value-safe __len__ stub regressed the
+  # whole LLVM suite (its dispatch emitter lacks the C backend's
+  # nil/untagged routes). The nil arm of an unresolved send is
+  # silently dropped under fruntime_errors, which is the right
+  # degradation for these.
   # Issue 004: None.__is__(x) is True iff x is also None.
   # Note: the __pyc_None_type__::__is__ path is rarely hit
   # in practice because the frontend (PY_CMP_IS) rewrites

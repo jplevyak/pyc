@@ -29,8 +29,34 @@ def random():
 def uniform(a, b):
     return a + (b - a) * random()
 
-def randrange(start, stop):
+def randrange(start, stop=None):
+    # CPython's one-arg form randrange(stop) -> [0, stop). The
+    # stop-is-None branches keep each call contour monomorphic via
+    # nil narrowing (same pattern as min/max key= in
+    # __pyc__/05_builtins.py). No step= form yet.
+    if stop is None:
+        return int(random() * float(start))
     return start + int(random() * float(stop - start))
+
+def triangular(low=0.0, high=1.0, mode=None):
+    # Triangular distribution (CPython random.triangular). All
+    # arithmetic through explicit float() per this file's NB note --
+    # callers pass ints (genetic2: triangular(0, iters, 0)) and the
+    # LLVM backend mis-types mixed int/float prims.
+    u = random()
+    lo = float(low)
+    hi = float(high)
+    if mode is None:
+        c = 0.5
+    else:
+        c = (float(mode) - lo) / (hi - lo)
+    if u > c:
+        u = 1.0 - u
+        c = 1.0 - c
+        t = lo
+        lo = hi
+        hi = t
+    return lo + (hi - lo) * (u * c) ** 0.5
 
 def randint(a, b):
     return a + int(random() * float(b - a + 1))

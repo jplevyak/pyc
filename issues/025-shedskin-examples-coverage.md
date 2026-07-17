@@ -950,3 +950,418 @@ Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
 (and running), promote the stable ones into `test_pyc.py` with
 `.exec.check` goldens so they don't regress.
+
+### R1 item 1 fixed: reflected int*sequence multiplication (2026-07-15)
+
+`int.__mul__` now checks `isinstance(x, list)` and dispatches to
+`x.__rmul__(self)`; `list.__rmul__` (previously a `pass` stub) now
+returns `self.__mul__(n)` (multiplication is commutative for
+sequence-repeat). Fixes `print(3 * [0])` and both verified
+first-blocker shapes (rubik2's `20*[0]`, tictactoe's `edge*[0]`
+comprehension) — output byte-identical to CPython on both backends.
+rubik2 and tictactoe now compile past this point and hit their next
+(unrelated) blockers, confirming this was genuinely their first
+blocker per the earlier grep-attribution.
+
+Landing this exposed a **pre-existing LLVM-backend codegen bug**,
+unrelated to reflected operators specifically: `cg_emit_llvm.cc`'s
+`sym_to_llvm_type` mapped FA's `sym_void_type` (the marker for
+FA-unreachable/no-value results — the C backend's harmless
+`_CG_void_type = void*` placeholder that's declared but never
+touched) to a generic opaque `ptr`, instead of LLVM's real `void`
+type. `discover_phi_targets`' union-find (which decides which Vars
+share a mutable alloca slot, for loop-carried/branch-joined
+variables) doesn't distinguish dead from live members when picking
+a class's storage type, so a void-typed dead branch's Var could
+claim a phi-class's slot as `ptr` before a live, genuinely-`int64`
+member of the *same* class got a chance to — corrupting that live
+var's storage type. Symptom: an LLVM verifier failure (`mul ptr,
+i64`) on plain `i * 10` inside a `while` loop, with *no* isinstance
+or list involved on the live path — any `isinstance(x, T)`-guarded
+dead branch inside a loop-reached function could trigger it. Fixed
+by mapping `sym_void_type` to LLVM's void type in `sym_to_llvm_type`
+so `discover_phi_targets`' existing (previously dead) `t->isVoidTy()`
+skip actually fires. Verified: both backends' `test_pyc.py` still
+196/0 (7 expected fails unchanged), `make test-unit` 58/0.
+
+### R1 item 2 fixed: list.extend (2026-07-15)
+
+Added a real `extend` to `__pyc__/04_sequence.py`'s `list` class (a
+per-element `append` loop; `append`'s `merge_in`-tagged resize
+mutates the backing store in place, verified through a plain local
+var, a field access, and a helper-function indirection -- no
+explicit `self = self.extend(...)` rebind needed at any call site).
+Previously `extend` was an unresolved method that silently
+warned-and-dropped (`a=[1]; a.extend([2,3]); print(a)` printed `[1]`
+-- a correctness hole independent of any example, not just a compile
+blocker). Fixes the micro-repro and matches CPython on both
+backends. softrender, chull, and rdb (the three grep-attributed
+members) now compile past their `.extend()` call sites into new,
+unrelated blockers: softrender hits a string/float64 cast error
+later in the file; chull hits the R2 mixed-basic-types bucket
+(`tuple/int64/float64/str/Vector/Vertex/Edge/Face` union); rdb hits
+a `\x` string-escape parse bug plus `os.path`/`getopt` gaps already
+noted above. Verified: both backends' `test_pyc.py` 196/0, `make
+test-unit` 58/0.
+
+### R1 item 3 fixed: range.__len__/__getitem__ (2026-07-15)
+
+Added `__len__` (CPython's exact ceil-division formula, split by
+step sign) and `__getitem__` (with negative-index support) to
+`range` in `__pyc__/05_builtins.py`. `reversed()` is index-based
+(`len(seq)` + `seq[i]` in a countdown loop) and `range` had neither
+method, so `reversed(range(n))` aborted at runtime ("getter not
+resolved"). Verified against CPython: positive/negative step,
+negative indexing, and empty ranges all byte-identical on both
+backends. linalg (the sole member) now compiles past
+`reversed(range(1025))` into new, unrelated type-resolution errors
+further down the file. Verified: both backends' `test_pyc.py`
+196/0, `make test-unit` 58/0.
+
+### R1 item 4 fixed: tuple literal concat/repeat via compile-time folding (2026-07-15)
+
+Tuples are fixed-arity structs (no general runtime `__add__`/`__mul__`
+is possible -- each length is a distinct struct type), so this
+needed frontend-level constant folding rather than a `__pyc__`
+stub, per the plan above. Added `try_fold_tuple_arity` in
+`python_ifa_build_if1.cc`, wired into the `PY_binop` ADD/MUL case
+before normal dispatch: recursively recognizes `tuple_literal +
+tuple_literal` and `tuple_literal * int_literal` (any nesting depth,
+either operand order for `*`) and flattens the whole expression into
+a single tuple-literal element list at compile time, falling through
+to the normal (still-missing) runtime path unchanged for anything
+that doesn't match this shape (a non-literal repeat count, tuple +
+non-tuple, etc). Elements are evaluated exactly once per Python
+semantics (`expr * n` evaluates `expr` once and repeats references
+to its already-computed elements, never re-executes them) --
+`try_fold_tuple_arity` may return the same source PyDAST* pointer at
+multiple output positions, so the call site dedupes before calling
+`build_if1_pyda`, then re-references each element's already-built
+`rval` for every position it appears at, including repeats.
+
+Verified: `(1, 2) + (None,) * 3` and `(10, 20, 30) * 2` both
+byte-identical to CPython on both backends (length, per-element
+identity/value, and str() of the homogeneous case all checked);
+regression suite 196/0 both backends, `make test-unit` 58/0. chess
+(the sole member) now compiles cleanly past line 24's `setup =
+(4,2,...) + (iTrue,)*4 + ... + (iNone,)*40` (no diagnostics at that
+line at all) into new, unrelated blockers at lines 26+: `tuple(range
+(...))` and `tuple([comprehension])` -- the dynamic-length `tuple()`
+**constructor** call, a genuinely different and harder problem (needs
+an actual variable-length tuple or a list-backed fallback) than the
+literal concat/repeat this item covers. Noting for a future item;
+out of scope here.
+
+One known gap surfaced, NOT a regression (reproduces identically on
+`main` with a plain literal, no `+`/`*` involved):
+`print()`/`str()` of a tuple with genuinely mixed element types
+(`(1, None)`) aborts at runtime ("matching function not found") --
+`tuple.__str__` indexes elements through a generic runtime loop that
+can't dispatch per-position on a heterogeneous struct. Homogeneous
+tuples (all-int, etc.) print fine, matching CPython, on both
+backends -- only affects printing a truly mixed-type tuple.
+
+### R1 item 5 investigated, NOT fixed: copy.deepcopy (2026-07-15)
+
+**SUPERSEDED by the next section (2026-07-16):** point 2 below
+("not implementable") was wrong -- it described an FA BUG, not a
+design limit. Handling recursion is core IFA design; the recursive-
+ES splitting fix below makes deepcopy compile and run correctly.
+Point 1 (genetic2's separate optional-None crash) stands -- filed
+as [ifa/issues/046](../ifa/issues/046-optional-none-field-inline-type-sum-assert.md).
+
+This item was filed as SUSPECT (first-diag + shim inspection, no
+micro) and turns out to be wrong on both counts once verified:
+
+1. **genetic2's real first blocker is unrelated to deepcopy.**
+   `class TreeNode: def __init__(self, ..., args=None)` -- an
+   optional-list-of-same-class-instances field defaulting to `None`
+   -- crashes the compiler on its own, with no `copy`/`deepcopy`
+   involved at all: `pyc: optimize/inline.cc:407: ... Assertion
+   \`v->type->type_kind != Type_SUM' failed`. Minimal repro (any
+   class with an Optional[list-of-self-type] field, `Node(1,
+   [Node(2, None), Node(3, None)])`) reproduces it standalone. This
+   is the SAME "optional-None fields" gap the tail-dig section above
+   already attributes to loop/softrender/pygmy/lz2 -- genetic2
+   belongs in that bucket, not R1, and hits it before ever reaching
+   its `copy.deepcopy(self.genome)` call.
+
+2. **A general recursive Python-level deepcopy is not implementable
+   in the current compiler.** `deepcopy`'s shallow `copy` alias is a
+   real semantic gap in principle (mutating a "deep" copy's nested
+   containers should not corrupt the source -- `_CG_prim_copy_dst`
+   is a single-level struct memcpy, pointer fields stay shared), but
+   attempting a fix -- an `isinstance`-dispatched recursive Python
+   function (list/dict/set branches recursing into `deepcopy`,
+   falling back to shallow `copy` for scalars/tuples/objects) --
+   breaks compilation even in the narrowest form tried (list-only
+   recursion, no dict/set): the base-case `copy(obj)` call's `obj`
+   comes out typed `_CG_any` (opaque `void*`), because FA merges
+   `obj`'s type across every depth of the SAME recursive call rather
+   than specializing per depth/type the way per-call-site dispatch
+   works for a plain (non-recursive) method -- unlike `int.__mul__`
+   (R1 item 1), which has exactly two call shapes and got a working
+   isinstance branch, `deepcopy` recurses back into itself with
+   *different* argument types at each level and the shared function
+   contour can't carry that. This needs either `clone_methods_per_cs`
+   -style per-contour cloning extended to plain recursive functions,
+   or a tagged-dispatch mechanism (ifa/issues 030's territory) --
+   real FA work, not a pure-Python fix. Reverted the attempted change
+   (`pyc_lib/copy.py` back to `deepcopy = copy`); regression suite
+   unaffected (still 196/0 both backends).
+
+No corpus member is unblocked by (or blocked on) this item. Closing
+it out of R1; if revisited, scope it as an FA/cloning item next to
+043/045, not a `__pyc__`/shim edit.
+
+### R1 item 5 RESOLVED: recursive-ES splitting; deepcopy works (2026-07-16)
+
+The previous section's "recursion can't specialize per depth" was an
+FA bug, not a design limit -- resolving recursion to monomorphic
+contours is core IFA design (split + find-ES bind the recursive call
+in the next pass to the same ES as its top-level caller's contour).
+Three fixes, all in ifa:
+
+1. **`decide_entry_set_split` excluded every recursive edge from
+   type grouping** (`is_es_recursive(ee) -> continue`), then
+   short-circuited on `non_rec_edges == 1` -- so a self-recursive
+   function with one caller could NEVER split: its formal held the
+   union of all recursion depths' types forever (deepcopy's `obj`
+   boxed to `void*`). Now recursive edges join type-driven grouping
+   when the recursion is LEVEL-DESCENDING, gated on separability:
+   the recursive edge's type at the confluence position must be
+   IDENTICAL TO or DISJOINT FROM every other edge's. Partial overlap
+   (same-shape recursion over one union -- tests/expr_evaluator.py's
+   kind-discriminated Expr tree, lhs/rhs actuals {Expr, None} vs a
+   caller's {Expr}) keeps the recursion fused as before: splitting
+   those re-derives forever, strands runtime-dead union members
+   (None) in contours where nothing resolves, and fans single call
+   sites across same-class contours runtime dispatch can't
+   discriminate ("polymorphic dispatch: no branch matched" -- both
+   failure modes observed under weaker gates). The setter path keeps
+   the blanket exclusion (recursive DATA isn't level-separable).
+   The single-real-caller short-circuit is now setter-path-only.
+
+2. **`check_split`'s pending-backedge binding could veto the
+   split.** record_backedges plants "recursion binds to the split
+   product" entries; when the splitter later decides (on type
+   evidence) to detach a recursive edge from that very product,
+   the pending route re-bound it straight back -- the split silently
+   no-oped and re-derived every pass (2-level `f([[1,2],[3,4]])`
+   stalled with the level-1 contour permanently {list, int64}).
+   make_entry_set now passes the split-source ES into check_split as
+   `avoid`; routes back into it are skipped (the monomorphic-
+   recursion binding is a default, not evidence).
+
+3. **`P_prim_copy` on scalars** (both backends): the clone macro's
+   `sizeof(*(T)0)` only compiles for records; a scalar/string copy
+   is identity. Newly reachable because deepcopy's int64 leaf
+   contour is now monomorphic instead of boxed.
+
+Result: level-descending recursion gets one monomorphic contour per
+level (verified via ES dump: `deepcopy` over `[[1,2],[3,4]]` yields
+exactly {outer-list} -> {inner-lists} -> {int64}, each recursive
+edge bound to its own ES); monomorphic recursion (fib) binds back to
+its caller's ES; mutual recursion works; statically-unbounded
+polymorphic recursion (`g(n-1, [x])`) still compiles in <1s
+(depth-independent -- stall guard bounds it) and degrades honestly
+at runtime. `pyc_lib/copy.py`'s deepcopy is now a real recursive
+list deep-copy, byte-identical to CPython on both backends,
+including mutation-isolation (`b[0][0] = 99` leaves the source
+untouched). One constraint: deepcopy iterates by INDEX, not
+`for x in obj` -- iteration shares one `__list_iter__` CS across
+recursion levels (its `thelist` unions every level's lists), which
+re-fuses the freshly-separated contours; that's the CS-contour
+cross-product gap (ifa/issues/043), noted there.
+
+New regression tests: tests/recursive_polymorphic.py (descent +
+fib + mutual), tests/deepcopy_list.py (deep + shallow, mutation
+isolation). Verified: both suites 198/0 (C + LLVM), `make
+test-unit` 58/0, `make test-ir` clean, corpus sweep unchanged at
+22/77 compiled with pygasus's pre-existing 65s-vs-60s-cap timeout
+(baseline-identical compile time, measured), fysphun/kmeanspp/
+pylife/stereo all ~1s. genetic2 now compiles PAST its old
+`inline.cc:407` crash into later, separate blockers; the
+optional-None micro still reproduces standalone --
+[ifa/issues/046](../ifa/issues/046-optional-none-field-inline-type-sum-assert.md).
+
+### 043 shape C resolved: iterator-CS re-fusion; `for x in obj` recursion works (2026-07-16)
+
+Follow-on to the R1-item-5 resolution above: the "index loop, not
+`for x in obj`" constraint is GONE. Two changes (full mechanics in
+[ifa/issues/043](../ifa/issues/043-empty-container-inference-options.md),
+shape C):
+
+1. `__list_iter__` joined the ifa/issues/045 `clone_methods_per_cs`
+   track (one-line `__pyc_clone_constants__` marking in
+   `__pyc__/04_sequence.py`) -- one iterator CS per creating
+   contour, `__pyc_more__`/`__next__` per receiver CS, so each
+   recursion level's loop carries only that level's element types.
+
+2. The FA stall guard is now dup-aware (`IFA_STALL_LIMIT` counts
+   only re-deriving passes; new `IFA_NONIMPROVE_LIMIT 32` bounds
+   dup-free descent): the iterator method chain legitimately needs
+   ~14 one-split-per-pass passes, and the old unconditional 8-pass
+   counter killed splitting mid-chain whenever a second recursive
+   function shared the file (found via tests/recursive_polymorphic
+   .py's combined form failing while each half passed alone).
+
+`pyc_lib/copy.py` deepcopy reverted to the natural `for x in obj:`
+loop; tests/recursive_polymorphic.py extended with the iterator-
+descent + second-recursive-function combination. Verified: both
+suites 198/0, unit 58/0, compile times flat (pygasus 64s), and the
+corpus IMPROVED 22 -> 24 compiled: **kanoodle** (iterator-CS
+precision) and **oliva2** (its float64 violation now actually
+resolves with the extra dup-free passes -- compiles in 0.7s; it was
+never a timeout case).
+
+### genetic2 dig: six fixes; now runs to a deepcopy-rooted crash (2026-07-16)
+
+Peeled genetic2's blockers one at a time (each verified by a
+standalone micro + both suites staying 198/0 after every step):
+
+1. **`min`/`max` `key=` parameter** (`__pyc__/05_builtins.py`):
+   `max(self.population, key=fitness)` had no formal to bind `key`
+   to; the unmatched call's untyped result cascaded into the
+   cg.cc:306 getter assert this dig started from. Implemented with
+   the list.sort nil-narrowing pattern (key-is-None branches keep
+   contours monomorphic); two-arg + key forms too.
+2. **`random.randrange(stop)` one-arg form and `random.triangular`**
+   (`pyc_lib/random.py`): both used by genetic2; randrange(N) simply
+   didn't match, triangular didn't exist (CPython formula, explicit
+   float() coercions per that file's LLVM note).
+3. **Class scope does not nest into methods** (`find_PycSymbol`,
+   `python_ifa_sym.cc`): `import copy` + a METHOD named `copy` made
+   `copy.deepcopy(...)` inside `Individual.copy` resolve `copy` to
+   the method (Python semantics: class bodies are not enclosing
+   scopes for their functions -- bare names in methods resolve at
+   module level). 13-line repro; one bare intra-class reference in
+   `__pyc__` (`list.__iadd__`'s `__add__(self, l)`) updated to
+   `self.__add__(l)`. Scoping suite goldens unchanged.
+4. **Dynamic `tuple(iterable)` + `list(tuple)`**
+   (python_ifa_build_if1.cc intercept + `tuple.__pyc_tolist__`, an
+   INDEX loop -- see ifa/issues/047 for why not iteration): returns
+   a LIST (fixed-arity tuples can't be dynamic; same compromise as
+   zip/map/reversed). Unblocks genetic2's
+   `node.args = tuple([TreeNode() ...])` and chess's board lines.
+   `list + tuple` concat added to `list.__add__` (inline append
+   loops -- a self-recursive conversion helper cross-contaminated
+   unrelated sites' element types).
+5. **Boolean-context `and`/`or` lowering**
+   (python_ifa_build_if1.cc): when the chain feeds an
+   if/while/elif/`not` condition, the result var is the per-operand
+   `__pyc_to_bool__` BOOL, not the operand value -- the value form
+   made `if node.args and <test>:` a {nil, list, bool} union that
+   reached clone.cc's "mismatched field sizes" through a
+   partial-application closure (and was needlessly polymorphic
+   everywhere). Python's operand-value semantics are unobservable
+   in boolean context.
+6. **C-backend dispatch + cast gaps** (cg.cc): (a) multi-candidate
+   sends with one NIL branch + exactly ONE untagged-receiver method
+   candidate (list/str receivers carry no classtag) now emit
+   `if (!recv) nil_branch else direct_call` instead of the flat
+   "matching function not found" trap -- with a scalar-receiver
+   guard (0 vs NULL conflation) that EXEMPTS the truthiness
+   selectors (`__pyc_to_bool__`/`__bool__`/`__not__`), where None
+   and zero coincide (`if f():` on an implicit-None-returning int
+   function is genetic2's TreeNode.execute). (b) single-target
+   calls and all dispatch arms now CAST results when the callee
+   contour returns a wider C type than the call site's lval.
+7. **Constant-format `%` pre-conversion**
+   (python_ifa_build_if1.cc): `fmt % args` with a constant format
+   now stringifies each %s argument through a real `__str__` send
+   before the `__pyc_format_string__` prim -- raw C varargs
+   strlen'd scalars (`"Epoch: %s" % epoch` segfaulted) and objects
+   could never print. `%d`/`%f` args stay raw. Byte-identical to
+   CPython on scalars, strings, and objects with `__str__`.
+
+Also probed and REJECTED (each regressed the suites and was backed
+out): `__pyc_None_type__.__getitem__` (injected None into element
+unions program-wide; printing tuple element 0 became "None"),
+`__pyc_None_type__.__len__` (turned every iterator prototype's
+None-default field into live multi-candidate dispatches; the LLVM
+backend's dispatch emitter lacks the C backend's new routes and
+19 EXEC tests silently broke), and `clone_methods_per_cs` on
+`__tuple_iter__` (didn't produce per-contour CSs; the real
+different-arity tuple iteration bug is ifa/issues/047).
+`__pyc_None_type__.__pyc_getslice__` returning `[]` KEPT (value-
+safe; unblocks `args[:k]` slicing on optional fields).
+
+**genetic2 now compiles on the C backend and runs deep into its GP
+simulation**; the remaining crash is `copy.deepcopy` being shallow
+for USER OBJECTS (TreeNode trees end up sharing subtrees across
+individuals until crossover creates a cycle and execute's recursion
+overflows) -- filed as
+[issues/029](029-deepcopy-user-objects.md) with fix directions
+(compiler-synthesized per-class `__deepcopy__`).
+
+### genetic2 dig, round 2: %-format fix, tuple.__add__, two more compiler fixes (2026-07-16)
+
+Continuing the dig after the six fixes above:
+
+8. **Constant-format `%` pre-conversion refined** (see item 7 above;
+   the final form generates the literal arg tuple's ELEMENTS
+   directly, stringifies %s members, then makes a fresh tuple -- the
+   naive "build a second tuple" left the original heterogeneous
+   make-tuple dead-but-diagnosed, and mutating it in place ran the
+   conversions before the elements were computed).
+9. **Dynamic `tuple + tuple` of NAMED values** returns a list
+   (`tuple.__add__`, `__pyc__/04_sequence.py`): the compile-time
+   literal fold only covers literal operands; chess's
+   `queenLines = bishopLines + rookLines` became live once the
+   tuple() intercept typed its operands.
+10. **`cg_build_new_to_val_map` null-hole crash**
+    (`ifa/codegen/codegen_common.cc`): iterated `Fun::ess` (a
+    hash-set Vec with null holes) without the `if (es)` guard every
+    sibling loop has -- latent; surfaced on chess once the
+    dup-aware stall guard's extra passes left holes. Compiler
+    SIGSEGV -> fixed.
+
+Filed [ifa/issues/047](../ifa/issues/047-different-arity-tuple-iteration-shared-cs.md):
+iterating two DIFFERENT-ARITY tuples in one program segfaults
+(shared `__tuple_iter__` CS: void `thetuple`, per-arity folded
+lengths, prototype method-pointer slots cross-wired) -- pre-existing
+at user level (4-line repro on main), sidestepped in
+`tuple.__pyc_tolist__` via an index loop; the `clone_methods_per_cs`
+lever does NOT work for the prototype-instantiation path.
+
+New regression test: tests/genetic2_idioms.py (max/min key=,
+method-named-like-module, dynamic tuple()/list()/+, Optional-field
+guard + slice + graft, %-formatting with scalars/objects, named
+tuple concat). Suites 199/0 both backends, unit 58/0.
+
+**End state: genetic2 COMPILES and runs deep into its GP simulation**
+(epochs of evolution, correct dispatch through every layer this dig
+fixed); the remaining crash is `copy.deepcopy` being SHALLOW for
+user objects -- crossover on shared subtrees eventually creates a
+cyclic "tree" and TreeNode.execute's recursion overflows. Filed as
+[issues/029](029-deepcopy-user-objects.md) (fix direction:
+compiler-synthesized per-class `__deepcopy__`; layouts are fully
+known at codegen). chaos also newly compiles (25/77 at the sweep
+before chess's frontier wobble); chess bounced back to FAIL with an
+honest sizeof_element diagnostic -- it sits on the mixed-types
+frontier (R2), where its sweep3 "compile" was never a verified run.
+
+### issues/029 implemented: synthesized per-class __deepcopy__ (+5 latent bugs) (2026-07-17)
+
+The deepcopy fix sketch landed: every record class without its own
+`__deepcopy__` gets a compiler-synthesized recursive one (shallow
+clone + per-field dispatch; fields collected syntactically from
+`self.NAME = ...` stores in first-store order). Full mechanics and
+the five latent compiler bugs it surfaced and fixed -- ifa/issues/
+046 (inline Type_SUM assert), ifa/issues/044 (listish-tuple length
+off-by-one / phantom elements -- also fixes that issue's standalone
+print repro), an uninitialized nil-typed `return` in cg's
+simple_move, the recursion pending-map edge fan-out, and
+determine_layouts' order-dependent offsets -- are in
+[issues/029](029-deepcopy-user-objects.md). New regression test:
+tests/deepcopy_objects.py (deterministic, both backends). Suites
+200/0 x2.
+
+Corpus effect: genetic2's deepcopy SEMANTICS are now correct (the
+runtime cyclic-tree crash is structurally impossible), but its
+compile currently diverges in FA flow over the copy-chain unions --
+filed with analysis and fix directions as
+[ifa/issues/048](../ifa/issues/048-deepcopy-flow-divergence-genetic2.md);
+genetic2 drops out of the compiled column until 048 lands (24/77;
+its previous "compiled" state ran on miscompiled shallow copies).
