@@ -236,6 +236,24 @@ unrelated failures as baseline — confirmed zero occurrences of
 "Terminator found in the middle" anywhere in the corpus, i.e. the bug
 class this fix targets doesn't resurface elsewhere).
 
+**Tier 3a (2026-07-18, same day): native `can_raise` inside FA's own
+fixed point**. A third mechanism, alongside Tier 1/2, now also folds
+the exception check — natively, during `ifa_analyze()` itself, via a
+new generic `IFACallbacks::provably_constant_isinstance` hook
+consulted by `fa.cc`'s own `P_prim_isinstance` transfer function
+(`fa.cc` stays frontend-agnostic; pyc's override does the
+`__pyc_exc__` pattern-matching). Full design, the properly-layered
+architecture discussion that led to it, a real null-pointer bug found
+along the way (`EntrySet::out_edges` can contain null entries), and
+verification are recorded in
+[ifa/issues/050](../ifa/issues/050-general-constant-propagation-unreachable-code.md)'s
+3a section (it's an ifa-core feature, not pyc-specific, so it lives
+there rather than being duplicated here). **Does not replace Tier
+2** — confirmed empirically that Tier 3a's native fold alone doesn't
+make `reclaim_dead_producer_chain` unnecessary (a separate,
+orthogonal property of `mark_live_code`'s design), so both tiers now
+run, each doing genuinely non-redundant work.
+
 Investigating this surfaced a pre-existing, unrelated FA convergence
 gap — filed as
 [ifa/issues/049](../ifa/issues/049-raise-only-contour-notype.md): a

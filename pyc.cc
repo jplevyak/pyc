@@ -110,6 +110,21 @@ void compile(cchar *fn) {
   // removes the dead exception-dispatch code the check used to guard,
   // not just the check's own cost. Must run after
   // compute_fun_can_raise() and before codegen.
+  //
+  // issue 050 Tier 3a (2026-07-18) added a SEPARATE, earlier fold --
+  // IFACallbacks::provably_constant_isinstance, consulted natively by
+  // FA's own P_prim_isinstance transfer function during
+  // ifa_analyze() -- but Tier 2 stays, unconditionally, as more than
+  // a fallback: mark_live_code (inside ifa_analyze) treats
+  // constness and liveness as deliberately orthogonal (a
+  // constant-folded SEND's own inputs can still be marked live, even
+  // though codegen will separately elide the SEND's emission via
+  // virtual_cg_is_const_folded_send) -- confirmed empirically by
+  // disabling Tier 2 alone: Tier 3a's fold still removes the
+  // check/branch on its own, but the __pyc_exc__ slot-read MOVE's
+  // residual comes back. reclaim_dead_producer_chain's cleanup is
+  // NOT redundant with native FA integration; it addresses a
+  // different, general property of mark_live_code's design.
   mark_exc_checks_constant(fa);
   if (ifa_optimize() < 0) fail("unable to optimize program");
   if (fgraph) ifa_graph(fn);

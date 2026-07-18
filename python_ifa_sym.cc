@@ -350,6 +350,35 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   return again;
 }
 
+// issue 011/050 (Tier 3a): FA's own P_prim_isinstance transfer
+// function (analysis/fa.cc) calls this before its normal
+// CreationSet-intersection logic, for EVERY isinstance() check FA
+// analyzes -- so this must recognize ONLY the exact pattern
+// emit_exc_check (python_ifa_build_if1.cc) builds and stay
+// conservative (return nullptr) for anything else, including a
+// genuine user `isinstance(x, SomeNoneUnion)`. Mirrors
+// ifa/optimize/exc_check_fold.cc's exc_check_operand_provably_safe
+// (Tier 2, post-clone, reads Fun::calls) but pre-clone, over the
+// live ES/AEdge graph FA's OWN fixed point maintains -- see
+// EntrySet::can_raise (fa.h) and compute_es_can_raise() (fa.cc).
+AType *PycCompiler::provably_constant_isinstance(AVar *operand_av, EntrySet *es, PNode *send_pnode) {
+  if (!operand_av || !operand_av->var || !es || !send_pnode) return nullptr;
+  PNode *def = operand_av->var->def;
+  if (!def || !def->code || def->code->kind != Code_MOVE) return nullptr;
+  if (!def->rvals.n || !def->rvals[0]->sym || !def->rvals[0]->sym->name) return nullptr;
+  if (strcmp(def->rvals[0]->sym->name, "__pyc_exc__")) return nullptr;
+  if (!def->code->ast) return nullptr;
+  IFAAST *ast = def->code->ast;
+  bool found_any = false;
+  for (AEdge *e : es->out_edges) {
+    if (!e || !e->pnode || !e->pnode->code || e->pnode->code->ast != ast) continue;
+    found_any = true;
+    if (!e->to || e->to->can_raise) return nullptr;  // unresolved or raising -- stay conservative
+  }
+  if (!found_any) return nullptr;  // no matching outgoing edge (yet) -- stay conservative
+  return fa->type_world.true_type;
+}
+
 bool PycCompiler::c_codegen_pre_file(FILE *fp) {
   for (int i = 0; i < c_code.n; i++) {
     fputs(c_code[i], fp);

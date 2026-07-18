@@ -111,6 +111,11 @@ class PycCompiler : public PycCallbacks {
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
   bool reanalyze(Vec<ATypeViolation *> &type_violations);
   bool c_codegen_pre_file(FILE *);
+  // issue 011/050 (Tier 3a: native can_raise inside FA's own fixed
+  // point). See ifa.h's declaration for the general contract; see
+  // this method's definition (python_ifa_sym.cc) for the specific
+  // __pyc_exc__ pattern it recognizes.
+  AType *provably_constant_isinstance(AVar *operand_av, EntrySet *es, PNode *send_pnode);
 
   // --- Entry point ---
   int run(Vec<PycModule *> &mods);
