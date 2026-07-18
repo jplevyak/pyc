@@ -47,6 +47,40 @@ Verified: `tests/exception_basic.py`, `tests/exception_propagation.py`,
 raises a catchable `AssertionError(msg)` instead of print+exit
 (`tests/assert_fail.py` updated to match).
 
+**Per-callee can-raise gating (2026-07-18), closing the staged
+plan's stage 2 properly**: the initial landing above gated the
+post-call check on a single WHOLE-PROGRAM flag
+(`pyc_program_has_raise`) — zero overhead only if the entire program
+never raises anywhere, not per call subtree as the design intended.
+Verified concretely: a `pure_math()` helper with no `raise` in its
+own body or anywhere it calls STILL got a check inserted after every
+call to it, solely because some unrelated function elsewhere in the
+same program used `try`/`raise`. Fixed with `Sym::can_raise`
+(`ifa/if1/sym.h`) — a whole-program fixed point
+(`compute_can_raise`/`collect_can_raise`, `python_ifa_build_syms.cc`)
+over a SYNTACTIC call graph, run once over the builtin module
+(`ast_to_if1_baseline`, self-contained, shared via CoW across REPL
+fork children) and once over user modules (`ast_to_if1_extend`) —
+BEFORE any `build_if1` runs, so `emit_exc_check` can skip emitting
+ANYTHING for a call whose resolved callee is proven `can_raise ==
+false`. Conservative by construction: only a "plain call" (a bare
+name in USE context immediately followed by a call trailer) resolves
+to a specific callee at all; method dispatch, constructor calls, and
+calls through a variable holding a callable always fall back to the
+whole-program gate, unchanged from before. `tests/exception_propagation.py`
+extended with `pure_math`/`mixed_caller` to lock in FUNCTIONAL
+correctness of the resolution (not just the optimization) — a
+resolution bug here would silently omit a NEEDED check, not just
+miss zero-overhead; caught and fixed one during development
+(`cur_val` at a plain call's build site can be a fresh, unnamed
+load-temp for a top-level function reference — `PY_name`'s
+`is_module_data_var` path — rather than the stable Sym
+`collect_can_raise` resolved against; must resolve from `atom_ast->sym`
+instead, and only when the call trailer sits directly on the atom).
+Confirmed via `-x 1` IF1 dumps: a leaf helper's IF1 body is just the
+call/move/reply with no slot read, isinstance check, or branch at
+all — not merely folded away later.
+
 Not done (out of scope for this pass, no corpus need yet): runtime
 helpers (index/key errors) raising instead of trapping — issue 011's
 staged-plan item 5; a memo/identity cache isn't needed since

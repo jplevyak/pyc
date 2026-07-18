@@ -6,3 +6,6 @@ cleanup
 outer caught: too big
 logging
 final: too big
+11
+11
+mixed caught: too big for mixed_caller

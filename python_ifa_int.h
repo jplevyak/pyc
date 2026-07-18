@@ -211,6 +211,11 @@ void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx, char *vector_size 
 // it over freshly-parsed expression ASTs that never went through the
 // whole-module build_syms pass (f-string interpolation sub-expressions).
 int build_syms_pyda(PyDAST *n, PycCompiler &ctx);
+// issue 011: per-callee can-raise gating -- computes Sym::can_raise
+// (ifa/if1/sym.h) for every function found across `mods`. Run once
+// over the builtin module (ast_to_if1_baseline) and once over user
+// modules (ast_to_if1_extend); see its definition for why the split.
+void compute_can_raise(Vec<PycModule *> &mods, PycCompiler &ctx);
 
 // From python_ifa_build_if1.cc:
 int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code);

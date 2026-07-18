@@ -273,6 +273,111 @@ static bool pyda_contains_return(PyDAST *n) {
   return false;
 }
 
+// issue 011 (per-callee can-raise gating): syntactic call-graph
+// collector, run AFTER build_syms (so every name reference already
+// has its resolved Sym cached in pydmap -- see getAST). Populates:
+//   - raisers: functions that directly raise/assert, OR make a call
+//     this pass can't resolve to a specific def (method dispatch, a
+//     builtin intercept, a constructor, calling a variable) -- these
+//     seed can_raise=true unconditionally, since an unresolved call
+//     can't be disproven safe.
+//   - call_edges: caller -> Vec of callees, for PLAIN calls only
+//     (`foo(...)`, a bare name in USE context immediately followed
+//     by a call trailer) resolved to another def's own Sym via
+//     ctx.def_internal_fn (build_syms_pyda's PY_funcdef case: a
+//     plain def's PUBLIC name Sym and its INTERNAL closure Sym are
+//     different objects, linked only by this map -- see the PY_funcdef
+//     comment there). Recursive self-calls resolve through the same
+//     map (build_syms never does the recursion-specific swap
+//     build_if1's PY_name case does; that only matters at build_if1
+//     time).
+// current_fn is null at module/class-body top level and inside
+// lambdas (no raise/assert is possible in an expression-only lambda
+// body; class bodies run at definition time, not as a call target) --
+// their contents are still walked (for nested defs), just not
+// attributed to any enclosing function.
+static void collect_can_raise(PyDAST *n, PycCompiler &ctx, Sym *current_fn, Map<PyDAST *, bool> &resolved_calls,
+                               Map<Sym *, Vec<Sym *> *> &call_edges, Vec<Sym *> &raisers) {
+  if (!n) return;
+  switch (n->kind) {
+    case PY_funcdef: {
+      Sym *fn_sym = getAST(n, ctx)->sym;
+      for (auto c : n->children.values()) collect_can_raise(c, ctx, fn_sym, resolved_calls, call_edges, raisers);
+      return;
+    }
+    case PY_lambda:
+    case PY_classdef:
+      for (auto c : n->children.values()) collect_can_raise(c, ctx, nullptr, resolved_calls, call_edges, raisers);
+      return;
+    case PY_raise_stmt:
+    case PY_assert_stmt:
+      if (current_fn) raisers.add(current_fn);
+      break;
+    case PY_power:
+      if (n->children.n >= 2 && n->children[0]->kind == PY_name && n->children[0]->ctx != PY_STORE &&
+          n->children[1]->kind == PY_call) {
+        Sym *ref = getAST(n->children[0], ctx)->sym;
+        Sym *callee = nullptr;
+        if (ref) {
+          Sym *ifn = ctx.def_internal_fn.get(ref);
+          callee = ifn ? ifn : (ref->is_fun ? ref : nullptr);
+        }
+        resolved_calls.put(n->children[1], true);  // don't ALSO flag this node as unresolved below
+        if (current_fn) {
+          if (callee)
+            map_set_add(call_edges, current_fn, callee);
+          else
+            raisers.add(current_fn);  // e.g. a constructor call: ref resolves to a class, not a def
+        }
+      }
+      break;
+    case PY_call:
+      // Any call trailer not already claimed by the plain-call case
+      // above -- a method call (obj.method(...)), a call on a
+      // subscript/further-chained result (foo(...).bar(), foo[i]()),
+      // or a call whose atom didn't resolve at all.
+      if (current_fn && !resolved_calls.get(n)) raisers.add(current_fn);
+      break;
+    default:
+      break;
+  }
+  for (auto c : n->children.values()) collect_can_raise(c, ctx, current_fn, resolved_calls, call_edges, raisers);
+}
+
+// issue 011: compute Sym::can_raise (see its declaration, ifa/if1/sym.h)
+// for every function found across `mods` via collect_can_raise, then
+// a simple worklist fixed point propagating along call_edges --
+// standard "compute closure" iteration, same shape as ast.cc's
+// implementor/specializer closure. Run once over just the builtin
+// module (ast_to_if1_baseline -- self-contained, shared via CoW
+// across REPL fork children) and once over user modules
+// (ast_to_if1_extend, per compile): builtin callees already carry
+// their final bit by the second call, so that pass's fixed point
+// only needs to iterate over the newly-collected user-level edges.
+void compute_can_raise(Vec<PycModule *> &mods, PycCompiler &ctx) {
+  Map<PyDAST *, bool> resolved_calls;
+  Map<Sym *, Vec<Sym *> *> call_edges;
+  Vec<Sym *> raisers;
+  for (auto m : mods.values()) collect_can_raise(m->pymod, ctx, nullptr, resolved_calls, call_edges, raisers);
+  for (auto f : raisers.values()) f->can_raise = 1;
+  Vec<Sym *> callers;
+  call_edges.get_keys(callers);
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (auto caller : callers.values()) {
+      if (caller->can_raise) continue;
+      Vec<Sym *> *callees = call_edges.get(caller);
+      for (auto callee : callees->values())
+        if (callee->can_raise) {
+          caller->can_raise = 1;
+          changed = true;
+          break;
+        }
+    }
+  }
+}
+
 // Set up function scope for pyda path
 static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   fn->in = ctx.scope_stack.last()->in;

@@ -50,3 +50,28 @@ try:
     print(reraise(9))
 except ValueError as e:
     print("final: " + str(e))
+
+# issue 011 (per-callee can-raise gating): a call to a function whose
+# entire transitive call subtree provably never raises gets NO
+# post-call check emitted at all (verified via if1 dump during
+# development; this test locks in FUNCTIONAL correctness of that
+# resolution, since a bug there -- e.g. resolving the wrong Sym for a
+# top-level function reference -- would silently OMIT a check that
+# was actually needed, not just miss the optimization). pure_math is
+# called both directly and from a mix of raising/non-raising callers
+# in the SAME program to guard against the resolution being confused
+# by the presence of can_raise functions elsewhere.
+def pure_math(n):
+    return n * 2 + 1
+
+def mixed_caller(n):
+    if n > 100:
+        raise ValueError("too big for mixed_caller")
+    return pure_math(n)
+
+print(pure_math(5))
+print(mixed_caller(5))
+try:
+    print(mixed_caller(200))
+except ValueError as e:
+    print("mixed caught: " + str(e))

@@ -250,6 +250,11 @@ BaselineIF1State ast_to_if1_baseline(Vec<PycModule *> &builtin_mods) {
   build_search_path(*ctx);
   build_environment(builtin_mods[0], *ctx);
   if (build_syms(builtin_mods[0], *ctx) < 0) fail("baseline: builtin build_syms failed");
+  // issue 011: computed once here (self-contained -- the builtin
+  // module never calls into user code) and shared via CoW across
+  // every REPL fork child, so ast_to_if1_extend's own call only has
+  // to iterate over the user-level call graph it collects.
+  compute_can_raise(builtin_mods, *ctx);
   finalize_types(if1);
   ctx->mod = builtin_mods[0];
   build_module_attributes_if1(builtin_mods[0], *ctx, &code);
@@ -273,6 +278,15 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
     PycModule *x = all_mods[i];
     x->filename = cannonicalize_string(x->filename);
     if (build_syms(x, *ctx) < 0) return -1;
+  }
+  // issue 011: user-level call graph (the builtin module's own was
+  // already computed once in ast_to_if1_baseline). all_mods.n here
+  // (not the n_user snapshot) so imports build_syms pulled in mid-loop
+  // are included -- their build_syms already ran, inline, above.
+  {
+    Vec<PycModule *> user_mods;
+    for (int i = 1; i < all_mods.n; i++) user_mods.add(all_mods[i]);
+    compute_can_raise(user_mods, *ctx);
   }
   finalize_types(if1);
   for (int i = 1; i < n_user; i++) {

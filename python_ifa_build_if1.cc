@@ -1113,14 +1113,46 @@ static void goto_exc_target(Code **code, PycAST *ast, PycCompiler &ctx, Label *t
   if1_goto(if1, code, target)->ast = ast;
 }
 
+// issue 011 (per-callee can-raise gating): given the VALUE Sym used
+// as a plain call's callee (`cur_val` at that call site -- NOT valid
+// for method dispatch, where the callee is resolved dynamically via
+// sym_period), resolve it to the same internal Fun Sym
+// compute_can_raise's collect_can_raise attributes raise/assert and
+// call edges to. A plain def's PUBLIC name Sym and its INTERNAL
+// closure Sym are different objects (see build_syms_pyda's
+// PY_funcdef case) linked via ctx.def_internal_fn EXCEPT for a
+// recursive self-call, where build_if1's PY_name case already swaps
+// `cur_val` to the internal Sym (or its ->self for a capturing
+// nested def) directly -- is_fun catches that case here. Returns
+// null (unresolvable -- conservative, caller must still check) for
+// anything else: a class value (constructor call), a variable
+// holding a callable, or any Sym compute_can_raise's own resolution
+// wouldn't have recognized either.
+static Sym *resolve_plain_callee(Sym *cur_val, PycCompiler &ctx) {
+  if (!cur_val) return nullptr;
+  if (cur_val->is_fun) return cur_val;
+  Sym *ifn = ctx.def_internal_fn.get(cur_val);
+  return ifn;
+}
+
 // Emit `if __pyc_exc__ is not None: goto <transfer>` -- the
 // post-call pending-exception check. The slot read mirrors the
 // module-data-var load shape (cell -> fresh temp, ifa/issues/031);
 // the not-None test is the raw prim_isinstance-vs-nil form the
 // `x is None` lowering uses, sitting directly in if-condition
 // position as FA's narrowing machinery expects.
-static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx) {
+//
+// `known_callee`, when non-null and PROVEN unable to raise
+// (compute_can_raise, run before any build_if1 -- see
+// python_ifa_main.cc), skips emitting ANYTHING: true zero overhead
+// for a call whose entire transitive subtree never raises, not just
+// "the whole program never raises" (pyc_program_has_raise's
+// granularity). Left null (or unresolved/can-raise) for every other
+// call site, this behaves exactly as before -- the whole-program
+// gate remains the fallback for anything this pass can't prove safe.
+static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *known_callee = nullptr) {
   if (!pyc_program_has_raise || ctx.is_builtin()) return;
+  if (known_callee && !known_callee->can_raise) return;
   Label *target = exc_transfer_target(ctx);
   if (!target) return;
   Sym *t = new_sym(ast);
@@ -2942,13 +2974,19 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             ast->rval = new_sym(ast);
             if1_add_send_result(if1, send, ast->rval);
             cur_val = ast->rval;
-            emit_exc_check(&ast->code, ast, ctx);  // issue 011
+            // issue 011: qual_fn is statically resolved right here
+            // (the classmethod the attribute trailer picked), so its
+            // OWN can_raise bit (computed for every funcdef
+            // regardless of whether any caller's plain-call edge
+            // pointed at it) is usable directly.
+            emit_exc_check(&ast->code, ast, ctx, qual_fn);
             pending_member = false;
             qual_cls = qual_fn = nullptr;
             continue;
           }
           Code *send = nullptr;
           int arg_start = 0;
+          Sym *plain_callee = nullptr;  // issue 011: set only for the non-method branch below
           if (pending_member) {
             Sym *t = new_sym(ast);
             Sym *obj;
@@ -2979,6 +3017,20 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           } else {
             send = if1_send1(if1, &ast->code, ast);
             if1_add_send_arg(if1, send, cur_val);
+            // issue 011: NOT cur_val -- for a top-level function
+            // reference, PY_name's is_module_data_var load path
+            // (build_if1_pyda's PY_name case) rewrites ast->rval to
+            // a fresh, unnamed load-temp of the STABLE ast->sym, so
+            // cur_val at this point can be that temp instead of the
+            // Sym compute_can_raise's collect_can_raise actually
+            // resolved against (getAST(atom)->sym, never
+            // overwritten). Only valid when this call trailer sits
+            // DIRECTLY on the bare-name atom (i==1, matching
+            // collect_can_raise's own shape check) -- a call further
+            // down a chain (foo(...).bar(), or any call whose atom
+            // isn't a plain name) has no such stable Sym to resolve.
+            if (i == 1 && n->children[0]->kind == PY_name && n->children[0]->ctx != PY_STORE)
+              plain_callee = atom_ast->sym;
           }
           for (int ai = arg_start; ai < pos_args.n; ai++) if1_add_send_arg(if1, send, getAST(pos_args[ai], ctx)->rval);
           // Keyword arguments: pass each value under its parameter name.
@@ -3004,7 +3056,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           // through intermediate frames. Builtin intercepts skipped
           // via the `continue`s above; prim/operator dunder sends
           // (a+b etc.) are not checked -- v1 scope, see the issue.
-          emit_exc_check(&ast->code, ast, ctx);
+          // plain_callee is null for method calls (pending_member --
+          // dynamic dispatch, not resolvable here); resolve_plain_callee
+          // returns null too for anything compute_can_raise couldn't
+          // attribute a bit to (a class value/constructor call, a
+          // variable holding a callable) -- emit_exc_check falls back
+          // to the whole-program gate in either case, unchanged from
+          // before this optimization.
+          emit_exc_check(&ast->code, ast, ctx, resolve_plain_callee(plain_callee, ctx));
         } else if (trailer->kind == PY_subscript) {
           // Flush pending member
           if (pending_member) {
@@ -3569,7 +3628,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_add_send_arg(if1, send, fail_fn->sym);
       if1_add_send_arg(if1, send, msg_val);
       if1_add_send_result(if1, send, new_sym(ast));
-      emit_exc_check(&ast->code, ast, ctx);
+      // issue 011: __pyc_assert_fail__ always directly raises, so
+      // this always still emits (can_raise resolves true) -- passed
+      // through mainly for consistency with the general call site.
+      emit_exc_check(&ast->code, ast, ctx, resolve_plain_callee(fail_fn->sym, ctx));
       if1_label(if1, &ast->code, ast, cont_label);
       return 0;
     }
