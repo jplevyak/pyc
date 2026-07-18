@@ -167,6 +167,75 @@ change — only generated-code shape changed), shedskin corpus sweep
 (47/47 `rc=` results byte-identical to the pre-change baseline,
 including the same 2 pre-existing, unrelated segfaults).
 
+**Closing the residual (2026-07-18, same day)**: the "one harmless
+dead assignment" above, plus a second gap found while investigating
+it, are now both closed. Three additions, `ifa/optimize/dead.h`/
+`.cc` (grouped alongside `mark_live_code`/`mark_live_funs` since
+they're all liveness-adjacent utilities, not codegen-specific):
+- `mark_var_constant(Var*, Sym*)`: formalizes the raw `->sym` write
+  `mark_exc_checks_constant` was doing inline, as a small documented
+  primitive any future constant-fold pass can reuse instead of
+  re-deriving the same trick.
+- `reclaim_dead_producer_chain(Var*)`: closes the dead-`MOVE`
+  residual. `mark_live_code`'s liveness was computed BEFORE the fold,
+  so the `__pyc_exc__` slot-read `MOVE` stayed marked live even
+  though its only consumer (the now-constant-folded isinstance send)
+  is skipped at emission. A small targeted backward walk — NOT a full
+  `mark_live_code()` re-run — clears `->live` on a Var's producer only
+  when nothing else still uses it (`Var::uses.n <= 1`), recursing into
+  that producer's own inputs. Verified: a folded `use_calc`'s C body
+  now drops to exactly `goto L868; L868:; return 10;` — zero residual
+  lines.
+- A second, independent gap found while checking the LLVM side
+  specifically: `cg_emit_llvm.cc`'s `discover_blocks` (the pre-pass
+  that allocates one `llvm::BasicBlock` per reachable label) walked
+  `cfg_succ` with NO constant-condition awareness at all, unlike
+  `emit_block_terminator` (which already had the `true_type`/
+  `false_type` check). Confirmed empirically: a folded check's dead
+  arm showed up in the raw `.ll` as an orphaned `; No predecessors!`
+  block — harmless for the shipped binary (`llvm_codegen_compile`
+  always runs `clang++ -O2` on the `.ll` regardless of `-O`, and
+  SimplifyCFG trivially drops predecessor-less blocks) but meant
+  pyc's own LLVM emission never had the same true zero-dead-code
+  property the C backend already has structurally. Fixed by factoring
+  the three-way successor-selection logic out of
+  `emit_block_terminator` into a shared `const_if_successor` helper
+  and calling it from `discover_blocks` too, so the two can't drift
+  apart. **Caught a real bug while doing this**: a THIRD site,
+  `emit_pnode`'s own recursive walk into `cfg_succ` (separate from
+  both of the above), also had no constant-condition awareness —
+  after teaching `discover_blocks` to skip allocating a block for the
+  dead arm, `emit_pnode` still tried to recurse into and emit content
+  for it, landing in whatever block the builder was last left at
+  (already terminated by that point) and producing "LLVM module
+  verification failed: Terminator found in the middle of a basic
+  block" on `use_calc`. Fixed the same way (shared helper, skip the
+  dead successor index). A reminder that "the same walk happens in N
+  places" needs verifying by exhaustive grep, not by fixing the first
+  two spots that looked relevant.
+- **Not fixed, left as documented, low-value**: a phi/phy
+  alloca-allocation pre-pass in `cg_emit_llvm.cc` (Pass A, right
+  before the `phi_targets`/union-find pass) also walks `cfg_succ`
+  with no constant-condition awareness — but it only over-allocates
+  stack slots for merge points that turn out unreachable, doesn't
+  corrupt anything (LLVM's own `-O2` drops unused allocas), so left
+  alone rather than chasing every `cfg_succ` walk in a ~3400-line
+  file for a purely cosmetic win.
+
+Verified: full suites 203/0 × 2 backends, unit 58/0, IR 20/0,
+`tests/exception_propagation.py` deterministic across 3 compiles on
+both backends, generated-code A/B diffing via `git worktree` against
+the pre-change commit (poly-dispatch fixtures byte-identical on both
+backends, as expected since this change is orthogonal to that work;
+`tests/recursive_polymorphic.py`'s `.ll` legitimately differs — MORE
+dead exception-check code eliminated than before, confirmed
+functionally identical output on both backends and against the
+pre-change baseline), and a full shedskin corpus sweep on BOTH
+backends (C: 47/47 unchanged from baseline; LLVM: same pre-existing,
+unrelated failures as baseline — confirmed zero occurrences of
+"Terminator found in the middle" anywhere in the corpus, i.e. the bug
+class this fix targets doesn't resurface elsewhere).
+
 Investigating this surfaced a pre-existing, unrelated FA convergence
 gap — filed as
 [ifa/issues/049](../ifa/issues/049-raise-only-contour-notype.md): a
