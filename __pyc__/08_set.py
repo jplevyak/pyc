@@ -80,6 +80,10 @@ class set:
     return True
   def __ne__(self, other):
     return not self.__eq__(other)
+  def update(self, other):
+    for item in other:
+      self.add(item)
+    return self
   def __str__(self):
     x = "{"
     i = 0
@@ -90,3 +94,20 @@ class set:
       i += 1
     x += "}"
     return x
+
+# issue 025 "has no type" bucket: set(iterable) -- like list(iterable)
+# (04_sequence.py) and str(x) (01_str.py), `set` has no __init__ that
+# accepts a value to build from (only the zero-arg form, __init__(self),
+# which the generic Type_RECORD constructor lowering already handles
+# fine -- see python_ifa_build_if1.cc's issues/022 comment). A 1-arg
+# call fell through to that same zero-arg path and silently dropped
+# its argument, degrading `set([...])`'s result to a bottom/NOTYPE
+# value that cascaded into "illegal call argument type 'set'" and
+# (downstream, once fruntime_errors' default NOTYPE-to-void salvage
+# kicks in) invalid generated C. python_ifa_build_if1.cc's
+# build_builtin_call_pyda dispatches set(iterable) here directly,
+# mirroring the list(iterable)/str(x) 1-arg intercepts.
+def __pyc_set_from_iterable__(other):
+  s = set()
+  s.update(other)
+  return s

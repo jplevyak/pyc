@@ -623,6 +623,31 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
     return 1;
   }
+  // issues/025 "has no type" bucket: set(iterable) -- same shape as
+  // str(x)/list(iterable) above: `set` (__pyc__/08_set.py) has no
+  // __init__ that accepts a value to build from (only the zero-arg
+  // form, which the generic Type_RECORD constructor lowering already
+  // handles fine), so a 1-arg call fell through to that path and
+  // silently dropped its argument. Unlike str/list, there's no single
+  // method already defined on the ARGUMENT to dispatch to (set
+  // construction needs a fresh instance to populate) -- dispatch to
+  // __pyc_set_from_iterable__ (08_set.py), a plain builtin function
+  // (not a class method), the same way PY_assert_stmt calls
+  // __pyc_assert_fail__.
+  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "set")) {
+    PycSymbol *set_cls = make_PycSymbol(ctx, "set", PYC_USE);
+    if (set_cls && f == set_cls->sym) {
+      PycAST *a0 = getAST(pos_args[0], ctx);
+      PycSymbol *from_iter_fn = make_PycSymbol(ctx, "__pyc_set_from_iterable__", PYC_USE);
+      if (!from_iter_fn) fail("'__pyc_set_from_iterable__' not found (is __pyc__/08_set.py loaded?)");
+      ast->rval = new_sym(ast);
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, from_iter_fn->sym);
+      if1_add_send_arg(if1, send, a0->rval);
+      if1_add_send_result(if1, send, ast->rval);
+      return 1;
+    }
+  }
   // issues/022: zero-arg builtin-type constructor calls (int(), float(),
   // bool(), str(), list(), tuple()) all fail identically. Root cause: the
   // generic class-instantiation lowering (clone prototype + call __init__,

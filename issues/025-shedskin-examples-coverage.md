@@ -1365,3 +1365,59 @@ filed with analysis and fix directions as
 [ifa/issues/048](../ifa/issues/048-deepcopy-flow-divergence-genetic2.md);
 genetic2 drops out of the compiled column until 048 lands (24/77;
 its previous "compiled" state ran on miscompiled shallow copies).
+
+### `set(iterable)` fixed; "undeclared label" crash-class investigated (2026-07-18)
+
+Went looking for the highest-leverage remaining bucket in the
+"compilation failure" column (generated C fails to compile, not a
+pyc-side rejection). 11 examples (`dijkstra`, `chull`, `pisang`,
+`sha`, `rdb`, `softrender`, `sieve`, `amaze`, `rubik2`, `yopyra`,
+`voronoi2`) shared a "use of undeclared label 'LNNNN'" C compile
+error -- a `goto` to a label whose own emission got skipped.
+
+Traced the actual chain, since the label mismatch turned out to be a
+*symptom*, not the root cause: `runtime_errors` defaults to `true`
+(`defs.h:23`), so `fruntime_errors` is always on unless explicitly
+disabled -- meaning `ifa_analyze()` never hard-fails on unresolved
+("NOTYPE") violations; `convert_NOTYPE_to_void()` silently salvages
+them to `void_type` and lets the compile proceed. All three sampled
+examples had real, nonzero violations at convergence (`dijkstra`:
+20, `chull`: 10, `sha`: 12, `amaze`: 404) -- codegen's `write_c_pnode`
+isn't robust to the resulting void-typed CFG islands, and the
+`extra_goto` mechanism (`cg.cc`) can emit a `goto` to a label region
+that never gets printed.
+
+**One concrete, well-scoped violation found and fixed**: `rubik2.py`
+(the smallest of the 11, 100 lines) hit `set([current_id])` at line
+81. `set` (`__pyc__/08_set.py`) only ever had a zero-arg
+`__init__(self)` -- `set(iterable)` fell through to the generic
+constructor path (which the zero-arg form already handles fine, so
+this had never surfaced as an issues/022-style zero-arg gap) and
+silently dropped its argument, same shape as the `str(x)`/
+`list(iterable)` 1-arg intercepts already in
+`python_ifa_build_if1.cc` before this fix -- `set` just never got
+the same treatment. Isolated with a 17-line repro (`set([1,2,3])`
+alone, no tuples needed, already failed) before touching the real
+example. Fixed by adding `set.update(other)` and a module-level
+`__pyc_set_from_iterable__(other)` helper (`__pyc__/08_set.py`),
+dispatched from a new 1-arg `set(iterable)` intercept mirroring the
+existing `str`/`list`/`tuple` ones. New test
+`tests/set_from_iterable.py` (list/tuple/range/empty sources,
+`update()`, both backends). Corpus effect verified via full
+77-example sweep, before/after diff: **only** `rubik2` changes,
+`rc=1` -> `rc=0` (compiles) -- 26/77. No other example in the
+11-cluster shares `set(iterable)` as ITS trigger; each has some
+other, not-yet-diagnosed violation feeding the same
+salvage-then-invalid-C failure mode.
+
+**Not fully resolved**: `rubik2.py` now compiles but hangs at
+runtime -- it still has separate, unrelated violations
+(`result`/`newstate`, `__imod__` on augmented list-element
+assignment around `apply_move`'s cube-turn logic, lines 48/66) not
+yet diagnosed. The other 10 "undeclared label" examples are
+untouched by this fix and need individual root-causing the same way
+`rubik2`'s `set()` gap was found -- there is no single shared trigger
+across the cluster, only a shared *symptom* (the void-salvage +
+`write_c_pnode` robustness gap described above, which a defensive
+codegen fix could address structurally without resolving any
+individual program's actual type violations).
