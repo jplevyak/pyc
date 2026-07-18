@@ -1421,3 +1421,62 @@ across the cluster, only a shared *symptom* (the void-salvage +
 `write_c_pnode` robustness gap described above, which a defensive
 codegen fix could address structurally without resolving any
 individual program's actual type violations).
+
+### `simple_move` null-type codegen bug fixed (`-r` mode); genuine root cause, not a violation (2026-07-18)
+
+Per the previous entry's "defensive codegen fix" thread: went
+looking directly at the `write_c_pnode` robustness gap rather than
+another individual program's violation. Built a minimal,
+**violation-free** repro under `-r` (`runtime_errors=false`, which
+skips `convert_NOTYPE_to_void`'s salvage and surfaces the raw FA
+state): `x=0; for e in range(3): x=x+1; print(x)`. This alone
+produced invalid C (`t0 = (_CG_bool)t2;` reading an
+un-assigned/undeclared-type temp, right after a `return`) -- proof
+the bug lives in codegen itself, independent of any program's type
+violations.
+
+Root cause, found by instrumenting `do_phy_nodes`/`do_phi_nodes`
+(`ifa/codegen/cg.cc`) and tracing exact Var ids/types through a
+fresh build each time (**gdb was unusable in this sandbox --
+silently swallowed output across several invocations; printf-bisection
+worked reliably and should be the default for future crashes here**):
+`range::__pyc_more__`'s `self.s >= 0` branch is proved always-true
+for the `__pyc_clone_constants__`'d contour (`range(3)`'s 1-arg
+`__init__` leaves `self.s` at its class-default `1`), so the `else`
+arm's value never gets a type -- its Var's `->type` field is a bare
+`nullptr`, not `sym_void_type`. `simple_move`'s existing void-guard
+(`cg.cc`) only checked `rhs->type == sym_void->type`, which a null
+`->type` doesn't satisfy, even though `c_type()` (`codegen_common.cc`)
+already treats `!v->type` as void for declaring/printing the same
+Var. The mismatch let a MOVE with a genuinely-untyped, never-defined
+source slip through as valid-looking C.
+
+First fix attempt was wrong and is worth recording: gating
+`do_phy_nodes`/`do_phi_nodes` on the phy/phi PNode's own
+`->live`/`->fa_live` fixed the compile error but broke *correct*
+moves too (traced via added Var-id/type fields on the debug prints)
+-- `mark_live_code` (`ifa/optimize/dead.cc`) never touches phy/phi
+PNodes at all, so those flags are always `0` regardless of whether
+the specific move is needed, and the blanket skip silently dropped
+the legitimate `self`-passthrough and return-value moves too
+(reproduced as a segfault from reading `t9` uninitialized). Reverted
+that approach entirely.
+
+**Actual fix**: extended `simple_move`'s existing void-guard to also
+treat a null `->type` as void-equivalent on either side of the move
+(`ifa/codegen/cg.cc`) -- one line, no new control flow. Verified:
+minimal repro now compiles and runs correctly (prints `3`); full
+`test_pyc.py` (both C and `-b` LLVM backends, 204/204) and `ifa`'s
+`make test` (all phases) still 100% clean; a before/after diff of a
+full corpus sweep run under **default** settings (`runtime_errors=true`)
+is byte-identical (this bug only manifests when the salvage is
+disabled, so no effect on normal operation); a before/after diff of
+the corpus run **under `-r`** shows 7 examples strictly improve and
+zero regress -- `circle`, `mandelbrot`, `nbody` now compile and run
+correctly; `genetic`, `neural2`, `voronoi` now compile and run but
+hang (separate, undiagnosed issues); `ant` progresses from a compile
+failure to a runtime crash (also separate). `rubik2` itself still
+does not compile clean under `-r` -- it has its own, unrelated
+violations (`__imod__`/`__ior__` on augmented list-element
+assignment, lines 48/66, matching the previous entry's note) that
+this fix doesn't touch.
