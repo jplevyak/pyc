@@ -126,6 +126,47 @@ candidate and the check correctly stays live — confirms Tier 2 doesn't
 UNDER-approximate when resolution is genuinely mixed, which matters
 more than the fold case for correctness.
 
+**Exception-check dead-code elimination (2026-07-18), Tier 2
+follow-up**: Tier 2 as landed above only folded the check's own
+boolean cost, not the dead exception-dispatch code it used to guard —
+in an unoptimized C build (no `-O`), or any build that inspects the
+IF1/`.code` dump directly, the never-taken propagate arm was still
+fully present. Turned out no new dead-code pass was needed: both
+backends' `Code_IF` codegen (`cg.cc`'s `write_c_pnode`,
+`cg_emit_llvm.cc`'s `emit_pnode`) already special-case a condition
+Var whose `->sym` is FA's own canonical `type_world.true_type`/
+`false_type` constant Sym — emitting only the live arm, walking the
+CFG from `f->entry` via `cfg_succ` only, so the dead arm is never even
+visited. This is the SAME mechanism ordinary FA-resolved constant
+`isinstance()` checks already benefit from; it just wasn't reachable
+for our check because FA's own type inference is provably too
+imprecise for the whole-program-shared `__pyc_exc__` slot (unlike
+`Fun::can_raise`'s call-graph-precise fact). Fix: `mark_exc_checks_constant()`
+(new file `ifa/optimize/exc_check_fold.cc`), run right after
+`compute_fun_can_raise()` in `pyc.cc`'s `compile()`, rewrites each
+provably-safe check's isinstance-send result Var's `->sym` directly to
+`fa->type_world.true_type->v[0]->sym`. That one write is sufficient:
+`virtual_cg_is_const_folded_send` (`codegen_common.cc`, already
+shared by both backends via `virtual_cg_emit_send`) then skips
+emitting the isinstance send itself too, and the surrounding branch
+collapses to a straight `goto`. Verified via generated-C inspection:
+a folded call's body drops from a full check-and-branch (move, `if`,
+dead handler forwarding) to `t0 = <exc slot>; goto Lx; Lx:; return
+<val>;` — one harmless dead assignment left over (the slot-read MOVE
+itself isn't elided, since `virtual_cg_is_const_folded_send` only
+special-cases `Code_SEND`, not `Code_MOVE`; flagged as a tiny,
+low-value residual, not fixed). This **superseded and replaced**
+Tier 2's original codegen-time special case entirely —
+`cg_exc_check_provably_safe` was deleted from
+`ifa/codegen/codegen_common.{cc,h}` along with its call sites in both
+backends' `emit_send_is`; codegen needs zero exception-specific logic
+now, only the existing constant-condition path. Verified: full suites
+203/0 × 2 backends, unit 58/0, IR 20/0, `tests/exception_propagation.py`
+deterministic across 3 compiles (output byte-identical to before this
+change — only generated-code shape changed), shedskin corpus sweep
+(47/47 `rc=` results byte-identical to the pre-change baseline,
+including the same 2 pre-existing, unrelated segfaults).
+
 Investigating this surfaced a pre-existing, unrelated FA convergence
 gap — filed as
 [ifa/issues/049](../ifa/issues/049-raise-only-contour-notype.md): a

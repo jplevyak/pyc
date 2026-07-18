@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #define EXTERN
 #include "defs.h"
+#include "exc_check_fold.h"
 #include "python_parse.h"
 #include <signal.h>
 #include <sys/resource.h>
@@ -101,6 +102,15 @@ void compile(cchar *fn) {
   // now exists -- compute the precise, post-FA can-raise bit before
   // any codegen consumes it.
   compute_fun_can_raise();
+  // issue 011 (Tier 2 continued): fold each provably-safe exception
+  // check's condition to FA's own canonical true_type constant --
+  // both backends' existing Code_IF codegen already elides an
+  // unreachable arm entirely for that exact Sym identity (the same
+  // path ordinary FA-folded isinstance checks use), so this also
+  // removes the dead exception-dispatch code the check used to guard,
+  // not just the check's own cost. Must run after
+  // compute_fun_can_raise() and before codegen.
+  mark_exc_checks_constant(fa);
   if (ifa_optimize() < 0) fail("unable to optimize program");
   if (fgraph) ifa_graph(fn);
   if (fdump_html) {
