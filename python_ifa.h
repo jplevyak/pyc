@@ -63,6 +63,14 @@ class PycAST : public IFAAST {
   uint32 is_builtin : 1;
   uint32 is_member : 1;
   uint32 is_object_index : 1;
+  // Set alongside is_object_index when the index trailer is a slice
+  // (`a[i:j]`) rather than a plain subscript (`a[i]`) -- slice STORE
+  // targets still eagerly build the __pyc_setslice__ call (rval is
+  // its result, consumed via find_send()+add_arg by assign/augassign
+  // callers); plain-index STORE targets defer instead (rval/sym hold
+  // the object/index pair so augmented assignment can __getitem__
+  // before __setitem__ -- see PY_augassign's is_object_index branch).
+  uint32 is_slice : 1;
   // @staticmethod / @classmethod markers, set on a class-body
   // funcdef's PycAST during build_syms_pyda's PY_decorated case and
   // consumed by gen_fun_pyda (formal-list convention) and the

@@ -1945,9 +1945,12 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
     if (a->is_member)
       if1_send(if1, code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, val, (ast->rval = new_sym(ast)))
           ->ast = ast;
-    else if (a->is_object_index)
-      if1_add_send_arg(if1, find_send(a->code), val);
-    else
+    else if (a->is_object_index) {
+      if (a->is_slice)
+        if1_add_send_arg(if1, find_send(a->code), val);
+      else
+        call_method(code, ast, a->rval, sym___setitem__, (ast->rval = new_sym(ast)), 2, a->sym, val);
+    } else
       if1_move(if1, code, val, a->sym);
   }
 }
@@ -2387,7 +2390,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
                  new_sym(ast));
       } else if (a->is_object_index) {
-        if1_add_send_arg(if1, find_send(a->code), v->rval);
+        if (a->is_slice)
+          if1_add_send_arg(if1, find_send(a->code), v->rval);
+        else
+          call_method(&ast->code, ast, a->rval, sym___setitem__, new_sym(ast), 2, a->sym, v->rval);
       } else {
         if1_move(if1, &ast->code, v->rval, a->sym);
       }
@@ -2409,7 +2415,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
                    new_sym(ast));
         } else if (a->is_object_index) {
-          if1_add_send_arg(if1, find_send(a->code), v->rval);
+          if (a->is_slice)
+            if1_add_send_arg(if1, find_send(a->code), v->rval);
+          else
+            call_method(&ast->code, ast, a->rval, sym___setitem__, new_sym(ast), 2, a->sym, v->rval);
         } else {
           if1_move(if1, &ast->code, v->rval, a->sym);
         }
@@ -2437,9 +2446,29 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_send(if1, &ast->code, 5, 1, sym_operator, t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))
             ->ast = ast;
       } else if (t->is_object_index) {
-        if1_add_send_arg(if1, find_send(ast->code), v->rval);
-        if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, (ast->rval = new_sym(ast)))
-            ->ast = ast;
+        if (t->is_slice) {
+          // issues/025: slice augmented-assignment (`a[i:j] |= x`) still
+          // has the same silent-wrong-answer shape as the plain-index
+          // case below -- the value the operator sees isn't the current
+          // slice's contents, so `|=` acts like `=`. Not fixed here:
+          // no failing corpus example exercises it and __pyc_setslice__
+          // takes a whole replacement sequence, not a single value, so
+          // the read-compute-write shape needs its own translation.
+          if1_add_send_arg(if1, find_send(ast->code), v->rval);
+          if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, (ast->rval = new_sym(ast)))
+              ->ast = ast;
+        } else {
+          // t->rval/t->sym are the object/index pair deferred by the
+          // PY_power STORE-mode subscript branch above (not an
+          // already-built __setitem__ call) -- read the current
+          // element, apply the in-place op, then write the result
+          // back. Mirrors the is_member branch's getter/compute/setter
+          // shape one case up.
+          Sym *cur = new_sym(ast), *result = new_sym(ast);
+          call_method(&ast->code, ast, t->rval, sym___getitem__, cur, 1, t->sym);
+          if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), cur, v->rval, result)->ast = ast;
+          call_method(&ast->code, ast, t->rval, sym___setitem__, (ast->rval = new_sym(ast)), 2, t->sym, result);
+        }
       } else {
         if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, (ast->rval = new_sym(ast)))
             ->ast = ast;
@@ -3135,6 +3164,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               u = getAST(sub_node->children[cidx], ctx)->rval;
             }
             ast->is_object_index = 1;
+            ast->is_slice = 1;
             bool store = (n->ctx == PY_STORE && i == n->children.n - 1);
             if (!has_step) s = int64_constant(1);
             if (store)
@@ -3148,7 +3178,16 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             if1_gen(if1, &ast->code, sub_ast->code);
             ast->is_object_index = 1;
             if (n->ctx == PY_STORE && i == n->children.n - 1) {
-              call_method(&ast->code, ast, cur_val, sym___setitem__, (ast->rval = new_sym(ast)), 1, sub_ast->rval);
+              // Defer the __setitem__ call to the assignment/augassign
+              // caller (mirrors is_member's obj/name deferral below) --
+              // augmented assignment needs a __getitem__ read using this
+              // same object+index before any __setitem__ write; eagerly
+              // building __setitem__ here (as the slice branch above
+              // still does) left augmented assignment with no way to
+              // read the prior value, silently discarding the op and
+              // storing the raw RHS instead (issues/025 rubik2).
+              ast->rval = cur_val;
+              ast->sym = sub_ast->rval;
             } else {
               call_method(&ast->code, ast, cur_val, sym___getitem__, (ast->rval = new_sym(ast)), 1, sub_ast->rval);
               cur_val = ast->rval;
@@ -3336,6 +3375,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         ast->sym = c->sym;
         ast->is_member = c->is_member;
         ast->is_object_index = c->is_object_index;
+        ast->is_slice = c->is_slice;
       } else {
         for (auto c : n->children.values()) {
           build_if1_pyda(c, ctx);

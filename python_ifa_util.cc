@@ -102,6 +102,7 @@ PycAST::PycAST()
       is_builtin(0),
       is_member(0),
       is_object_index(0),
+      is_slice(0),
       is_staticmethod(0),
       is_classmethod(0) {
   label[0] = label[1] = 0;

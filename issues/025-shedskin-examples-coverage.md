@@ -1480,3 +1480,107 @@ does not compile clean under `-r` -- it has its own, unrelated
 violations (`__imod__`/`__ior__` on augmented list-element
 assignment, lines 48/66, matching the previous entry's note) that
 this fix doesn't touch.
+
+### rubik2's `__ior__`/`__imod__` and the crash that followed it, both fixed (2026-07-18)
+
+Continuation of the previous entry's open thread: rubik2's
+remaining `__ior__`/`__imod__` "unresolved call" warnings turned out
+to be two separate, real bugs, both now fixed.
+
+**Bug 1 (silent wrong output, not just a warning)**: augmented
+assignment to a subscript target (`result[0] |= x`, `newstate[i] %=
+n`) built `__setitem__(index, value)` directly with the *raw* RHS
+value, discarding the in-place operator entirely --
+`python_ifa_build_if1.cc`'s `PY_power` STORE-mode subscript branch
+called `call_method(..., sym___setitem__, ..., 1, sub_ast->rval)`
+eagerly, so `PY_augassign`'s `is_object_index` branch had nothing to
+read the *current* element from -- it appended the raw value to that
+already-built setitem call (`a[i] |= x` behaved exactly like `a[i] =
+x`) and separately computed an `__ior__` result that was stored
+nowhere. Repro: `result = [0,0,0]; result[0] |= 5` prints `5`
+either way (0|5==5, coincidence) but `result[0] |= e` inside a loop
+over non-constant `e` gave `2` instead of the correct `3`
+(`0|0|1|2`) -- confirmed against CPython.
+
+Fixed by making the STORE-mode subscript branch *defer* instead of
+eagerly building `__setitem__` -- mirrors how the adjacent
+`is_member` branch already defers (stores object+name, lets the
+assignment/augassign caller build getter/setter on demand). Added
+`PycAST::is_slice` (`python_ifa.h`) to keep the (separately, still
+eager -- see below) slice-target path distinguishable from the new
+deferred plain-index path, since both previously shared the single
+`is_object_index` flag and eager-`__setitem__`-then-append-arg
+shape. `PY_augassign`'s `is_object_index` branch now does
+`__getitem__` → apply op → `__setitem__`, the same read-compute-write
+shape as `is_member`. `PY_assign`/`PY_namedexpr_test`/`PY_annassign`
+updated to build the full `__setitem__` call themselves for the
+deferred (non-slice) case. New test `tests/augassign_subscript.py`
+(list `+=`/`-=`/`*=`/`%=` incl. loop-carried, `.attr[i] |=`, dict
+`d[k] +=`) -- verified WRONG on the pre-fix binary, correct after,
+clean on both backends.
+
+Slice-target augmented assignment (`a[i:j] |= x`) still has the same
+eager-write shape and is *not* fixed here -- no failing corpus
+example exercises it, and `__pyc_setslice__` takes a whole
+replacement sequence rather than a single value, so it needs its own
+translation, not just the same read-compute-write swap. Left as a
+documented gap (comment at the `is_slice` branch in
+`python_ifa_build_if1.cc`).
+
+**Bug 2 (the crash that appeared once Bug 1 stopped masking it)**:
+fixing Bug 1 made rubik2 compile clean (`-r` no longer reports *any*
+violation) but the binary then segfaulted a few BFS levels into the
+solve. Root cause: `list` is a single generic class program-wide, so
+its element type is the union of *every* list's element type in the
+whole program (`P_prim_sizeof_element`, `ifa/codegen/cg.cc`).
+rubik2 mixes a list-of-lists (`affected_cubies`/`phase_moves`
+literals -- element type `list` itself, `Type_PRIMITIVE`) with a
+list-of-class-instances (`states`/`next_states` -- element type
+`cube_state`, `Type_RECORD`). The existing `sizeof_element`
+mitigation (from issues/025's original tuple-list soundness fix,
+see above) only recognized a union where *every* member is
+`Type_RECORD` as safely pointer-sized; `list`'s `Type_PRIMITIVE`
+membership didn't qualify, so `sizeof_element` fell through to `0`
+for this specific union -- `list.append`'s resize call never grew
+storage, and reads returned corrupted/aliased objects (confirmed via
+a debug trace: `state_ids._items[0]`'s reported `len()` went 12 → 0
+→ 32292 garbage across three `.add()` calls, then segfault).
+Generalized the check in both backends (`ifa/codegen/cg.cc`'s
+`P_prim_sizeof_element` case and `ifa/codegen/cg_emit_llvm.cc`'s
+`emit_send_sizeof`) from "every member is `Type_RECORD`" to "every
+member has the same concrete size" -- the real invariant a uniform
+element slot needs; boxed records and other boxed containers (list,
+str, set, dict, ...) all happen to be one `pointer_size`, and
+same-width scalar unions (two `int64` contours, say) are covered by
+the same check for free.
+
+New test `tests/list_element_type_union.py` (a trimmed, deterministic
+slice of rubik2's actual `cube_state`/`apply_move`/BFS shape) --
+confirmed it segfaults on the pre-fix binary and runs correctly
+(matches CPython's counts for 3 BFS levels) after, on the C backend.
+**Compile-only in the suite (no `.exec.check`)**: the LLVM backend
+(`-b`) hits a separate, deeper, still-open bug on this same union
+shape -- crashes during the very first `apply_move`, before this
+fix's `sizeof_element` path is meaningfully exercised, so an
+`.exec.check` here would make `PYC_FLAGS=-b ./test_pyc.py` red.
+Filed as [ifa/issues/051](../ifa/issues/051-llvm-nested-list-index-mixed-union-crash.md).
+
+**Net effect**: rubik2 now compiles with zero violations (`-r`) and
+zero warnings (default), and runs without crashing -- it correctly
+solves phase 0 (a long but valid move sequence, matching goal state)
+and proceeds into phase 1 before hitting a multi-minute wall-clock
+budget. That remaining slowness looks like a *third*, separate issue
+worth flagging for whoever picks this up next: the phase-0
+"solution" found is ~7675 moves long (cycling through all 18
+phase-0 moves repeatedly), wildly longer than Thistlethwaite phase 0
+should ever need -- consistent with `state_ids`' `not in` dedup
+check not actually pruning already-seen states as effectively as it
+should (on top of `set`'s inherent O(n) linear-scan cost, which
+alone would explain slow-but-eventually-correct, not this specific
+degenerate-looking move pattern). Full regression verified clean
+throughout this entry's work: `test_pyc.py` and `PYC_FLAGS=-b
+test_pyc.py` both 206/206 (204 prior + the 2 new tests here), `ifa`'s
+`make test` all phases clean, full corpus sweep before/after shows
+zero regressions and 4 examples make forward progress (`ant`,
+`loop`: crash → different/no crash; `mastermind2`, `score4`: no
+longer fail to compile).
