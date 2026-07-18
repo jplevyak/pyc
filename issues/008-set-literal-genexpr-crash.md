@@ -1,9 +1,12 @@
 # Issue 008: Set literals and generator expressions crash the compiler
 
 **Status:** set literals and set comprehensions fixed. Generator
-expressions turned into a clean `fail()` (was a crash) per this
-issue's own interim-fix sketch; real generator-expression support
-remains open, tracked jointly with issue 014 (generators).
+expressions: FIXED 2026-07-18 (see
+[issues/025](../issues/025-shedskin-examples-coverage.md)'s
+"Generator expressions implemented" entry) -- eagerly materializes
+into a `list`, not a true lazy iterator (`yield`-backed laziness,
+issue 014, was deliberately not used; no corpus usage found that
+needs it). Revisit with real laziness if that changes.
 **Affects:** `python_ifa_build_if1.cc` (`build_syms_pyda`'s and
 `build_if1_pyda`'s `PY_set` cases — new; `PY_genexpr` given its own
 `fail()` instead of falling into the shared no-op default);

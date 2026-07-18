@@ -648,6 +648,26 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       return 1;
     }
   }
+  // issues/025 "has no type" bucket: dict(iterable_of_pairs) -- same
+  // shape as set(iterable) just above: `dict` (__pyc__/07_dict.py)
+  // has no __init__ that accepts a value to build from. Dispatches
+  // to __pyc_dict_from_iterable__ (07_dict.py), a plain builtin
+  // function, not dict.update() -- update()'s `other` is itself a
+  // dict, not an iterable of (key, value) tuples.
+  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "dict")) {
+    PycSymbol *dict_cls = make_PycSymbol(ctx, "dict", PYC_USE);
+    if (dict_cls && f == dict_cls->sym) {
+      PycAST *a0 = getAST(pos_args[0], ctx);
+      PycSymbol *from_iter_fn = make_PycSymbol(ctx, "__pyc_dict_from_iterable__", PYC_USE);
+      if (!from_iter_fn) fail("'__pyc_dict_from_iterable__' not found (is __pyc__/07_dict.py loaded?)");
+      ast->rval = new_sym(ast);
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, from_iter_fn->sym);
+      if1_add_send_arg(if1, send, a0->rval);
+      if1_add_send_result(if1, send, ast->rval);
+      return 1;
+    }
+  }
   // issues/022: zero-arg builtin-type constructor calls (int(), float(),
   // bool(), str(), list(), tuple()) all fail identically. Root cause: the
   // generic class-instantiation lowering (clone prototype + call __init__,
@@ -3793,14 +3813,30 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
-    case PY_genexpr:
-      // Generator expressions need a lazily-evaluated iterator object (see
-      // issue 014's generator/yield work); until that lands, fail cleanly
-      // instead of falling through to the no-op default case (issue 008 —
-      // that used to crash the compiler with an internal if1_move
-      // assertion rather than reject the input).
-      fail("error line %d, generator expressions not yet supported (see issues/008, issues/014)", ctx.lineno);
-      return -1;
+    case PY_genexpr: {
+      // children: [elt_expr, PY_comp_for] -- identical shape to
+      // PY_listcomp just above. True lazy generator-expression
+      // semantics (issue 014's yield/generator machinery could back
+      // this) aren't implemented; instead, materialize eagerly into
+      // a list, exactly like PY_listcomp, and like PY_set already
+      // does for `{... for ...}` below. Every genexpr in the
+      // shedskin corpus (issues/025) is consumed immediately by a
+      // single eager builtin (dict(...), b''.join(...), sorted(...),
+      // sum(...), any(...), min(...), tuple(...)) over a finite
+      // iterable -- observably identical to a list there, and far
+      // less work than synthesizing an anonymous generator function.
+      // Revisit if a genexpr needing genuine laziness (infinite
+      // iterable, manual .__next__(), side-effect interleaving with
+      // its consumer) turns up.
+      ast->rval = new_sym(ast);
+      if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_make, sym_list, ast->rval)->ast = ast;
+      reenter_scope_pyda(n, ctx);
+      Vec<PyDAST *> elts;
+      elts.add(n->children[0]);
+      build_list_comp_pyda(n->children[1], elts, ast, &ast->code, ctx);
+      exit_scope(ctx);
+      return 0;
+    }
 
     case PY_yield_expr: {
       // issues/014: `yield expr` as an expression (`x = yield foo`).

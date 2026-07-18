@@ -1584,3 +1584,85 @@ test_pyc.py` both 206/206 (204 prior + the 2 new tests here), `ifa`'s
 zero regressions and 4 examples make forward progress (`ant`,
 `loop`: crash → different/no crash; `mastermind2`, `score4`: no
 longer fail to compile).
+
+### Generator expressions implemented (eager, not lazy); 6 examples make forward progress, 1 fully fixed (2026-07-18)
+
+Went looking for the single highest-leverage remaining bucket across
+the whole corpus rather than another individual violation:
+`(expr for target in iter [if cond])` hit an explicit `fail("generator
+expressions not yet supported")` at `PY_genexpr` in
+`build_if1_pyda` (`python_ifa_build_if1.cc`) -- the interim fix from
+issue 008, with real support tracked jointly with issue 014
+(generators/`yield`). 8 of the ~49 then-failing examples hit this
+exact wall and nothing else blocking them at the frontend level
+(`adatron`, `mandelbrot2`, `minpng`, `plcfrs`, `sat`, `sokoban`,
+`sudoku5`, `sunfish`) -- by far the largest single-cause bucket in
+the corpus (the next largest, "has no type", is 13 examples but each
+with its own distinct root cause, one investigation apiece).
+
+**Scope decision: eager, not lazy.** True generator-expression
+semantics need a lazily-evaluated iterator object, and issue 014's
+`yield`/generator machinery already exists and works -- a genexpr
+could in principle desugar to an anonymous generator function reusing
+it. But every genexpr usage actually found across the 8 examples
+(and grep'd more broadly across the whole corpus) is consumed
+immediately, once, by a single eager builtin over a finite iterable:
+`dict(...)`, `b''.join(...)`, `sorted(...)`, `sum(...)`, `any(...)`,
+`all(...)`, `min(...)`, `max(...)`, `tuple(...)`. None involve an
+infinite iterable, manual interleaved `.__next__()` calls, or
+consumer-order-sensitive side effects. Given that, materializing a
+genexpr eagerly into a `list` -- exactly like `PY_listcomp`, and
+like `PY_set` already does for `{... for ...}` (issue 008) -- is
+observably identical for every real use in this corpus and far less
+work than synthesizing an anonymous generator function. Revisit
+(desugar to a real generator instead) if a genexpr needing genuine
+laziness turns up.
+
+**Implementation** (`python_ifa_build_if1.cc`): replaced the
+`PY_genexpr` `fail()` with the same three lines `PY_listcomp` uses
+(allocate an empty list via `sym_primitive`/`sym_make`/`sym_list`,
+reenter the scope `build_syms_pyda` already sets up identically for
+both node kinds -- `PY_listcomp`/`PY_genexpr` shared that case
+already, untouched by this fix -- then call the existing
+`build_list_comp_pyda` loop-lowering helper). `PY_genexpr`'s AST
+shape (`[elt_expr, PY_comp_for]`, confirmed in `python.g`'s
+`testlist_comp` and `argument` rules) is identical to
+`PY_listcomp`'s, so no new lowering logic was needed at all.
+
+**Follow-on gap found and fixed**: `dict(iterable_of_pairs)` (e.g.
+adatron's `dict(((x, 0.0) for x in AMINOACIDS))`) hit the same
+"has no type" 1-arg-constructor gap as `set(iterable)` (`str`/`list`/
+`tuple`/`set`, all fixed in earlier issues/025 work) -- `dict`'s only
+`__init__` takes zero args. `dict.update()` doesn't fit either: its
+`other` is itself a dict (`for k in other: self[k] = other[k]`), not
+an iterable of `(key, value)` tuples. Added
+`__pyc_dict_from_iterable__(pairs)` (`__pyc__/07_dict.py`) and a
+matching 1-arg `dict(iterable)` frontend intercept
+(`python_ifa_build_if1.cc`), mirroring `set`'s shape exactly.
+
+New tests: `tests/genexpr_basic.py` (rewritten from its old
+`.expect_fail`-locked interim-behavior guard into a real positive
+test -- bare iteration, `sum`/`list`/`dict`/`join`/`sorted`/`any`/
+`all`/`min`/`max` consumers, matching the corpus shapes found;
+`.expect_fail` removed) and `tests/dict_from_iterable.py` (list of
+pairs, genexpr of pairs, empty). Note: `tests/dict_from_iterable.py`
+deliberately keeps one value type throughout -- mixing value types
+(e.g. `str` and `int64`) across `dict()` calls in one program hits a
+pre-existing, unrelated FA limitation ("expression has mixed basic
+types") that reproduces identically with plain dict literals
+(`{1: "a"}` and `{1: 2}` in the same file); nothing to do with this
+fix, not investigated further here.
+
+**Corpus effect** (full pipeline: pyc → C → clang → run, before/after
+diff, zero regressions): `mandelbrot2` fully fixed -- compiles, runs,
+produces a correct-looking 921KB BMP. `sat`, `score4`, `sokoban`,
+`sudoku5`, `sunfish` progress from a clean compile-time `fail()` to
+actually compiling (each now surfaces its own separate, distinct
+downstream issue: `sat`/`score4` don't finish in the sweep's 30s
+budget, `sokoban`/`sudoku5`/`sunfish` now abort at runtime, rc=134).
+`adatron` and `minpng`/`plcfrs` still don't compile clean -- a
+different, unrelated frontend crash and two separate C-compile-error
+codegen bugs respectively, none investigated further here. Full
+regression suite clean throughout: `test_pyc.py` and `PYC_FLAGS=-b
+test_pyc.py` both 208/208 (206 prior + genexpr_basic rewritten +
+dict_from_iterable new), `ifa`'s `make test` all phases clean.

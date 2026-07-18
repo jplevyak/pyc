@@ -107,3 +107,18 @@ class dict:
     return x
   def __repr__(self):
     return self.__str__()
+
+# issue 025 "has no type" bucket: dict(iterable_of_pairs) -- same
+# shape as set(iterable) in __pyc__/08_set.py: `dict` has no
+# __init__ that accepts a value to build from (only the zero-arg
+# form). update()'s existing `other` is itself a dict (`for k in
+# other: self[k] = other[k]`), which doesn't fit an iterable of
+# (key, value) tuples -- e.g. `dict((x, 0.0) for x in AMINOACIDS)`
+# (shedskin's adatron.py). A new function, not a dict method, since
+# real Python's dict(iterable) form takes 2-tuples, not another
+# dict's `__iter__`-over-keys shape update() already relies on.
+def __pyc_dict_from_iterable__(pairs):
+  d = dict()
+  for pair in pairs:
+    d[pair[0]] = pair[1]
+  return d
