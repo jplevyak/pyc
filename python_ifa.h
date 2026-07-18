@@ -93,6 +93,12 @@ class PycModule : public gc {
 
 int ast_to_if1(Vec<PycModule *> &mods);
 
+// issue 011 (per-callee can-raise gating, post-FA refinement): call
+// once after ifa_analyze() succeeds (pyc.cc), before ifa_optimize()
+// or codegen -- that's the earliest point Fun::calls (built by
+// clone(), partway through ifa_analyze()) exists and is stable.
+void compute_fun_can_raise();
+
 // Stage-3 REPL: split ast_to_if1 into a one-time baseline (builtin module
 // only) and a per-iteration extend (user module).  The REPL parent calls
 // ast_to_if1_baseline once; each fork child inherits the IF1 state via CoW

@@ -97,6 +97,10 @@ static void init_system() {
 
 void compile(cchar *fn) {
   if (ifa_analyze(fn) < 0) fail("program does not type");
+  // issue 011: Fun::calls (built by clone(), inside ifa_analyze())
+  // now exists -- compute the precise, post-FA can-raise bit before
+  // any codegen consumes it.
+  compute_fun_can_raise();
   if (ifa_optimize() < 0) fail("unable to optimize program");
   if (fgraph) ifa_graph(fn);
   if (fdump_html) {

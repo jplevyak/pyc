@@ -81,10 +81,79 @@ Confirmed via `-x 1` IF1 dumps: a leaf helper's IF1 body is just the
 call/move/reply with no slot read, isinstance check, or branch at
 all — not merely folded away later.
 
+**Precise post-FA can-raise gating (2026-07-18), Tier 2**: the
+per-callee gating above (`Sym::can_raise`) is syntactic and pre-FA —
+it can only resolve "plain calls" (a bare name immediately followed
+by a call trailer), so it never touches method calls, which fall back
+to the whole-program gate. FA already builds a PRECISE, per-clone call
+graph (`Fun::calls`, `ifa/if1/fun.h`, populated by `clone()` inside
+`ifa_analyze()`) that correctly resolves polymorphic method dispatch
+per receiver type — added a second, complementary bit,
+`Fun::can_raise`, computed post-FA by `compute_fun_can_raise()`
+(`python_ifa_main.cc`, called from `pyc.cc`'s `compile()` right after
+`ifa_analyze()` succeeds and before `ifa_optimize()`): a worklist
+fixed point over `Fun::calls_funs()`, seeded from a new
+`Sym::direct_raise` bit (set directly at `PY_raise_stmt` build time —
+clone-invariant, since every `Fun` clone of a `Sym` shares the same
+IF1 body). Consumed at CODEGEN time (not IF1-build time, unlike Tier
+1) by both backends via a new shared helper,
+`cg_exc_check_provably_safe(Var*, Fun*)`
+(`ifa/codegen/codegen_common.cc`): identifies an exception-check's
+`isinstance(t, nil_type)` by tracing its operand back to a `MOVE` from
+the `__pyc_exc__` global (codegen files don't include the frontend's
+`python_ifa_int.h`, so this avoids new cross-module symbol plumbing —
+nothing else ever reads that slot), then uses FA's existing
+`call_info()` (`ifa/analysis/fa.cc`) to look up the specific call
+site's resolved candidate `Fun`s and folds the check to a compile-time
+constant only if EVERY candidate has `can_raise == false`. `cg.cc`
+emits the constant directly; `cg_emit_llvm.cc` reuses the existing
+`ICmpEQ` path by comparing the operand to itself (always true) rather
+than a separate return, so it still gets the same dst-type coercion.
+Conservative if the call doesn't resolve to any candidate (e.g. dead
+code) — keeps the real check.
+
+`tests/exception_propagation.py` extended with a `SafeCalc`/
+`RiskyCalc`/`use_calc` method-dispatch scenario to lock in FUNCTIONAL
+correctness of a case Tier 1 could never even attempt (a method call's
+callee isn't resolvable syntactically at all). Verified via `-x
+<pass>` IF1 dumps during development: a monomorphic, always-safe
+receiver gets NO check emitted at all (full Tier-2 fold, something
+Tier 1 structurally cannot do for method calls); the committed test's
+mixed-receiver shape has FA merge both receiver types into one
+contour (doesn't split `use_calc` per receiver type for this
+particular shape), so `Fun::calls` correctly reports a possibly-raising
+candidate and the check correctly stays live — confirms Tier 2 doesn't
+UNDER-approximate when resolution is genuinely mixed, which matters
+more than the fold case for correctness.
+
+Investigating this surfaced a pre-existing, unrelated FA convergence
+gap — filed as
+[ifa/issues/049](../ifa/issues/049-raise-only-contour-notype.md): a
+function whose only call site(s) in the whole program reach its
+raising branch (no call anywhere reaches the normal `return`) gets a
+bottom-typed return and spurious NOTYPE violations, since the raise
+path deliberately contributes nothing to `fn->ret` (by design, to
+avoid a different, earlier bug — see that file). Confirmed via `git
+worktree` bisection to predate ALL of today's can_raise work (present
+already at `04d56587`, the very first issue-011 commit) — the can_raise
+gating (Tier 1 or Tier 2) only decides whether to EMIT a check; it runs
+either before FA (Tier 1) or strictly after FA converges (Tier 2), so
+neither can cause or fix this. Worked around in the new test (the
+raise-triggering call is a direct, non-polymorphic method call, which
+converges fine; only routing a raise through the specific polymorphic
+`use_calc`-style wrapper shape triggers 049).
+
+Verified: full suites 203/0 × 2 backends; unit 58/0; IR 20/0;
+`tests/exception_propagation.py` output deterministic across 3
+compiles; shedskin corpus spot-check (2 pre-existing segfaults, `bh`
+and `pygmy`, confirmed present at `08e3bf31` too — not a Tier-2
+regression).
+
 Not done (out of scope for this pass, no corpus need yet): runtime
 helpers (index/key errors) raising instead of trapping — issue 011's
 staged-plan item 5; a memo/identity cache isn't needed since
-exceptions aren't deep-copied.
+exceptions aren't deep-copied. Also not done: ifa/issues/049 itself
+(filed, not fixed).
 
 Original report follows.
 

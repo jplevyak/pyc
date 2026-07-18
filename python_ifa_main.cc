@@ -305,6 +305,37 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
   return 0;
 }
 
+// issue 011 (per-callee can-raise gating, post-FA refinement): the
+// precise Fun-level pass complementing Sym::can_raise's pre-FA
+// syntactic one (python_ifa_build_syms.cc's compute_can_raise). Must
+// run after ifa_analyze() (pyc.cc) -- that's when Fun::calls, built
+// by clone() partway through it, first exists and is stable; running
+// any earlier would see an incomplete or absent call graph. A simple
+// worklist fixed point over calls_funs() (the union of a Fun's own
+// call-site resolutions, not the per-site precision codegen's
+// cg_exc_check_provably_safe separately needs from Fun::calls
+// directly) -- same shape as ifa/optimize/inline.cc's simple_inlining,
+// which walks the same post-clone call graph.
+void compute_fun_can_raise() {
+  for (Fun *f : fa->funs)
+    if (f->sym && f->sym->direct_raise) f->can_raise = 1;
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (Fun *f : fa->funs) {
+      if (f->can_raise) continue;
+      Vec<Fun *> callees;
+      f->calls_funs(callees);
+      for (Fun *callee : callees.values())
+        if (callee && callee->can_raise) {
+          f->can_raise = 1;
+          changed = true;
+          break;
+        }
+    }
+  }
+}
+
 int ast_to_if1(Vec<PycModule *> &mods) {
   // For the non-REPL path: build baseline for mods[0] (builtin), then extend.
   // The builtin_mods Vec is local; ctx->modules is updated to &mods by extend.

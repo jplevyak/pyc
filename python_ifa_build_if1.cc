@@ -3360,6 +3360,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // (gen_fun_pyda's tail), so the exceptional path contributes
       // NOTHING to the return type: the caller never reads the dead
       // result because its check fires first.
+      //
+      // issue 011 (per-callee can-raise gating, post-FA refinement):
+      // mark the enclosing fun Sym directly -- every Fun CLONE FA
+      // later makes of this Sym shares this same IF1 body, so the
+      // bit is clone-invariant; compute_fun_can_raise seeds its
+      // fixed point from it.
+      if (ctx.fun()) ctx.fun()->direct_raise = 1;
       Sym *exc = nullptr;
       if (n->children.n) {
         build_if1_pyda(n->children[0], ctx);
