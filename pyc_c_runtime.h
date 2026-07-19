@@ -834,6 +834,53 @@ inline char *_CG_char_from_string(void *s, int i) {
   return x;
 }
 
+// `str` has no __getitem__ that handles a slice key (str.__getitem__
+// always calls index_object, a single-char op) -- unlike list/range/
+// bytearray, str previously had no __pyc_getslice__ override of its
+// own, so `s[i:j]` fell through to __pyc_any_type__'s generic
+// self.__getitem__(slice(i,j,s)) fallback, which no __getitem__
+// actually handles either (it always ends up passing the slice
+// *object* itself where an int index is expected). Mirrors
+// _CG_list_getslice_internal's negative-index/clamp/step logic, but
+// direct on the length-prefixed string buffer instead of a list's
+// element array.
+//
+// Positive step only: a negative step (`s[::-1]`) needs different
+// clamping (default l/h flip, iterate backward) that
+// _CG_list_getslice_internal doesn't implement either -- confirmed a
+// pre-existing, separate bug (`a[::-1]` on a plain list hangs, not
+// just wrong output), left untouched here rather than expanded
+// into. No corpus caller of this function uses a non-1 or negative
+// step.
+inline char *_CG_string_getslice(const char *s, int32 l, int32 h, int32 step) {
+  int32 len = (int32)_CG_string_len(s);
+  if (l > len) l = len;
+  if (l < 0) {
+    l = len + l;
+    if (l < 0) l = 0;
+  }
+  if (h > len) h = len;
+  if (h < 0) {
+    h = len + h;
+    if (h < 0) h = 0;
+  }
+  if (l > h) h = l;
+  // Ceiling division: a positive-step slice over [l, h) has
+  // ceil((h-l)/step) elements, not the floor _CG_list_getslice_internal
+  // uses (confirmed separately wrong there too, e.g. an 11-element
+  // list's [::2] should yield 6 elements, not 5).
+  int32 n = step > 0 ? (h - l + step - 1) / step : 0;
+  if (n < 0) n = 0;
+  char *x = _CG_string_alloc(n);
+  if (n) {
+    if (step == 1)
+      memcpy(x, s + l, n);
+    else
+      for (int32 i = 0; i < n; i++) x[i] = s[l + i * step];
+  }
+  return x;
+}
+
 #ifdef __cplusplus
 static inline char *_CG_prim_primitive_to_string(double d) {
   char s[100], *p = s;

@@ -9,6 +9,18 @@ class str:
     return "'" + __pyc_clone_constants__(self) + "'"
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
+  def __pyc_getslice__(self, i, j, s):
+    # issue 025: str had no __pyc_getslice__ of its own (unlike
+    # list/range/bytearray) -- `text[i:j]` fell through to
+    # __pyc_any_type__'s generic self.__getitem__(slice(i,j,s))
+    # fallback, but __getitem__ above unconditionally treats its key
+    # as a single int index (index_object), so it received a slice
+    # *object* where an int was expected. Miscompiled to invalid C
+    # (_CG_char_from_string given a struct pointer instead of an
+    # int) with a clean compile otherwise -- even the simplest
+    # `"hello"[1:3]` hit this; string slicing had no test coverage
+    # before this fix. Mirrors list.__pyc_getslice__'s shape.
+    return __pyc_c_call__(str, "_CG_string_getslice", str, self, int, i, int, j, int, s)
   def __len__(self):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __iter__(self):

@@ -1666,3 +1666,107 @@ codegen bugs respectively, none investigated further here. Full
 regression suite clean throughout: `test_pyc.py` and `PYC_FLAGS=-b
 test_pyc.py` both 208/208 (206 prior + genexpr_basic rewritten +
 dict_from_iterable new), `ifa`'s `make test` all phases clean.
+
+### minpng's and plcfrs's C-compile-error bugs, both root-caused and fixed (2026-07-19)
+
+Continuation of the previous entry's "still don't compile clean"
+thread: dug into each example's actual generated-C compile error
+directly (matching the write_c_pnode/sizeof_element investigation
+style from the rubik2 entries above) rather than another individual
+type violation.
+
+**minpng: `str` had no `__pyc_getslice__` of its own.** Even the
+simplest possible repro, `"hello world"[1:3]`, produced a C compile
+error (`_CG_char_from_string` given a `_CG_ps153*` -- a `slice`
+struct pointer -- where an `int` index was expected), with pyc's own
+compile otherwise clean. Root cause: unlike `list`/`range`/
+`bytearray`, `str` (`__pyc__/01_str.py`) never defined its own
+`__pyc_getslice__`, so `s[i:j]` fell through to
+`__pyc_any_type__`'s generic `self.__getitem__(slice(i,j,s))`
+fallback (`__pyc__/00_runtime.py`) -- but `str.__getitem__`
+unconditionally treats its `key` as a single int index
+(`index_object`), so it received the slice *object* itself where an
+int was expected. **String slicing had zero test coverage before
+this fix** (`tests/string_index.py` only covers single-char
+indexing) -- grepped the whole `tests/` tree to confirm. Fixed by
+giving `str` its own `__pyc_getslice__` (mirrors `list`'s shape
+exactly: dispatches to a new C runtime helper,
+`_CG_string_getslice`, added to `pyc_c_runtime.h` +
+`pyc_runtime.c`'s LLVM-linkage `extern` list). New test
+`tests/string_slicing.py` (positive/negative/out-of-range bounds,
+empty string, empty slice, `pieces()`'s exact `seq[i:i+n]`-in-a-loop
+shape from minpng.py). While writing `_CG_string_getslice`, found
+`_CG_list_getslice_internal`'s existing step-length formula is
+*also* wrong (floor instead of ceiling division -- an 11-element
+list's `[::2]` should yield 6 elements, not 5) and copied the
+correct formula into the new string version; **left the list version
+as-is** (out of scope, and negative-step slicing turned out to be a
+separate, deeper pre-existing bug shared by both -- `a[::-1]` on a
+plain list *hangs*, not just wrong output -- documented as a comment
+in the new code but not chased further here).
+
+This was minpng's *originally identified* C-compile-error, and it's
+now fully fixed -- but minpng doesn't compile clean yet regardless:
+`crc()`/`adler32()` do `for x in data: c ^= x` expecting `x` to be an
+int (a byte value), but `data` is `str`-typed (pyc has no distinct
+`bytes` type at all -- `b'...'` literals silently become `str`,
+confirmed by grepping the whole frontend), so iteration yields str
+characters instead, and `c ^= x` (int ^= str) miscompiles the same
+way (`_CG_prim_xor` given a `_CG_string`). That's a materially
+different, larger gap (a real `bytes`/`str` split touching literal
+parsing, iteration, indexing, concatenation) than "one codegen
+robustness fix" -- not attempted here.
+
+**plcfrs: a void-typed record field assigned into a differently-typed
+destination.** `plcfrs.py.c:1381: assigning to '_CG_ps13834*' from
+incompatible type '_CG_void'` -- `t155 = ((_CG_ps13835)t161)->e0;`.
+Traced via a debug trace on `P_prim_index_object`'s
+constant-record-field-getter branch (`ifa/codegen/cg.cc`): field 0
+of the receiver's record type had a genuinely unresolved type (no
+compile-time size -- FA never gave that field a value along any live
+path for this contour, hence a bare `_CG_void` struct member), but
+the destination Var `t155` had independently resolved to a
+*different*, concrete, non-void type (`tuple`, 8 bytes) from its own
+broader use elsewhere in the function. Emitting the getter
+unconditionally cast a genuinely-typeless field read into that
+mismatched C pointer type. Same general shape as the `simple_move`
+null-type fix (rubik2, `issues/025` above) -- a value with no
+concrete C representation flowing into a C assignment that assumes
+one -- but in the record-getter emission path instead of a phy/phi
+move. Fixed by skipping the getter emission when the specific
+field's resolved type has no size, mirroring `simple_move`'s guard.
+Deliberately narrow (checks the field's *own* type only, not a
+comparison against the destination's type, to avoid repeating the
+overly-broad first attempt at the `simple_move` fix that broke
+legitimate cases) -- only 2 call sites in the whole plcfrs compile
+hit this getter branch at all, not enough diversity to safely widen
+the condition further. No LLVM-backend equivalent needed: `-b`
+already compiled this same program without error (LLVM's opaque
+`ptr` type sidesteps C's stricter pointer-type checking here, so
+there's no analogous *compile-time* failure on that backend for this
+specific bug -- it likely still produces a wrong value at runtime,
+not investigated).
+
+plcfrs also doesn't compile-and-run clean yet: line 591's
+`mostprobablederivation(...) == (tuple literal)` comparison still
+has real, separate "expression has no type" violations, not chased
+further here.
+
+Couldn't construct a clean minimal synthetic repro for the plcfrs
+getter fix (a few attempts didn't reproduce the specific FA
+specialization shape) -- verified instead via a direct debug trace
+against plcfrs itself (confirmed the exact size-0-field/size-8-lval
+mismatch) and the full corpus sweep.
+
+**Corpus effect** (full pipeline, before/after, zero regressions):
+`plcfrs` progresses from a clean compile-time C error to actually
+compiling and linking (still crashes at runtime on the separate
+violation above). Two more examples not otherwise touched today also
+progress the same way -- `dijkstra2`, `lz2` (both `PYC_FAIL` →
+compiles, `RUN_FAIL` at runtime on their own separate issues) --
+confirming the getter fix generalizes beyond the one example it was
+found in. `minpng` unchanged (`PYC_FAIL`, now for the unrelated
+`bytes` gap instead of the fixed getslice bug). Full regression
+suite clean: `test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` both
+209/209 (208 prior + `string_slicing` new), `ifa`'s `make test` all
+phases clean.
