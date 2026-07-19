@@ -2023,3 +2023,56 @@ repro is C-only -- the real program's fuller complexity hits at
 least one more unisolated manifestation of this general family.
 Full regression clean throughout: `test_pyc.py` and `PYC_FLAGS=-b
 test_pyc.py` both 212/212, `ifa`'s `make test` all phases clean.
+
+### ifa/issues/053 fixed; a new, separate FA non-convergence bug found and deferred (2026-07-19)
+
+Root-caused and fixed
+[ifa/issues/053](../ifa/issues/053-tuple-unpack-target-heterogeneous-arity-segfault.md)
+(the tuple-unpack-target segfault left open above): same general
+"`Type_SUM`'s own `->size` is 0 even when uniform" shape already
+special-cased for `P_prim_sizeof_element` during the tuple-list-header
+fix, just not yet applied to `P_prim_index_object`'s constant-field-getter
+-- a field whose *own* type is a union (one field of a tuple wrapper
+bound to tuples of differing arity) was silently skipped instead of
+read, leaving the destination `Var` declared but never assigned.
+Fixed by extracting a shared `resolve_uniform_size()` helper
+(`ifa/codegen/cg.cc`) and using it in the getter; needed an explicit
+destination-type cast alongside it (a `Type_SUM` field's own
+struct-declared C type, often `_CG_void*`, can differ from the
+destination's independently-resolved type even though both are the
+same pointer-sized value underneath -- caught as a regression in the
+already-committed `tests/tuple_arity_union.py` during this fix,
+fixed same-turn). New test:
+`tests/tuple_unpack_target_arity_union.py` (the issue's exact repro,
+both backends). Full regression clean: `test_pyc.py` and
+`PYC_FLAGS=-b test_pyc.py` both 212/212, `ifa`'s `make test` all
+phases clean, zero regressions in the shedskin corpus sweep (three
+examples -- `dijkstra2`, `lz2`, `pygmy` -- newly progress from
+`PYC_FAIL` to compiling/running; `plcfrs` itself stays `PYC_FAIL`,
+matching its pre-existing baseline, since the fix doesn't touch its
+remaining separate gap, see below).
+
+While re-verifying `plcfrs.py` itself against this fix, found
+`set` has no `__sub__`/difference operator at all -- a plain missing
+feature (`plcfrs.py` line 300 does `set(...) - set([...])`),
+unrelated to the tuple-arity family. Added it (plus
+`__isub__`/`intersection`/`__and__`/`union`/`__or__`) to
+`__pyc__/08_set.py` -- but this made the **compiler itself** crash
+(segfault, or hang past 30s with a trivial no-op body) compiling the
+full `plcfrs.py`, traced via phase-level instrumentation to FA's
+first convergence pass never stabilizing (worklist churn climbing
+without bound while the actual EntrySet count stays flat -- a
+non-monotonic lattice, not just "a lot of work"). Isolated minimal
+repros of the same code shape don't reproduce it -- this is specific
+to `plcfrs.py`'s full-program scale interacting with generic `-`
+operator dispatch now having one more polymorphic candidate
+(`set.__sub__`) at every subtraction call site in the program,
+including all the unrelated integer arithmetic. **Reverted** (`git
+checkout -- __pyc__/08_set.py`) rather than shipped with a live
+compiler-crash regression; filed as
+[ifa/issues/055](../ifa/issues/055-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)
+with the full bisection trail. `set.__sub__` remains unimplemented;
+`plcfrs.py` remains `PYC_FAIL` (matching its pre-this-session
+baseline, not a regression -- 053's fix is a genuine, isolated,
+independently-verified improvement, just not sufficient on its own to
+unblock the full program).
