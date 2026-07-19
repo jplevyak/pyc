@@ -1995,6 +1995,13 @@ extended that correction to tuples too
 issues/044 "phantom trailing element" bug for tuples specifically
 (044 itself only ever fixed the list-literal case).
 
+The header is now added to *every* tuple unconditionally, not just
+ones that end up in a heterogeneous-arity union -- provably safe
+(field access doesn't care what's behind the pointer) but broader
+than strictly necessary; a precise version needs FA to flag which
+tuple types actually need one, deliberately deferred, see
+[ifa/issues/054](../ifa/issues/054-remove-unconditional-tuple-list-header.md).
+
 New test `tests/tuple_arity_union.py` (both backends, verified wrong
 on the pre-fix binary, correct after, matches CPython). Corpus
 effect: `plcfrs` progresses from `RUN_FAIL` (crash) to `RUN_TIMEOUT`
