@@ -2088,3 +2088,104 @@ improvement from 053's fix alone -- `plcfrs.py` isn't fully unblocked
 (that still needs `set.__sub__`, i.e. ifa/issues/055, plus whatever
 underlies the line-591 violation itself), but it's no longer a
 compile-time failure.
+
+### dict.keys()/.values()/.items() implemented; RUN_FAIL bucket triage finds 3 more corpus examples make progress, 2 new FA bugs filed (2026-07-19)
+
+Asked to dig into the shedskin corpus's `RUN_FAIL` bucket (compiles,
+but the generated binary crashes) rather than another individual
+example. Triaged all 14 by grouping their runtime assertion messages:
+6 share `"getter not resolved"`, 2 share `"matching function not
+found"`, 1 is `"polymorphic dispatch: no branch matched"`
+(`richards`, pre-existing, unrelated), and 5 crash with no assertion
+at all (raw `SIGSEGV`/`SIGILL`). Cross-referencing each one's
+compile-time diagnostics against its source found the single
+highest-leverage bucket: **`dict` had no `.keys()`/`.values()`/
+`.items()` at all** (`__pyc__/07_dict.py` only had `__iter__`, which
+iterates keys) -- `loop.py:250`, `mastermind2.py:75` (via
+`defaultdict`, see below), `plcfrs.py:134`, and `sunfish.py:74` each
+independently hit this exact gap (4 of the 14 `RUN_FAIL` examples,
+before even counting `chaos`/`lz2`/`sokoban`/`sudoku1` in the
+`"getter not resolved"` bucket, which trace to their own separate,
+distinct "has no type" violations, one investigation apiece, not
+dug into further here).
+
+**Fix**: added `keys()`/`values()`/`items()` to `class dict`
+(`__pyc__/07_dict.py`), reusing the existing `__dict_iter__` class for
+`keys()`/`values()` (it's generic over whatever list it's handed --
+`_keys` or `_vals`) and adding a new `__dict_items_iter__` class
+(same shape, yields `(key, value)` tuples) for `items()`. Not a live
+view (unlike real Python's `dict_keys`/`dict_values`/`dict_items`) --
+a fresh snapshot iterator, matching this file's existing `__iter__`
+and the rest of `__pyc__`'s established eager-not-lazy convention
+(genexprs, `08_set.py`); every corpus usage found iterates
+immediately without mutating the dict mid-iteration, so this is
+observably identical there. `sunfish.py`/`plcfrs.py` additionally
+wrap the call in `list(...)` (`list(pst.items())`,
+`list(C.values())`), which needed a second, narrower piece: `list(x)`
+dispatches to `x.__pyc_tolist__()`
+(`python_ifa_build_if1.cc`), and no plain iterator class in this
+codebase had ever defined that (only `list`/`tuple`/`str`/`range`
+do) -- added `__pyc_tolist__` (a generic "drain via
+`__pyc_more__`/`__next__`" loop) to both new/reused iterator classes.
+`mastermind2.py`'s `.values()` call is actually on a `defaultdict`
+(`pyc_lib/collections.py`), a separate wrapper class around its own
+internal `dict` -- needed the identical three methods (delegating to
+`self.d`) plus `__len__`/`__iter__` (which it also lacked) added
+there too, independently of `07_dict.py`.
+
+New tests: `tests/dict_items_keys_values.py`,
+`tests/defaultdict_keys_values.py` (both backends, matches CPython).
+Full regression clean: `test_pyc.py` and `PYC_FLAGS=-b test_pyc.py`
+both 215/215, `ifa`'s `make test` all phases clean.
+
+**Corpus effect, and an important nuance in how to read it**: all
+four target examples' *originally diagnosed* violation line is
+resolved (confirmed by diff'ing each one's `pyc_out.log` before/after
+-- the specific `"unresolved call '__iter__'"` at that exact line is
+gone in every case). But the sweep's mechanical `PYC_FAIL`/`RUN_FAIL`
+categories show `loop`, `mastermind2`, and `sunfish` moving from
+`RUN_FAIL` to `PYC_FAIL` -- worse by the sweep's simple ranking, even
+though nothing about this fix is wrong. What's actually happening:
+each of the three, once past its `.items()`/`.values()` blocker,
+progresses far enough to hit a *different*, separate, pre-existing
+bug that happens to be compile-time-unsalvageable (a real C compile
+error for `loop.py` -- `_CG_norm_idx` given a non-integer `_CG_any`
+index, filed as [ifa/issues/056](../ifa/issues/056-degraded-index-type-raw-c-compile-error.md);
+an internal `fail()` for `sunfish.py` --
+`"sizeof_element of non-container type"` in `__add__`, not
+investigated further; an `int`/`float` mixed `-=`/`*` gap for
+`mastermind2.py` at its own line 77, not investigated further) --
+rather than the salvage-and-abort-at-runtime path its OLD blocker
+happened to take. None of the three ever produced correct output
+before or after this fix (both `RUN_FAIL` and `PYC_FAIL` mean "does
+not work" for this corpus's purposes) -- so this is not a regression
+in any real sense, just the sweep's taxonomy surfacing a downstream
+problem that used to be hidden behind an upstream one. `plcfrs.py`
+is unaffected (its `.values()` call already resolved cleanly; its
+known remaining blockers are the unrelated line-591/`set.__sub__`
+gaps from the entry above). `dijkstra2`/`lz2` also unaffected
+(already accounted for by the 053 entry above). Full before/after
+corpus sweep, zero *net-new* broken examples -- three reclassified,
+each independently traceable to a real, distinct, separate cause
+(one filed, two merely triaged), zero examples moved into or out of
+`RUN_OK`.
+
+**A second, independently-found FA non-convergence bug, much cheaper
+to reproduce than 055's**: while writing a thorough test exercising
+every new dict-method code path together, found that combining
+`sorted()` on a plain string list with `list(d.items())` +
+`sorted()` on the resulting tuple list hangs the compiler (same
+worklist-churn-without-bound signature as
+[ifa/issues/055](../ifa/issues/055-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md),
+confirmed via the same printf-bisection technique) -- but reproduces
+in **4 lines**, no 500-line real program needed, and isn't
+dict-specific (a bare `sorted(["p","q"])` triggers it just as well as
+`sorted(d.keys())`). Filed as
+[ifa/issues/057](../ifa/issues/057-sorted-tolist-fa-nonconvergence.md)
+and cross-linked with 055 as likely the better repro to start from.
+**Not shipped in the committed test**: `tests/dict_items_keys_values.py`
+deliberately avoids this exact combination (see its own comment) so
+it stays green -- none of the four real corpus targets hit it either
+(each does only simple, unsorted access), so this doesn't block
+today's fix, but it's a live landmine for any future program (or
+corpus example) that combines these two very ordinary patterns.

@@ -41,3 +41,18 @@ class defaultdict:
 
     def __contains__(self, key):
         return key in self.d
+
+    def __len__(self):
+        return len(self.d)
+
+    def __iter__(self):
+        return iter(self.d)
+
+    def keys(self):
+        return self.d.keys()
+
+    def values(self):
+        return self.d.values()
+
+    def items(self):
+        return self.d.items()

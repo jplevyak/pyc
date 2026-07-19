@@ -16,6 +16,43 @@ class __dict_iter__:
   def __next__(self):
     self._pos += 1
     return self._keys[self._pos - 1]
+  def __pyc_tolist__(self):
+    # `list(d.keys())`/`list(d.values())` (both share this class --
+    # plcfrs.py's `list(C.values())`) route through list()'s generic
+    # __pyc_tolist__ dispatch (python_ifa_build_if1.cc), which no
+    # plain iterator class defined before now -- consumes any
+    # remaining items via the existing __pyc_more__/__next__ protocol
+    # rather than reading `_keys` directly, so a partially-consumed
+    # iterator still yields only what's left (matching real Python).
+    r = []
+    while self.__pyc_more__():
+      r = r.append(self.__next__())
+    return r
+
+class __dict_items_iter__:
+  _keys = []
+  _vals = []
+  _len = 0
+  _pos = 0
+  def __iter__(self):
+    return self
+  def __init__(self, keys, vals, n):
+    self._keys = keys
+    self._vals = vals
+    self._len = n
+    self._pos = 0
+  def __pyc_more__(self):
+    return self._pos < self._len
+  def __next__(self):
+    self._pos += 1
+    return (self._keys[self._pos - 1], self._vals[self._pos - 1])
+  def __pyc_tolist__(self):
+    # `list(d.items())` (sunfish.py) -- same rationale as
+    # __dict_iter__.__pyc_tolist__ above.
+    r = []
+    while self.__pyc_more__():
+      r = r.append(self.__next__())
+    return r
 
 class dict:
   _keys = []
@@ -70,6 +107,20 @@ class dict:
     return self
   def __iter__(self):
     return __dict_iter__(self._keys, self._len)
+  def keys(self):
+    # issues/025 "has no type" bucket: dict had no .keys()/.values()/
+    # .items() at all (loop, mastermind2, plcfrs, sunfish all hit this
+    # exact gap independently). Not a live view (unlike real Python's
+    # dict_keys/dict_values/dict_items) -- a fresh snapshot iterator,
+    # matching this file's existing __iter__ and __pyc__'s established
+    # eager-not-lazy convention (see 08_set.py, genexpr handling);
+    # every corpus usage found iterates immediately without mutating
+    # the dict mid-iteration, so this is observably identical there.
+    return __dict_iter__(self._keys, self._len)
+  def values(self):
+    return __dict_iter__(self._vals, self._len)
+  def items(self):
+    return __dict_items_iter__(self._keys, self._vals, self._len)
   def __contains__(self, key):
     i = 0
     while i < self._len:
