@@ -1925,3 +1925,32 @@ the slicing fix above -- a real, directly-verified correctness fix
 that doesn't flip any currently-tracked example's coarse bucket).
 Full regression: `test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` both
 211/211, `ifa`'s `make test` all phases clean.
+
+### `bytearray` negative indexing fixed too (2026-07-19)
+
+Closed the gap the previous entry left open: `bytearray` (the only
+`@vector` class in `__pyc__/`) has no runtime list-header and no
+compile-time-constant length the way list/tuple do -- its length is
+an ordinary struct field (`self.length`), so neither codegen fix
+above applies. Fixed directly in Python source instead
+(`__pyc__/06_bytearray.py`'s `__getitem__`/`__setitem__`, mirroring
+`range.__getitem__`'s existing pattern) -- safe here specifically
+because `bytearray`, unlike `list`, is **not**
+`clone_methods_per_cs`-flagged, so it isn't exposed to
+[ifa/issues/052](../ifa/issues/052-shared-method-branch-reopens-empty-list-fragility.md)'s
+fragility. Confirmed empirically before landing: an
+empty-plus-non-empty `bytearray` in one program (`bytearray(5)`
+alongside `bytearray(0)`) compiles and runs clean with the new
+branch in place.
+
+Extended `tests/negative_index.py` with `bytearray` coverage (both
+backends, verified against CPython). Corpus sweep: one additional,
+unrelated diff appeared alongside the three from the previous
+entries -- `richards` moves from `RUN_FAIL rc=1` to `RUN_FAIL rc=134`
+(same failure category; the program doesn't use `bytearray` at all,
+and both before/after fail on an unrelated pre-existing
+"polymorphic dispatch: no branch matched" assertion elsewhere in the
+program -- consistent with earlier fixes today letting it progress
+slightly further before hitting that separate gap, not a
+regression). Full regression: `test_pyc.py` and `PYC_FLAGS=-b
+test_pyc.py` both 211/211, `ifa`'s `make test` all phases clean.

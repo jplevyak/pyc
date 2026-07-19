@@ -28,6 +28,15 @@
 # list-header at all, unlike a list literal -- reusing the runtime
 # list-header trick for it read garbage memory and returned nonsense,
 # not a crash).
+#
+# bytearray (a @vector class) needed a third fix, separate again:
+# its length is a runtime struct field (self.length), not a list
+# header and not a compile-time constant, so neither codegen fix
+# above applies. Unlike list/tuple, bytearray isn't
+# clone_methods_per_cs-flagged, so it isn't exposed to issues/052's
+# empty-container fragility -- fixed directly in Python source
+# (__pyc__/06_bytearray.py), confirmed safe with an empty+non-empty
+# bytearray in one program before landing.
 a = [10, 20, 30, 40, 50]
 print(a[-1])
 print(a[-2])
@@ -54,3 +63,16 @@ i = -1
 print(a[i])
 print(t[i])
 print(s[i])
+
+# bytearray (@vector class): fixed at the Python source level
+# (unlike list/tuple above -- bytearray isn't clone_methods_per_cs
+# flagged, so it isn't exposed to issues/052's fragility; confirmed
+# empirically with an empty+non-empty bytearray in one program
+# before landing this).
+ba = bytearray(5)
+ba[0] = 1
+ba[1] = 2
+ba[-1] = 9
+print(ba[-1])
+print(ba[-2])
+print(ba[0], ba[1], ba[2], ba[3], ba[4])

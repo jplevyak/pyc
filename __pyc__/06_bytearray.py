@@ -4,9 +4,13 @@ class bytearray:
   def __init__(self, s):
     self.length = s
   def __getitem__(self, key):
+    if key < 0:
+      key = key + self.length
     return __pyc_primitive__(__pyc_symbol__("coerce"), int,
                              __pyc_primitive__(__pyc_symbol__("index_object"), self, key))
   def __setitem__(self, key, value):
+    if key < 0:
+      key = key + self.length
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
                              __pyc_clone_constants__(key),
                              __pyc_primitive__(__pyc_symbol__("coerce"), __pyc_char__, value))
