@@ -2189,3 +2189,57 @@ it stays green -- none of the four real corpus targets hit it either
 (each does only simple, unsorted access), so this doesn't block
 today's fix, but it's a live landmine for any future program (or
 corpus example) that combines these two very ordinary patterns.
+
+### ifa/issues/057: root cause still open, but the hang itself is now mitigated (2026-07-19)
+
+Picked up 057 directly (root cause investigation, not another corpus
+example). Confirmed via `PYC_DBG_HIST`-style edge-histogram
+instrumentation (added then removed, same printf-bisection
+convention as 055) that `tuple.__lt__` dominates the runaway edge
+processing (~25% of edges in the first 20K alone) -- consistent with
+`sorted()`'s single shared body needing per-call-site contour
+separation between the `str`-list and `tuple`-list call sites that
+FA apparently isn't providing here (the `05_builtins.py` comment on
+`sorted()` already flags this kind of per-call-site-contour fragility
+as a known, unresolved risk). Let the repro run past its original 30s
+triage ceiling to determine whether it's genuinely non-convergent or
+just slow: confirmed genuine -- RSS grew past 1GB and was still
+climbing after 280 wall-clock seconds with zero termination in
+sight, `fa->ess.n` never once changing from 97 the entire time.
+Root-causing *why* the underlying type union never stabilizes would
+need instrumentation at [033](../ifa/issues/033-splitter-non-idempotent-divergence.md)'s
+scale (that issue alone runs ~2000 lines and spans weeks investigating
+the analogous disease in the *outer* splitting loop) -- out of scope
+for landing today, but a real, scoped, low-risk improvement was:
+FA's *inner* flow-to-fixpoint loop (`analyze_to_convergence`'s
+edge/send/es worklist drain) had **no bound at all**, unlike the
+outer loop's `pass_limit`/stall-guard machinery. Added a wall-clock
+stagnation timeout (`ifa/analysis/fa.cc`): every 20,000 edges, check
+whether `fa->ess.n` grew since the last check; 120 real seconds with
+zero growth fails cleanly with a diagnostic instead of continuing to
+hang. A raw edge-count cap was tried first and rejected -- the
+per-edge cost itself grows over time as the stuck union accumulates
+(the first 140K edges took ~15s, the next 200K took over 120s), so
+any fixed count threshold is either too slow to trip or a
+false-positive risk; the wall-clock-plus-ess-growth check is robust
+to that. Calibrated against `pygasus` (issue 033's own historical
+worst case): its busiest single pass processes ~65K edges while
+`fa->ess.n` grows by hundreds *within that pass* -- nowhere near 120s
+of zero growth; verified `pygasus` reaches its own separate,
+pre-existing, unrelated compile error identically with and without
+this change across repeated runs. Full regression clean: `test_pyc.py`
+and `PYC_FLAGS=-b test_pyc.py` both 215/215, `ifa`'s `make test` all
+phases clean, zero new diffs in a full corpus sweep and zero
+occurrences of the new failure message anywhere in it (nothing in
+the routine corpus was anywhere close to tripping this). Not added
+as an automated test (the ~2-minute cost to actually trigger the
+guard doesn't fit the routine ~30s suite); 057's own file carries the
+full verification record instead. Re-tested against
+[055](../ifa/issues/055-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)'s
+`plcfrs.py`/`set.__sub__` repro directly: the new guard does **not**
+help there -- that repro segfaults in ~7s (a fast crash, not the slow
+zero-`ess.n`-growth stall this guard targets), so 055 stays open and
+unaffected. This is a symptom mitigation, not a fix: `sorted()` +
+`dict.items()` combined still cannot compile, it just fails fast and
+diagnosably now instead of hanging/OOMing. The actual root cause
+(from either 055 or 057) remains open for whoever picks it up next.
