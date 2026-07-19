@@ -42,6 +42,7 @@ extern char *_CG_string_mult(char *str, int64 n);
 extern void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v);
 extern char *_CG_strcat(const char *a, const char *b);
 extern char *_CG_char_from_string(void *s, int i);
+extern int32 _CG_norm_idx(int32 idx, int32 len);
 extern char *_CG_string_getslice(const char *s, int32 l, int32 h, int32 step);
 extern void *_CG_prim_tuple_list_internal(unsigned int s, unsigned int n);
 extern void _CG_write(const void *s);

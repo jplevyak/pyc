@@ -1844,3 +1844,79 @@ correctness fix (21 slicing cases checked against CPython output
 directly, not just "does it compile"). Full regression suite clean:
 `test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` both 210/210 (209 prior
 + `negative_step_slicing` new), `ifa`'s `make test` all phases clean.
+
+### Plain negative indexing fixed -- worse than slicing, out-of-bounds memory access (2026-07-19)
+
+Follow-up requested directly: fix "the `_CG_list_getslice_internal`
+list indexing issue" specifically. Testing `a[-1]` (plain indexing,
+not a slice) to compare against the just-fixed `a[::-1]` found a
+separate, more severe bug: `str.__getitem__`/`list.__getitem__`/
+`list.__setitem__`/`tuple.__getitem__`/`tuple.__setitem__` all pass
+a negative key straight through to `index_object`'s/
+`set_index_object`'s raw C array indexing with **no normalization at
+all** -- undefined behavior (reads/writes memory *before* the
+buffer), not just a wrong-value computation like the slicing bugs.
+`a[-1]` on a real list returned a garbage value (whatever happened
+to sit just before the allocation). Zero test coverage before this
+(`tests/string_index.py` only covers positive indices).
+
+**First attempt (reverted): fix it in the `__getitem__`/
+`__setitem__` Python source**, mirroring `range.__getitem__`'s
+already-working `if idx < 0: idx += len(self)`
+(`__pyc__/05_builtins.py`). This broke FA's handling of an empty
+list literal sharing a program with a non-empty one -- the exact
+issues/025/040 "has no type" fragility already documented above.
+Bisected the Python source down to the *comparison itself*: even a
+no-op `if key < 0: pass` inside `list.__getitem__` was enough to
+break `b = [2, 3]; print(b); k = []; print(k)`. A ternary form
+(`key = key + self.__len__() if key < 0 else key`) hit the identical
+failure. Reverted both.
+
+**Actual fix: normalize at the codegen level instead**, where there's
+no FA-visible branch at all -- a plain C ternary / LLVM `select` in
+the generated code. New `_CG_norm_idx(idx, len)` helper
+(`pyc_c_runtime.h`, `extern`'d in `pyc_runtime.c` for the LLVM
+linker). Wired into both backends' index-load/index-store emission
+(`ifa/codegen/cg.cc`'s `P_prim_index_object`/`P_prim_set_index_object`,
+`ifa/codegen/cg_emit_llvm.cc`'s `emit_send_index_load`/
+`emit_send_index_store`), scoped to the common single-index case
+(string char access, and non-record dynamically-indexed lists).
+
+**A *compile-time-constant* negative index needed a separate fix**,
+since it never reaches the dynamic-index code path at all: `a[-1]`
+on a fixed-size tuple-list literal goes through
+`P_prim_index_object`'s Type_RECORD-and-constant-index branch on the
+C backend (`->eN` field access) and the generic GEP fallback on
+LLVM. Both used `n->rvals[o+1]->sym->constant` (a string like `"-1"`)
+either directly as the field suffix (`->e-1` -- invalid C, a compile
+error, pre-existing) or, after this issue's earlier plcfrs fix added
+a bounds check there, `atoi("-1") < 0` failed that check and
+*silently* skipped the read (leaving the destination uninitialized --
+worse than the original compile error). Fixed by normalizing the
+parsed field index (`if (fidx < 0) fidx += t->has.n;`) before the
+bounds check, on both the get and set sides. **A real tuple has no
+runtime length to read at all** (confirmed: `_CG_prim_tuple` --
+true Python tuples -- has no list-header, unlike
+`_CG_prim_tuple_list` -- fixed-size list literals -- which does;
+reusing the list-header runtime-read trick for a real tuple on the
+LLVM backend read garbage memory and returned nonsense, not a
+crash) -- `t->has.n` (the record's field count, a compile-time
+constant) is correct for both shapes uniformly, so the LLVM fix uses
+a new `emit_norm_idx_const_len` (constant-length variant) rather
+than reusing the runtime-length `emit_norm_idx` there.
+
+**Not fixed**: a `@vector`-class instance (`bytearray`, the only one
+in `__pyc__/`) indexed with a negative key. Its length is an ordinary
+runtime struct field (`self.length`), not a list-header and not a
+compile-time constant -- no generic way to find it from the codegen
+sites touched here without hardcoding knowledge of one specific
+class's field layout. Confirmed still broken on both backends,
+left as an open gap.
+
+New test `tests/negative_index.py` (list/str/tuple, literal and
+dynamic negative indices, both backends, verified byte-identical to
+CPython). Corpus sweep byte-identical before/after (same pattern as
+the slicing fix above -- a real, directly-verified correctness fix
+that doesn't flip any currently-tracked example's coarse bucket).
+Full regression: `test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` both
+211/211, `ifa`'s `make test` all phases clean.

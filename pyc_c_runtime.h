@@ -834,6 +834,29 @@ inline char *_CG_char_from_string(void *s, int i) {
   return x;
 }
 
+// issues/025: plain (non-slice) indexing (`a[-1]`, `s[-1]`) had no
+// negative-index normalization at all -- str.__getitem__/
+// list.__getitem__/list.__setitem__ pass the raw key straight
+// through to index_object/set_index_object's C array indexing
+// (`array[key]`, `_CG_char_from_string(s, key)`), which is
+// undefined behavior for a negative key: it reads/writes memory
+// *before* the buffer instead of counting back from the end. `a[-1]`
+// on a real list returned a garbage value (whatever happened to sit
+// just before the allocation), not the last element -- confirmed
+// separately from (and worse than) the slicing bugs above, since
+// this is out-of-bounds memory access, not just a wrong-value
+// computation. Tried fixing this in the __getitem__/__setitem__
+// Python source first (mirroring range.__getitem__'s existing `if
+// idx < 0: idx += len(self)`, 05_builtins.py) -- that approach
+// broke FA's handling of an empty list literal sharing a program
+// with a non-empty one (issues/025/040's "has no type" fragility):
+// even a no-op `if key < 0: pass` inside list.__getitem__ was enough
+// to trigger it, confirmed by bisecting the Python source down to
+// that single comparison. Normalizing here instead -- a plain C
+// ternary in the generated code, no FA-visible branch at all --
+// sidesteps that fragility entirely.
+inline int32 _CG_norm_idx(int32 idx, int32 len) { return idx < 0 ? idx + len : idx; }
+
 // `str` has no __getitem__ that handles a slice key (str.__getitem__
 // always calls index_object, a single-char op) -- unlike list/range/
 // bytearray, str previously had no __pyc_getslice__ override of its
