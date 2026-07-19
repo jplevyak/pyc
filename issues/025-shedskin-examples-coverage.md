@@ -1954,3 +1954,65 @@ program -- consistent with earlier fixes today letting it progress
 slightly further before hitting that separate gap, not a
 regression). Full regression: `test_pyc.py` and `PYC_FLAGS=-b
 test_pyc.py` both 211/211, `ifa`'s `make test` all phases clean.
+
+### plcfrs's remaining violation: root-caused two-thirds of the way, one piece still open (2026-07-19)
+
+Dug into the `line 591: expression has no type` violation directly
+(requested follow-up on the previous plcfrs entry). Traced it back
+through `mostprobablederivation` → `getmpd` → ultimately
+`splitgrammar()`'s `nonterminals = list(enumerate([...] + sorted(set(nt
+for (rule, yf), weight in grammar for nt in rule) - ...)))`, where
+`grammar`'s `rule` tuples have genuinely varying arity by design
+(different grammar rules have different RHS lengths -- confirmed via
+`rules = [(( tuple(a[:len(a)-2]), ...), ...) for a in srules]`
+upstream). Isolated to a **real, fixed-arity tuple literal having no
+list-header at all**: `_CG_prim_tuple` (the "true tuple" macro) is a
+bare `GC_MALLOC(sizeof(struct))`, unlike `_CG_prim_tuple_list`
+(used for list literals promoted to record shape), which sets a
+real header (`_CG_list_len`, matching `t->has.n`). Fine as long as
+every consumer resolves the tuple's arity at compile time (constant
+field access, `->eN`, always does) -- but tuples of *differing*
+arity unioned together push `len()`/non-constant indexing onto the
+generic runtime fallback (`_CG_prim_len`), which unconditionally
+reads that nonexistent header: garbage memory, ranging from silently
+wrong output (an all-empty-tuple union, confirmed with a minimal
+`ts = [(3,), (1, 2)]; print(ts)` → `[(), ()]` repro) to a hard FA
+violation depending on how badly the garbage confused downstream
+inference.
+
+**Fixed**: gave every tuple a real header unconditionally
+(`ifa/codegen/cg.cc`'s `P_prim_make`) -- safe because field access
+(`->eN`) is offset-based from the pointer forward and doesn't care
+what's behind it, so this is additive, not a semantic change, for
+every tuple that was already working. The LLVM backend had an
+*independent*, narrower version of the same gap: it already used the
+headered allocation for tuples (unlike the C backend), but only
+corrected the header's length for the list-struct case, not plain
+tuples (a stale "Stage 2 -- NOT plain tuples" comment, predating this
+fix, confirms this was a known-and-accepted gap at the time) --
+extended that correction to tuples too
+(`ifa/codegen/cg_emit_llvm.cc`). Both backends independently had the
+issues/044 "phantom trailing element" bug for tuples specifically
+(044 itself only ever fixed the list-literal case).
+
+New test `tests/tuple_arity_union.py` (both backends, verified wrong
+on the pre-fix binary, correct after, matches CPython). Corpus
+effect: `plcfrs` progresses from `RUN_FAIL` (crash) to `RUN_TIMEOUT`
+(compiles and runs to completion of the sweep's 30s budget without
+crashing) on the default C backend.
+
+**Not fixed -- a second, deeper piece remains**: a *tuple-unpack
+target* whose bound value has heterogeneous own-arity still
+segfaults (`for rule, weight in grammar` where each `rule` varies in
+length, vs. plain `for rule in grammar` which now works) --
+filed separately as
+[ifa/issues/053](../ifa/issues/053-tuple-unpack-target-heterogeneous-arity-segfault.md)
+since it's a distinct code path (`emit_assign_to_target`'s
+destructuring branch) with its own not-yet-found root cause,
+confirmed C-backend-specific (the isolated repro runs correctly
+under `-b`). `plcfrs.py` itself still shows the same violation and
+still segfaults on *both* backends even though the isolated 053
+repro is C-only -- the real program's fuller complexity hits at
+least one more unisolated manifestation of this general family.
+Full regression clean throughout: `test_pyc.py` and `PYC_FLAGS=-b
+test_pyc.py` both 212/212, `ifa`'s `make test` all phases clean.
