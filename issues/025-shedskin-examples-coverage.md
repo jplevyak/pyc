@@ -2045,12 +2045,16 @@ already-committed `tests/tuple_arity_union.py` during this fix,
 fixed same-turn). New test:
 `tests/tuple_unpack_target_arity_union.py` (the issue's exact repro,
 both backends). Full regression clean: `test_pyc.py` and
-`PYC_FLAGS=-b test_pyc.py` both 212/212, `ifa`'s `make test` all
-phases clean, zero regressions in the shedskin corpus sweep (three
-examples -- `dijkstra2`, `lz2`, `pygmy` -- newly progress from
-`PYC_FAIL` to compiling/running; `plcfrs` itself stays `PYC_FAIL`,
-matching its pre-existing baseline, since the fix doesn't touch its
-remaining separate gap, see below).
+`PYC_FLAGS=-b test_pyc.py` both 213/213 (the new test included),
+`ifa`'s `make test` all phases clean, zero regressions in the
+shedskin corpus sweep (three examples -- `dijkstra2`, `lz2`,
+`plcfrs` -- newly progress from `PYC_FAIL` to compiling; see below
+for `plcfrs`'s specific outcome. An earlier sweep taken while the
+now-reverted `set.py` change below was still present had also shown
+`pygmy` improving -- re-swept against the final, `set.py`-reverted
+state and confirmed `pygmy` is untouched by this fix, unchanged at
+`PYC_FAIL rc=139`; that was this fix's misattribution, corrected
+here and in ifa/issues/053 directly).
 
 While re-verifying `plcfrs.py` itself against this fix, found
 `set` has no `__sub__`/difference operator at all -- a plain missing
@@ -2071,8 +2075,16 @@ including all the unrelated integer arithmetic. **Reverted** (`git
 checkout -- __pyc__/08_set.py`) rather than shipped with a live
 compiler-crash regression; filed as
 [ifa/issues/055](../ifa/issues/055-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)
-with the full bisection trail. `set.__sub__` remains unimplemented;
-`plcfrs.py` remains `PYC_FAIL` (matching its pre-this-session
-baseline, not a regression -- 053's fix is a genuine, isolated,
-independently-verified improvement, just not sufficient on its own to
-unblock the full program).
+with the full bisection trail. `set.__sub__` remains unimplemented.
+
+With `__pyc__/08_set.py` reverted (the actual committed state),
+`plcfrs.py` itself does move -- from `PYC_FAIL rc=1` (compiler
+rejects it outright) to `RUN_FAIL rc=134` (compiles successfully,
+same degraded-type diagnostics at line 591 as before via the
+`runtime_errors` salvage, but the *generated binary* now aborts at
+runtime on `assert(!"runtime error: matching function not found")`
+instead of the compiler itself crashing). A real, if partial,
+improvement from 053's fix alone -- `plcfrs.py` isn't fully unblocked
+(that still needs `set.__sub__`, i.e. ifa/issues/055, plus whatever
+underlies the line-591 violation itself), but it's no longer a
+compile-time failure.
