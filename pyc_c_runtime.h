@@ -841,35 +841,46 @@ inline char *_CG_char_from_string(void *s, int i) {
 // self.__getitem__(slice(i,j,s)) fallback, which no __getitem__
 // actually handles either (it always ends up passing the slice
 // *object* itself where an int index is expected). Mirrors
-// _CG_list_getslice_internal's negative-index/clamp/step logic, but
-// direct on the length-prefixed string buffer instead of a list's
-// element array.
+// _CG_list_getslice_internal's clamp/step logic, but direct on the
+// length-prefixed string buffer instead of a list's element array.
 //
-// Positive step only: a negative step (`s[::-1]`) needs different
-// clamping (default l/h flip, iterate backward) that
-// _CG_list_getslice_internal doesn't implement either -- confirmed a
-// pre-existing, separate bug (`a[::-1]` on a plain list hangs, not
-// just wrong output), left untouched here rather than expanded
-// into. No corpus caller of this function uses a non-1 or negative
-// step.
+// An omitted bound (INT_MIN for lower, INT_MAX for upper -- see the
+// frontend's int64_constant(INT_MIN)/int64_constant(INT_MAX)
+// defaults, python_ifa_build_if1.cc) needs a different real default
+// depending on the step's sign: `s[::-1]`'s omitted lower/upper are
+// len-1/before-0, not the positive-step 0/len. Mirrors CPython's
+// PySlice_GetIndicesEx. A negative step with EXPLICIT bounds also
+// clamps differently on overflow (out-of-range lands on len-1/-1,
+// not len/0) -- confirmed the previous version's positive-step-only
+// clamping made `s[::-1]` compute a negative element count that,
+// assigned to the (unsigned) list-length header elsewhere
+// (_CG_list_getslice_internal shares this same shape), wrapped to a
+// huge value and read/printed as a practically-infinite loop, not
+// just wrong output.
 inline char *_CG_string_getslice(const char *s, int32 l, int32 h, int32 step) {
   int32 len = (int32)_CG_string_len(s);
-  if (l > len) l = len;
-  if (l < 0) {
-    l = len + l;
-    if (l < 0) l = 0;
+  if (!step) step = 1;
+  if (l == INT32_MIN) {
+    l = step < 0 ? len - 1 : 0;
+  } else if (l < 0) {
+    l += len;
+    if (l < 0) l = step < 0 ? -1 : 0;
+  } else if (l >= len) {
+    l = step < 0 ? len - 1 : len;
   }
-  if (h > len) h = len;
-  if (h < 0) {
-    h = len + h;
-    if (h < 0) h = 0;
+  if (h == INT32_MAX) {
+    h = step < 0 ? -1 : len;
+  } else if (h < 0) {
+    h += len;
+    if (h < 0) h = step < 0 ? -1 : 0;
+  } else if (h >= len) {
+    h = step < 0 ? len - 1 : len;
   }
-  if (l > h) h = l;
-  // Ceiling division: a positive-step slice over [l, h) has
-  // ceil((h-l)/step) elements, not the floor _CG_list_getslice_internal
-  // uses (confirmed separately wrong there too, e.g. an 11-element
-  // list's [::2] should yield 6 elements, not 5).
-  int32 n = step > 0 ? (h - l + step - 1) / step : 0;
+  int32 n;
+  if (step > 0)
+    n = l < h ? (h - l + step - 1) / step : 0;
+  else
+    n = l > h ? (l - h + (-step) - 1) / (-step) : 0;
   if (n < 0) n = 0;
   char *x = _CG_string_alloc(n);
   if (n) {
@@ -998,21 +1009,40 @@ static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size
   return x;
 }
 
+// See _CG_string_getslice's comment (same file) for the sentinel
+// (INT_MIN/INT_MAX omitted-bound) and negative-step algorithm this
+// mirrors -- CPython's PySlice_GetIndicesEx. Also fixes a latent
+// signed/unsigned bug in the old clamp (`len` was uint32, so `l >
+// len` on a negative int32 `l` promoted `l` to a huge unsigned value
+// first, comparing true and clamping `l` to `len` *before* the
+// negative-index branch below ever ran -- `a[-3:]` on a 5-element
+// list returned `[]` instead of the last 3 elements, confirmed
+// separately broken from the missing negative-step support).
 static inline _CG_list _CG_list_getslice_internal(_CG_list v, uint32 size, int32 l, int32 h, int32 s) {
-  uint32 len = _CG_prim_len(0, v);
-  if (l > len) l = len;
-  if (l < 0) {
-    l = len + l;
-    if (l < 0) l = 0;
+  int32 len = (int32)_CG_prim_len(0, v);
+  if (!s) s = 1;
+  if (l == INT32_MIN) {
+    l = s < 0 ? len - 1 : 0;
+  } else if (l < 0) {
+    l += len;
+    if (l < 0) l = s < 0 ? -1 : 0;
+  } else if (l >= len) {
+    l = s < 0 ? len - 1 : len;
   }
-  if (h > len) h = len;
-  if (h < 0) {
-    h = len + h;
-    if (h < 0) h = 0;
+  if (h == INT32_MAX) {
+    h = s < 0 ? -1 : len;
+  } else if (h < 0) {
+    h += len;
+    if (h < 0) h = s < 0 ? -1 : 0;
+  } else if (h >= len) {
+    h = s < 0 ? len - 1 : len;
   }
-  if (l > h) h = l;
-  int n = h - l;
-  n = n / s;
+  int32 n;
+  if (s > 0)
+    n = l < h ? (h - l + s - 1) / s : 0;
+  else
+    n = l > h ? (l - h + (-s) - 1) / (-s) : 0;
+  if (n < 0) n = 0;
   _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * n + SIZEOF_LIST_HEADER));
   _CG_list_len(x) = n;
   _CG_list_total_len(0, x) = n;
@@ -1021,7 +1051,7 @@ static inline _CG_list _CG_list_getslice_internal(_CG_list v, uint32 size, int32
     if (s == 1)
       memcpy(x, ((char *)_CG_list_ptr(v)) + l * size, n * size);
     else
-      for (int i = 0; i < n; i++) memcpy(((char *)x) + i * size, ((char *)_CG_list_ptr(v)) + (l + i) * size, size);
+      for (int32 i = 0; i < n; i++) memcpy(((char *)x) + i * size, ((char *)_CG_list_ptr(v)) + (l + (int32)i * s) * size, size);
   }
   return x;
 }

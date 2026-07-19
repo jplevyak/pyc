@@ -157,19 +157,40 @@ void *_CG_list_mult(void *l1, int64 k, int64 size) {
   return x;
 }
 
+// See pyc_c_runtime.h's _CG_list_getslice_internal/_CG_string_getslice
+// for the sentinel (INT_MIN/INT_MAX omitted-bound) and negative-step
+// algorithm this mirrors -- CPython's PySlice_GetIndicesEx. `s[::-1]`
+// used to compute a negative element count that, stored into the
+// (unsigned) list-length header, wrapped to a huge value and hung on
+// read/print.
 void *_CG_list_getslice(void *v, int64 size, int64 l_in, int64 h_in,
                          int64 s) {
   int l = (int)l_in, h = (int)h_in;
-  unsigned int len = _PYC_list_len(v);
-  if (l > (int)len) l = (int)len;
-  if (l < 0) { l = (int)len + l; if (l < 0) l = 0; }
-  if (h > (int)len) h = (int)len;
-  if (h < 0) { h = (int)len + h; if (h < 0) h = 0; }
-  if (l > h) h = l;
-  int span = h - l;
+  int len = (int)_PYC_list_len(v);
   int sv = (int)s;
   if (sv == 0) sv = 1;
-  int n = span / sv;
+  if (l == INT32_MIN) {
+    l = sv < 0 ? len - 1 : 0;
+  } else if (l < 0) {
+    l += len;
+    if (l < 0) l = sv < 0 ? -1 : 0;
+  } else if (l >= len) {
+    l = sv < 0 ? len - 1 : len;
+  }
+  if (h == INT32_MAX) {
+    h = sv < 0 ? -1 : len;
+  } else if (h < 0) {
+    h += len;
+    if (h < 0) h = sv < 0 ? -1 : 0;
+  } else if (h >= len) {
+    h = sv < 0 ? len - 1 : len;
+  }
+  int n;
+  if (sv > 0)
+    n = l < h ? (h - l + sv - 1) / sv : 0;
+  else
+    n = l > h ? (l - h + (-sv) - 1) / (-sv) : 0;
+  if (n < 0) n = 0;
   size_t sz = (size_t)size;
   char *base = (char *)GC_MALLOC(sz * (n > 0 ? n : 0) + _CG_SIZEOF_LIST_HDR);
   void *x = base + _CG_SIZEOF_LIST_HDR;

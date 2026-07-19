@@ -3157,7 +3157,21 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             // slice: int_val encodes has_lower(bit0)|has_upper(bit1); last child may be PY_slice (step/sliceop)
             bool has_lower = sub_node->is_int ? (sub_node->int_val & 1) : false;
             bool has_upper = sub_node->is_int ? (sub_node->int_val & 2) : false;
-            Sym *l = int64_constant(0), *u = int64_constant(INT_MAX), *s = nullptr;
+            // An omitted bound's real default depends on the step's
+            // sign (`a[::-1]` needs lower=len-1/upper=before-0, not
+            // the positive-step lower=0/upper=len) -- the step isn't
+            // always a compile-time constant, so these can't be
+            // resolved here. INT_MIN/INT_MAX are sentinels the
+            // getslice runtime helpers (_CG_list_getslice_internal,
+            // _CG_string_getslice) resolve against the actual
+            // (possibly runtime) step's sign; a real slice bound of
+            // exactly INT_MIN/INT_MAX is never legitimately reachable
+            // (they'd already clamp to a real index), matching how
+            // INT_MAX was already used as the upper sentinel before
+            // this fix -- only the lower default's sentinel changed
+            // (was a plain 0, indistinguishable from a user-supplied
+            // 0 and always wrong for a negative step).
+            Sym *l = int64_constant(INT_MIN), *u = int64_constant(INT_MAX), *s = nullptr;
             int cidx = 0;
             // Check if last child is PY_slice (the sliceop/step)
             bool has_step = (sub_node->children.n > 0 &&

@@ -1770,3 +1770,77 @@ found in. `minpng` unchanged (`PYC_FAIL`, now for the unrelated
 suite clean: `test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` both
 209/209 (208 prior + `string_slicing` new), `ifa`'s `make test` all
 phases clean.
+
+### Negative-step slicing hang fixed -- a chain of three separate bugs (2026-07-19)
+
+Follow-up on a gap flagged (not filed) while fixing `string_slicing`
+above: `a[::-1]` on a plain list hangs, not just wrong output. Dug
+in as its own fix. Turned out to be three separate, independently
+confirmed bugs, only the first of which is specific to negative
+step -- the other two are general slicing/constant-folding bugs this
+just happened to be the first thing to exercise with a large-enough
+value to expose.
+
+**Bug 1: no real negative-step support.** `_CG_list_getslice_internal`
+and the new `_CG_string_getslice` (see the previous entry) always
+used the positive-step defaults (omitted lower→0, omitted upper→len)
+regardless of the actual step's sign. For `a[::-1]`, that computes a
+*negative* element count (`h - l` with `h=len, l=0` divided by
+`s=-1`), which gets stored into the list's length header -- an
+*unsigned* field -- wrapping to a huge value. Reading/printing that
+"list" afterward is practically an infinite loop, not merely wrong
+output. Fixed by giving the frontend's omitted-bound sentinel real
+meaning: `l`'s default changed from `int64_constant(0)` to
+`int64_constant(INT_MIN)` (`u`'s default was already `INT_MAX`,
+already usable as a sentinel), and rewrote both getslice runtime
+helpers (plus the LLVM backend's separate `_CG_list_getslice` in
+`pyc_runtime.c`, three call sites total) to resolve `INT_MIN`/
+`INT_MAX` against the actual (possibly runtime-variable) step's sign,
+mirroring CPython's `PySlice_GetIndicesEx` algorithm.
+
+**Bug 2 (found while fixing bug 1): a signed/unsigned comparison bug
+in `_CG_list_getslice_internal`,** unrelated to step direction. `len`
+was `uint32`; comparing a negative `int32 l` against it (`l > len`)
+promotes `l` to a huge unsigned value via the usual arithmetic
+conversions, comparing true and clamping `l` to `len` *before* the
+`if (l < 0)` negative-index branch ever ran. `a[-3:]` on a 5-element
+list returned `[]` instead of the last three elements -- confirmed
+independently of the step-direction bug (reproduces with plain
+`a[-3:]`, step=1). Fixed by making the comparisons signed throughout
+(`int32 len` instead of `uint32`).
+
+**Bug 3 (found while verifying bug 1's fix): `int64_constant()`
+silently corrupts negative values.** `Immediate`
+(`ifa/if1/num.h`) is a union of `v_int32`/`v_int64`/etc;
+`int_constant_internal` (`ifa/if1/sym.cc`) only ever wrote
+`v_int32`, regardless of whether the caller asked for an int32 or
+int64 constant. For `int64_constant(INT_MIN)` (the new sentinel from
+bug 1's fix), codegen reads the constant back via `v_int64` -- whose
+upper 32 bits were never touched, so it saw `0x00000000_80000000`
+(2147483648, `INT_MIN`'s bit pattern with zero sign-extension)
+instead of the correctly sign-extended `-2147483648`. Caught by
+clang's own `-Wconstant-conversion` warning breaking the compile-time
+output-comparison gate (`test_pyc.py`'s "COMPILE-OUT diff" check,
+not a runtime symptom) rather than by inspection -- worth noting as
+a case where the test harness's strict-empty-stdout convention
+caught a real, unrelated latent bug essentially for free. Fixed by
+writing the wider union member (`v_int64 = n`, sign-extends
+correctly in C++); on this codebase's assumed little-endian
+platforms the lower 4 bytes are unaffected, so `int32_constant`
+callers reading `v_int32` back still see the correct value.
+
+This is exactly the kind of thing that could have been silently
+wrong elsewhere already -- `int64_constant()` is called throughout
+the frontend, and any call site passing a value >= 2^31 or negative
+would have hit the same corruption. Worth a scan for other affected
+call sites if this class of bug recurs.
+
+New test `tests/negative_step_slicing.py` (all three bugs' repros,
+list and string, both backends, verified byte-identical to CPython).
+Corpus effect: byte-identical sweep before/after -- none of the
+currently-tracked examples' pass/fail bucket changes at this
+coarse-grained level, but this is a real, thoroughly-verified
+correctness fix (21 slicing cases checked against CPython output
+directly, not just "does it compile"). Full regression suite clean:
+`test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` both 210/210 (209 prior
++ `negative_step_slicing` new), `ifa`'s `make test` all phases clean.
