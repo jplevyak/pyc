@@ -2243,3 +2243,101 @@ unaffected. This is a symptom mitigation, not a fix: `sorted()` +
 `dict.items()` combined still cannot compile, it just fails fast and
 diagnosably now instead of hanging/OOMing. The actual root cause
 (from either 055 or 057) remains open for whoever picks it up next.
+
+### RUN_FAIL's raw-crash bucket triaged: 5 examples, 5 distinct causes, 1 real codegen bug found and fixed (2026-07-19)
+
+Picked up the 5 shedskin examples with no runtime-error assertion at
+all (`block`, `kanoodle`, `mastermind2`, `neural1`, `rsync` --
+`SIGSEGV`/`SIGILL` with zero diagnostic, distinct from the much
+larger "getter not resolved"/"matching function not found" bucket
+that already degrades gracefully). `gdb` remains unreliable in this
+sandbox (confirmed again: hangs even attached to `/bin/echo`);
+`valgrind` (already wired into `test_pyc.py` via its `VALGRIND` env
+var) turned out to be the right tool throughout -- precise fault
+addresses and call stacks with no live-debugger flakiness.
+
+Five distinct root causes, no shared thread except "no guard emitted
+before undefined behavior":
+
+- **`block`**: not a bug. `valgrind` showed a genuine stack overflow
+  in `list.sort`'s comparison chain -- `iterate()` (Huffman tree
+  construction) legitimately recurses once per input symbol, and the
+  test config (`N=12`) generates ~4096 symbols. The original Python
+  needs `sys.setrecursionlimit(10000)` for exactly this reason;
+  pyc's generated C frames are evidently larger per call than
+  CPython's, so ~4096 levels exceeds the default 8MB thread stack
+  where CPython's own recursion-limited interpreter loop wouldn't.
+  Not investigated further -- a resource limit, not a logic bug.
+- **`kanoodle`**: a real, previously-unknown codegen bug -- see
+  [ifa/issues/058](../ifa/issues/058-polymorphic-classtag-dispatch-drops-extra-arguments.md)
+  for the full account. Fixed on both backends.
+- **`mastermind2`**: already tracked (the `int`/`float` mixed `-=`
+  gap found during the dict-methods work above); no longer a runtime
+  crash at all, now a clean `PYC_FAIL`.
+- **`neural1`**: not a pyc bug. The test file does `open('jets.txt',
+  'wb')` then writes a `str` to it -- confirmed directly that real
+  CPython raises `TypeError: a bytes-like object is required, not
+  'str'` at that exact line (Python 2-to-3 incompatibility in the
+  shedskin example itself, predating this investigation). pyc's file
+  I/O is more lenient and doesn't enforce the str/bytes distinction
+  there, so execution runs past the point real Python would already
+  have halted, eventually hitting undefined behavior downstream (a
+  `dict.__getitem__` missing-key fallback -- `07_dict.py`'s
+  `return self._vals[0]` on a lookup miss -- reading out-of-bounds
+  because the data that should have populated the dict never
+  round-tripped through the broken file write/read correctly). Not a
+  pyc fix; would need changing the vendored shedskin test data,
+  out of scope (`shedskin_examples/` is a subtree, see
+  `[[shedskin-subtree]]` memory).
+- **`rsync`**: a distinct codegen gap, not chased to a fix -- FA
+  marks `blockchecksums`'s loop body dead (a downstream "has no
+  type" violation), and dead-code elimination empties the loop's `if`
+  branch entirely with **no runtime-error guard at all**: no `assert`,
+  no `goto`, the function just falls off its end. Same general
+  "salvage-reachable site missing a guard" family as
+  [ifa/issues/056](../ifa/issues/056-degraded-index-type-raw-c-compile-error.md),
+  different specific location (dead loop bodies via `mark_live_code`,
+  not an index/getter site). Filed as a known gap, not fixed this
+  round -- lower urgency than `kanoodle`'s bug since it degrades to
+  "undefined behavior on an already-broken program" rather than
+  affecting otherwise-correct code.
+
+**The `kanoodle` fix** (`ifa/codegen/cg.cc` and its LLVM-backend
+sibling in `cg_emit_llvm.cc`, both same-day, same root cause): the
+polymorphic classtag method-dispatch branch -- ordinary `obj.method(args)`
+where `method` is inherited (not overridden) by multiple concrete
+classes, called on a receiver whose static type is a genuine union --
+hardcoded its emitted call to pass only `self`, silently dropping
+every other argument regardless of the method's real signature. Both
+backends' sibling branches for the *other* dispatch shapes (a
+None-receiver candidate, bare callable values, untagged single-
+candidate receivers) already looped over the candidate's live formal
+positions correctly; only this one, the most common shape, never got
+that treatment. Root-caused via `valgrind` pinpointing the exact
+faulting instruction and cross-referencing the generated C directly
+(the missing argument, `[col, row]`, was visibly computed into a
+temp and then never passed at the call site) -- no gdb needed. Fixed
+by tracking each dispatch candidate's `Fun*` alongside its class/slot
+and building the real argument list (mirroring the already-correct
+sibling branch in each file) instead of hardcoding a self-only
+signature.
+
+Verified: `kanoodle.py` moves from `RUN_FAIL rc=139` (raw segfault,
+zero diagnostic) to `RUN_FAIL rc=134` (a clean, salvage-driven
+assertion on a *separate*, pre-existing, already-documented
+violation elsewhere in the program -- real progress, not a new
+failure). Full `test_pyc.py`/`PYC_FLAGS=-b test_pyc.py` 216/216 both
+(215 prior + new test), `ifa`'s `make test` all phases clean, full
+shedskin corpus sweep zero new diffs beyond `kanoodle`'s own
+improvement. New test: `tests/poly_dispatch_shared_method_extra_args.py`
+-- verified correct against CPython on both backends, though (noted
+honestly in the test's own comment and in issue 058) it doesn't
+reliably discriminate the bug via crash/wrong-output at this scale --
+the missing argument happens to read back the right value by ABI/
+register-allocation luck in this minimal shape at both default and
+`-O3` compile settings; `kanoodle.py` itself remains the reliable
+real-world repro, verified via the corpus sweep. This is a genuinely
+impactful class of bug fixed, not a corpus-example-specific patch:
+any inherited (non-overridden) polymorphic method call taking
+arguments beyond `self` was silently broken, undefined-behavior-wise,
+on both backends -- an ordinary OOP shape, not an edge case.
