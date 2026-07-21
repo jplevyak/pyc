@@ -1516,13 +1516,18 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
     // untouched, mirroring PEP 634's own rule that mapping-pattern
     // keys must be literals/value patterns, never captures).
     //
-    // `**rest` (PEP 634's rest-of-mapping capture) isn't supported:
-    // python.g's dictorsetmaker has no `'**' NAME` alternative at all
-    // (real Python's dict-merge literal, `{**other}`, isn't a pyc
-    // feature either), so it fails to parse with an ordinary syntax
-    // error rather than reaching this code -- same "doesn't parse,
-    // so at least loud" deferral as sequence patterns' `*rest`.
+    // `**rest` (issues/023): a trailing PY_dstar_arg -- odd child
+    // count signals its presence (python.g's dict_rest_arg always
+    // collects as exactly one child, after n_pairs*2 key/value
+    // children). Real Python restricts it to a real capture name,
+    // never `_` (confirmed via `ast.parse`: `**_` is itself a
+    // SyntaxError, unlike sequence patterns' `*_`) -- checked here
+    // since pyc's own grammar doesn't structurally distinguish `_`
+    // from any other name the way it can't for star patterns either.
+    bool has_rest = pattern->children.n % 2 == 1;
     int n_pairs = pattern->children.n / 2;
+    if (has_rest && !strcmp(pattern->children[n_pairs * 2]->children[0]->str_val, "_"))
+      fail("error line %d: mapping pattern's '**' capture must be a real name, not '_'", ctx.lineno);
     Vec<Sym *> keys;
     for (int j = 0; j < n_pairs; j++) {
       PyDAST *key = pattern->children[j * 2];
@@ -1542,7 +1547,7 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
     // would be a runtime KeyError in the underlying dict, not
     // "doesn't match").
     return guarded_bool(is_map, code, case_ast, [&](Code **then_code) -> Sym * {
-      if (n_pairs == 0) {
+      if (n_pairs == 0 && !has_rest) {
         // `case {}:` -- no keys to check, matches any mapping.
         return guard_eval ? (*guard_eval)(then_code) : sym_true;
       }
@@ -1552,7 +1557,7 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
         call_method(then_code, case_ast, subject, make_symbol("__contains__"), has, 1, keys[j]);
         all_present = all_present ? combine_bool(all_present, has, "__and__", then_code, case_ast) : has;
       }
-      return guarded_bool(all_present, then_code, case_ast, [&](Code **vals_code) -> Sym * {
+      return guarded_bool(all_present ? all_present : sym_true, then_code, case_ast, [&](Code **vals_code) -> Sym * {
         Sym *combined = nullptr;
         for (int j = 0; j < n_pairs; j++) {
           PyDAST *val_pat = pattern->children[j * 2 + 1];
@@ -1560,6 +1565,56 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
           call_method(vals_code, case_ast, subject, sym___getitem__, item, 1, keys[j]);
           Sym *val_matched = build_pattern_match(val_pat, item, vals_code, case_ast, ctx);
           combined = combined ? combine_bool(combined, val_matched, "__and__", vals_code, case_ast) : val_matched;
+        }
+        if (has_rest) {
+          // rest = a NEW dict of every (k, v) in subject not already
+          // claimed by an explicit key pattern above -- always a
+          // plain dict, even from a dict SUBCLASS subject (confirmed
+          // against real CPython), mirroring sequence patterns'
+          // "*rest is always a plain list" rule. dict is a real class
+          // (constructed via a constructor call, unlike list/tuple's
+          // low-level sym_make primitive -- same shape build_if1_pyda's
+          // own PY_dict literal case above uses).
+          Code *ctor = if1_send1(if1, vals_code, case_ast);
+          if1_add_send_arg(if1, ctor, dict_cls);
+          Sym *rest_dict = new_sym(case_ast);
+          if1_add_send_result(if1, ctor, rest_dict);
+          // excluded = [key0, key1, ...] -- the explicit pattern keys,
+          // already evaluated above -- checked per iterated key via
+          // list.__contains__ (issues/008). Same build shape as an
+          // ordinary list literal (build_if1_pyda's PY_list case).
+          Code *mk_excluded = if1_send1(if1, vals_code, case_ast);
+          if1_add_send_arg(if1, mk_excluded, sym_primitive);
+          if1_add_send_arg(if1, mk_excluded, sym_make);
+          if1_add_send_arg(if1, mk_excluded, sym_list);
+          for (int j = 0; j < n_pairs; j++) if1_add_send_arg(if1, mk_excluded, keys[j]);
+          Sym *excluded = new_sym(case_ast);
+          if1_add_send_result(if1, mk_excluded, excluded);
+          // for k in subject: if not excluded.__contains__(k): rest[k] = subject[k]
+          Sym *iter = new_sym(case_ast);
+          if1_send(if1, vals_code, 2, 1, sym___iter__, subject, iter)->ast = case_ast;
+          Code *cond = 0, *body = 0;
+          Sym *cond_var = new_sym(case_ast);
+          call_method(&cond, case_ast, iter, sym___pyc_more__, cond_var, 0);
+          Sym *k = new_sym(case_ast);
+          call_method(&body, case_ast, iter, sym___next__, k, 0);
+          Sym *is_excluded = new_sym(case_ast);
+          call_method(&body, case_ast, excluded, make_symbol("__contains__"), is_excluded, 1, k);
+          Sym *not_excluded = new_sym(case_ast);
+          call_method(&body, case_ast, is_excluded, make_symbol("__not__"), not_excluded, 0);
+          Code *copy_body = 0;
+          Sym *v = new_sym(case_ast);
+          call_method(&copy_body, case_ast, subject, sym___getitem__, v, 1, k);
+          call_method(&copy_body, case_ast, rest_dict, sym___setitem__, new_sym(case_ast), 2, k, v);
+          if1_if(if1, &body, 0, not_excluded, copy_body, 0, 0, 0, 0, case_ast);
+          if1_loop(if1, vals_code, if1_alloc_label(if1), if1_alloc_label(if1), cond_var, 0, cond, 0, body, case_ast);
+          // Bind rest_dict to the **rest capture name -- reuse the
+          // ordinary bare-name capture-pattern branch directly (same
+          // trick sequence patterns' star capture uses): always
+          // matches, folds into `combined` uniformly.
+          PyDAST *rest_name = pattern->children[n_pairs * 2]->children[0];
+          Sym *rest_matched = build_pattern_match(rest_name, rest_dict, vals_code, case_ast, ctx);
+          combined = combined ? combine_bool(combined, rest_matched, "__and__", vals_code, case_ast) : rest_matched;
         }
         Sym *result = combined ? combined : sym_true;
         if (guard_eval) {
@@ -3865,6 +3920,25 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
 
     case PY_dict: {
+      // issues/023: dictorsetmaker's grammar now also accepts a
+      // trailing dict_rest_arg element (needed for mapping-pattern
+      // `**rest` capture -- see build_pattern_match's PY_dict case,
+      // which intercepts pattern position entirely before reaching
+      // here). An ordinary dict LITERAL with a `**other` element
+      // (`{**other, "k": 1}`, PEP 448 dict-merge) is a side effect of
+      // sharing that grammar rule, not a supported pyc feature --
+      // fail cleanly rather than silently DROPPING it (the flat-
+      // literal loop below only walks children in pairs, so a
+      // trailing odd child would otherwise just be ignored, an
+      // observably-wrong dict with a missing merge). No assignment-
+      // target collision risk here the way list/tuple literals had
+      // (issue 023's star-capture landing) -- a dict literal is
+      // never a legal assignment target in Python at all. Excludes
+      // the comprehension shape (3 children: key, value, PY_comp_for
+      // -- also an odd count, but unrelated).
+      bool is_comp = n->children.n == 3 && n->children[2]->kind == PY_comp_for;
+      if (!is_comp && n->children.n % 2 == 1)
+        fail("error line %d: dict literal unpacking ('**expr' inside '{...}') is not yet supported", ctx.lineno);
       // Create dict instance by calling dict() constructor
       if (!ast->sym) fail("error line %d, 'dict' type not found (is __pyc__/07_dict.py loaded?)", n->line);
       Code *ctor = if1_send1(if1, &ast->code, ast);
@@ -3872,7 +3946,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *dict_inst = new_sym(ast);
       ast->rval = dict_inst;
       if1_add_send_result(if1, ctor, dict_inst);
-      if (n->children.n == 3 && n->children[2]->kind == PY_comp_for) {
+      if (is_comp) {
         // Dict comprehension: {key: value for target in iter [if cond]}.
         // build_syms_pyda gave this its own scope (matching
         // PY_listcomp/PY_set); reenter it here the same way PY_listcomp

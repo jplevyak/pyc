@@ -75,9 +75,12 @@ conventions are the same; the only difference is location.
   (`case [a, *rest]:`, reusing issue 024's `star_expr` grammar node in
   `listmaker`/`testlist_comp` -- with a defensive `fail()` added for
   the ordinary, unsupported list/tuple-literal-unpacking shape (PEP
-  448) that grammar sharing also newly parses). `**rest` in mapping
-  patterns remains explicitly deferred (fails to parse, not a silent
-  trap).
+  448) that grammar sharing also newly parses), and mapping-pattern
+  `**rest` (`case {"k": v, **rest}:`, a new `dictorsetmaker` grammar
+  rule; real Python structurally limits `**rest` to one, last, never
+  `_` — pyc's grammar enforces the first two for free, `build_pattern_match`
+  checks the third). No pattern-matching features remain deferred;
+  only the `case None:`-combination runtime limitation above is left.
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected

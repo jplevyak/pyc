@@ -1,18 +1,24 @@
 # Issue 023: Structural pattern matching (`match`/`case`, PEP 634)
 
-**Status:** open — every PEP 634 pattern KIND is implemented and
-verified byte-identical to real `python3` output on both backends
-(all landed 2026-07-12; positional class patterns and sequence-pattern
-star capture both added 2026-07-21; re-verified same day, all tests
-below pass on both backends). What remains is one narrow,
-explicitly-deferred feature and one runtime-crash limitation, both
-under "Gaps" below.
+**Status:** open — every PEP 634 pattern KIND, INCLUDING all three
+"rest capture" forms (`*rest` in sequence patterns, `**rest` in
+mapping patterns, positional class patterns via `__match_args__`),
+is implemented and verified byte-identical to real `python3` output
+on both backends (base landed 2026-07-12; positional class patterns,
+sequence-pattern star capture, and mapping-pattern `**rest` all added
+2026-07-21; re-verified same day, all tests below pass on both
+backends). No pattern-matching features remain deferred; what's left
+is one runtime-crash limitation, under "Gaps" below.
 **Affects:** `python.g` (`match_stmt`/`case_block`/`case_guard`
 grammar, soft-keyword `match`/`case`; `listmaker`/`testlist_comp` now
 accept `testlist_item` -- issue 024's `star_expr`/`PY_star_expr` --
-instead of a bare `test`), `python_ifa_build_syms.cc`
-(`mark_pattern_captures`, `collect_match_args`, `gen_class_pyda`),
-`python_ifa_build_if1.cc` (`build_match_pyda`, `build_pattern_match`,
+instead of a bare `test`; `dictorsetmaker` now accepts a trailing
+`dict_rest_arg` -- a `PY_dstar_arg`-producing rule dedicated to this
+use, not the existing `dstar_arg` used by `**kwargs` parameters,
+whose optional type-annotation clause doesn't belong here),
+`python_ifa_build_syms.cc` (`mark_pattern_captures`,
+`collect_match_args`, `gen_class_pyda`), `python_ifa_build_if1.cc`
+(`build_match_pyda`, `build_pattern_match`,
 `PycCompiler::building_assign_target`), `ifa/if1/sym.h`
 (`Sym::match_args`).
 
@@ -115,10 +121,88 @@ Two related issues caught and fixed before/while landing this:
   captures above. Caught the same way: a shadowing test, covered as a
   permanent regression test in `match_seq_star.py`.
 
+**`**rest` in mapping patterns** (`case {"k": v, **rest}:`, added
+2026-07-21): `python.g`'s `dictorsetmaker` (the `{...}` dict/set-
+LITERAL grammar -- match/case patterns ride this same grammar) gets
+a new `dict_rest_arg: '**' NAME` rule, collected as one trailing
+child after the existing flat key/value pairs -- an ODD total child
+count signals "last child is the rest capture" to every consumer
+(mirrors how `new_pyast_collect`'s flat DFS already produces
+alternating key/value pairs for the plain form). Real Python
+structurally restricts `**rest` to at most one, and only last
+(confirmed via `ast.parse`: `{**a, "k":1}` and `{**a, **b}` are both
+grammar-level `SyntaxError`s, not semantic checks) -- pyc's grammar
+enforces the same restriction for free, unlike sequence patterns'
+star (whose more permissive host grammar needed an explicit "at most
+one" runtime check). One thing pyc's grammar does NOT structurally
+prevent that real Python's does: `**_` (a wildcard rest, illegal in
+real Python -- confirmed via `ast.parse`, unlike sequence patterns'
+`*_`) -- `build_pattern_match` explicitly `fail()`s on it.
+`build_pattern_match`'s mapping-pattern branch: the existing
+per-key `__contains__`/`__getitem__`/recursive-match logic for the
+explicit keys is unchanged; when `**rest` is present, builds a NEW
+`dict()` (a real constructor call, like the existing dict/set literal
+building -- unlike list/tuple's low-level `sym_make` primitive),
+iterates `subject`'s keys via its own `__iter__`/`__pyc_more__`/
+`__next__` protocol, and copies every key not already claimed by an
+explicit pattern (checked against a small `excluded` list of the
+already-evaluated pattern keys via `list.__contains__`, issue 008)
+into the new dict -- always a plain `dict`, even from a `dict`
+SUBCLASS subject, confirmed against real CPython, mirroring sequence
+patterns' "*rest is always a plain list" rule. The built dict binds
+to the `**rest` name by reusing `build_pattern_match`'s own bare-name
+capture-pattern branch directly, same trick the sequence-pattern star
+capture uses. No FA/codegen changes.
+
+Three related issues caught and fixed while landing this, the first
+two mirroring the star-capture landing's own findings exactly:
+
+- `dictorsetmaker` is also the grammar for ORDINARY dict literal
+  expressions, so this also newly parses `**other` inside a plain
+  `{"k": 1, **other}` (PEP 448 dict-merge) where it used to be a
+  clean syntax error (an ordinary dict literal with `**other` FIRST
+  or in the MIDDLE, e.g. `{**other, "k": 1}`, still doesn't parse --
+  a side effect of the grammar's own "rest must be last" shape, still
+  loud either way). `build_if1_pyda`'s ordinary (non-pattern)
+  `PY_dict` case now explicitly `fail()`s on a trailing
+  `PY_dstar_arg` (careful to exclude the dict-COMPREHENSION shape,
+  `{k: v for ...}`, which is ALSO a 3-child/odd-count AST but
+  unrelated) -- the flat-literal loop below only walks children in
+  pairs, so a trailing rest arg would otherwise be silently DROPPED
+  (an observably-wrong dict missing the merge), not just misread.
+- `mark_pattern_captures` needed a new case for the trailing
+  `**rest` child, same shadowing-bug shape as the sequence-pattern
+  star capture and the positional-class-pattern captures -- caught
+  the same way, via a shadowing test, before it shipped.
+- Unlike the star-capture landing, no `PycCompiler::building_assign_target`-
+  style collision existed to fix here: a dict literal is never a
+  legal assignment target in Python, so there's no analogous
+  "grammar shared with a target-tree prebuild pass" risk.
+
+**Found, not fixed -- a pre-existing dead-code residual, not a new
+logic bug:** compiling two SEPARATE functions that each `case
+{"key": x, **rest}:` against the SAME literal key, where one
+function's captured `x` goes unused in its body, produces a clang
+`-Wunused-value` warning in the generated C (a computed-but-discarded
+`dict._vals[i]` index expression, immediately followed by a hardcoded
+`return 0;`) -- confirmed via the generated C that this is a
+provably-dead residual from FA/codegen determining a SHARED
+`dict.__getitem__` clone's return value unneeded by (at least) one of
+its call sites, the same general shape issue 011 already documented
+("one harmless dead assignment left over," `mark_live_code` computed
+before a later fold) and explicitly left as a low-value residual
+rather than fixing. Confirmed NOT a correctness bug: every
+combination tried (many) produced byte-identical output to real
+`python3` regardless of whether the warning fired. `tests/match_map_star.py`
+avoids the trigger (all captured names are used) rather than
+papering over it with an accepted-output sidecar; not filed as its
+own issue since it's a duplicate of 011's already-accepted class, not
+a new one.
+
 Test coverage (all passing, both backends): `tests/match_basic.py`,
 `match_capture.py`, `match_or.py`, `match_guard.py`, `match_seq.py`,
-`match_seq_star.py`, `match_map.py`, `match_class.py`,
-`match_class_positional.py`, `match_literal_types.py`,
+`match_seq_star.py`, `match_map.py`, `match_map_star.py`,
+`match_class.py`, `match_class_positional.py`, `match_literal_types.py`,
 `match_none.py`.
 
 One lesson from this work worth remembering beyond match/case: FA
@@ -132,16 +216,8 @@ against the narrowed type.
 
 ## Gaps
 
-One explicitly-deferred feature. Fails loudly (parse error) — not
-silent:
-
-- **`**rest` in mapping patterns** (`case {"k": v, **rest}:`) —
-  `python.g`'s `dictorsetmaker` has no `'**' NAME` alternative (real
-  Python's `{**other}` dict-merge literal isn't a pyc feature
-  either).
-
-One runtime-crash limitation, actively guarded against at compile
-time:
+No pattern-matching features remain deferred. One runtime-crash
+limitation, actively guarded against at compile time:
 
 ### `case None:` combined with almost any other pattern crashes at runtime
 
@@ -180,7 +256,7 @@ keeps it from being a correctness hazard meanwhile.
 
 ## What this unblocks
 
-Real Python code using any PEP 634 pattern kind compiles and runs
-correctly on both backends. What's left — one deferred feature and
-one guarded runtime limitation — are both narrow and loud, not
-correctness traps.
+Real Python code using any PEP 634 pattern kind — including all three
+rest-capture forms — compiles and runs correctly on both backends.
+What's left is the one guarded runtime limitation above, itself
+narrow and loud, not a correctness trap.

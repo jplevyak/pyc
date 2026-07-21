@@ -1,0 +1,14 @@
+a= 1 rest= {'b': 2, 'c': 3}
+a= 1 rest= {}
+other
+other
+all: {'x': 1, 'y': 2}
+all: {}
+1 2 {'c': 3, 'd': 4}
+1 2 {}
+big rest 1 {'b': 2, 'c': 3}
+small rest 1 {'b': 2}
+small rest 1 {}
+nested 1 {'b': 2} 99
+bound rest: {'b': 2} x: 1
+outer still: outer_rest_value

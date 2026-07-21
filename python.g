@@ -454,7 +454,24 @@ dictorsetmaker:
     test ':' test comp_for {
       $$.ast = new_pyast_collect(PY_dict, &$n);
     }
-  | test ':' test (',' test ':' test)* ','? {
+  // issues/023: (',' dict_rest_arg)? lets a mapping PATTERN's
+  // `case {"k": v, **rest}:` parse -- match/case patterns ride this
+  // same dict-literal grammar (no dedicated pattern grammar exists).
+  // dict_rest_arg (not dstar_arg, whose optional ': test' annotation
+  // clause belongs to **kwargs parameters, not this) collects as ONE
+  // trailing child; new_pyast_collect's flat DFS otherwise produces
+  // alternating key/value pairs, so an ODD total child count signals
+  // "last child is the rest capture" to every consumer. This also
+  // newly parses `**other` inside an ORDINARY dict literal
+  // (`{**other, "k": 1}`, PEP 448) as a side effect of sharing the
+  // rule -- build_if1_pyda's PY_dict case fails cleanly on a trailing
+  // PY_dstar_arg there since real dict-merge-literal semantics aren't
+  // implemented.
+  | test ':' test (',' test ':' test)* (',' dict_rest_arg)? ','? {
+      $$.ast = new_pyast_collect(PY_dict, &$n);
+    }
+  // issues/023: bare `case {**rest}:` -- no explicit keys at all.
+  | dict_rest_arg ','? {
       $$.ast = new_pyast_collect(PY_dict, &$n);
     }
   | test comp_for {
@@ -464,6 +481,7 @@ dictorsetmaker:
       $$.ast = new_pyast_collect(PY_set, &$n);
     }
   ;
+dict_rest_arg: '**' NAME { $$.ast = new_pyast(PY_dstar_arg, &$n, $1.ast); };
 
 classdef: 'class' NAME (LP testlist? RP)? ':' suite {
   $$.ast = new_pyast_collect(PY_classdef, &$n);

@@ -225,6 +225,14 @@ static void mark_pattern_captures(PyDAST *n) {
     // generic recurse below as a normal read, same as any other
     // expression position.
     for (int i = 0; i + 1 < n->children.n; i += 2) mark_pattern_captures(n->children[i + 1]);
+    // issues/023: `**rest` (a trailing PY_dstar_arg, odd child count
+    // -- see python.g's dict_rest_arg) always binds a fresh capture,
+    // same as sequence patterns' star capture. Unlike a star target,
+    // `**rest` can never be `_` (build_pattern_match rejects it) --
+    // recursing into mark_pattern_captures anyway rather than
+    // special-casing, since its PY_name branch already handles both
+    // `_` and real names correctly regardless.
+    if (n->children.n % 2 == 1) mark_pattern_captures(n->children[n->children.n - 1]->children[0]);
     return;
   }
   if (n->kind == PY_power && n->children.n == 2 && n->children[1]->kind == PY_call) {
