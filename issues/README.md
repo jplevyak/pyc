@@ -71,8 +71,12 @@ conventions are the same; the only difference is location.
   than risk shipping it. Positional class patterns (`case Point(0,
   0):`, matched via a compile-time read-back of `__match_args__`,
   including base-class inheritance and mixing with keyword args) were
-  added **2026-07-21**. `*rest`/`**rest` captures in sequence/mapping
-  patterns remain explicitly deferred (fail to parse, not a silent
+  added **2026-07-21**, along with sequence-pattern star capture
+  (`case [a, *rest]:`, reusing issue 024's `star_expr` grammar node in
+  `listmaker`/`testlist_comp` -- with a defensive `fail()` added for
+  the ordinary, unsupported list/tuple-literal-unpacking shape (PEP
+  448) that grammar sharing also newly parses). `**rest` in mapping
+  patterns remains explicitly deferred (fails to parse, not a silent
   trap).
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from

@@ -60,6 +60,17 @@ class PycCompiler : public PycCallbacks {
   cchar *filename;
   int lineno;
   int loop_depth = 0;
+  // issues/023/024: true while build_if1_assign_target's initial
+  // build_if1_pyda(tgt, ctx) pre-builds an assignment TARGET tree
+  // (populating ->code/->rval/->sym/->is_member for emit_assign_to_target
+  // to read back -- the target's own "make tuple/list" SEND that pass
+  // produces is thrown away, only sub-node fields matter). A target
+  // tuple/list can contain a PY_star_expr (issue 024's `a, *b = ...`)
+  // that build_if1_pyda's ordinary PY_list/PY_tuple case would
+  // otherwise reject (issues/023's defensive check for the SAME node
+  // shape used as a genuine, unsupported list/tuple-literal-unpacking
+  // VALUE) -- this flag lets that check tell the two contexts apart.
+  bool building_assign_target = false;
   void *node;
   PycModule *mod, *package;
   Vec<PycModule *> *modules;

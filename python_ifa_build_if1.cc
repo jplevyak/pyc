@@ -1386,11 +1386,26 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
     // sub-pattern (which may itself be any pattern kind, including
     // a nested sequence pattern -- this recurses).
     //
-    // Star patterns (`case [a, *rest]:`) are not yet supported --
-    // same underlying grammar gap as issue 024's `a, *b = ...`
-    // extended-unpacking assignment targets, which also doesn't
-    // parse today. Left for a follow-on.
+    // Star capture (`case [a, *rest]:`, issues/023) reuses the same
+    // star_expr/PY_star_expr grammar node issue 024's assignment-
+    // target unpacking built -- listmaker/testlist_comp now accept it
+    // too (see python.g). Real Python restricts a star element to a
+    // bare name or `_` (never a further sub-pattern -- confirmed via
+    // `ast.parse`: `case [*[1,2]]:` is itself a SyntaxError), so
+    // there's no recursive pattern to match against the star capture,
+    // just a bind-or-discard, same as any other capture/wildcard.
+    int star_idx = -1;
+    for (int j = 0; j < pattern->children.n; j++) {
+      if (pattern->children[j]->kind != PY_star_expr) continue;
+      if (star_idx >= 0)
+        fail("error line %d: multiple starred names in sequence pattern", ctx.lineno);
+      star_idx = j;
+    }
+    if (star_idx >= 0 && pattern->children[star_idx]->children[0]->kind != PY_name)
+      fail("error line %d: sequence pattern's starred element must be a plain name or '_'", ctx.lineno);
     int n_elts = pattern->children.n;
+    int n_leading = star_idx >= 0 ? star_idx : n_elts;
+    int n_trailing = star_idx >= 0 ? n_elts - star_idx - 1 : 0;
 
     // isinstance(subject, list) or isinstance(subject, tuple) --
     // sequence patterns match list/tuple-like values, NOT str/bytes
@@ -1413,13 +1428,18 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
     // __len__/__getitem__), so is_list/is_tuple/is_seq above stay
     // unconditional.
     return guarded_bool(is_seq, code, case_ast, [&](Code **then_code) -> Sym * {
-      // len(subject) == n_elts -- via __len__ directly (mirrors
-      // __pyc__/05_builtins.py's `def len(x): return x.__len__()`)
-      // rather than resolving "len" as a free-function reference.
+      // No star: len(subject) == n_elts, exactly as before. With a
+      // star: len(subject) >= n_leading + n_trailing -- the star
+      // itself can consume zero or more elements, so equality would
+      // wrongly reject a longer-than-minimum subject.
       Sym *len_result = new_sym(case_ast);
       call_method(then_code, case_ast, subject, make_symbol("__len__"), len_result, 0);
       Sym *len_eq = new_sym(case_ast);
-      call_method(then_code, case_ast, len_result, sym___eq__, len_eq, 1, int64_constant(n_elts));
+      if (star_idx < 0)
+        call_method(then_code, case_ast, len_result, sym___eq__, len_eq, 1, int64_constant(n_elts));
+      else
+        call_method(then_code, case_ast, len_result, make_symbol("__ge__"), len_eq, 1,
+                    int64_constant(n_leading + n_trailing));
       Sym *len_bool = new_sym(case_ast);
       call_method(then_code, case_ast, len_eq, sym___pyc_to_bool__, len_bool, 0);
 
@@ -1430,12 +1450,47 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
       // sequence pattern needing its own subject to be narrowed).
       return guarded_bool(len_bool, then_code, case_ast, [&](Code **elems_code) -> Sym * {
         Sym *combined = nullptr;
-        for (int j = 0; j < n_elts; j++) {
-          PyDAST *elt = pattern->children[j];
-          Sym *item = new_sym(case_ast);
-          call_method(elems_code, case_ast, subject, sym___getitem__, item, 1, int64_constant(j));
+        auto match_one = [&](PyDAST *elt, Sym *item) {
           Sym *elt_matched = build_pattern_match(elt, item, elems_code, case_ast, ctx);
           combined = combined ? combine_bool(combined, elt_matched, "__and__", elems_code, case_ast) : elt_matched;
+        };
+        for (int j = 0; j < n_leading; j++) {
+          Sym *item = new_sym(case_ast);
+          call_method(elems_code, case_ast, subject, sym___getitem__, item, 1, int64_constant(j));
+          match_one(pattern->children[j], item);
+        }
+        if (star_idx >= 0) {
+          // rest = a NEW list of subject[n_leading : len(subject) -
+          // n_trailing] -- mirrors emit_assign_to_target's star-target
+          // loop for ordinary assignment (issues/024) exactly: `idx =
+          // n_leading; while idx < limit: rest.append(subject[idx]);
+          // idx += 1`.
+          Sym *limit = new_sym(case_ast);
+          call_method(elems_code, case_ast, len_result, make_symbol("__sub__"), limit, 1, int64_constant(n_trailing));
+          Sym *star_list = new_sym(case_ast);
+          if1_send(if1, elems_code, 3, 1, sym_primitive, sym_make, sym_list, star_list)->ast = case_ast;
+          Sym *idx = new_sym(case_ast);
+          Code *before = 0, *cond = 0, *body = 0;
+          if1_move(if1, &before, int64_constant(n_leading), idx, case_ast);
+          Sym *cond_var = new_sym(case_ast);
+          call_method(&cond, case_ast, idx, make_symbol("__lt__"), cond_var, 1, limit);
+          Sym *item = new_sym(case_ast);
+          call_method(&body, case_ast, subject, sym___getitem__, item, 1, idx);
+          Sym *append_result = new_sym(case_ast);
+          call_method(&body, case_ast, star_list, sym_append, append_result, 1, item);
+          Sym *next_idx = new_sym(case_ast);
+          call_method(&body, case_ast, idx, make_symbol("__add__"), next_idx, 1, int64_constant(1));
+          if1_move(if1, &body, next_idx, idx, case_ast);
+          if1_loop(if1, elems_code, if1_alloc_label(if1), if1_alloc_label(if1), cond_var, before, cond, 0, body,
+                    case_ast);
+          match_one(pattern->children[star_idx]->children[0], star_list);
+          for (int k = 0; k < n_trailing; k++) {
+            Sym *tidx = new_sym(case_ast);
+            call_method(elems_code, case_ast, limit, make_symbol("__add__"), tidx, 1, int64_constant(k));
+            Sym *titem = new_sym(case_ast);
+            call_method(elems_code, case_ast, subject, sym___getitem__, titem, 1, tidx);
+            match_one(pattern->children[star_idx + 1 + k], titem);
+          }
         }
         Sym *result = combined ? combined : sym_true; // `case []:` -- zero elements, nothing to check
         // Guard evaluated HERE, inside the innermost "then" branch --
@@ -2001,7 +2056,10 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
 }
 
 static void build_if1_assign_target(PyDAST *tgt, PycAST *v, PycAST *ast, PycCompiler &ctx) {
+  bool saved = ctx.building_assign_target;
+  ctx.building_assign_target = true;
   build_if1_pyda(tgt, ctx);  // build the whole target tree once
+  ctx.building_assign_target = saved;
   emit_assign_to_target(tgt, v->rval, &ast->code, ast, ctx);
 }
 
@@ -3354,6 +3412,19 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_list: {
+      // issues/023: listmaker's grammar now also accepts a star_expr
+      // element (needed for sequence-pattern star capture -- see
+      // build_pattern_match's PY_list/PY_tuple case, which intercepts
+      // pattern position entirely before reaching here). An ordinary
+      // list LITERAL with a star element (`[1, *y, 2]`, PEP 448) is a
+      // side effect of sharing that grammar rule, not a supported
+      // pyc feature -- fail cleanly rather than silently building
+      // `*y` as if it were a plain element (its own PY_star_expr
+      // build_if1_pyda case just forwards the inner value unchanged).
+      if (!ctx.building_assign_target)
+        for (auto c : n->children.values())
+          if (c->kind == PY_star_expr)
+            fail("error line %d: list literal unpacking ('*expr' inside '[...]') is not yet supported", ctx.lineno);
       for (auto c : n->children.values()) {
         build_if1_pyda(c, ctx);
         if1_gen(if1, &ast->code, getAST(c, ctx)->code);
@@ -3369,6 +3440,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_tuple: {
+      // issues/023: same testlist_comp grammar-sharing side effect as
+      // PY_list above, for parenthesized tuple literals (`(1, *y, 2)`).
+      if (!ctx.building_assign_target)
+        for (auto c : n->children.values())
+          if (c->kind == PY_star_expr)
+            fail("error line %d: tuple literal unpacking ('*expr' inside '(...)') is not yet supported", ctx.lineno);
       for (auto c : n->children.values()) {
         build_if1_pyda(c, ctx);
         if1_gen(if1, &ast->code, getAST(c, ctx)->code);

@@ -1,0 +1,21 @@
+head 1 rest [2, 3, 4]
+head 1 rest []
+other
+other
+init [1, 2] last 3
+init [] last 5
+first 1 mid [2, 3, 4] last 5
+first 1 mid [] last 2
+other
+first is 9
+all: [1, 2, 3]
+all: []
+all: [1, 2]
+long rest 1 [2, 3, 4]
+short rest 1 [2]
+short rest 1 []
+tuple 1 [2, 3]
+tuple 1 [2, 3]
+nested 1 [2, 3] 99
+bound rest: [2, 3]
+outer still: outer_rest_value

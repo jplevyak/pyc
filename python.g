@@ -374,7 +374,16 @@ atom:
 listmaker: test list_for {
     $$.ast = new_pyast(PY_listcomp, &$n, $0.ast, $1.ast);
   }
-  | test (',' test)* ','? {
+  // issues/023: testlist_item (test | star_expr, issues/024) instead
+  // of a bare test lets a sequence PATTERN's `case [a, *rest]:` parse
+  // -- match/case patterns ride this same list-literal grammar (no
+  // dedicated pattern grammar exists). This also newly parses `*y`
+  // inside an ORDINARY list literal (`[1, *y, 2]`, PEP 448) as a side
+  // effect of sharing the rule; build_if1_pyda's PY_list case fails
+  // cleanly on a PY_star_expr child there since real literal-unpacking
+  // semantics aren't implemented, rather than let it silently
+  // miscompile.
+  | testlist_item (',' testlist_item)* ','? {
     if (d_get_number_of_children(d_get_child(&$n, 1)) == 0 &&
         d_get_number_of_children(d_get_child(&$n, 2)) == 0) {
       $$.ast = new_pyast(PY_list, &$n, $0.ast);
@@ -386,7 +395,9 @@ listmaker: test list_for {
 testlist_comp: test comp_for {
     $$.ast = new_pyast(PY_genexpr, &$n, $0.ast, $1.ast);
   }
-  | test (',' test)* ','? {
+  // issues/023: same testlist_item reuse as listmaker above, for
+  // parenthesized tuple-shaped sequence patterns (`case (a, *rest):`).
+  | testlist_item (',' testlist_item)* ','? {
     $$.ast = pass_or_collect2(1, 2, PY_tuple, &$n, $0.ast);  /* single expr → pass through, else tuple */
   }
   ;

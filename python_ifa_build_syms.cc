@@ -202,6 +202,16 @@ static void mark_pattern_captures(PyDAST *n) {
     mark_pattern_captures(n->children[1]);
     return;
   }
+  if (n->kind == PY_star_expr) {
+    // issues/023: sequence pattern's star capture (`case [a, *rest]:`)
+    // -- same PY_star_expr node issue 024's assignment-target star
+    // reuses, restricted (by build_pattern_match) to a bare name or
+    // `_`. Recurse into the inner name exactly like mark_store does
+    // for the assignment-target case; the existing PY_name branch
+    // above already excludes `_` correctly.
+    mark_pattern_captures(n->children[0]);
+    return;
+  }
   if (n->kind == PY_list || n->kind == PY_tuple) {
     for (auto c : n->children.values()) mark_pattern_captures(c);
     return;

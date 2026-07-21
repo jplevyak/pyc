@@ -2,15 +2,19 @@
 
 **Status:** open — every PEP 634 pattern KIND is implemented and
 verified byte-identical to real `python3` output on both backends
-(all landed 2026-07-12; positional class patterns added 2026-07-21;
-re-verified same day, all tests below pass on both backends). What
-remains are two narrow, explicitly-deferred features and one
-runtime-crash limitation, all under "Gaps" below.
+(all landed 2026-07-12; positional class patterns and sequence-pattern
+star capture both added 2026-07-21; re-verified same day, all tests
+below pass on both backends). What remains is one narrow,
+explicitly-deferred feature and one runtime-crash limitation, both
+under "Gaps" below.
 **Affects:** `python.g` (`match_stmt`/`case_block`/`case_guard`
-grammar, soft-keyword `match`/`case`), `python_ifa_build_syms.cc`
+grammar, soft-keyword `match`/`case`; `listmaker`/`testlist_comp` now
+accept `testlist_item` -- issue 024's `star_expr`/`PY_star_expr` --
+instead of a bare `test`), `python_ifa_build_syms.cc`
 (`mark_pattern_captures`, `collect_match_args`, `gen_class_pyda`),
-`python_ifa_build_if1.cc` (`build_match_pyda`, `build_pattern_match`),
-`ifa/if1/sym.h` (`Sym::match_args`).
+`python_ifa_build_if1.cc` (`build_match_pyda`, `build_pattern_match`,
+`PycCompiler::building_assign_target`), `ifa/if1/sym.h`
+(`Sym::match_args`).
 
 ## What's implemented
 
@@ -60,10 +64,62 @@ fix. Now mirrors `build_pattern_match`'s own arg loop, recursing into
 positional args exactly like keyword values. Covered by
 `match_class_positional.py`'s last test.
 
+**Star capture in sequence patterns** (`case [a, *rest]:`, added
+2026-07-21): `python.g`'s `listmaker`/`testlist_comp` (the grammar
+`[...]`/`(...)` list/tuple LITERALS use -- match/case patterns ride
+this same grammar, no dedicated pattern grammar exists) now accept
+`testlist_item` (`test | star_expr`) per element instead of a bare
+`test`, reusing issue 024's `star_expr`/`PY_star_expr` node wholesale.
+`build_pattern_match`'s sequence-pattern branch: at most one star
+element (else `fail()`, matching CPython's real "multiple starred
+names in sequence pattern" wording -- confirmed via `compile()` that
+real Python defers this to a semantic check, not the grammar, same as
+implemented here); its target must be a plain name or `_` (else
+`fail()` -- confirmed via `ast.parse` that CPython's OWN grammar
+restricts it the same way, so there's no recursive sub-pattern to
+match against a star capture, just bind-or-discard). Leading/trailing
+elements bind positionally as before; the length check relaxes from
+`==` to `>=`; the star target binds a NEW list built via a runtime
+loop over the middle range -- mirrors `emit_assign_to_target`'s
+existing star-target loop for ordinary assignment (issue 024)
+exactly, `idx = n_leading; while idx < limit: rest.append(subject[idx]);
+idx += 1`. No FA/codegen changes.
+
+Two related issues caught and fixed before/while landing this:
+
+- Since `listmaker`/`testlist_comp` are also the grammar for
+  ORDINARY list/tuple literal expressions (not just patterns), the
+  change also newly parses `*y` inside a plain `[1, *y, 2]`/
+  `(1, *y, 2)` (PEP 448 literal unpacking) where it used to be a
+  clean syntax error. pyc doesn't implement real PEP 448 semantics,
+  so `build_if1_pyda`'s ordinary (non-pattern) `PY_list`/`PY_tuple`
+  case now explicitly `fail()`s on a `PY_star_expr` child, keeping
+  that gap loud instead of letting it silently build `*y` as a single
+  unspread element (its own `PY_star_expr` case just forwards the
+  inner value unchanged).
+- That defensive check initially broke `tests/star_unpack.py`
+  (issue 024's OWN test): `build_if1_assign_target` pre-builds an
+  assignment target tree via the SAME generic `build_if1_pyda`
+  dispatch (to populate per-node `->code`/`->rval`/`->sym`/
+  `->is_member` for `emit_assign_to_target` to read back) -- so
+  `a, *b = [1, 2, 3]`'s target, ALSO a `PY_tuple` node with a
+  `PY_star_expr` child, hit the same new check. Fixed with a small
+  `PycCompiler::building_assign_target` flag, set around that one
+  pre-build call, that the defensive check skips.
+- `mark_pattern_captures` needed a new `PY_star_expr` case (recursing
+  into the inner name, mirroring `mark_store`'s existing handling for
+  the assignment-target case) -- without it, `rest` would resolve as
+  an ordinary read of (and the match would silently mutate) any
+  same-named OUTER variable instead of binding a fresh local, the
+  exact same class of bug caught for positional class-pattern
+  captures above. Caught the same way: a shadowing test, covered as a
+  permanent regression test in `match_seq_star.py`.
+
 Test coverage (all passing, both backends): `tests/match_basic.py`,
 `match_capture.py`, `match_or.py`, `match_guard.py`, `match_seq.py`,
-`match_map.py`, `match_class.py`, `match_class_positional.py`,
-`match_literal_types.py`, `match_none.py`.
+`match_seq_star.py`, `match_map.py`, `match_class.py`,
+`match_class_positional.py`, `match_literal_types.py`,
+`match_none.py`.
 
 One lesson from this work worth remembering beyond match/case: FA
 type-checks a call against a subject's *whole static union type*
@@ -76,12 +132,9 @@ against the narrowed type.
 
 ## Gaps
 
-Two explicitly-deferred features. Both fail loudly (parse error) —
-neither is silent:
+One explicitly-deferred feature. Fails loudly (parse error) — not
+silent:
 
-- **Star capture in sequence patterns** (`case [a, *rest]:`) — same
-  underlying grammar gap as issue 024's extended-unpacking assignment
-  targets.
 - **`**rest` in mapping patterns** (`case {"k": v, **rest}:`) —
   `python.g`'s `dictorsetmaker` has no `'**' NAME` alternative (real
   Python's `{**other}` dict-merge literal isn't a pyc feature
@@ -128,6 +181,6 @@ keeps it from being a correctness hazard meanwhile.
 ## What this unblocks
 
 Real Python code using any PEP 634 pattern kind compiles and runs
-correctly on both backends. What's left — three deferred features and
-one guarded runtime limitation — are all narrow and loud, not
+correctly on both backends. What's left — one deferred feature and
+one guarded runtime limitation — are both narrow and loud, not
 correctness traps.
