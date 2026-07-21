@@ -35,32 +35,10 @@ conventions are the same; the only difference is location.
   call doesn't route through constructor lowering), dotted-name
   decorators (silent no-op), and decorated *methods* (legacy
   no-op).
-- [008-set-literal-genexpr-crash.md](008-set-literal-genexpr-crash.md)
-  — **Set literals/comprehensions fixed** (new `__pyc__/08_set.py`
-  `set` class); also fixed a pre-existing `x in y`/`x not in y`
-  operand-order bug affecting *every* container type, found along
-  the way. Generator expressions now fail cleanly instead of
-  crashing (real support tracked with issue 014).
-- [011-exception-handling-unimplemented.md](011-exception-handling-unimplemented.md)
-  — `try`/`except`/`finally`/`raise` are entirely unimplemented
-  (`fail("statement not supported")`); no exception object model
-  or unwinding mechanism exists yet. Largest lift in this batch
-  besides generators.
-- [012-with-statement-unimplemented.md](012-with-statement-unimplemented.md)
-  — `with` (context managers) is unimplemented; a happy-path
-  `__enter__`/`__exit__` desugaring doesn't need issue 011's
-  exception model, only full exception-safety does.
 - [014-generators-yield-unimplemented.md](014-generators-yield-unimplemented.md)
   — `yield` (generator functions) is unimplemented; needs a
   resumable-function execution model (state-machine transform or
   stackful coroutines) not present anywhere else in pyc today.
-- [016-missing-grammar-level-syntax.md](016-missing-grammar-level-syntax.md)
-  — Five newer syntax forms aren't in the grammar at all and fail
-  as parse errors: `async`/`await`, walrus `:=`, `match`/`case`,
-  PEP 484 type annotations, and extended unpacking (`a, *b =
-  ...`). Grouped as one filing; split out per sub-item as work
-  starts (priority/effort vary widely — annotations and walrus
-  are small, async/await and match/case are substantial).
 - [018-dict-mixed-key-types-boxing-failure.md](018-dict-mixed-key-types-boxing-failure.md)
   — A program using `dict` (or `set`) with two different key/
   element types anywhere fails to compile with a `BOXING`/"mixed
@@ -99,12 +77,62 @@ conventions are the same; the only difference is location.
   to `a32a6467` (issue 027's qualified-static-dispatch commit),
   which simultaneously fixed go and loop, so corpus bucket COUNTS
   didn't move — compare member sets, not counts.
+- [030-with-exit-not-called-on-exception.md](030-with-exit-not-called-on-exception.md)
+  — `with`'s `__exit__` is never called when the body raises (and
+  can't suppress the exception the way real Python allows) — the
+  exception-safety gap issue 012's own filing anticipated and
+  deferred pending issue 011, which landed three weeks after 012
+  closed without this being revisited. `with`'s cleanup only hooks
+  into `return`/`break`/`continue`, never into `raise`/unwinding.
 
 ## Closed (archive)
 
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [011](closed/011-exception-handling-unimplemented.md) —
+  `try`/`except`/`else`/`finally`/`raise` implemented (option C:
+  exception slot + explicit post-call checks, FA-gated), including
+  typed clauses (`except X as e:`, tuple forms), bare re-raise, and
+  cross-function propagation on both backends. Landing it fixed four
+  unrelated pre-existing bugs (a stubbed `isinstance()` against real
+  classes, `pass`-only exception subclasses losing constructor args,
+  a shared clonable `isinstance()` wrapper breaking per-class
+  dispatch, and a raise-only function body leaving its return value
+  untyped) and went through three further optimization passes
+  (per-callee, then post-FA precise, then FA-native `can_raise`
+  gating) to fold the post-call check away entirely for provably-safe
+  calls. File had been left in `issues/` (never moved to `closed/`)
+  for several days despite being fully implemented — moved as part of
+  the same 2026-07-21 pass that filed
+  [030](030-with-exit-not-called-on-exception.md); its content needed
+  no correction, only relocation. `with`'s exception-safety
+  integration was the one real gap this surfaced — see 030.
+- [012](closed/012-with-statement-unimplemented.md) — `with`
+  (context managers) implemented: `__enter__`/binding/`__exit__`
+  desugaring, multiple context managers in one statement, and
+  cleanup firing correctly on fallthrough, `return`, and loop
+  `break`/`continue` (tracked via a `with_stack`). File had been
+  moved to `closed/` with stale content (still said "Status: open")
+  until a 2026-07-20 pass reconciled it. Exception-safety
+  (`__exit__` on a raising body) was correctly anticipated as a
+  follow-on dependent on issue 011, which landed after this issue
+  closed and was never revisited — now concretely confirmed broken
+  and filed as [030](030-with-exit-not-called-on-exception.md).
+- [016](closed/016-missing-grammar-level-syntax.md) — the five
+  grouped parse-gap syntax forms (`async`/`await`, walrus `:=`,
+  `match`/`case`, PEP 484 annotations, extended iterable unpacking)
+  were split out into their own per-form issues as each was picked
+  up, per this filing's own stated plan.
+- [008](closed/008-set-literal-genexpr-crash.md) — set literals
+  and set comprehensions fixed (`04a85584`/`f67cf692`, new
+  `__pyc__/08_set.py` `set` class); also fixed a pre-existing
+  `x in y`/`x not in y` operand-order bug affecting *every*
+  container type, found along the way. Generator expressions got
+  only an interim clean `fail()` here, then were actually
+  implemented later (`20fdc72d`, eager `list` materialization, not
+  true laziness — see issue 014) as part of the shedskin-corpus
+  push tracked in issue 025.
 - [024](closed/024-extended-iterable-unpacking.md) — extended
   iterable unpacking assignment targets (`a, *b = [1, 2, 3]`,
   PEP 3132): new `star_expr`/`testlist_item` grammar (`testlist`,
@@ -161,6 +189,27 @@ commit ref recorded in each file's status line.
   classmethod through an instance (`a.cf()`) and bare classmethod/
   method references without a call keep the old prototype-bound
   behavior.
+- [029](closed/029-deepcopy-user-objects.md) — `copy.deepcopy(obj)`
+  on a user-class instance now recurses per-field instead of doing a
+  shallow one-level clone: every record class without its own
+  `__deepcopy__` gets a compiler-synthesized recursive one. Fixed
+  five latent compiler bugs along the way (a stubbed
+  `isinstance()`-adjacent Type_SUM inliner assert, a mixed-length
+  tuple/list literal length off-by-one, `cg.cc` dropping nil-typed
+  moves into real locals, a degenerate recursion-pending-map fan-out,
+  and non-canonical struct-layout field ordering). No memo table
+  (v1) — shared subtrees duplicate and cycles don't terminate,
+  deliberately deferred (no corpus need). File had sat in `issues/`
+  unmoved despite being fully implemented; `tests/deepcopy_list.py`/
+  `deepcopy_objects.py` had no `.exec.check` (compile-only in CI) —
+  both fixed 2026-07-21, along with a test bug in
+  `deepcopy_objects.py` that called a pyc-only synthesized method
+  directly (`tree.__deepcopy__()`, which doesn't exist on real
+  CPython objects) — changed to `copy.deepcopy(tree)`, now fully
+  CPython-comparable. genetic2 (the corpus example that motivated
+  this) has correct deepcopy semantics but still doesn't compile due
+  to an unrelated FA flow-divergence bug, tracked separately as
+  `ifa/issues/048`.
 
 - [003](closed/003-subclass-struct-layout-mismatch.md) — the
   originally-filed struct-layout-mismatch bug no longer reproduces

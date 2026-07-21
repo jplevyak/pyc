@@ -1,0 +1,7 @@
+loop 1
+enter A
+enter B
+breaking
+exit B
+exit A
+done

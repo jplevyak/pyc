@@ -7,14 +7,14 @@
 `ifa/codegen/codegen_common.cc` (`cg_build_new_to_val_map`, the
 shared method-pointer-slot registry both backends' `P_prim_clone`
 slot-store emission reads from).
-**Related:** [ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+**Related:** [ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
 (the classtag dispatch mechanism this bug lived in); found while
 stress-testing
-[closed/003-subclass-struct-layout-mismatch.md](closed/003-subclass-struct-layout-mismatch.md)
+[closed/003-subclass-struct-layout-mismatch.md](003-subclass-struct-layout-mismatch.md)
 (unrelated to that issue's struct-layout root cause — this
 reproduces with zero data fields involved, pure method dispatch).
 **Not related to
-[023-structural-pattern-matching.md](023-structural-pattern-matching.md)'s
+[023-structural-pattern-matching.md](../023-structural-pattern-matching.md)'s
 `case None:` limitation**, despite the identical assertion text —
 see "Ruled out: NOT the same bug as issue 023's `case None:`
 limitation" below. That was the leading hypothesis when this issue

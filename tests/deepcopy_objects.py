@@ -46,7 +46,7 @@ leaf1 = T(0, 5, None)
 leaf2 = T(0, 6, None)
 tree = T(1, 0, tuple([leaf1, leaf2]))
 print(count(tree))
-c1 = tree.__deepcopy__()
+c1 = copy.deepcopy(tree)
 print(count(c1))
 c2 = copy.deepcopy(c1)   # copy-of-copy: union of original+copy CSs
 print(count(c2))

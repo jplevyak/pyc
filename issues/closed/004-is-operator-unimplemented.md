@@ -22,7 +22,7 @@
 
 See [ifa/issues/024](../../ifa/issues/closed/024-is-comparison-narrowing.md)
 for the narrowing-side fix and
-[ifa/issues/028](../../ifa/issues/028-fibheap-blockers.md)
+[ifa/issues/028](../../ifa/issues/closed/028-fibheap-blockers.md)
 for step 4's identity primitive.
 
 **Affects:** pyc Python frontend (`python_ifa_build_if1.cc:102`

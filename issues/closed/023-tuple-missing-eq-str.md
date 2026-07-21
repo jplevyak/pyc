@@ -3,7 +3,7 @@
 **Status:** fixed. See "What landed" below.
 **Affects:** `__pyc__/04_sequence.py` (`class tuple`).
 **Related:** discovered while verifying
-[022-builtin-type-zero-arg-constructor-broken.md](closed/022-builtin-type-zero-arg-constructor-broken.md)'s
+[022-builtin-type-zero-arg-constructor-broken.md](022-builtin-type-zero-arg-constructor-broken.md)'s
 fix — `tuple()` itself now works, but printing or comparing the
 result (or any other tuple) fails; confirmed unrelated to the
 zero-arg case specifically, since non-empty tuple literals hit the

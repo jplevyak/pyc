@@ -3,7 +3,7 @@
 **Status:** fixed. See "What landed" below.
 **Affects:** `__pyc__/07_dict.py` (`class dict`).
 **Related:** discovered while fixing
-[023-tuple-missing-eq-str.md](closed/023-tuple-missing-eq-str.md) — checked
+[023-tuple-missing-eq-str.md](023-tuple-missing-eq-str.md) — checked
 whether `list`/`tuple`'s `__eq__`/`__ne__` fix pattern
 (`__pyc__/04_sequence.py`) should extend to `dict` too, and found
 `dict` has neither method at all, unlike `set` (which already has

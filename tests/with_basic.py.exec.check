@@ -1,0 +1,14 @@
+test 1
+enter A
+body 1 A_val
+exit A
+test 2
+enter B
+enter C
+body 2 B_val C_val
+exit C
+exit B
+test 3
+enter D
+body 3
+exit D

@@ -1,21 +1,27 @@
 # Issue 008: Set literals and generator expressions crash the compiler
 
-**Status:** set literals and set comprehensions fixed. Generator
-expressions: FIXED 2026-07-18 (see
-[issues/025](../issues/025-shedskin-examples-coverage.md)'s
+**Status:** CLOSED 2026-07-20. Set literals and set comprehensions
+fixed 2026-07-03 (`04a85584`/`f67cf692`). Generator expressions
+originally got only an interim clean `fail()` (turning the crash
+into a diagnostic, per this issue's own fix sketch); FIXED for real
+2026-07-18 (`20fdc72d`, see [025](../025-shedskin-examples-coverage.md)'s
 "Generator expressions implemented" entry) -- eagerly materializes
 into a `list`, not a true lazy iterator (`yield`-backed laziness,
 issue 014, was deliberately not used; no corpus usage found that
-needs it). Revisit with real laziness if that changes.
+needs it). Revisit with real laziness if that changes; until then
+there is no remaining work item against *this* issue.
 **Affects:** `python_ifa_build_if1.cc` (`build_syms_pyda`'s and
 `build_if1_pyda`'s `PY_set` cases — new; `PY_genexpr` given its own
-`fail()` instead of falling into the shared no-op default);
+`fail()` instead of falling into the shared no-op default, later
+replaced with a real lowering — see "What landed");
 `__pyc__/08_set.py` — new `set`/`__set_iter__` classes;
 `python_ifa_build_if1.cc`'s `PY_compare` — fixed a pre-existing
 `x in y` / `x not in y` operand-order bug found while wiring up
 `set.__contains__` (see "What landed").
-**Related:** issue 009 (dict comprehensions — same family of gap,
-different failure mode, still open); **issue 017** (closed) — filed
+**Related:** [009](009-dict-comprehension-drops-comp-for.md) (dict
+comprehensions — same family of gap, different failure mode; shared
+this issue's loop-lowering machinery, closed the same way);
+[017](017-multi-instance-mutation-corruption.md) (closed) — filed
 after this fix exposed a serious pre-existing multi-instance data
 corruption bug (affects `dict` too, nothing to do with sets
 specifically), then fixed in a follow-up pass.
@@ -123,6 +129,16 @@ upstream ever produced a value for the set/genexpr node.
 4. **`PY_genexpr`**: split out of the shared silent-recursion
    fallthrough into its own `fail("generator expressions not yet
    supported")` — the interim fix this issue's sketch proposed.
+   **Superseded 2026-07-18** (`20fdc72d`, see issue 025's "Generator
+   expressions implemented" entry): the `fail()` was replaced with
+   the same three lines `PY_listcomp` uses (allocate an empty list,
+   reuse the already-shared comprehension scope, call the existing
+   `build_list_comp_pyda` loop-lowering helper) — genexprs now
+   eagerly materialize into a `list` and produce real output rather
+   than a clean rejection. `tests/genexpr_basic.py` is a live,
+   passing test (not an `.expect_fail`) covering `sum`/`list`/`dict`/
+   `join`/`sorted`/`any`/`all`/`min`/`max` consumers and nested/
+   filtered forms.
 5. **Fixed `x in y` / `x not in y`** (`PY_compare`): discovered while
    wiring up `2 in {1,2,3}` that the *existing* lowering called
    `lv.__contains__(rv)` (left operand as receiver) instead of the
@@ -159,15 +175,20 @@ since the artificial isolation was no longer needed.
 ## Verification plan
 
 1. `{1, 2, 3}` compiles and `len(s) == 3` at runtime. ✓
-2. `(x * 2 for x in [1, 2, 3])` fails cleanly (interim; real
-   laziness tracked in issue 014). ✓
+2. `(x * 2 for x in [1, 2, 3])` now runs and produces correct
+   output, matching CPython (eager `list` materialization; real
+   laziness would be tracked in issue 014 if ever needed). ✓
 3. No `Assertion .* failed` / core dump for either construct. ✓
-4. `tests/set_literal_basic.py` and `tests/genexpr_basic.py` added. ✓
+4. `tests/set_literal_basic.py` and `tests/genexpr_basic.py` added,
+   both passing (the latter is a real executing test, not an
+   `.expect_fail`). ✓
 
 ## What this unblocks
 
 Set literals are common in idiomatic Python (deduplication,
 membership tests) and now work correctly on both backends. Generator
-expressions remain unimplemented but no longer crash the compiler —
-tracked jointly with issue 014. The `in`/`not in` operator fix
-unblocks membership testing for *any* container, not just sets.
+expressions also now work (eager materialization) rather than merely
+failing cleanly — true laziness remains a follow-on, tracked jointly
+with issue 014, only if a corpus example is ever found that actually
+needs it. The `in`/`not in` operator fix unblocks membership testing
+for *any* container, not just sets.

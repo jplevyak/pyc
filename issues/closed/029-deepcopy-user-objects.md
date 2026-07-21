@@ -1,6 +1,25 @@
 # 029 — copy.deepcopy of user objects is shallow (no per-class recursive copy)
 
-**Status:** IMPLEMENTED 2026-07-17 (fix sketch option 1). Every
+**Status:** CLOSED. IMPLEMENTED 2026-07-17 (`251c4175`, fix sketch
+option 1). Re-verified 2026-07-21: `tests/deepcopy_list.py` and
+`tests/deepcopy_objects.py` both had **no `.exec.check` golden** —
+they ran compile-only under `test_pyc.py` despite the "Verified"
+claim below, so their runtime behavior had never actually been
+diffed against real `python3` output in CI (the "deterministic"
+claim below refers to repeat-compile output stability, a different
+check, not a CPython comparison). Compiled and ran both directly:
+`deepcopy_list.py` matched CPython byte-for-byte immediately.
+`deepcopy_objects.py` did not — one line, `c1 = tree.__deepcopy__()`,
+calls a compiler-synthesized method directly; real CPython objects
+have no `__deepcopy__` unless the class defines one, so this line
+can only ever run under pyc. Changed it to `c1 = copy.deepcopy(tree)`
+(semantically identical for pyc, since `pyc_lib/copy.py`'s
+`deepcopy` already just calls `obj.__deepcopy__()` per this file's
+own note below) — now fully CPython-comparable, and matches
+byte-for-byte. Added `.exec.check` for both tests; both now pass
+execution-verified, on both backends, through `test_pyc.py`. Moved
+to `closed/` as part of this pass (had sat in `issues/` unmoved
+despite being fully implemented). Every
 record class without its own `__deepcopy__` gets a compiler-
 synthesized recursive one (gen_class_pyda, python_ifa_build_syms.cc):
 shallow clone + per-field `member.__deepcopy__()` dispatch, fields
@@ -17,9 +36,9 @@ strings/tuples); `pyc_lib/copy.py`'s deepcopy is now just
 cycles don't terminate -- corpus need is trees.
 
 Landing it surfaced and fixed FIVE latent compiler bugs:
-[ifa/issues/046](../ifa/issues/046-optional-none-field-inline-type-sum-assert.md)
+[ifa/issues/046](../../ifa/issues/046-optional-none-field-inline-type-sum-assert.md)
 (inline chain Type_SUM assert -> pre-checked, un-inlined),
-[ifa/issues/044](../ifa/issues/044-mixed-length-tuple-list-len-miscompile.md)
+[ifa/issues/044](../../ifa/issues/044-mixed-length-tuple-list-len-miscompile.md)
 (listish-tuple literal length off-by-one -> phantom elements),
 cg.cc's `simple_move` dropping nil-typed moves into REAL locals
 (uninitialized `return t0;` -- None-returning methods returned stack
@@ -35,7 +54,7 @@ of-self] trees, copy-of-copy, mutation isolation; deterministic,
 both backends), suites 200/0 x2, unit 58/0. genetic2 itself now has
 correct deepcopy SEMANTICS but its compile diverges in FA flow
 (unbounded matcher allocation over the copy-chain unions) --
-[ifa/issues/048](../ifa/issues/048-deepcopy-flow-divergence-genetic2.md).
+[ifa/issues/048](../../ifa/issues/048-deepcopy-flow-divergence-genetic2.md).
 
 Original report follows.
 

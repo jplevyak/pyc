@@ -20,6 +20,26 @@ bare-callable dispatch layer landed too (value-identity dispatch
 in both backends, `tests/function_reassignment.py` passes; mixed
 classtag+address chains supported).
 
+**2026-07-20 correction:** `@staticmethod`/`@classmethod` are
+already handled — landed 2026-07-10 alongside
+`closed/027-unbound-base-method-call-self-type-mismatch.md`, five
+days after this doc's last update, which is why the "Still open"
+list below previously (incorrectly) listed them as unevaluated.
+They are **not** routed through this issue's decorator-application
+mechanism at all: `build_syms_pyda` (`python_ifa_build_syms.cc:628`)
+detects the names as compile-time **markers** before decorator
+resolution runs (so they're never looked up as callables) and
+installs the method via the existing value-convention/setter path
+with `is_staticmethod`/`is_classmethod` set on the def — no runtime
+`staticmethod`/`classmethod` object is ever constructed or applied.
+Verified working through the class, an instance, a subclass, and as
+a bare extracted value (`tests/static_method.py`), and `cls(...)`
+construction dispatch (`tests/class_method.py`). `@property` has no
+such special-casing anywhere in the frontend and remains fully
+unhandled — it still goes through the general (silently-a-no-op for
+anything but `@vector`/`@pyc_struct`) `PY_decorated` path this issue
+tracks.
+
 Still open, all with defined failure modes rather than silent
 mis-execution:
 - **Stacked applications of the same closure-wrapping decorator**
@@ -40,9 +60,13 @@ mis-execution:
   decorated function invokes the *undecorated* function (the
   in-body self-reference resolves to the internal fn Sym /
   carrier self — see `def_internal_fn` in `python_ifa_int.h`).
-- `@staticmethod`/`@classmethod`/`@property` semantics were not
-  evaluated (methods keep the pre-existing alias/setter path;
-  decorated *methods* still take the legacy no-op route).
+- **`@property`**: no getter/setter routing exists anywhere in the
+  frontend — `@property`-decorated methods take the same silent
+  no-op path as any other unhandled decorator (attribute access
+  never calls the getter). (`@staticmethod`/`@classmethod` are
+  fixed — see the 2026-07-20 correction above; they are a separate,
+  marker-based mechanism, not a fix to this issue's general
+  application path.)
 **Affects:** `python_ifa_build_if1.cc:517-606` (`PY_decorated` case
 in `build_if1_pyda`); the real fix, if attempted, also touches
 `python_ifa_build_syms.cc` (symbol creation for decorated defs — see
@@ -90,9 +114,12 @@ Expected (CPython): `12` (`(5+1)*2`).
 Actual (pyc): `6` (`5+1` — the decorator never ran its wrapping
 logic; `add_one` is used as if `@double` weren't there).
 
-This affects the standard library idioms `@staticmethod`,
-`@classmethod`, `@property`, `@functools.wraps`, and any
-user-defined decorator — none of them do anything.
+This affects the standard library idioms `@property`,
+`@functools.wraps`, and any user-defined decorator — none of them
+do anything. (`@staticmethod`/`@classmethod` are an exception: see
+the 2026-07-20 correction below — they're handled via a separate,
+marker-based mechanism outside this issue's decorator-application
+path, not via a fix to it.)
 
 ## Root cause (original, still accurate)
 
@@ -399,9 +426,13 @@ context on what was tried first.
    real blocking bug and should be the first thing re-verified
    before trusting any decorator fix built on top of it.
 4. `@staticmethod` / `@classmethod` at minimum don't silently
-   drop the `self`/`cls` binding semantics incorrectly (may need
-   their own follow-on issue if full method-binding semantics are
-   out of scope for the first pass — flag if so).
+   drop the `self`/`cls` binding semantics incorrectly — **done**,
+   landed 2026-07-10 via the marker-based mechanism (see the
+   2026-07-20 correction above), covered by `tests/static_method.py`
+   / `tests/class_method.py`. `@property` still needs its own
+   follow-on verification once (if) getter/setter routing is
+   attempted — out of scope for this issue's fix as currently
+   understood (see "Still open").
 5. Existing `@vector("s")` and `@pyc_struct` tests
    (`tests/pyc_struct_basic.py`, etc.) continue to pass unchanged.
 6. Add `tests/decorator_basic.py` + `.exec.check`.

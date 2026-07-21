@@ -181,7 +181,7 @@ near sufficient:
 A follow-up fix was applied for one confirmed root cause: `Var`
 (`ifa/if1/var.h`) has a monotonic `int id` field but was never
 given a `PointerHash<Var *>` specialization when
-[`ifa/notes/004-plib-vec-pointer-set-hashing.md`](../ifa/notes/004-plib-vec-pointer-set-hashing.md)'s
+[`ifa/notes/004-plib-vec-pointer-set-hashing.md`](../../ifa/notes/004-plib-vec-pointer-set-hashing.md)'s
 "options A+B" landed — the note's own list of six specialized
 types (`AVar`, `AEdge`, `EntrySet`, `CreationSet`, `Sym`, `Fun`)
 omits `Var` entirely. `collect_types_and_globals`
@@ -213,7 +213,7 @@ one of these unfixed sets, the resulting id-assignment order shifts
 between runs, and every downstream id-keyed structure — even ones
 with a correct `PointerHash` specialization — inherits the drift.
 
-This is not a new problem: it is [ifa/issues/010-vec-set-api-cleanup.md](../ifa/issues/010-vec-set-api-cleanup.md)'s
+This is not a new problem: it is [ifa/issues/010-vec-set-api-cleanup.md](../../ifa/issues/010-vec-set-api-cleanup.md)'s
 already-deferred audit (Task A/B, "~244 `set_add`/`set_in` call
 sites... every one is a potential non-determinism source"),
 confirmed here for the first time to actually reach pyc's *emitted

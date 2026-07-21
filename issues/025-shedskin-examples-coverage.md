@@ -1292,7 +1292,7 @@ simulation**; the remaining crash is `copy.deepcopy` being shallow
 for USER OBJECTS (TreeNode trees end up sharing subtrees across
 individuals until crossover creates a cycle and execute's recursion
 overflows) -- filed as
-[issues/029](029-deepcopy-user-objects.md) with fix directions
+[issues/029](closed/029-deepcopy-user-objects.md) with fix directions
 (compiler-synthesized per-class `__deepcopy__`).
 
 ### genetic2 dig, round 2: %-format fix, tuple.__add__, two more compiler fixes (2026-07-16)
@@ -1335,7 +1335,7 @@ tuple concat). Suites 199/0 both backends, unit 58/0.
 fixed); the remaining crash is `copy.deepcopy` being SHALLOW for
 user objects -- crossover on shared subtrees eventually creates a
 cyclic "tree" and TreeNode.execute's recursion overflows. Filed as
-[issues/029](029-deepcopy-user-objects.md) (fix direction:
+[issues/029](closed/029-deepcopy-user-objects.md) (fix direction:
 compiler-synthesized per-class `__deepcopy__`; layouts are fully
 known at codegen). chaos also newly compiles (25/77 at the sweep
 before chess's frontier wobble); chess bounced back to FAIL with an
@@ -1354,7 +1354,7 @@ off-by-one / phantom elements -- also fixes that issue's standalone
 print repro), an uninitialized nil-typed `return` in cg's
 simple_move, the recursion pending-map edge fan-out, and
 determine_layouts' order-dependent offsets -- are in
-[issues/029](029-deepcopy-user-objects.md). New regression test:
+[issues/029](closed/029-deepcopy-user-objects.md). New regression test:
 tests/deepcopy_objects.py (deterministic, both backends). Suites
 200/0 x2.
 

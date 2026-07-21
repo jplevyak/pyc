@@ -30,7 +30,7 @@ is missing a piece of lowering that `gen_class_pyda` already has for
 a structurally-identical problem (see below).
 **Surfaced:** June 2026, while writing a `captured_local.py`
 test as part of the v2 LLVM closure-handler coverage push (see
-[ifa/codegen/CG_IR_PARITY_PLAN.md](../ifa/codegen/CG_IR_PARITY_PLAN.md)
+[ifa/codegen/CG_IR_PARITY_PLAN.md](../../ifa/codegen/CG_IR_PARITY_PLAN.md)
 recommendation 3 follow-up).
 **Related:** [002-fa-crash-escaped-closure.md](002-fa-crash-escaped-closure.md)
 looked at first glance like the same root cause, but is more likely

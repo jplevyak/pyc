@@ -1,7 +1,21 @@
 # Issue 011: Exception handling (`try`/`except`/`finally`/`raise`) is unimplemented
 
-**Status:** IMPLEMENTED 2026-07-17 (option C: exception slot +
-explicit checks). `raise`/`try`/`except`/`else`/`finally`, typed
+**Status:** CLOSED. IMPLEMENTED 2026-07-17 (`04d56587`, option C:
+exception slot + explicit checks; design alternatives analyzed in
+`62c8e5d1`), with follow-on optimization/dead-code-elimination work
+same-day and the next (`08e3bf31`, `b26b3983`, `50472c35`,
+`942e36ff`, `76f70e61`) — see the dated entries below for what each
+one landed. Re-verified 2026-07-21: `tests/exception_basic.py`,
+`tests/exception_propagation.py`, `tests/exception_assert.py`,
+`tests/assert_fail.py` all still pass through `test_pyc.py` (full
+suite: 216 passed, 6 expected fails, 0 failed). This file sat in
+`issues/` (never moved to `closed/`) despite being fully implemented
+for several days — moved as part of a 2026-07-21 documentation-hygiene
+pass; no content in the status block below needed correcting; only
+`with`'s exception-safety integration (see the last "Related" entry)
+was actually still outstanding, now filed as
+[030](../030-with-exit-not-called-on-exception.md).
+`raise`/`try`/`except`/`else`/`finally`, typed
 clauses (`except X as e:`, tuple forms), bare re-raise, and
 cross-function propagation all work on both backends. Landing it
 surfaced and fixed FOUR pre-existing, unrelated bugs:
@@ -246,7 +260,7 @@ consulted by `fa.cc`'s own `P_prim_isinstance` transfer function
 architecture discussion that led to it, a real null-pointer bug found
 along the way (`EntrySet::out_edges` can contain null entries), and
 verification are recorded in
-[ifa/issues/050](../ifa/issues/050-general-constant-propagation-unreachable-code.md)'s
+[ifa/issues/050](../../ifa/issues/050-general-constant-propagation-unreachable-code.md)'s
 3a section (it's an ifa-core feature, not pyc-specific, so it lives
 there rather than being duplicated here). **Does not replace Tier
 2** — confirmed empirically that Tier 3a's native fold alone doesn't
@@ -256,7 +270,7 @@ run, each doing genuinely non-redundant work.
 
 Investigating this surfaced a pre-existing, unrelated FA convergence
 gap — filed as
-[ifa/issues/049](../ifa/issues/049-raise-only-contour-notype.md): a
+[ifa/issues/049](../../ifa/issues/049-raise-only-contour-notype.md): a
 function whose only call site(s) in the whole program reach its
 raising branch (no call anywhere reaches the normal `return`) gets a
 bottom-typed return and spurious NOTYPE violations, since the raise
