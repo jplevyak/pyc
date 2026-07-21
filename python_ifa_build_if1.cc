@@ -1070,28 +1070,30 @@ static Sym *resolve_global_class(cchar *name, PycCompiler &ctx) {
   return s->sym;
 }
 
-// Call the real `isinstance(obj, cls)` builtin (__pyc__/05_builtins.py)
-// as an ordinary plain function call -- if1_send1 + if1_add_send_arg,
-// the same shape build_if1_pyda's own PY_call trailer uses for any
-// non-method callee. Deliberately NOT the raw `sym_primitive`
-// isinstance send `x is None` uses (python_ifa_build_if1.cc's
-// PY_compare handling): that form is tied to FA's isinstance-based
-// type-narrowing, which expects the send to sit directly in an
-// if-condition position. Sequence-pattern matching needs to combine
-// several isinstance/length/element checks with bool.__and__/__or__
-// before the actual if1_if, and the raw primitive form breaks
-// (confirmed empirically -- "illegal call argument" FA errors) once
-// composed that way. The ordinary-call form is exactly what a real
-// `isinstance(x, list) or isinstance(x, tuple)` in user source
-// already compiles to, so it's proven to compose correctly.
+// Raw `sym_primitive` isinstance send -- the same shape issue 011
+// uses for `except X:` clause dispatch (see the "Raw sym_primitive
+// isinstance send" comment further down in this file), NOT the
+// ordinary-call form that routes through __pyc__/05_builtins.py's
+// `isinstance()` wrapper. That wrapper form was tried first here and
+// found to reproduce issue 011's bug class: once a match statement
+// checks more than one distinct class this way, FA generalizes the
+// shared wrapper into ONE polymorphic clone taking a runtime class
+// value, rather than a separate monomorphic clone per call site --
+// silently corrupting which class is even being asked about (see
+// ifa/issues/060-none-branch-dropped-mixed-with-literal-bool-sequence.md
+// for the full trace). The raw form keeps the class arg a genuine
+// compile-time constant at this exact call site, never shared with
+// any other isinstance check in the program, matching cg.cc's/
+// cg_emit_llvm.cc's isinstance codegen (which reads the class arg's
+// Sym identity directly, not its runtime value). Verified this also
+// composes fine with bool.__and__/__or__ (sequence-pattern matching's
+// `isinstance(x, list) or isinstance(x, tuple)`, including with
+// actual tuple subjects) despite an earlier, now-stale comment here
+// claiming the raw form broke that composition with "illegal call
+// argument" FA errors -- not reproduced.
 static Sym *build_isinstance_call(Sym *obj, Sym *cls, Code **code, PycAST *case_ast, PycCompiler &ctx) {
-  Sym *iso_fn = resolve_global_class("isinstance", ctx);
-  Code *send = if1_send1(if1, code, case_ast);
-  if1_add_send_arg(if1, send, iso_fn);
-  if1_add_send_arg(if1, send, obj);
-  if1_add_send_arg(if1, send, cls);
   Sym *result = new_sym(case_ast);
-  if1_add_send_result(if1, send, result);
+  if1_send(if1, code, 4, 1, sym_primitive, make_symbol("isinstance"), obj, cls, result)->ast = case_ast;
   return result;
 }
 
