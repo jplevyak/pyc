@@ -68,7 +68,12 @@ conventions are the same; the only difference is location.
   is dispatch over a union of PRIMITIVE/boxed types
   (`None|int|float`), not 026's class-method classtag gap.
   `build_match_pyda` refuses the combination at compile time rather
-  than risk shipping it. Positional class patterns (`case Point(0,
+  than risk shipping it. **Precisely root-caused 2026-07-22** (still
+  not fixed): a gap in `ifa/analysis/fa.cc`'s `peel_wrapper_def`
+  (issue 025's per-branch narrowing) that never engages for
+  `match`/`case`'s generated code — see
+  [`ifa/issues/059`](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)
+  for the full mechanism and proposed fix. Positional class patterns (`case Point(0,
   0):`, matched via a compile-time read-back of `__match_args__`,
   including base-class inheritance and mixing with keyword args) were
   added **2026-07-21**, along with sequence-pattern star capture

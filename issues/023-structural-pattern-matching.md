@@ -232,27 +232,46 @@ match) and refuses to compile it, pointing at the workaround (split
 into a separate match statement, or use `case x if x is None:`).
 Re-confirmed reproducing 2026-07-21.
 
-**Root cause, as far as traced:** dispatching `__str__` (needed by
-`print()`) on a subject whose static type spans multiple
+**Root cause, precisely identified 2026-07-22:** dispatching `__str__`
+(needed by `print()`) on a subject whose static type spans multiple
 PRIMITIVE/boxed types (`None | int | float | ...`) — none of which
 carry the classtag mechanism polymorphic dispatch relies on for class
 instances. Ruled out as the same bug as (closed)
 [026](closed/026-polymorphic-method-dispatch-partial-override-crash.md)
 — identical assertion text, but 026 was a `Type_SUM`-typed
 class-instance receiver hitting a classtag gap; this is a union of
-primitive/boxed types with no classtag involved at all (confirmed via
-`PYC_DBG_DISPATCH=1`). Also confirmed the crash is not specific to:
-which lowering `case None:`'s own check uses (three different forms
-tried, all fail identically); whether the *other* case does any type
-narrowing (a plain unconditional capture fallback crashes too); or
-`match`/`case` itself (a plain `if val is None: ... elif
-isinstance(val, int): ...` compiles and runs fine). It's specific to
-the chain of nested `if1_if`s `build_match_pyda` generates for a
-multi-arm match over a subject union that includes `None`. Points at
-a genuine codegen gap in dispatching a method over a primitive/boxed
-union, not anything fixable from this file's own lowering code. Not
-yet filed as its own `ifa/issues/` entry — the compile-time refusal
-keeps it from being a correctness hazard meanwhile.
+primitive/boxed types with no classtag involved at all.
+
+This is exactly the scenario `ifa/issues/025`'s per-branch type
+narrowing feature exists to prevent — and confirmed via a clean A/B
+test (`IFA_NARROW=0` vs. the default `1`) that narrowing has **zero
+effect** on `match`/`case`'s generated code for this repro (byte-
+identical C either way), while the identical union written by hand
+(`if val is None: ... else: x = val; print(x)`) genuinely depends on
+narrowing (works at `IFA_NARROW=1`, crashes identically at `=0`).
+Root-caused to a gap in `ifa/analysis/fa.cc`'s `peel_wrapper_def`
+(issue 025's narrowing-predicate walk-back): `build_pattern_match`'s
+`guarded_bool` helper — the shared mechanism every isinstance-based
+pattern kind uses — collapses each discriminator check into a plain
+boolean via a phi-merged if1_if (`result = then_val` in one branch,
+`result = sym_false` in the other) *before* `build_match_pyda`'s outer
+per-arm dispatch ever sees it. `peel_wrapper_def` only walks
+single-source MOVE chains and one specific 3-SEND `__pyc_to_bool__`
+unwrap shape — it doesn't walk through a two-branch phi-merge, so it
+never reaches the real discriminator one level down, and the
+narrowing that would otherwise correctly restrict the captured
+value's type inside the "didn't match" branch never applies. Also
+confirmed BOXING (issue 025's *other* documented blocker, for
+multi-basic-type unions like `int | str`) does NOT gate this: `None`
+falls through `to_basic_type` the same way user classes do (per issue
+025's own `Node | None` finding), so a `None`-plus-one-primitive-type
+union never trips `mixed_basics`'s "≥2 distinct basic types" check —
+the peel-wrapper gap is the *only* remaining blocker for this shape.
+Root-caused and scoped, not yet fixed —
+[ifa/issues/059](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)
+has the full mechanism, proposed fix sketch, and open questions (this
+is genuinely `ifa/analysis/fa.cc` work, not fixable from this file's
+own lowering code, hence filed there rather than duplicated here).
 
 ## What this unblocks
 
