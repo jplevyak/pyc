@@ -68,9 +68,12 @@ conventions are the same; the only difference is location.
   is dispatch over a union of PRIMITIVE/boxed types
   (`None|int|float`), not 026's class-method classtag gap.
   `build_match_pyda` refuses the combination at compile time rather
-  than risk shipping it. Positional class patterns (`Point(0, 0)`)
-  and `*rest`/`**rest` captures remain explicitly deferred (fail to
-  parse or fail loudly, not silent traps).
+  than risk shipping it. Positional class patterns (`case Point(0,
+  0):`, matched via a compile-time read-back of `__match_args__`,
+  including base-class inheritance and mixing with keyword args) were
+  added **2026-07-21**. `*rest`/`**rest` captures in sequence/mapping
+  patterns remain explicitly deferred (fail to parse, not a silent
+  trap).
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected

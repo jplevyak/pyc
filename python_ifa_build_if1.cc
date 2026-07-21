@@ -1531,28 +1531,49 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
     // and sequence patterns hit before their own fixes.
     //
     // Positional class patterns (`Point(0, 0)`, matched via
-    // `__match_args__`) are NOT supported -- pyc has no compile-time
-    // read-back of a class-body literal assignment like
-    // `__match_args__ = ("x", "y")`, unlike sequence patterns which
-    // could reuse existing `__getitem__`/`__len__` machinery wholesale.
-    // Fails loudly rather than guessing; keyword-only class patterns
-    // are PEP 634's more common, more explicit form regardless.
+    // `__match_args__`) -- resolved against cls->match_args
+    // (issues/023, collect_match_args/gen_class_pyda), a compile-time
+    // read-back of the class body's `__match_args__ = ("x", ...)`
+    // literal (or the nearest base's, if this class declares none).
+    // Positional args must come before any keyword args in the call,
+    // same as CPython's own grammar restriction on class patterns.
     cchar *cls_name = pattern->children[0]->str_val;
     PyDAST *call = pattern->children[1];
-    Vec<PyDAST *> kw_names, kw_pats;
+    Vec<cchar *> kw_name_strs;
+    Vec<PyDAST *> kw_pats;
+    Sym *cls = resolve_global_class(cls_name, ctx);
     if (call->children.n > 0) {
       PyDAST *arglist = call->children[0];
+      int pos_idx = 0;
+      bool seen_keyword = false;
       for (auto arg : arglist->children.values()) {
-        if (arg->kind != PY_keyword_arg)
-          fail("error line %d: positional class pattern arguments ('%s(...)' without "
-               "'attr=pattern' keyword names) are not yet supported -- use "
-               "'%s(attr=pattern, ...)'",
-               ctx.lineno, cls_name, cls_name);
-        kw_names.add(arg->children[0]);
-        kw_pats.add(arg->children[1]);
+        if (arg->kind == PY_keyword_arg) {
+          seen_keyword = true;
+          // Canonicalize before the .in() dedup check below -- Vec::in
+          // compares by pointer, and cls->match_args entries are
+          // already canonicalized (collect_match_args); an
+          // uncanonicalized AST str_val would never pointer-equal a
+          // canonicalized one even for the same text.
+          cchar *name = if1_cannonicalize_string(if1, arg->children[0]->str_val);
+          if (kw_name_strs.in(name))
+            fail("error line %d: '%s(...)' got multiple sub-patterns for attribute '%s'", ctx.lineno, cls_name, name);
+          kw_name_strs.add(name);
+          kw_pats.add(arg->children[1]);
+          continue;
+        }
+        if (seen_keyword)
+          fail("error line %d: positional patterns follow keyword patterns in '%s(...)'", ctx.lineno, cls_name);
+        if (pos_idx >= cls->match_args.n)
+          fail("error line %d: '%s' accepts %d positional sub-pattern%s (no '__match_args__' entry for "
+               "position %d) -- use '%s(attr=pattern, ...)'",
+               ctx.lineno, cls_name, cls->match_args.n, cls->match_args.n == 1 ? "" : "s", pos_idx, cls_name);
+        cchar *name = cls->match_args[pos_idx++];
+        if (kw_name_strs.in(name))
+          fail("error line %d: '%s(...)' got multiple sub-patterns for attribute '%s'", ctx.lineno, cls_name, name);
+        kw_name_strs.add(name);
+        kw_pats.add(arg);
       }
     }
-    Sym *cls = resolve_global_class(cls_name, ctx);
     Sym *is_inst = build_isinstance_call(subject, cls, code, case_ast, ctx);
 
     // Single-level guarded_bool: attribute reads (unlike sequence
@@ -1562,8 +1583,8 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
     // against the narrowed class type.
     return guarded_bool(is_inst, code, case_ast, [&](Code **then_code) -> Sym * {
       Sym *combined = nullptr;
-      for (int j = 0; j < kw_names.n; j++) {
-        Sym *val = build_attribute_get(subject, kw_names[j]->str_val, then_code, case_ast);
+      for (int j = 0; j < kw_name_strs.n; j++) {
+        Sym *val = build_attribute_get(subject, kw_name_strs[j], then_code, case_ast);
         Sym *sub_matched = build_pattern_match(kw_pats[j], val, then_code, case_ast, ctx);
         combined = combined ? combine_bool(combined, sub_matched, "__and__", then_code, case_ast) : sub_matched;
       }
@@ -1701,10 +1722,14 @@ static bool pattern_contains_none(PyDAST *pattern) {
     return false;
   }
   if (pattern->kind == PY_power && pattern->children.n == 2 && pattern->children[1]->kind == PY_call) {
+    // issues/023: positional class-pattern args (`Point(None, y)`)
+    // are a sub-pattern exactly like a keyword arg's value
+    // (`Point(x=None)`, already scanned below) -- recurse into both
+    // the same way build_pattern_match's own arg loop does.
     PyDAST *call = pattern->children[1];
     if (call->children.n > 0)
       for (auto arg : call->children[0]->children.values())
-        if (arg->kind == PY_keyword_arg && pattern_contains_none(arg->children[1])) return true;
+        if (pattern_contains_none(arg->kind == PY_keyword_arg ? arg->children[1] : arg)) return true;
     return false;
   }
   return false;

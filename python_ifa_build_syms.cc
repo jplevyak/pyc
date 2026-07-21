@@ -218,20 +218,24 @@ static void mark_pattern_captures(PyDAST *n) {
     return;
   }
   if (n->kind == PY_power && n->children.n == 2 && n->children[1]->kind == PY_call) {
-    // Class pattern (`ClassName(attr=pat, ...)`, parsed as an ordinary
-    // constructor-call-shaped PY_power/PY_call by build_pattern_match).
-    // Only keyword sub-patterns' VALUES can bind -- the class name and
-    // the keyword names themselves (`attr` in `attr=pat`) are left
-    // untouched, same rationale as PY_dict's keys above: they fall
-    // through to the generic recurse as ordinary reads, exactly like
-    // an ordinary call's keyword-argument names already do (ordinary
-    // `foo(x=1)` calls resolve `x` the same harmless way -- see
+    // Class pattern (`ClassName(attr=pat, ...)` or, issues/023,
+    // positional `ClassName(pat, ...)` resolved via __match_args__),
+    // parsed as an ordinary constructor-call-shaped PY_power/PY_call
+    // by build_pattern_match. Every sub-pattern binds -- keyword
+    // values AND positional args alike (build_pattern_match's own arg
+    // loop treats them identically once positional args are resolved
+    // to an attribute name); only the class name and the keyword
+    // names themselves (`attr` in `attr=pat`) are left untouched, same
+    // rationale as PY_dict's keys above: they fall through to the
+    // generic recurse as ordinary reads, exactly like an ordinary
+    // call's keyword-argument names already do (ordinary `foo(x=1)`
+    // calls resolve `x` the same harmless way -- see
     // tests/keyword_args.py).
     PyDAST *call = n->children[1];
     if (call->children.n > 0) {
       PyDAST *arglist = call->children[0];
       for (auto arg : arglist->children.values())
-        if (arg->kind == PY_keyword_arg) mark_pattern_captures(arg->children[1]);
+        mark_pattern_captures(arg->kind == PY_keyword_arg ? arg->children[1] : arg);
     }
     return;
   }
@@ -1418,11 +1422,64 @@ static void collect_self_store_fields(PyDAST *n, Vec<cchar *> &fields) {
   for (auto c : n->children.values()) collect_self_store_fields(c, fields);
 }
 
+// issues/023: read back a class-body `__match_args__ = ("x", "y")`
+// literal at compile time -- positional class patterns
+// (`case Point(0, 0):`) need to map position -> attribute name, and
+// PEP 634 requires that mapping to come from an explicit
+// __match_args__, never guessed from __init__'s parameter list.
+// Unlike collect_self_store_fields, this only looks at the class
+// body's OWN top-level statements (no recursion into methods --
+// __match_args__ is a class attribute, never meaningfully assigned
+// inside one). String literals are read the same way the
+// @vector("s") decorator argument already is (strip the raw
+// source's surrounding quote char) -- there's no runtime value to
+// evaluate here, this runs before build_if1 does anything.
+static void collect_match_args(PyDAST *cdef, Vec<cchar *> &out) {
+  PyDAST *body_node = cdef->children.last();
+  Vec<PyDAST *> stmts;
+  if (body_node->kind == PY_suite)
+    for (auto c : body_node->children.values()) stmts.add(c);
+  else
+    stmts.add(body_node);
+  for (auto n : stmts.values()) {
+    if (n->kind != PY_assign || n->children.n != 2) continue;
+    PyDAST *tgt = n->children[0], *val = n->children[1];
+    if (tgt->kind != PY_name || !tgt->str_val || strcmp(tgt->str_val, "__match_args__")) continue;
+    if (val->kind != PY_tuple && val->kind != PY_list) continue;
+    Vec<cchar *> names;
+    bool ok = true;
+    for (auto elt : val->children.values()) {
+      if (elt->kind != PY_string || !elt->str_val) { ok = false; break; }
+      cchar *s = elt->str_val;
+      int len = strlen(s);
+      char *inner = (char *)MALLOC(len + 1);
+      if (len >= 2 && (s[0] == '"' || s[0] == '\'')) {
+        strncpy(inner, s + 1, len - 2);
+        inner[len - 2] = 0;
+      } else {
+        strcpy(inner, s);
+      }
+      names.add(if1_cannonicalize_string(if1, inner));
+    }
+    if (ok) out = names;  // last __match_args__ statement wins, matching Python's own assignment semantics
+  }
+}
+
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
   bool is_record = cls->type_kind == Type_RECORD && cls != sym_object;
   Code *body = 0;
+  // issues/023: __match_args__ for positional class patterns
+  // (case Point(0, 0):). Own class body first; if it declares none,
+  // fall back to the first direct base that has some -- classes are
+  // processed in program order (pass 1 already validated every base
+  // is a real class before this pass-2 function runs for ANY class),
+  // so a base named in cls->includes here already carries its OWN
+  // fully-resolved (declared-or-inherited) match_args.
+  collect_match_args(cdef, cls->match_args);
+  for (int i = 0; i < cls->includes.n && !cls->match_args.n; i++)
+    if (cls->includes[i]->match_args.n) cls->match_args = cls->includes[i]->match_args;
   // Build base ___init___ (class prototype initialization)
   for (int i = 0; i < cls->includes.n; i++) {
     Sym *inc = cls->includes[i];

@@ -1,0 +1,12 @@
+origin
+on y-axis at 5
+diagonal: 3
+point: 3 4
+other: 42
+special row
+on x-axis at 9
+point: 1 1
+3d, x=y=0, z= 9
+3d: 1 2 3
+bound: 3 4
+outer still: 999 888
