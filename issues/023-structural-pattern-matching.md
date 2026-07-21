@@ -229,49 +229,51 @@ error: matching function not found"'`. `build_match_pyda` detects
 this at compile time (`pattern_contains_none`/
 `pattern_is_risky_with_none`, scanning every case pattern in the
 match) and refuses to compile it, pointing at the workaround (split
-into a separate match statement, or use `case x if x is None:`).
-Re-confirmed reproducing 2026-07-21.
+into a separate match statement, or use `case x if x is None:`). This
+guard is **still fully active** — see "Underlying mechanism fixed,
+guard not yet relaxed" below for why.
 
-**Root cause, precisely identified 2026-07-22:** dispatching `__str__`
-(needed by `print()`) on a subject whose static type spans multiple
-PRIMITIVE/boxed types (`None | int | float | ...`) — none of which
-carry the classtag mechanism polymorphic dispatch relies on for class
-instances. Ruled out as the same bug as (closed)
+**Root cause:** dispatching `__str__` (needed by `print()`) on a
+subject whose static type spans multiple PRIMITIVE/boxed types
+(`None | int | float | ...`) — none of which carry the classtag
+mechanism polymorphic dispatch relies on for class instances. Ruled
+out as the same bug as (closed)
 [026](closed/026-polymorphic-method-dispatch-partial-override-crash.md)
-— identical assertion text, but 026 was a `Type_SUM`-typed
-class-instance receiver hitting a classtag gap; this is a union of
-primitive/boxed types with no classtag involved at all.
+— identical assertion text, but a different mechanism (026 was a
+classtag gap for `Type_SUM`-typed class instances; this is a union of
+primitive/boxed types with no classtag involved at all, and BOXING
+doesn't gate it either — `None` falls through `to_basic_type` the
+same way user classes do). This is exactly the scenario
+`ifa/issues/025`'s per-branch type narrowing feature exists to
+prevent, and was traced to a specific gap in its `peel_wrapper_def`
+walk-back: `build_pattern_match`'s `guarded_bool` helper collapses
+every isinstance-based pattern's discriminator check into a
+phi-merged boolean before `build_match_pyda`'s outer per-arm dispatch
+ever sees it, and `peel_wrapper_def` didn't know how to see through
+that collapse to find the real discriminator underneath. Full
+mechanism, the fix, and its soundness constraints:
+[ifa/issues/059](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md).
 
-This is exactly the scenario `ifa/issues/025`'s per-branch type
-narrowing feature exists to prevent — and confirmed via a clean A/B
-test (`IFA_NARROW=0` vs. the default `1`) that narrowing has **zero
-effect** on `match`/`case`'s generated code for this repro (byte-
-identical C either way), while the identical union written by hand
-(`if val is None: ... else: x = val; print(x)`) genuinely depends on
-narrowing (works at `IFA_NARROW=1`, crashes identically at `=0`).
-Root-caused to a gap in `ifa/analysis/fa.cc`'s `peel_wrapper_def`
-(issue 025's narrowing-predicate walk-back): `build_pattern_match`'s
-`guarded_bool` helper — the shared mechanism every isinstance-based
-pattern kind uses — collapses each discriminator check into a plain
-boolean via a phi-merged if1_if (`result = then_val` in one branch,
-`result = sym_false` in the other) *before* `build_match_pyda`'s outer
-per-arm dispatch ever sees it. `peel_wrapper_def` only walks
-single-source MOVE chains and one specific 3-SEND `__pyc_to_bool__`
-unwrap shape — it doesn't walk through a two-branch phi-merge, so it
-never reaches the real discriminator one level down, and the
-narrowing that would otherwise correctly restrict the captured
-value's type inside the "didn't match" branch never applies. Also
-confirmed BOXING (issue 025's *other* documented blocker, for
-multi-basic-type unions like `int | str`) does NOT gate this: `None`
-falls through `to_basic_type` the same way user classes do (per issue
-025's own `Node | None` finding), so a `None`-plus-one-primitive-type
-union never trips `mixed_basics`'s "≥2 distinct basic types" check —
-the peel-wrapper gap is the *only* remaining blocker for this shape.
-Root-caused and scoped, not yet fixed —
-[ifa/issues/059](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)
-has the full mechanism, proposed fix sketch, and open questions (this
-is genuinely `ifa/analysis/fa.cc` work, not fixable from this file's
-own lowering code, hence filed there rather than duplicated here).
+**Underlying mechanism fixed 2026-07-22, guard not yet relaxed.**
+[059](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)'s
+fix (extending `peel_wrapper_def` in `ifa/analysis/fa.cc`) is landed,
+verified sound, and confirmed correct for `case None:` combined with a
+bare capture, a class pattern, or a mapping pattern (all now match
+CPython byte-for-byte, verified via a temporary bypass of this same
+guard). But the guard above remains **fully unconditional** because
+verifying 059's fix surfaced a second, more severe, completely
+independent bug: `case None:` combined with a **literal**, **`True`**/
+**`False`**, or **sequence** pattern doesn't crash at all — it
+compiles clean and silently produces the *wrong answer* (the `None`
+arm's own check vanishes from the generated code entirely; confirmed
+via `IFA_NARROW=0` that this has nothing to do with narrowing).
+Filed as [ifa/issues/060](../ifa/issues/060-none-branch-dropped-mixed-with-literal-bool-sequence.md),
+not yet root-caused. Relaxing this guard for only *some* pattern
+kinds while leaving others blocked is a real option (059's fix is
+independently sound for the subset it covers), but hasn't been done
+yet — trading a loud, safe compile-time refusal for a silent wrong
+answer on the wrong subset would be strictly worse than the status
+quo, so this needs a deliberate decision, not a reflexive relaxation.
 
 ## What this unblocks
 
