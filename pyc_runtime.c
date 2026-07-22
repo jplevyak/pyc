@@ -32,6 +32,8 @@ extern char *_CG_String(const void *x);
 extern char *_CG_format_string(char *str, ...);
 extern char *_CG_str_from_int(int64 x);
 extern char *_CG_str_from_float(double d);
+extern double _CG_str_to_float64(char *s);
+extern int64 _CG_str_to_int64(char *s);
 extern char *_CG_group_digits(const char *core, char sep);
 extern char *_CG_pad_align(const char *core, int width, char align, char fill, int sign_len);
 extern void  _CG_parse_format_spec(const char *spec, _CG_FormatSpec *out);

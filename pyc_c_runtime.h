@@ -445,6 +445,17 @@ inline char *_CG_str_from_float(double d) {
   return s;
 }
 
+// str -> float / int parsing for `float("...")` / `int("...")`. A
+// _CG_string is a NUL-terminated char* (with side length metadata), so
+// strtod/strtoll consume it directly. strtod already accepts CPython's
+// "inf"/"-inf"/"nan"/"infinity" spellings and scientific notation.
+// Codegen routes here only when a string flows into the coerce
+// primitive; a numeric source keeps the plain cast (see
+// emit_send_coerce). No exception model yet (issue 011): an unparseable
+// string yields 0.0 / 0 rather than raising ValueError.
+inline double _CG_str_to_float64(char *s) { return strtod(s, 0); }
+inline int64 _CG_str_to_int64(char *s) { return (int64)strtoll(s, 0, 10); }
+
 // File I/O helpers for the library-level file object (__pyc__/07_file.py:
 // open(), read/readline/write/close, sys.std{in,out,err}, input()).
 // Handles are FILE* smuggled through int64 -- the library stores them in
