@@ -7,6 +7,7 @@ make_PycSymbol local 'z'
 make_PycSymbol local 'y'
 enter scope level 2
 make_PycSymbol local 'i'
+make_PycSymbol local 'i'
 make_PycSymbol use 'i'
 make_PycSymbol use 'i'
 make_PycSymbol global 'z'

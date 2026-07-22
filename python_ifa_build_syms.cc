@@ -167,6 +167,91 @@ static void mark_store(PyDAST *n) {
     for (auto c : n->children.values()) mark_store(c);
 }
 
+// issues/025 (mwmatching): Python decides a name's scope over the WHOLE
+// function -- a name assigned anywhere in a function body is local
+// throughout, even at a point that READS it before that assignment.
+// build_syms_pyda walks the body in source order, so a read-before-
+// write (`if first or d < bd: ... bd = d`) resolves the read as a
+// not-yet-bound USE, falls through to module scope, and mints a
+// SPURIOUS module global -- which a second same-shaped function then
+// collides with ("'bd' redefined as local"). The helpers below collect
+// every bare-name local assignment target in a function body (BEFORE
+// the body is walked) so those names can be pre-bound PYC_LOCAL and the
+// reads resolve to the correct local.
+
+// Collect bare NAME(s) bound by an assignment/for target expression.
+// Attribute/subscript targets (`a.x`, `a[i]`, a PY_power) bind no local
+// and are skipped, exactly as build_syms_pyda's own PY_name/PY_power
+// handling distinguishes them.
+static void collect_bind_names(PyDAST *t, Vec<cchar *> &out) {
+  if (!t) return;
+  if (t->kind == PY_name) {
+    if (t->str_val) out.add(t->str_val);
+    return;
+  }
+  if (t->kind == PY_star_expr) {
+    if (t->children.n) collect_bind_names(t->children[0], out);
+    return;
+  }
+  if (t->kind == PY_tuple || t->kind == PY_testlist || t->kind == PY_exprlist || t->kind == PY_list ||
+      t->kind == PY_fplist || t->kind == PY_fpdef)
+    for (auto c : t->children.values()) collect_bind_names(c, out);
+}
+
+// Walk a function body collecting local assignment-target names (into
+// `out`) and names removed from local consideration by an explicit
+// `global`/`nonlocal` (into `excluded`). Does NOT descend into nested
+// funcdef/lambda/class bodies or comprehension for-clauses -- those are
+// separate scopes -- and deliberately does NOT collect nested def/class
+// NAMES (pre-binding those as plain locals would rob the def of its own
+// function Sym).
+static void collect_prebind_targets(PyDAST *n, Vec<cchar *> &out, Vec<cchar *> &excluded) {
+  if (!n) return;
+  switch (n->kind) {
+    case PY_funcdef:
+    case PY_lambda:
+    case PY_classdef:
+      return;  // separate scope
+    case PY_global_stmt:
+    case PY_nonlocal_stmt:
+      for (auto c : n->children.values())
+        if (c->str_val) excluded.add(c->str_val);
+      return;
+    case PY_assign:
+      for (int i = 0; i < n->children.n - 1; i++) collect_bind_names(n->children[i], out);
+      break;
+    case PY_annassign:
+    case PY_augassign:
+      if (n->children.n) collect_bind_names(n->children[0], out);
+      break;
+    case PY_for_stmt:
+      if (n->children.n) collect_bind_names(n->children[0], out);
+      break;
+    default:
+      break;
+  }
+  for (auto c : n->children.values())
+    if (c && c->kind != PY_comp_for && c->kind != PY_list_for) collect_prebind_targets(c, out, excluded);
+}
+
+// Pre-bind whole-function local targets. Runs after the parameters are
+// bound and before the body is walked (PY_funcdef).
+static void prebind_function_locals(PyDAST *body, PycCompiler &ctx) {
+  Vec<cchar *> targets, excluded;
+  collect_prebind_targets(body, targets, excluded);
+  for (cchar *name : targets) {
+    bool skip = false;
+    for (cchar *e : excluded)
+      if (e == name || (e && name && !strcmp(e, name))) {
+        skip = true;
+        break;
+      }
+    if (skip) continue;
+    if (!ctx.scope_stack.last()->map.get(name))  // not already a param / earlier pre-bind
+      make_PycSymbol(ctx, name, PYC_LOCAL);
+  }
+}
+
 // Recursively mark every bare, non-wildcard NAME reachable through
 // capture position in a match/case PATTERN as PY_STORE. Mirrors
 // build_if1_pyda's build_pattern_match traversal exactly (wildcard/
@@ -805,6 +890,11 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
             build_syms_pyda(c, ctx);
           }
         }
+      // issues/025: pre-bind whole-function locals so a read-before-
+      // write of a local (common `if first or x < best: ... best = x`
+      // shape) resolves to the local instead of minting a spurious
+      // global -- see prebind_function_locals.
+      if (n->children.n >= 3) prebind_function_locals(n->children[2], ctx);
       if (n->children.n >= 3) build_syms_pyda(n->children[2], ctx);
       form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
         if (!MARKED(x->value) && !x->value->sym->is_fun) {
