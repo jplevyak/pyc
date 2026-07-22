@@ -44,51 +44,6 @@ conventions are the same; the only difference is location.
   element types anywhere fails to compile with a `BOXING`/"mixed
   basic types" FA violation — each shared internal comparison
   method (`_keys[i] == key`) isn't specialized per key type.
-- [023-structural-pattern-matching.md](023-structural-pattern-matching.md)
-  — `match`/`case` now covers every PEP 634 pattern KIND: literal,
-  wildcard, capture, or-patterns, guards, sequence, mapping, class,
-  and `None`/`True`/`False` singleton patterns all work (**fixed
-  2026-07-12**), verified against real `python3` output on both
-  backends. Or-patterns and class patterns had both been **silent
-  miscompiles** (parsed as an ordinary expression/constructor call
-  and compared via `__eq__`, no error at all); so had `None`/`True`/
-  `False` (silently caught by the capture-pattern branch, matching
-  unconditionally regardless of the subject's actual value) and
-  mixed-literal-type matches (`case 5: ... case "hi":` crashed the
-  underlying C compiler). Sequence/mapping/class patterns share one
-  lesson: FA type-checks the whole program statically, so a
-  structural check's element/attribute access needs genuine nested
-  `if1_if` control flow (not a flat boolean fold) to narrow the
-  subject's type within a branch, and a guard must be evaluated
-  *inside* that same nesting, not appended afterward. The last
-  limitation — `case None:` combined with a narrowing or capturing
-  pattern — is **RESOLVED 2026-07-21**: two independent mechanisms,
-  (1) `build_isinstance_call` sharing one polymorphic `isinstance()`
-  clone across pattern kinds (same class as closed 011, now using the
-  raw `sym_primitive` send) and (2) the general `None`-plus-scalar
-  contour merge — `nil_type` was stripped from FA's `->type`
-  projection unconditionally, so a `{None, scalar}` union looked
-  monomorphic-scalar and `None` was coerced to `(scalar)NULL` (= 0),
-  fixed by splitting `None` into its own contour in
-  `type_cannonicalize` (see
-  [`ifa/issues/060`](../ifa/issues/060-none-branch-dropped-mixed-with-literal-bool-sequence.md)).
-  The [`ifa/issues/059`](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)
-  `peel_wrapper_def` narrowing fix composes with this. The compile-time
-  guard and its two helper functions were removed; `tests/match_none.py`
-  now exercises all four previously-blocked combinations on both
-  backends. Positional class patterns (`case Point(0,
-  0):`, matched via a compile-time read-back of `__match_args__`,
-  including base-class inheritance and mixing with keyword args) were
-  added **2026-07-21**, along with sequence-pattern star capture
-  (`case [a, *rest]:`, reusing issue 024's `star_expr` grammar node in
-  `listmaker`/`testlist_comp` -- with a defensive `fail()` added for
-  the ordinary, unsupported list/tuple-literal-unpacking shape (PEP
-  448) that grammar sharing also newly parses), and mapping-pattern
-  `**rest` (`case {"k": v, **rest}:`, a new `dictorsetmaker` grammar
-  rule; real Python structurally limits `**rest` to one, last, never
-  `_` — pyc's grammar enforces the first two for free, `build_pattern_match`
-  checks the third). No pattern-matching features or limitations
-  remain — issue 023 is resolved.
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected
@@ -108,6 +63,18 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [023](closed/023-structural-pattern-matching.md) — `match`/`case`
+  (PEP 634): every pattern kind implemented and matching CPython on
+  both backends, including all three rest-capture forms (`*rest`,
+  `**rest`, positional class patterns via `__match_args__`) and every
+  `case None:` combination. The last limitation — `case None:` mixed
+  with a narrowing/capturing pattern — was resolved 2026-07-21 by
+  [ifa/issues/060](../ifa/issues/closed/060-none-branch-dropped-mixed-with-literal-bool-sequence.md)
+  (isinstance wrapper-clone sharing + the general `None`-plus-scalar
+  contour merge, fixed in `type_cannonicalize`); the compile-time
+  guard was then removed. `tests/match_none.py`. (Note: distinct from
+  the also-closed [023-tuple-missing-eq-str](closed/023-tuple-missing-eq-str.md)
+  — a pre-existing frontend numbering collision.)
 - [011](closed/011-exception-handling-unimplemented.md) —
   `try`/`except`/`else`/`finally`/`raise` implemented (option C:
   exception slot + explicit post-call checks, FA-gated), including
@@ -166,7 +133,7 @@ commit ref recorded in each file's status line.
   Found and filed separately while landing this: a pre-existing,
   unrelated FA bug where an empty list literal sharing a method
   clone with a non-empty, differently-element-typed list fails to
-  type-check — [ifa/issues/040](../ifa/issues/040-empty-list-shared-clone-type-inference.md).
+  type-check — [ifa/issues/040](../ifa/issues/closed/040-empty-list-shared-clone-type-inference.md).
   Test: `tests/star_unpack.py`, both backends.
 
 - [026](closed/026-polymorphic-method-dispatch-partial-override-crash.md)

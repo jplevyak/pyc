@@ -38,7 +38,7 @@ cycles don't terminate -- corpus need is trees.
 Landing it surfaced and fixed FIVE latent compiler bugs:
 [ifa/issues/046](../../ifa/issues/046-optional-none-field-inline-type-sum-assert.md)
 (inline chain Type_SUM assert -> pre-checked, un-inlined),
-[ifa/issues/044](../../ifa/issues/044-mixed-length-tuple-list-len-miscompile.md)
+[ifa/issues/044](../../ifa/issues/closed/044-mixed-length-tuple-list-len-miscompile.md)
 (listish-tuple literal length off-by-one -> phantom elements),
 cg.cc's `simple_move` dropping nil-typed moves into REAL locals
 (uninitialized `return t0;` -- None-returning methods returned stack

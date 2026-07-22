@@ -778,19 +778,19 @@ comprehension chains; chess/rubik/sudoku3 unsampled.
 Chased the "empty-container inference" theory from the round-4
 notes to ground; outcome recorded across three ifa issues:
 
-- **[ifa/issues/043](../ifa/issues/043-empty-container-inference-options.md)**:
+- **[ifa/issues/043](../ifa/issues/closed/043-empty-container-inference-options.md)**:
   the empty-container-element premise is FALSE — FA's union flow
   already populates empty siblings' element types; every candidate
   repro compiles clean today. The dijkstra2-family dict failure is a
   **union cross-product dead combination** (`op(A, B)` pairings that
   never co-occur at runtime), a distinct, still-open shape whose
   bucket share is unmeasured.
-- **[ifa/issues/044](../ifa/issues/044-mixed-length-tuple-list-len-miscompile.md)**
+- **[ifa/issues/044](../ifa/issues/closed/044-mixed-length-tuple-list-len-miscompile.md)**
   (NEW, silent wrong output): mixed-length list literals in one
   container print phantom elements (`[[3], [1, 2]]` →
   `[[3, 0], [1, 2, 0]]`) — len over a union of different-length
   tuple-list CSs. Open; ranked above further bucket work.
-- **[ifa/issues/045](../ifa/issues/045-receiver-cs-method-cloning.md)**
+- **[ifa/issues/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md)**
   (LANDED): receiver-CS-directed method cloning as a precision move
   (opt-in `clone_methods_per_cs`, first user `range`). **Fixes
   ifa/issues/040** (`k=[]; print(k)` next to a non-empty list) and
@@ -944,7 +944,7 @@ guard un-starves the numeric-coercion reanalyze callback) and now
 fails at a void-typed-field codegen bug; kmeanspp/pylife fast-fail
 with inference diagnostics; pygasus surfaces a previously-masked
 update_display assert
-([../ifa/issues/034](../ifa/issues/034-pygasus-update-display-assert.md)).
+([../ifa/issues/034](../ifa/issues/closed/034-pygasus-update-display-assert.md)).
 
 Re-run `./shedskin_sweep.sh` after each change; the bucket counts
 are the regression/progress signal. As examples start reaching C
@@ -1189,7 +1189,7 @@ optional-None micro still reproduces standalone --
 
 Follow-on to the R1-item-5 resolution above: the "index loop, not
 `for x in obj`" constraint is GONE. Two changes (full mechanics in
-[ifa/issues/043](../ifa/issues/043-empty-container-inference-options.md),
+[ifa/issues/043](../ifa/issues/closed/043-empty-container-inference-options.md),
 shape C):
 
 1. `__list_iter__` joined the ifa/issues/045 `clone_methods_per_cs`
@@ -2013,7 +2013,7 @@ target* whose bound value has heterogeneous own-arity still
 segfaults (`for rule, weight in grammar` where each `rule` varies in
 length, vs. plain `for rule in grammar` which now works) --
 filed separately as
-[ifa/issues/053](../ifa/issues/053-tuple-unpack-target-heterogeneous-arity-segfault.md)
+[ifa/issues/053](../ifa/issues/closed/053-tuple-unpack-target-heterogeneous-arity-segfault.md)
 since it's a distinct code path (`emit_assign_to_target`'s
 destructuring branch) with its own not-yet-found root cause,
 confirmed C-backend-specific (the isolated repro runs correctly
@@ -2027,7 +2027,7 @@ test_pyc.py` both 212/212, `ifa`'s `make test` all phases clean.
 ### ifa/issues/053 fixed; a new, separate FA non-convergence bug found and deferred (2026-07-19)
 
 Root-caused and fixed
-[ifa/issues/053](../ifa/issues/053-tuple-unpack-target-heterogeneous-arity-segfault.md)
+[ifa/issues/053](../ifa/issues/closed/053-tuple-unpack-target-heterogeneous-arity-segfault.md)
 (the tuple-unpack-target segfault left open above): same general
 "`Type_SUM`'s own `->size` is 0 even when uniform" shape already
 special-cased for `P_prim_sizeof_element` during the tuple-list-header
@@ -2269,7 +2269,7 @@ before undefined behavior":
   where CPython's own recursion-limited interpreter loop wouldn't.
   Not investigated further -- a resource limit, not a logic bug.
 - **`kanoodle`**: a real, previously-unknown codegen bug -- see
-  [ifa/issues/058](../ifa/issues/058-polymorphic-classtag-dispatch-drops-extra-arguments.md)
+  [ifa/issues/058](../ifa/issues/closed/058-polymorphic-classtag-dispatch-drops-extra-arguments.md)
   for the full account. Fixed on both backends.
 - **`mastermind2`**: already tracked (the `int`/`float` mixed `-=`
   gap found during the dict-methods work above); no longer a runtime

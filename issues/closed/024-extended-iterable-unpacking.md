@@ -87,7 +87,7 @@ CPython's `1 [2, 3, 0]`) and both error cases against CPython's own
   isolation but not committed as a test.** Combining one with ANY
   OTHER list of the same element type elsewhere in the same program
   can hit a separate, pre-existing, unrelated FA bug — see
-  [ifa/issues/040-empty-list-shared-clone-type-inference.md](../../ifa/issues/040-empty-list-shared-clone-type-inference.md),
+  [ifa/issues/040-empty-list-shared-clone-type-inference.md](../../ifa/issues/closed/040-empty-list-shared-clone-type-inference.md),
   filed while landing this fix. Confirmed NOT caused by this
   feature's own lowering: a plain `b = [2, 3]; print(b); k = [];
   print(k)`, zero star syntax involved, reproduces it identically.

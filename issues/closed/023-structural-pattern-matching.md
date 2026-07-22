@@ -1,6 +1,6 @@
 # Issue 023: Structural pattern matching (`match`/`case`, PEP 634)
 
-**Status:** RESOLVED 2026-07-21 — every PEP 634 pattern KIND,
+**Status: CLOSED** — RESOLVED 2026-07-21 (`9806301d`) — every PEP 634 pattern KIND,
 INCLUDING all three "rest capture" forms (`*rest` in sequence
 patterns, `**rest` in mapping patterns, positional class patterns via
 `__match_args__`), is implemented and verified byte-identical to real
@@ -11,7 +11,7 @@ remaining limitation — `case None:` combined with a narrowing or
 capturing pattern — is fixed: mechanism 1 in `build_isinstance_call`
 and mechanism 2 (the general `None`-plus-scalar contour merge) in
 `type_cannonicalize`, both landed 2026-07-21 under
-[ifa/issues/060](../ifa/issues/060-none-branch-dropped-mixed-with-literal-bool-sequence.md),
+[ifa/issues/060](../../ifa/issues/closed/060-none-branch-dropped-mixed-with-literal-bool-sequence.md),
 and the compile-time guard has been removed. `tests/match_none.py`
 covers all four previously-blocked combinations. No pattern-matching
 features or limitations remain.
@@ -237,7 +237,7 @@ mechanisms, both fixed 2026-07-21:
 - **Mechanism 1** — `build_isinstance_call` (`python_ifa_build_if1.cc`)
   routed through the shared Python-level `isinstance()` wrapper, which
   FA generalized into one polymorphic clone across pattern kinds (the
-  same bug class [closed/011](../ifa/issues/closed/011-setter-codegen-vs-analyzer-mismatch.md)
+  same bug class [closed/011](../../ifa/issues/closed/011-setter-codegen-vs-analyzer-mismatch.md)
   fixed for `except` clauses). Switched to the raw `sym_primitive`
   isinstance send.
 - **Mechanism 2** (the general one, not `match`-specific) — `None` and
@@ -249,14 +249,14 @@ mechanisms, both fixed 2026-07-21:
   (`ifa/analysis/fa.cc`) — nil is kept in `->type` when the union also
   carries a `num_kind` scalar, so FA gives `None` its own contour and
   the check folds statically. Full trace:
-  [ifa/issues/060](../ifa/issues/060-none-branch-dropped-mixed-with-literal-bool-sequence.md).
+  [ifa/issues/060](../../ifa/issues/closed/060-none-branch-dropped-mixed-with-literal-bool-sequence.md).
 
 With both fixes in, the compile-time guard
 (`pattern_contains_none`/`pattern_is_risky_with_none` in
 `build_match_pyda`) and its two helper functions were removed;
 `tests/match_none.py` now exercises all four previously-blocked
 combinations and matches CPython on both backends. The
-[059](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)
+[059](../../ifa/issues/closed/059-narrowing-peel-wrapper-boolean-collapse-gap.md)
 narrowing fix (`peel_wrapper_def`) composes with this and remains in
 place.
 

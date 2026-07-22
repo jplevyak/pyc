@@ -14,7 +14,7 @@ stress-testing
 (unrelated to that issue's struct-layout root cause — this
 reproduces with zero data fields involved, pure method dispatch).
 **Not related to
-[023-structural-pattern-matching.md](../023-structural-pattern-matching.md)'s
+[023-structural-pattern-matching.md](023-structural-pattern-matching.md)'s
 `case None:` limitation**, despite the identical assertion text —
 see "Ruled out: NOT the same bug as issue 023's `case None:`
 limitation" below. That was the leading hypothesis when this issue
