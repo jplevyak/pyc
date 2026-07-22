@@ -309,6 +309,15 @@ re-run individually to classify.)
    swaps), and nested targets now works (recursive assign in
    `build_if1_assign_target`). Cleared fysphun/softrender/sat off
    this error. Test `tests/destructuring_targets.py`.
+5b. ~~**`float("...")`/`int("...")` string coercion**~~ — DONE,
+   2026-07-22 (`61abfb8f`). The synthesized `__coerce__` method lowered
+   a string argument to a raw `(double)(char*)` cast (a C compile
+   error; an LLVM verifier failure). Codegen now routes a string source
+   through runtime parsers (`_CG_str_to_float64`/`_CG_str_to_int64`) in
+   both backends. `path_tracing` (its final blocker, `float("inf")`)
+   now compiles clean, and `pygmy`'s compiler crash (same invalid
+   coerce path) is gone: sweep 34 → 36 compiled. Test
+   `tests/str_to_number.py`.
 6. **D — grammar/scanner** — INVESTIGATED 2026-07. Down to 8
    examples (module/destructuring/etc. fixes advanced the rest):
    astar, mao, neural1, path_tracing, plcfrs, rdb, solitaire,
