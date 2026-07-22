@@ -349,11 +349,22 @@ re-run individually to classify.)
    family) -- `split_edges`' dynamic redispatch routed edges into
    product ESes without a display-compatibility check, tripping the
    assert when two differently-nested edges shared a CS; added the
-   check. Now fails gracefully. Still open: `fysphun`'s "missmatched
-   offsets" (clone.cc) -- a polymorphic `obj.field` access over classes
-   that place the field at different struct offsets (issue 026/044
-   layout family); already a graceful diagnostic, needs layout
-   unification or per-type dispatch.
+   check. Now fails gracefully. (4) `fysphun` -- fully FIXED, now
+   COMPILES. Two independent defects: (a) `prim_period_offset`
+   (`a9ca2545`) tripped "missmatched offsets" on an `Optional[Point]`
+   (`Point | None`) `.x` access because None's CreationSet carries a
+   phantom field-ivar at offset 0 that disagrees with Point's real
+   offset -- NOT a genuine cross-class layout conflict, just
+   Optional-without-narrowing; fixed by skipping nil_type, mirroring
+   codegen's `resolve_union_receiver`. (b) `Point.x = 0` (int) then
+   float values assigned makes the field a `int64 | float64` mix with
+   no single C type, degrading to `_CG_void` and breaking arithmetic
+   (`(double)(void*)`); `fa_coerce_numeric_confluences` (`7d7eff88`)
+   now applies its int-vs-float unification to pure-numeric user record
+   fields (it self-gates on pure numeric, so class-instance fields stay
+   the classtag domain). Together these advance the sweep 36 -> 39
+   compiled -- `fysphun` (clean), `kmeanspp`, and `timsort` all now
+   compile.
 6. **D — grammar/scanner** — INVESTIGATED 2026-07. Down to 8
    examples (module/destructuring/etc. fixes advanced the rest):
    astar, mao, neural1, path_tracing, plcfrs, rdb, solitaire,
