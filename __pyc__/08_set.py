@@ -69,6 +69,16 @@ class set:
     return self
   def __iter__(self):
     return __set_iter__(self._items, self._len)
+  def __pyc_tolist__(self):
+    # list(s) / sorted(s) (tictactoe's `list(players)[0]`). Index loop
+    # over the backing store, copied so callers can't alias/mutate the
+    # set's internal _items.
+    r = []
+    i = 0
+    while i < self._len:
+      r.append(self._items[i])
+      i += 1
+    return r
   def __pyc_to_bool__(self):
     return self._len != 0
   def __eq__(self, other):
@@ -84,6 +94,40 @@ class set:
     for item in other:
       self.add(item)
     return self
+  def difference(self, other):
+    # tictactoe's `set(fields).difference(set([0]))`. Elements of self
+    # not in other. Index loop over self, membership via other's while-
+    # loop __contains__ (no iterator on either operand).
+    r = set()
+    i = 0
+    while i < self._len:
+      if not other.__contains__(self._items[i]):
+        r.add(self._items[i])
+      i += 1
+    return r
+  def __sub__(self, other):
+    return self.difference(other)
+  def intersection(self, other):
+    r = set()
+    i = 0
+    while i < self._len:
+      if other.__contains__(self._items[i]):
+        r.add(self._items[i])
+      i += 1
+    return r
+  def __and__(self, other):
+    return self.intersection(other)
+  def union(self, other):
+    r = set()
+    i = 0
+    while i < self._len:
+      r.add(self._items[i])
+      i += 1
+    for item in other:
+      r.add(item)
+    return r
+  def __or__(self, other):
+    return self.union(other)
   def __str__(self):
     x = "{"
     i = 0
