@@ -332,6 +332,28 @@ re-run individually to classify.)
    `othello3` now fail *gracefully* on the pre-existing FA
    non-convergence the crashes had masked (issue 057/033 family) rather
    than crashing — the raw-crash bucket is empty.
+5d. ~~**FA-internal errors**~~ — 3 of 4 fixed, 2026-07-22. (1)
+   `mwmatching` (`099738b3`): "'bd' redefined as local" -- a whole-
+   function scoping bug. A local read before its first assignment
+   (`if first or d < bd: ... bd = d`) was mis-scoped as a spurious
+   module global, which a second same-shaped function then collided
+   with. Fixed with a pre-scan (`prebind_function_locals`) that binds
+   every local assignment target before the body is walked, so
+   read-before-write resolves to the local (CPython whole-function
+   semantics). General fix, test `scope_read_before_write.py`. (2)
+   `bh` (`ab65ff7c`): segfault in `find_all_loops` -- an unresolved
+   `__ne__` (over a `Body | None` union) left a malformed CFG whose
+   null loop-graph edges were dereferenced; guarded (mirrors the
+   existing guard in `find_recursive_loops`). Now fails gracefully.
+   (3) `sudoku5` (`6dd87515`): `update_display` assert (issue-034
+   family) -- `split_edges`' dynamic redispatch routed edges into
+   product ESes without a display-compatibility check, tripping the
+   assert when two differently-nested edges shared a CS; added the
+   check. Now fails gracefully. Still open: `fysphun`'s "missmatched
+   offsets" (clone.cc) -- a polymorphic `obj.field` access over classes
+   that place the field at different struct offsets (issue 026/044
+   layout family); already a graceful diagnostic, needs layout
+   unification or per-type dispatch.
 6. **D — grammar/scanner** — INVESTIGATED 2026-07. Down to 8
    examples (module/destructuring/etc. fixes advanced the rest):
    astar, mao, neural1, path_tracing, plcfrs, rdb, solitaire,
