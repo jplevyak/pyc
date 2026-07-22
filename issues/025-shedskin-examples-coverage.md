@@ -295,7 +295,15 @@ re-run individually to classify.)
 4. ~~**module import + module objects**~~ — DONE, 2026-07: from-import
    name binding, `import X`/`X.attr` module objects, and `pyc_lib/`
    shims for math/time/random/sys. Module-blocked 40 → 14. See
-   bucket C.
+   bucket C. **Update 2026-07-22**: added `math.radians`/`degrees`
+   (`b2c65eb6`) and `string.ascii_letters`/`ascii_lowercase`/
+   `ascii_uppercase` (the module had only the Python 2 names) — the
+   last two missing-member blockers in the sweep. `solitaire` now
+   compiles (33 → 34); `doom`'s module blocker cleared (it now fails
+   on bucket C-adjacent "has no type" type inference). Remaining
+   import failures are structural, not missing members: package/
+   multi-file layouts (`minilight` `ml/`, `quameon` `jastrow/`,
+   `tarsalzp` `com/…`) which need package-directory import resolution.
 5. ~~**illegal destructuring**~~ — DONE, 2026-07. Tuple-unpacking to
    attribute (`self.x, self.y = ...`), subscript (`a[i], a[j] = ...`
    swaps), and nested targets now works (recursive assign in
