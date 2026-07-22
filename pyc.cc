@@ -173,6 +173,27 @@ cchar *mod_name_from_filename(cchar *n) {
 }
 
 int main(int argc, char *argv[]) {
+  // Raise the stack soft limit toward the hard limit before any deep
+  // work. FA's matcher/dispatch (if1/pattern.cc, analysis/fa.cc) and
+  // the recursive frontend lowering recurse proportionally to program
+  // structure; a large machine-generated input (shedskin othello3:
+  // 23k lines, hundreds of dispatch classes) overflows the default 8MB
+  // stack, and the fault surfaces as a hard segfault deep inside the
+  // GC's stack scrubber. On Linux the main-thread stack grows on
+  // demand up to the current soft limit, so raising it here (best
+  // effort; ignored if already unlimited or the hard cap is lower)
+  // lets those inputs run to a normal outcome instead of crashing.
+  {
+    struct rlimit rl;
+    if (!getrlimit(RLIMIT_STACK, &rl)) {
+      rlim_t want = 1024ull * 1024 * 1024;  // 1 GiB
+      rlim_t target = (rl.rlim_max == RLIM_INFINITY) ? want : (rl.rlim_max < want ? rl.rlim_max : want);
+      if (rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < target) {
+        rl.rlim_cur = target;
+        (void)setrlimit(RLIMIT_STACK, &rl);
+      }
+    }
+  }
   MEM_INIT();
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
