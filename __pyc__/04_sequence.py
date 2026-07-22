@@ -256,6 +256,15 @@ class tuple:
     return __tuple_iter__(self)
   def __len__(self):
     return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("len"), self))
+  def __contains__(self, item):
+    # `x in (a, b, c)` (collatz's `rest9 in (2, 4, 5, 8)`). INDEX loop,
+    # not `for x in self`: sharing one __tuple_iter__ CS across
+    # different-arity tuples cross-wires per-arity len/method slots
+    # (ifa/issues/047) -- the same reason __pyc_tolist__/__str__ index.
+    for k in range(len(self)):
+      if self[k] == item:
+        return True
+    return False
   def __pyc_to_bool__(self):
     return self.__len__() != 0
   def __pyc_tolist__(self):
