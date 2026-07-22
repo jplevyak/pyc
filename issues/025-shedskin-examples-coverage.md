@@ -2405,3 +2405,41 @@ impactful class of bug fixed, not a corpus-example-specific patch:
 any inherited (non-overridden) polymorphic method call taking
 arguments beyond `self` was silently broken, undefined-behavior-wise,
 on both backends -- an ordinary OOP shape, not an edge case.
+
+### Heterogeneous/nested tuple comparison via `tuple_lt`/`tuple_eq` primitives; tictactoe compiles+runs (2026-07-22)
+
+`tuple.__lt__`/`__eq__` couldn't be written as a Python element loop: a
+variable index into a heterogeneous fixed-arity tuple collapses to the
+union of all element types, so `self[i] < t[i]` ends up comparing, say,
+an `int` field against a nested-`tuple` field and never types. Followed
+shedskin's lead (`../shedskin/shedskin/infer.py`, which special-cases
+2-tuples as `tuple2` with typed first/second and emits C++ template
+comparisons) but kept it general: added two primitives,
+`P_prim_tuple_lt`/`P_prim_tuple_eq` (`ifa/if1/prim_data.{h,cc}`), whose
+FA transfer functions (`ifa/analysis/fa.cc`) just return `bool`, taking
+the element-type-union problem out of FA entirely. Codegen then emits a
+lexicographic per-field comparison using each operand's **concrete**
+field types — recursing for nested tuples — on both backends
+(`emit_tuple_{lt,eq}_expr` in `ifa/codegen/cg.cc`; `emit_tuple_{lt,eq}_llvm`
+select-tree in `ifa/codegen/cg_emit_llvm.cc`). Option A element types:
+int/float/bool/str/nested-tuple; anything else `codegen_fail`s rather
+than emitting wrong code. Differing-arity operands are handled per
+Python semantics (`==` across arity is `False`; `<` uses the
+common-prefix rule, shorter-is-less). `__pyc__/04_sequence.py` wires
+`tuple.__lt__`/`__eq__`/`__ne__` to the primitives.
+
+Verified: full `test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` 226/226 both
+backends (incl. new `tests/tuple_compare.py`), `ifa` unit tests 17/17,
+and an isolated before/after corpus sweep — **+tictactoe, zero
+regressions** (38 → 39 compiled). `tictactoe` (the driver: it sorts a
+`(float,(int,int))` scorelist) now compiles clean and runs correctly on
+the **C backend**. On the **LLVM backend** the tuple-comparison emitter
+itself is correct (homogeneous, heterogeneous, and nested tuple sorts
+all match CPython), but `tictactoe` still fails LLVM verification due to
+a *separate, pre-existing* mixed int/float scalar-arithmetic coercion
+gap unrelated to tuples — filed as
+[ifa/issues/062](../ifa/issues/062-llvm-mixed-int-float-scalar-coercion.md).
+Also surfaced (pre-existing, reproduces at baseline) a C-backend
+list-of-tuples element-type naming bug when several distinct tuple types
+coexist with a `.sort()` — filed as
+[ifa/issues/061](../ifa/issues/061-c-backend-multi-tuple-list-null-element-type.md).
