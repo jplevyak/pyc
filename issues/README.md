@@ -60,26 +60,23 @@ conventions are the same; the only difference is location.
   structural check's element/attribute access needs genuine nested
   `if1_if` control flow (not a flat boolean fold) to narrow the
   subject's type within a branch, and a guard must be evaluated
-  *inside* that same nesting, not appended afterward. **One
-  remaining limitation**: `case None:` combined with almost any
-  OTHER pattern in the same match crashes at runtime (`"matching
-  function not found"`) — same assertion text as closed issue 026,
-  but ruled out as the same bug once 026 was root-caused: this one
-  is dispatch over a union of PRIMITIVE/boxed types
-  (`None|int|float`), not 026's class-method classtag gap.
-  `build_match_pyda` refuses the combination at compile time rather
-  than risk shipping it. **Underlying mechanism fixed 2026-07-22**
-  (a gap in `ifa/analysis/fa.cc`'s `peel_wrapper_def`, issue 025's
-  per-branch narrowing, that never engaged for `match`/`case`'s
-  generated code — see
-  [`ifa/issues/059`](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)),
-  verified correct for `case None:` + capture/class/mapping patterns.
-  The compile-time guard stays fully active regardless: verifying the
-  fix surfaced a second, independent, more severe bug — `case None:` +
-  literal/`True`/`False`/sequence patterns silently drops the `None`
-  check entirely (wrong output, not a crash) — filed as
-  [`ifa/issues/060`](../ifa/issues/060-none-branch-dropped-mixed-with-literal-bool-sequence.md),
-  not yet root-caused. Positional class patterns (`case Point(0,
+  *inside* that same nesting, not appended afterward. The last
+  limitation — `case None:` combined with a narrowing or capturing
+  pattern — is **RESOLVED 2026-07-21**: two independent mechanisms,
+  (1) `build_isinstance_call` sharing one polymorphic `isinstance()`
+  clone across pattern kinds (same class as closed 011, now using the
+  raw `sym_primitive` send) and (2) the general `None`-plus-scalar
+  contour merge — `nil_type` was stripped from FA's `->type`
+  projection unconditionally, so a `{None, scalar}` union looked
+  monomorphic-scalar and `None` was coerced to `(scalar)NULL` (= 0),
+  fixed by splitting `None` into its own contour in
+  `type_cannonicalize` (see
+  [`ifa/issues/060`](../ifa/issues/060-none-branch-dropped-mixed-with-literal-bool-sequence.md)).
+  The [`ifa/issues/059`](../ifa/issues/059-narrowing-peel-wrapper-boolean-collapse-gap.md)
+  `peel_wrapper_def` narrowing fix composes with this. The compile-time
+  guard and its two helper functions were removed; `tests/match_none.py`
+  now exercises all four previously-blocked combinations on both
+  backends. Positional class patterns (`case Point(0,
   0):`, matched via a compile-time read-back of `__match_args__`,
   including base-class inheritance and mixing with keyword args) were
   added **2026-07-21**, along with sequence-pattern star capture
@@ -90,8 +87,8 @@ conventions are the same; the only difference is location.
   `**rest` (`case {"k": v, **rest}:`, a new `dictorsetmaker` grammar
   rule; real Python structurally limits `**rest` to one, last, never
   `_` — pyc's grammar enforces the first two for free, `build_pattern_match`
-  checks the third). No pattern-matching features remain deferred;
-  only the `case None:`-combination runtime limitation above is left.
+  checks the third). No pattern-matching features or limitations
+  remain — issue 023 is resolved.
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected

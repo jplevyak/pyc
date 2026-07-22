@@ -1808,73 +1808,6 @@ static Sym *build_pattern_match(PyDAST *pattern, Sym *subject, Code **code, PycA
   return guarded_bool(is_same_type, code, case_ast, do_compare);
 }
 
-// Does `pattern` (or anything nested inside it -- a sequence
-// element, a mapping value, a class pattern's keyword value, an
-// or-pattern alternative) contain a `None` singleton pattern?
-// Recurses through every pattern kind build_pattern_match itself
-// recurses through, for the same reason build_match_pyda's None+
-// isinstance-narrowing check below needs it: a nested `case [None,
-// x]:` still puts a None-narrowing branch and an isinstance-
-// narrowing branch (the sequence pattern's own isinstance(subject,
-// list) check) in the same function, which is the exact shape
-// confirmed to crash at runtime -- see that check's comment.
-static bool pattern_contains_none(PyDAST *pattern) {
-  if (!pattern) return false;
-  if (pattern->kind == PY_name) return !strcmp(pattern->str_val, "None");
-  if (pattern->kind == PY_binop && pattern->op == PY_OP_BITOR)
-    return pattern_contains_none(pattern->children[0]) || pattern_contains_none(pattern->children[1]);
-  if (pattern->kind == PY_list || pattern->kind == PY_tuple) {
-    for (auto c : pattern->children.values())
-      if (pattern_contains_none(c)) return true;
-    return false;
-  }
-  if (pattern->kind == PY_dict) {
-    for (int i = 1; i < pattern->children.n; i += 2)
-      if (pattern_contains_none(pattern->children[i])) return true;
-    return false;
-  }
-  if (pattern->kind == PY_power && pattern->children.n == 2 && pattern->children[1]->kind == PY_call) {
-    // issues/023: positional class-pattern args (`Point(None, y)`)
-    // are a sub-pattern exactly like a keyword arg's value
-    // (`Point(x=None)`, already scanned below) -- recurse into both
-    // the same way build_pattern_match's own arg loop does.
-    PyDAST *call = pattern->children[1];
-    if (call->children.n > 0)
-      for (auto arg : call->children[0]->children.values())
-        if (pattern_contains_none(arg->kind == PY_keyword_arg ? arg->children[1] : arg)) return true;
-    return false;
-  }
-  return false;
-}
-
-// Does `pattern` (or anything nested inside it) do anything besides
-// an unconditional, no-op wildcard match -- specifically: does it
-// require isinstance-based narrowing (True/False, number/string
-// literals, or a structural sequence/mapping/class pattern -- every
-// kind build_pattern_match gates behind guarded_bool/
-// build_isinstance_call), OR does it bind the subject into a fresh
-// local at all (a bare capture, or ANY structural pattern's element/
-// value/attribute sub-bindings)? Both are confirmed unsafe combined
-// with a `case None:` elsewhere in the same match -- see the
-// has_none/has_risky check below for what "unsafe" means concretely.
-// Only wildcard (`_`) and None itself come back false: combining
-// `case None:` with ONLY wildcard and/or other None arms is
-// confirmed to work fine; anything that either narrows OR binds
-// crashes once a None-narrowing branch is ALSO present.
-static bool pattern_is_risky_with_none(PyDAST *pattern) {
-  if (!pattern) return false;
-  if (pattern->kind == PY_name) {
-    if (!strcmp(pattern->str_val, "_") || !strcmp(pattern->str_val, "None")) return false;
-    return true;  // True/False (narrows), or a plain capture (binds)
-  }
-  if (pattern->kind == PY_number || pattern->kind == PY_string) return true;
-  if (pattern->kind == PY_list || pattern->kind == PY_tuple || pattern->kind == PY_dict) return true;
-  if (pattern->kind == PY_power && pattern->children.n == 2 && pattern->children[1]->kind == PY_call) return true;
-  if (pattern->kind == PY_binop && pattern->op == PY_OP_BITOR)
-    return pattern_is_risky_with_none(pattern->children[0]) || pattern_is_risky_with_none(pattern->children[1]);
-  return false;
-}
-
 // Helper: build if-else chain for PY_match_stmt
 static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // children[0] = MATCH_KW, children[1] = subject (test), children[2..N-1] = case_blocks
@@ -1883,42 +1816,17 @@ static void build_match_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   PycAST *subject_ast = getAST(subject, ctx);
   if1_gen(if1, &ast->code, subject_ast->code);
 
-  // issues/023: combining a `None` pattern with almost anything else
-  // in the SAME match statement is confirmed to crash at RUNTIME
-  // ("matching function not found") -- codegen fails to generate a
-  // clone for one of the union's actually-reachable types once a
-  // None-narrowing branch is followed by EITHER a different
-  // isinstance-narrowing branch OR a capture-pattern binding for the
-  // same subject. `case None:` combined with ONLY wildcard (`_`)
-  // and/or other `None` arms is the one combination confirmed safe;
-  // everything else -- captures, literals, True/False,
-  // sequence/mapping/class patterns -- crashes. Tried three different
-  // lowerings for None's own check (a method dispatch, the
-  // ordinary-call isinstance() form, the raw prim_isinstance
-  // primitive) -- all three fail identically, so this isn't fixable
-  // from this lowering code; it looks like a deeper FA/codegen
-  // clone-generation gap. Fail loudly at compile time instead of
-  // silently emitting code that can crash -- matches this function's
-  // existing precedent (or-pattern capture alternatives, positional
-  // class patterns) of refusing unsupported combinations rather than
-  // guessing.
-  bool has_none = false, has_risky = false;
-  for (int i = 2; i < n->children.n; i++) {
-    PyDAST *case_block = n->children[i];
-    // Mirrors the case_cond indexing dance in the main loop below
-    // exactly (children.n varies with whether a guard is present).
-    PyDAST *case_cond = case_block->children.n >= 3 ? case_block->children[1] : case_block->children[0];
-    if (pattern_contains_none(case_cond)) has_none = true;
-    if (pattern_is_risky_with_none(case_cond)) has_risky = true;
-  }
-  if (has_none && has_risky)
-    fail("error line %d: this match statement combines a 'case None:' pattern with another pattern "
-         "that either binds a name or needs type narrowing -- this combination is not supported (a "
-         "known pyc code-generation limitation, not a source error): compiled code for it can crash "
-         "at runtime. 'case None:' may only be combined with a wildcard ('case _:') and/or other "
-         "'case None:' arms in the same match statement. Split it into its own match statement, or "
-         "use a guard ('case x if x is None:') instead.",
-         ctx.lineno);
+  // issues/023: `case None:` combined with a narrowing or capturing
+  // pattern (a literal, True/False, a sequence/mapping/class pattern,
+  // or a bare capture) once required a compile-time refusal here --
+  // codegen silently coerced None into a shared scalar clone as
+  // `(scalar)NULL` (== 0), so the None arm matched a falsy scalar and
+  // gave the wrong answer. That was ifa/issues/060 mechanism 2, fixed
+  // in type_cannonicalize (ifa/analysis/fa.cc): FA now splits None
+  // into its own contour whenever it would otherwise share a scalar
+  // clone, so the None check folds statically per contour. All four
+  // previously-blocked combinations now match CPython, so the guard is
+  // gone.
 
   Code *chain = 0; // Default is do nothing
   for (int i = n->children.n - 1; i >= 2; i--) {

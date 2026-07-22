@@ -1,4 +1,11 @@
-none
-other
-other
-other
+lit none
+lit five
+lit other
+bool none
+bool true
+bool false
+seq none
+seq pair 1 2
+seq cap 7
+cap none
+cap 42
