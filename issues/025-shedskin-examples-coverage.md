@@ -318,6 +318,20 @@ re-run individually to classify.)
    now compiles clean, and `pygmy`'s compiler crash (same invalid
    coerce path) is gone: sweep 34 → 36 compiled. Test
    `tests/str_to_number.py`.
+5c. ~~**compiler segfaults**~~ — DONE, 2026-07-22. The three
+   raw-crash examples (`adatron`, `othello3`, `pygmy`) all no longer
+   segfault. `pygmy` was the coerce path (5b). `adatron` (`359fb242`):
+   `type_violation` dereferenced `ChainHash::put`'s return without the
+   null guard the hash contract requires — put returns null on a hash
+   collision between two distinct violation triples, so the first such
+   collision crashed FA (a general latent bug, not adatron-specific).
+   `othello3` (`e44df449`): the 23k-line generated file overflowed the
+   default 8MB C stack via deep matcher/dispatch recursion, faulting
+   inside the GC stack scrubber; `pyc` now raises its stack soft limit
+   toward the hard limit (≤1 GiB) at startup. Both `adatron` and
+   `othello3` now fail *gracefully* on the pre-existing FA
+   non-convergence the crashes had masked (issue 057/033 family) rather
+   than crashing — the raw-crash bucket is empty.
 6. **D — grammar/scanner** — INVESTIGATED 2026-07. Down to 8
    examples (module/destructuring/etc. fixes advanced the rest):
    astar, mao, neural1, path_tracing, plcfrs, rdb, solitaire,
