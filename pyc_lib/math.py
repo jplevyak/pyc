@@ -31,3 +31,9 @@ def fmod(x, y): return __pyc_c_call__(float, "fmod", float, x, float, y)
 # to the integral value without changing it.
 def floor(x): return int(__pyc_c_call__(float, "floor", float, x))
 def ceil(x): return int(__pyc_c_call__(float, "ceil", float, x))
+
+# Angle conversions -- pure arithmetic, no libc equivalent. Coerce
+# through float() so an int argument (e.g. radians(90)) still yields a
+# float, matching CPython.
+def radians(x): return float(x) * pi / 180.0
+def degrees(x): return float(x) * 180.0 / pi
