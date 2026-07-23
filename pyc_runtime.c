@@ -431,7 +431,6 @@ void _CG_event_loop_run(void* initial_hdl) {
             if (prev) prev->next = curr->next;
             else _CG_io_queue_head = curr->next;
             
-            _CG_IoTask* to_free = curr;
             curr = curr->next;
             if (!curr && prev) _CG_io_queue_tail = prev;
             else if (!curr && !prev) _CG_io_queue_tail = NULL;
