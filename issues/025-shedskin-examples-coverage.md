@@ -2443,3 +2443,27 @@ Also surfaced (pre-existing, reproduces at baseline) a C-backend
 list-of-tuples element-type naming bug when several distinct tuple types
 coexist with a `.sort()` — filed as
 [ifa/issues/061](../ifa/issues/061-c-backend-multi-tuple-list-null-element-type.md).
+
+### "no type" bucket triaged: root-caused + three codegen-robustness fixes (39 → 51 compiled) (2026-07-22)
+
+Investigated the corpus's "no type" bucket (24 examples emitting
+`'x' has no type` / `expression has no type`). Root cause traced via
+chull to the empty-container / None-field inference family (ifa/issues
+040/043/052): fields set to `[]` and filled later never get their
+element type back-propagated, so indexing them reads no-type and
+cascades. That deep FA fix is still open, but three *codegen-robustness*
+gaps — salvage-reachable sites emitting raw unsalvageable C instead of
+degrading to a runtime assert (issue 056 convention) — were fixed:
+(1) unresolved `tuple.__lt__`/`__eq__` now runtime-asserts instead of
+aborting the compile (mastermind2); (2) a `goto` to an FA-salvaged
+(not-live) label now traps instead of dangling as `use of undeclared
+label` — the bucket's dominant terminal error (ac_encode, bh, doom,
+mwmatching, pisang, sha, sieve, softrender); (3) a constant record-index
+getter into a nameless destination is skipped instead of emitting
+`(null) = ...` (amaze, othello, voronoi2). Net: **39 → 51 pyc→C
+compiles, zero regressions**; full `test_pyc.py` both backends 227/227.
+Full triage, remaining residual blockers, and the FA-root fix sketch in
+[ifa/issues/063](../ifa/issues/063-no-type-bucket-triage.md). Note the
+recovered programs compile and trap *safely* but several don't yet *run*
+correctly — they hit a deeper `getter not resolved` assert from the same
+unresolved-field root.
