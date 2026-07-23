@@ -256,6 +256,15 @@ class tuple:
     return __tuple_iter__(self)
   def __len__(self):
     return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("len"), self))
+  def __contains__(self, item):
+    # `x in (a, b, c)` (collatz's `rest9 in (2, 4, 5, 8)`). INDEX loop,
+    # not `for x in self`: sharing one __tuple_iter__ CS across
+    # different-arity tuples cross-wires per-arity len/method slots
+    # (ifa/issues/047) -- the same reason __pyc_tolist__/__str__ index.
+    for k in range(len(self)):
+      if self[k] == item:
+        return True
+    return False
   def __pyc_to_bool__(self):
     return self.__len__() != 0
   def __pyc_tolist__(self):
@@ -294,29 +303,21 @@ class tuple:
     for k in range(len(t)):
       r.append(t[k])
     return r
+  # __eq__/__lt__ are primitives (issue 025, tictactoe): a Python
+  # element loop indexes self[i]/t[i] with a VARIABLE i, which collapses
+  # a heterogeneous fixed-arity tuple to the union of ALL its element
+  # types -- so `a < b` compares e.g. int against tuple and fails FA.
+  # The primitive's codegen (cg.cc/cg_emit_llvm.cc) instead compares
+  # field-by-field using each operand's CONCRETE field types, recursing
+  # for nested tuples and handling differing arity per Python semantics
+  # (== across arity is False; < uses the common-prefix / shorter-is-less
+  # rule).
   def __eq__(self, t):
-    lt = __pyc_clone_constants__(len(t))
-    lself = __pyc_clone_constants__(len(self))
-    if lself != lt:
-      return False
-    for i in range(lself):
-      if t[i] != self[i]:
-        return False
-    return True
+    return __pyc_primitive__(__pyc_symbol__("tuple_eq"), self, t)
   def __ne__(self, t):
     return not self.__eq__(t)
   def __lt__(self, t):
-    lt = __pyc_clone_constants__(len(t))
-    lself = __pyc_clone_constants__(len(self))
-    n = lself if lself < lt else lt
-    for i in range(n):
-      a = self[i]
-      b = t[i]
-      if a < b:
-        return True
-      if b < a:
-        return False
-    return lself < lt
+    return __pyc_primitive__(__pyc_symbol__("tuple_lt"), self, t)
   def __le__(self, t):
     return not t.__lt__(self)
   def __gt__(self, t):
