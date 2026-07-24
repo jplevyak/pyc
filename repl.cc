@@ -314,6 +314,7 @@ static int try_compile_jit(const char *tmpfile, const char *candidate, size_t cl
     s_builtin_mod = load_builtin_mod();
     if (!s_builtin_mod) { fprintf(stderr, "repl: failed to load __pyc__\n"); return 1; }
     s_builtin_mods.add(s_builtin_mod);
+    inject_tuple_compare(s_builtin_mods, 16);  // issue 069: REPL can't pre-scan future input -> generous floor
     s_baseline = ast_to_if1_baseline(s_builtin_mods);
     s_baseline_built = true;
   }

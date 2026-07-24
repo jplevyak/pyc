@@ -312,88 +312,15 @@ class tuple:
   # for nested tuples and handling differing arity per Python semantics
   # (== across arity is False; < uses the common-prefix / shorter-is-less
   # rule).
-  def __eq__(self, t):
-    # issue 069 option 2': all slots equal (constant index); different
-    # arity is never equal. Element compare via == (its own __eq__).
-    n = len(self)
-    if n != len(t): return False
-    if n >= 1 and not (self[0] == t[0]): return False
-    if n >= 2 and not (self[1] == t[1]): return False
-    if n >= 3 and not (self[2] == t[2]): return False
-    if n >= 4 and not (self[3] == t[3]): return False
-    if n >= 5 and not (self[4] == t[4]): return False
-    if n >= 6 and not (self[5] == t[5]): return False
-    if n >= 7 and not (self[6] == t[6]): return False
-    if n >= 8 and not (self[7] == t[7]): return False
-    if n >= 9 and not (self[8] == t[8]): return False
-    if n >= 10 and not (self[9] == t[9]): return False
-    if n >= 11 and not (self[10] == t[10]): return False
-    if n >= 12 and not (self[11] == t[11]): return False
-    if n >= 13 and not (self[12] == t[12]): return False
-    if n >= 14 and not (self[13] == t[13]): return False
-    if n >= 15 and not (self[14] == t[14]): return False
-    if n >= 16 and not (self[15] == t[15]): return False
-    return True
+  # issue 069 (per-program unroll): tuple __eq__ and __lt__ are GENERATED
+  # at ast_to_if1 time with the program's max tuple arity and injected onto
+  # this class (see inject_tuple_compare in python_ifa_main.cc), so the
+  # constant-index unroll count fits the program exactly instead of a fixed
+  # bound. They are constant-index / len-guarded folds where each element
+  # step is an ordinary send (issue 067 layer 3 fix). __ne__/__le__/__gt__/
+  # __ge__ below delegate to the injected __eq__/__lt__.
   def __ne__(self, t):
     return not self.__eq__(t)
-  def __lt__(self, t):
-    # issue 069 option 2': lexicographic compare by CONSTANT index,
-    # unrolled to a fixed max arity. len(self)/len(t) constant-fold
-    # per contour, so over-arity branches prune and only real slots
-    # are compared; each self[i] < t[i] is an ordinary send that
-    # dispatches to the element's own __lt__ (replaces the tuple_lt
-    # primitive; user-class elements now work -- issue 067).
-    n = len(self)
-    m = len(t)
-    if n >= 1 and m >= 1:
-      if self[0] < t[0]: return True
-      if t[0] < self[0]: return False
-    if n >= 2 and m >= 2:
-      if self[1] < t[1]: return True
-      if t[1] < self[1]: return False
-    if n >= 3 and m >= 3:
-      if self[2] < t[2]: return True
-      if t[2] < self[2]: return False
-    if n >= 4 and m >= 4:
-      if self[3] < t[3]: return True
-      if t[3] < self[3]: return False
-    if n >= 5 and m >= 5:
-      if self[4] < t[4]: return True
-      if t[4] < self[4]: return False
-    if n >= 6 and m >= 6:
-      if self[5] < t[5]: return True
-      if t[5] < self[5]: return False
-    if n >= 7 and m >= 7:
-      if self[6] < t[6]: return True
-      if t[6] < self[6]: return False
-    if n >= 8 and m >= 8:
-      if self[7] < t[7]: return True
-      if t[7] < self[7]: return False
-    if n >= 9 and m >= 9:
-      if self[8] < t[8]: return True
-      if t[8] < self[8]: return False
-    if n >= 10 and m >= 10:
-      if self[9] < t[9]: return True
-      if t[9] < self[9]: return False
-    if n >= 11 and m >= 11:
-      if self[10] < t[10]: return True
-      if t[10] < self[10]: return False
-    if n >= 12 and m >= 12:
-      if self[11] < t[11]: return True
-      if t[11] < self[11]: return False
-    if n >= 13 and m >= 13:
-      if self[12] < t[12]: return True
-      if t[12] < self[12]: return False
-    if n >= 14 and m >= 14:
-      if self[13] < t[13]: return True
-      if t[13] < self[13]: return False
-    if n >= 15 and m >= 15:
-      if self[14] < t[14]: return True
-      if t[14] < self[14]: return False
-    if n >= 16 and m >= 16:
-      if self[15] < t[15]: return True
-      if t[15] < self[15]: return False
-    return n < m  # common prefix equal: shorter is less
   def __le__(self, t):
     return not t.__lt__(self)
   def __gt__(self, t):

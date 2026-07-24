@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
+#include "python_parse.h"
 
 #ifdef USE_LLVM
 #include "codegen/llvm.h"
@@ -336,7 +337,85 @@ void compute_fun_can_raise() {
   }
 }
 
+// issue 069 (per-program unroll): tuple __eq__/__lt__ are unrolled
+// constant-index / len-guarded folds; the unroll count must cover the
+// program's largest tuple. Scan all module ASTs for the max (fold-aware)
+// tuple arity, GENERATE the two methods at exactly that arity, parse them,
+// and append them to the builtin `tuple` class -- so the unroll fits the
+// program instead of a fixed bound (removing the cap and the verbosity).
+
+// Fixed-arity tuple value: a tuple literal (its element count) or a `+` of
+// two fixed-arity tuples (literal-only concat folding, cf.
+// try_fold_tuple_arity in build_if1). -1 if not a fixed-arity tuple.
+static int estimate_tuple_arity(PyDAST *n) {
+  if (!n) return -1;
+  if (n->kind == PY_tuple) return n->children.n;
+  if (n->kind == PY_binop && n->op == PY_OP_ADD && n->children.n == 2) {
+    int l = estimate_tuple_arity(n->children[0]), r = estimate_tuple_arity(n->children[1]);
+    if (l >= 0 && r >= 0) return l + r;
+  }
+  return -1;
+}
+static void scan_max_tuple_arity(PyDAST *n, int &mx) {
+  if (!n) return;
+  int a = estimate_tuple_arity(n);
+  if (a > mx) mx = a;
+  for (PyDAST *c : n->children) scan_max_tuple_arity(c, mx);
+}
+
+// min_arity: a floor for the unroll count. The REPL can't pre-scan future
+// interactive input, so it passes a generous floor; the batch path passes 0
+// and gets the exact program max.
+void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
+  int max_arity = min_arity;
+  for (PycModule *m : mods) scan_max_tuple_arity(m->pymod, max_arity);
+  // Generate the two methods at exactly max_arity, wrapped in a throwaway
+  // class so the parser yields funcdef nodes (which we move onto `tuple`).
+  char *buf = nullptr;
+  size_t sz = 0;
+  FILE *f = open_memstream(&buf, &sz);
+  fputs("class __pyc_tuple_cmp__:\n", f);
+  fputs("  def __eq__(self, t):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    if n != len(t): return False\n", f);
+  for (int i = 0; i < max_arity; i++)
+    fprintf(f, "    if n >= %d and not (self[%d] == t[%d]): return False\n", i + 1, i, i);
+  fputs("    return True\n", f);
+  fputs("  def __lt__(self, t):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    m = len(t)\n", f);
+  for (int i = 0; i < max_arity; i++) {
+    fprintf(f, "    if n >= %d and m >= %d:\n", i + 1, i + 1);
+    fprintf(f, "      if self[%d] < t[%d]: return True\n", i, i);
+    fprintf(f, "      if t[%d] < self[%d]: return False\n", i, i);
+  }
+  fputs("    return n < m\n", f);
+  fclose(f);
+  PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", buf, (int)sz);
+  free(buf);
+  if (!gen) return;
+  PyDAST *gcls = nullptr;
+  for (PyDAST *c : gen->children)
+    if (c->kind == PY_classdef) {
+      gcls = c;
+      break;
+    }
+  if (!gcls || !gcls->children.n) return;
+  PyDAST *gbody = gcls->children.last();
+  // Append the generated funcdefs to the builtin `tuple` class body.
+  for (PyDAST *c : mods[0]->pymod->children) {
+    if (c->kind != PY_classdef || !c->children.n) continue;
+    PyDAST *nm = c->children[0];
+    if (!nm || !nm->str_val || strcmp(nm->str_val, "tuple")) continue;
+    PyDAST *body = c->children.last();
+    for (PyDAST *meth : gbody->children)
+      if (meth->kind == PY_funcdef) body->children.add(meth);
+    break;
+  }
+}
+
 int ast_to_if1(Vec<PycModule *> &mods) {
+  inject_tuple_compare(mods, 0);  // issue 069: program-sized tuple __eq__/__lt__
   // For the non-REPL path: build baseline for mods[0] (builtin), then extend.
   // The builtin_mods Vec is local; ctx->modules is updated to &mods by extend.
   Vec<PycModule *> builtin_mods;
