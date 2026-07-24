@@ -2307,6 +2307,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // set_value_for_value_classes pass then lifts through
         // `implements` to subclasses.
         char *vector_size = nullptr;
+        bool derive_compare = false;  // issue 068: @pyc_compare
         for (int i = 0; i < n->children.n - 1; i++) {
           PyDAST *child = n->children[i];
           // Decorators may be wrapped in a PY_suite or be direct PY_decorator nodes
@@ -2351,6 +2352,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               // then lifts the bit transitively through
               // `implements` so subclasses inherit.
               def_ast->sym->is_value_type = 1;
+            } else if (strcmp(fname, "pyc_compare") == 0) {
+              // @pyc_compare (issue 068) — derive a field-wise
+              // __eq__ for this record (the class side of the
+              // derive / field-fold framework). Opt-in: Python
+              // classes default to identity __eq__.
+              derive_compare = true;
             }
           }
         }
@@ -2360,7 +2367,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           if (bn->kind == PY_suite) { for (auto c : bn->children.values()) build_if1_pyda(c, ctx); }
           else build_if1_pyda(bn, ctx);
         }
-        gen_class_pyda(def, def_ast, ctx, vector_size);
+        gen_class_pyda(def, def_ast, ctx, vector_size, derive_compare);
         exit_scope(ctx);
         ast->rval = def_ast->rval;
         ast->code = def_ast->code;

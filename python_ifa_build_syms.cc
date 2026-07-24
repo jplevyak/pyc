@@ -1573,7 +1573,7 @@ static void collect_match_args(PyDAST *cdef, Vec<cchar *> &out) {
   }
 }
 
-void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size) {
+void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size, bool derive_compare) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
   bool is_record = cls->type_kind == Type_RECORD && cls != sym_object;
@@ -1701,6 +1701,67 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     member->in = cls;
     cls->has.add(member);
     if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, "__deepcopy__"), dcfn,
+             new_sym(ast))
+        ->ast = ast;
+  }
+
+  // issue 068: @pyc_compare derives a field-wise __eq__ for a record --
+  // the class side of the derive / field-fold framework, and the binary
+  // generalization of the __deepcopy__ synthesis above. Same field
+  // discovery (build_syms knew every `self.x = ...` store), but a BINARY
+  // fold: r = True, then r = r & (self.f == other.f) for each field. Every
+  // step is an ORDINARY send (self.f / other.f period-gets, the field's own
+  // __eq__, bool.__and__), so element comparison rides normal demand-driven
+  // dispatch -- no primitive, no inline codegen, no clone/transfer-function
+  // surgery (the whole point vs the tuple side, issue 067). Opt-in (Python
+  // classes default to identity __eq__); skipped if the class defines its
+  // own __eq__.
+  if (derive_compare && is_record &&
+      !ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, "__eq__"))) {
+    Vec<cchar *> fields;  // source order (same rationale as __deepcopy__)
+    collect_self_store_fields(cdef, fields);
+    for (int i = 0; i < cls->has.n; i++) {
+      Sym *m = cls->has[i];
+      if (!m || !m->name) continue;
+      if (m->alias && m->alias->is_fun) continue;  // methods, not data
+      cchar *cn = if1_cannonicalize_string(if1, m->name);
+      if (!fields.in(cn)) fields.add(cn);
+    }
+    Sym *eqfn = new_fun(ast);
+    eqfn->nesting_depth = fn->nesting_depth + 1;
+    eqfn->self = new_sym(ast);
+    eqfn->self->must_implement_and_specialize(cls);
+    eqfn->self->in = eqfn;
+    Sym *other = new_sym(ast);  // second formal, any type
+    other->in = eqfn;
+    Vec<Sym *> as;
+    as.add(new_sym(ast, "__eq__"));
+    as[0]->must_implement_and_specialize(if1_make_symbol(if1, "__eq__"));
+    eqfn->name = as[0]->name;
+    as.add(eqfn->self);
+    as.add(other);
+    Code *eqbody = 0;
+    Sym *r = sym_true;  // AND fold; bool.__and__ returns the arg when self is true
+    for (cchar *fname : fields) {
+      Sym *nm = if1_make_symbol(if1, fname);
+      Sym *sv = new_sym(ast), *ov = new_sym(ast);
+      if1_send(if1, &eqbody, 4, 1, sym_operator, eqfn->self, sym_period, nm, sv)->ast = ast;
+      if1_send(if1, &eqbody, 4, 1, sym_operator, other, sym_period, nm, ov)->ast = ast;
+      Sym *cmp = new_sym(ast);
+      call_method(&eqbody, ast, sv, if1_make_symbol(if1, "__eq__"), cmp, 1, ov);
+      Sym *rn = new_sym(ast);
+      call_method(&eqbody, ast, r, if1_make_symbol(if1, "__and__"), rn, 1, cmp);
+      r = rn;
+    }
+    if1_move(if1, &eqbody, r, eqfn->ret);
+    if1_send(if1, &eqbody, 4, 0, sym_primitive, sym_reply, eqfn->cont, eqfn->ret)->ast = ast;
+    if1_closure(if1, eqfn, eqbody, as.n, as.v);
+    Sym *member = new_PycSymbol("__eq__")->sym;
+    member->var = new Var(member);
+    member->alias = eqfn;
+    member->in = cls;
+    cls->has.add(member);
+    if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, "__eq__"), eqfn,
              new_sym(ast))
         ->ast = ast;
   }
