@@ -1573,6 +1573,109 @@ static void collect_match_args(PyDAST *cdef, Vec<cchar *> &out) {
   }
 }
 
+// issue 068: synthesize one derived comparison method `opname` on record
+// `cls` -- the class side of the derive / field-fold framework, and the
+// binary generalization of the synthesized __deepcopy__. Skipped if the
+// class defines its own. Every method is built from ORDINARY sends
+// (period-gets + the field's own comparison + bool combinators), so field
+// comparison rides normal demand-driven dispatch -- no primitive, no
+// inline codegen, unlike the tuple side (issue 067). Shapes:
+//   __eq__:  AND fold        r = True;  r = r & (self.f == other.f)
+//   __lt__:  lexicographic   r = False; r = (self.f < other.f) | ((self.f == other.f) & r)   [fields reversed]
+//   __ne__/__gt__/__le__/__ge__: delegate to derived __eq__/__lt__ (mirrors tuple's reflected ops)
+// Registration mirrors the synthesized __deepcopy__.
+static void synthesize_derived_compare(PycCompiler &ctx, PyDAST *cdef, PycAST *ast, Sym *cls, Sym *fn,
+                                       Code **classbody, cchar *opname) {
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, opname))) return;  // user-defined
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Sym *other = new_sym(ast);  // second formal, any type
+  other->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, opname));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, opname));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  as.add(other);
+  Sym *self = mfn->self;
+  Code *b = 0;
+  Sym *res = nullptr;
+  bool eq = !strcmp(opname, "__eq__"), lt = !strcmp(opname, "__lt__");
+  if (eq || lt) {
+    Vec<cchar *> fields;  // source order (same rationale as __deepcopy__)
+    collect_self_store_fields(cdef, fields);
+    for (int i = 0; i < cls->has.n; i++) {
+      Sym *m = cls->has[i];
+      if (!m || !m->name) continue;
+      if (m->alias && m->alias->is_fun) continue;  // methods, not data
+      cchar *cn = if1_cannonicalize_string(if1, m->name);
+      if (!fields.in(cn)) fields.add(cn);
+    }
+    // __lt__ folds fields in REVERSE so the outermost term is the first
+    // field (lexicographic); __eq__'s AND is order-free.
+    if (lt)
+      for (int i = 0, j = fields.n - 1; i < j; i++, j--) {
+        cchar *t = fields[i];
+        fields[i] = fields[j];
+        fields[j] = t;
+      }
+    Sym *r = eq ? sym_true : sym_false;
+    for (cchar *fname : fields) {
+      Sym *nm = if1_make_symbol(if1, fname);
+      Sym *sv = new_sym(ast), *ov = new_sym(ast);
+      if1_send(if1, &b, 4, 1, sym_operator, self, sym_period, nm, sv)->ast = ast;
+      if1_send(if1, &b, 4, 1, sym_operator, other, sym_period, nm, ov)->ast = ast;
+      if (eq) {
+        Sym *c = new_sym(ast), *rn = new_sym(ast);
+        call_method(&b, ast, sv, if1_make_symbol(if1, "__eq__"), c, 1, ov);
+        call_method(&b, ast, r, if1_make_symbol(if1, "__and__"), rn, 1, c);  // r = r and (self.f == other.f)
+        r = rn;
+      } else {
+        Sym *cl = new_sym(ast), *ce = new_sym(ast), *t = new_sym(ast), *rn = new_sym(ast);
+        call_method(&b, ast, sv, if1_make_symbol(if1, "__lt__"), cl, 1, ov);  // self.f < other.f
+        call_method(&b, ast, sv, if1_make_symbol(if1, "__eq__"), ce, 1, ov);  // self.f == other.f
+        call_method(&b, ast, ce, if1_make_symbol(if1, "__and__"), t, 1, r);   // (self.f == other.f) and r
+        call_method(&b, ast, cl, if1_make_symbol(if1, "__or__"), rn, 1, t);   // (self.f < other.f) or t
+        r = rn;
+      }
+    }
+    res = r;
+  } else if (!strcmp(opname, "__ne__")) {
+    Sym *e = new_sym(ast);
+    call_method(&b, ast, self, if1_make_symbol(if1, "__eq__"), e, 1, other);  // self == other
+    res = new_sym(ast);
+    call_method(&b, ast, e, if1_make_symbol(if1, "__not__"), res, 0);  // not (...)
+  } else if (!strcmp(opname, "__gt__")) {
+    res = new_sym(ast);
+    call_method(&b, ast, other, if1_make_symbol(if1, "__lt__"), res, 1, self);  // other < self
+  } else if (!strcmp(opname, "__le__")) {
+    Sym *x = new_sym(ast);
+    call_method(&b, ast, other, if1_make_symbol(if1, "__lt__"), x, 1, self);  // other < self
+    res = new_sym(ast);
+    call_method(&b, ast, x, if1_make_symbol(if1, "__not__"), res, 0);  // not (...)
+  } else if (!strcmp(opname, "__ge__")) {
+    Sym *x = new_sym(ast);
+    call_method(&b, ast, self, if1_make_symbol(if1, "__lt__"), x, 1, other);  // self < other
+    res = new_sym(ast);
+    call_method(&b, ast, x, if1_make_symbol(if1, "__not__"), res, 0);  // not (...)
+  } else {
+    return;  // unknown op
+  }
+  if1_move(if1, &b, res, mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(opname)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, opname), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size, bool derive_compare) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
@@ -1705,65 +1808,20 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
         ->ast = ast;
   }
 
-  // issue 068: @pyc_compare derives a field-wise __eq__ for a record --
-  // the class side of the derive / field-fold framework, and the binary
-  // generalization of the __deepcopy__ synthesis above. Same field
-  // discovery (build_syms knew every `self.x = ...` store), but a BINARY
-  // fold: r = True, then r = r & (self.f == other.f) for each field. Every
-  // step is an ORDINARY send (self.f / other.f period-gets, the field's own
-  // __eq__, bool.__and__), so element comparison rides normal demand-driven
-  // dispatch -- no primitive, no inline codegen, no clone/transfer-function
-  // surgery (the whole point vs the tuple side, issue 067). Opt-in (Python
-  // classes default to identity __eq__); skipped if the class defines its
-  // own __eq__.
-  if (derive_compare && is_record &&
-      !ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, "__eq__"))) {
-    Vec<cchar *> fields;  // source order (same rationale as __deepcopy__)
-    collect_self_store_fields(cdef, fields);
-    for (int i = 0; i < cls->has.n; i++) {
-      Sym *m = cls->has[i];
-      if (!m || !m->name) continue;
-      if (m->alias && m->alias->is_fun) continue;  // methods, not data
-      cchar *cn = if1_cannonicalize_string(if1, m->name);
-      if (!fields.in(cn)) fields.add(cn);
-    }
-    Sym *eqfn = new_fun(ast);
-    eqfn->nesting_depth = fn->nesting_depth + 1;
-    eqfn->self = new_sym(ast);
-    eqfn->self->must_implement_and_specialize(cls);
-    eqfn->self->in = eqfn;
-    Sym *other = new_sym(ast);  // second formal, any type
-    other->in = eqfn;
-    Vec<Sym *> as;
-    as.add(new_sym(ast, "__eq__"));
-    as[0]->must_implement_and_specialize(if1_make_symbol(if1, "__eq__"));
-    eqfn->name = as[0]->name;
-    as.add(eqfn->self);
-    as.add(other);
-    Code *eqbody = 0;
-    Sym *r = sym_true;  // AND fold; bool.__and__ returns the arg when self is true
-    for (cchar *fname : fields) {
-      Sym *nm = if1_make_symbol(if1, fname);
-      Sym *sv = new_sym(ast), *ov = new_sym(ast);
-      if1_send(if1, &eqbody, 4, 1, sym_operator, eqfn->self, sym_period, nm, sv)->ast = ast;
-      if1_send(if1, &eqbody, 4, 1, sym_operator, other, sym_period, nm, ov)->ast = ast;
-      Sym *cmp = new_sym(ast);
-      call_method(&eqbody, ast, sv, if1_make_symbol(if1, "__eq__"), cmp, 1, ov);
-      Sym *rn = new_sym(ast);
-      call_method(&eqbody, ast, r, if1_make_symbol(if1, "__and__"), rn, 1, cmp);
-      r = rn;
-    }
-    if1_move(if1, &eqbody, r, eqfn->ret);
-    if1_send(if1, &eqbody, 4, 0, sym_primitive, sym_reply, eqfn->cont, eqfn->ret)->ast = ast;
-    if1_closure(if1, eqfn, eqbody, as.n, as.v);
-    Sym *member = new_PycSymbol("__eq__")->sym;
-    member->var = new Var(member);
-    member->alias = eqfn;
-    member->in = cls;
-    cls->has.add(member);
-    if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, "__eq__"), eqfn,
-             new_sym(ast))
-        ->ast = ast;
+  // issue 068: @pyc_compare derives the record comparison family as
+  // field-folds of ORDINARY sends (see synthesize_derived_compare). Opt-in
+  // (Python classes default to identity __eq__ and no ordering); each op is
+  // skipped when the class defines its own. __eq__/__lt__ are folds;
+  // __ne__/__gt__/__le__/__ge__ delegate to them (order matters not for
+  // synthesis -- dispatch resolves at FA time). Matches CPython
+  // dataclass(order=True) + functools.total_ordering (see pyc_compat).
+  if (derive_compare && is_record) {
+    synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__eq__");
+    synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__lt__");
+    synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__ne__");
+    synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__gt__");
+    synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__le__");
+    synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__ge__");
   }
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
