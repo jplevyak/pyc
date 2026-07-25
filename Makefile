@@ -17,7 +17,6 @@ DEBUG=1
                   # `PYC_FLAGS=-b ./test_pyc`) selects LLVM at runtime once
                   # USE_LLVM=1 is built. The LLVM backend doesn't yet pass
                   # most pyc tests — see CODEGEN_PLAN §3.5 and CODEGEN_LLVM.md.
-#USE_SS=1         # Shedskin backend (vestigial)
 
 MAJOR=0
 MINOR=0
@@ -102,9 +101,6 @@ ifdef USE_LLVM
   JIT_RUNTIME_OBJ = pyc_runtime.o
 endif
 
-ifdef USE_SS
-  CFLAGS += -Ilib -Ilib/os -DSSLIB="../shedskin/shedskin/lib"
-endif
 
 # Version stamp ---------------------------------------------------------------
 
@@ -121,9 +117,6 @@ PYC_DEPEND_SRCS = pyc.cc repl.cc python_ifa_util.cc python_ifa_sym.cc \
                   python_ifa_build_syms.cc python_ifa_build_if1.cc \
                   python_ifa_main.cc python_parse.cc version.cc
 PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc python.g.d_parser.cc
-ifdef USE_SS
-  PYC_SRCS += shedskin.cc
-endif
 # Note: under USE_LLVM, the LLVM codegen sources (codegen/llvm.cc,
 # codegen/llvm_codegen.cc, codegen/llvm_primitives.cc) are already
 # compiled into ifa/libifa_gc.a — no top-level source to add. The

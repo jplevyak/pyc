@@ -19,7 +19,6 @@ EXTERN int codegen_jit EXTERN_INIT(0);
 // codegen_strict_verify lives only in pyc.cc's flag table — the
 // ifa lib's llvm.cc reads PYC_STRICT_VERIFY from getenv directly
 // (the flag system populates the env var from --strict-verify).
-EXTERN int codegen_shedskin EXTERN_INIT(0);
 EXTERN bool runtime_errors EXTERN_INIT(true);
 EXTERN int fgraph EXTERN_INIT(0);
 EXTERN int fdump_html EXTERN_INIT(0);
@@ -35,7 +34,6 @@ int llvm_jit_execute();
 // llvm_jit_execute() on a miss; call read_cache() to load on a hit.
 extern char llvm_jit_cache_path[512];
 bool llvm_jit_read_cache(const char *path);
-int shedskin_codegen(FA *fa, Fun *main, cchar *fn);
 
 void compile(cchar *fn);   // in pyc.cc: FA → codegen → JIT/AOT
 void pyc_repl();           // in repl.cc: interactive REPL loop

@@ -75,8 +75,7 @@ pyc <file.py>
 │       │
 │       └── backend:
 │           ├── (default)   c_codegen_write_c → c_codegen_compile  [ifa/codegen/cg.cc]
-│           ├── --llvm      llvm_codegen      → llvm_codegen_compile [ifa/codegen/llvm*.cc]
-│           └── --ss        shedskin_codegen                       [shedskin.cc — vestigial]
+│           └── --llvm      llvm_codegen      → llvm_codegen_compile [ifa/codegen/llvm*.cc]
 ```
 
 Phase ordering is encoded in two places:

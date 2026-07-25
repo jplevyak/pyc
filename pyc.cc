@@ -61,9 +61,6 @@ static ArgumentDescription arg_desc[] = {
 #endif
     {"dparse_only", ' ', "Validate DParser parse only (no compilation)", "F", &dparse_only, "PYC_DPARSE_ONLY", NULL},
     {"dparse_ast", ' ', "Parse with DParser and print AST", "F", &dparse_ast, "PYC_DPARSE_AST", NULL},
-#ifdef USE_SS
-    {"ss", 's', "Shedskin Codegen", "F", &codegen_shedskin, "PYC_SS", NULL},
-#endif
     {"escape_in_fa", ' ', "Integrate escape analysis into IFA (Phase 1+, see ESCAPE_PLAN.md)", "F",
      &ifa_escape_in_fa, "IFA_ESCAPE_IN_FA", NULL},
     {"fa_inline", ' ', "Run simple_inlining between FA passes (0/1, default 0)", "I",
@@ -134,11 +131,6 @@ void compile(cchar *fn) {
     ifa_html(fn, mktree_dir);
   }
   if (fcg) {
-#ifdef USE_SS
-    if (codegen_shedskin) {
-      if (shedskin_codegen(pdb->fa, if1->top->fun, fn)) fail("compilation failure");
-    } else
-#endif
 #ifdef USE_LLVM
         if (codegen_llvm) {
       // The only LLVM path.  Despite the name `llvm.cc`, the
