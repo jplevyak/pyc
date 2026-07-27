@@ -2585,13 +2585,21 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // children: [cond, PY_suite, PY_else_clause?]
       build_if1_pyda(n->children[0], ctx);
       PycAST *t = getAST(n->children[0], ctx);
+      // Coerce the condition to bool each iteration (mirrors build_if_pyda's
+      // __pyc_to_bool__ call) -- without it a non-bool condition value (e.g.
+      // the int literal in `while (1):`) is fed straight to if1_if_goto,
+      // which requires a real bool.
+      Sym *cond_bool = new_sym(ast);
+      Code *cond_code = 0;
+      if1_gen(if1, &cond_code, t->code);
+      call_method(&cond_code, ast, t->rval, sym___pyc_to_bool__, cond_bool, 0);
       Code *body = 0, *orelse = 0;
       ctx.loop_depth++;
       build_if1_suite_pyda(n->children[1], &body, ctx);
       ctx.loop_depth--;
       if (n->children.n > 2 && n->children[2]->kind == PY_else_clause)
         build_if1_suite_pyda(n->children[2]->children[0], &orelse, ctx);
-      if1_loop(if1, &ast->code, ast->label[0], ast->label[1], t->rval, 0, t->code, 0, body, ast);
+      if1_loop(if1, &ast->code, ast->label[0], ast->label[1], cond_bool, 0, cond_code, 0, body, ast);
       if1_gen(if1, &ast->code, orelse);
       return 0;
     }
