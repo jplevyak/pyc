@@ -112,7 +112,14 @@ PyDAST *dparse_builtin_dir(const char *dirname) {
   }
   buf[pos] = 0;
   buf[pos + 1] = 0;
-  D_Parser *p = make_python_parser(dirname, buf, pos);
+  // AST nodes retain this pathname for error reporting (fail.cc's
+  // get_file_line re-opens it to print source context). dirname itself is a
+  // real directory, not a file -- open()+read() on it fails an assert
+  // (EISDIR) the first time a warning inside the concatenated builtin
+  // module needs to show source context. Give it a synthetic ".py" name
+  // matching the one pyc.cc registers the module under instead.
+  char *label = dupstrs(dirname, ".py");
+  D_Parser *p = make_python_parser(label, buf, pos);
   dparse(p, buf, pos);
   PythonGlobals *pg = (PythonGlobals *)p->initial_globals;
   PyDAST *ast = nullptr;

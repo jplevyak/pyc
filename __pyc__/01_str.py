@@ -23,6 +23,8 @@ class str:
     return __pyc_c_call__(str, "_CG_string_getslice", str, self, int, i, int, j, int, s)
   def __len__(self):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
+  def __pyc_to_bool__(self):
+    return self.__len__() != 0
   def __iter__(self):
     return __base_iter__(self)
   def __pyc_tolist__(self):

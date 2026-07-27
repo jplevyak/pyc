@@ -894,8 +894,14 @@ static void build_list_comp_inner_pyda(PyDAST *iter_node, Vec<PyDAST *> &elts, P
     build_if1_pyda(iter_node->children[0], ctx);
     PycAST *test_ast = getAST(iter_node->children[0], ctx);
     if1_gen(if1, code, test_ast->code);
+    // Coerce the filter test to bool (mirrors build_if_pyda's
+    // __pyc_to_bool__ call) -- without it a non-bool truthy test (e.g.
+    // `if line` where line is a str) is fed straight to if1_if_goto,
+    // which requires a real bool.
+    Sym *test_bool = new_sym(ast);
+    call_method(code, ast, test_ast->rval, sym___pyc_to_bool__, test_bool, 0);
     Label *short_circuit = if1_alloc_label(if1);
-    Code *ifcode = if1_if_goto(if1, code, test_ast->rval, ast);
+    Code *ifcode = if1_if_goto(if1, code, test_bool, ast);
     if1_if_label_false(if1, ifcode, short_circuit);
     if1_if_label_true(if1, ifcode, if1_label(if1, code, ast));
     PyDAST *next_iter = (iter_node->children.n > 1) ? iter_node->children[1] : nullptr;
