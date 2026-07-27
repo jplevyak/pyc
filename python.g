@@ -715,6 +715,7 @@ Ldone:;
     n->kind = kind;
     n->filename = pn->start_loc.pathname;
     n->line = pn->start_loc.line;
+    n->col = pn->start_loc.col;
     (n->add(children), ...);
     return n;
   }

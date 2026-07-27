@@ -39,8 +39,8 @@ pyc.cat
 /ifa/ifa
 /ifa/ifa-test
 
-# Compiled C output from pyc compilations at repo root
-/*.py.c
+# Compiled C output from pyc compilations
+*.py.c
 
 # Profiling / debug output
 callgrind.out.*

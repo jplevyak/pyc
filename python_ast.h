@@ -85,6 +85,7 @@ class PyDAST : public gc {
   int ctx;          // PyCtx
   cchar *filename;
   int line;
+  int col;
   // IFA annotations (Phase 3+)
   Code *code;
   Label *label[2];
@@ -99,7 +100,7 @@ class PyDAST : public gc {
   PyDAST()
       : kind(PY_invalid), str_val(nullptr), int_val(0), float_val(0.0),
         is_int(false), is_imag(false), op(0), ctx(0),
-        filename(nullptr), line(0),
+        filename(nullptr), line(0), col(0),
         code(nullptr), sym(nullptr), rval(nullptr),
         parent(nullptr), is_builtin(0), is_member(0), is_object_index(0), is_async(0) {
     label[0] = label[1] = nullptr;

@@ -110,7 +110,10 @@ PycAST::PycAST()
 
 cchar *PycAST::pathname() { return filename; }
 
-int PycAST::column() { return 0; }
+int PycAST::column() {
+  if (xpyd) return xpyd->col;
+  return 0;
+}
 
 int PycAST::line() {
   if (xpyd) return xpyd->line;
