@@ -76,6 +76,16 @@ class object:
     if self.__pyc_to_bool__():
       return False
     return True
+  def __eq__(self, x):
+    # CPython default: plain classes compare by identity unless they
+    # override __eq__ (python_ifa_build_syms.cc's derive-compare comment:
+    # "Python classes default to identity __eq__"). Without this, `a == b`
+    # / `a != b` on two instances of a class with no explicit __eq__ is an
+    # unresolved call (bh.py's `self != hg.pskip`, a plain Body vs Body
+    # compare with no override).
+    return __pyc_primitive__(__pyc_symbol__("is"), self, x)
+  def __ne__(self, x):
+    return not self.__eq__(x)
 
 class __pyc_None_type__:
   def __bool__(self):

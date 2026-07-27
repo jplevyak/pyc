@@ -173,6 +173,19 @@ static void emit_in_pyda(Code **code, PycAST *ast, Sym *item, Sym *container, in
   }
 }
 
+// A 0x/0X/0o/0O/0b/0B-prefixed literal is unconditionally an integer in
+// Python -- there is no hex/octal/binary float or imaginary syntax --
+// but its hex digits legitimately include 'e'/'E' anywhere (0xEFCDAB89
+// starts WITH one), which the naive '.'/'e'/'E'/'j'/'J' float-vs-int
+// scan every classifier below does would otherwise misread as a float
+// exponent / imaginary marker. Merely skipping the 2-char prefix isn't
+// enough (the rest of the digit string can still contain 'e'/'E'); the
+// only correct fix is to short-circuit to "definitely int" for any such
+// literal before scanning at all.
+static bool has_int_literal_base_prefix(const char *s) {
+  return s[0] == '0' && (s[1] == 'x' || s[1] == 'X' || s[1] == 'o' || s[1] == 'O' || s[1] == 'b' || s[1] == 'B');
+}
+
 // Parse a PY_number PyDAST node as a decimal/hex/octal integer
 // literal. Mirrors the int-literal branch of make_num_pyda further
 // below: the grammar doesn't reliably populate is_int/int_val (see
@@ -183,8 +196,9 @@ static bool try_int_literal(PyDAST *n, long *out) {
   if (!n || n->kind != PY_number) return false;
   const char *s = n->str_val;
   if (!s) return false;
-  for (const char *p = s; *p; p++)
-    if (*p == '.' || *p == 'e' || *p == 'E' || *p == 'j' || *p == 'J') return false;
+  if (!has_int_literal_base_prefix(s))
+    for (const char *p = s; *p; p++)
+      if (*p == '.' || *p == 'e' || *p == 'E' || *p == 'j' || *p == 'J') return false;
   char *end;
   if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) *out = strtol(s + 2, &end, 16);
   else if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') *out = strtol(s + 1, &end, 8);
@@ -253,11 +267,23 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
   // Parse str_val since is_int/int_val/float_val may not be set from grammar
   const char *s = n->str_val;
   if (!s) s = "0";
-  // Determine type: float if contains '.', 'e', 'E', or 'j'/'J' (imaginary)
+  // Determine type: float if contains '.', 'e', 'E', or 'j'/'J' (imaginary).
+  // has_int_literal_base_prefix: a hex literal's digits legitimately
+  // include 'e'/'E' anywhere (0xEFCDAB89 starts with one) -- scanning
+  // unconditionally misclassified it as float, silently routing
+  // `n & mask`-style code through strtod and turning that one call's
+  // argument into a float64 (sha.py's `_long2bytesBigEndian(self.H4, 4)`
+  // where H4 = 0xC3D2E1F0; minimal repro: `def foo(n): return n &
+  // 0xFFFFFFFF; foo(0xEFCDAB89)`). Python has no hex/octal/binary float
+  // or imaginary literal syntax, so such a prefix means "definitely
+  // int" -- skip the scan entirely rather than try to skip past just
+  // the prefix (the digits after it can still contain 'e'/'E').
   bool is_float = false;
-  for (const char *p = s; *p; p++) {
-    if (*p == '.' || *p == 'e' || *p == 'E') { is_float = true; break; }
-    if (*p == 'j' || *p == 'J') { is_float = true; break; }
+  if (!has_int_literal_base_prefix(s)) {
+    for (const char *p = s; *p; p++) {
+      if (*p == '.' || *p == 'e' || *p == 'E') { is_float = true; break; }
+      if (*p == 'j' || *p == 'J') { is_float = true; break; }
+    }
   }
   if (n->is_int) {
     Immediate imm;
@@ -292,14 +318,18 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
 
 // Parse a Python string literal into its actual string value (pure C, no CPython runtime needed)
 // Skip a string-literal prefix (any combination of r/R/b/B/u/U/f/F) and
-// classify it. Returns a pointer to the opening quote character.
-static const char *skip_string_prefix(const char *s, bool *is_raw, bool *is_fstring) {
+// classify it. Returns a pointer to the opening quote character. Python's
+// grammar never combines b/B with f/F (no such thing as a byte f-string),
+// so is_bytes and is_fstring are mutually exclusive in practice.
+static const char *skip_string_prefix(const char *s, bool *is_raw, bool *is_fstring, bool *is_bytes) {
   *is_raw = false;
   *is_fstring = false;
+  *is_bytes = false;
   while (*s && (*s == 'r' || *s == 'R' || *s == 'b' || *s == 'B' ||
                 *s == 'u' || *s == 'U' || *s == 'f' || *s == 'F')) {
     if (*s == 'r' || *s == 'R') *is_raw = true;
     if (*s == 'f' || *s == 'F') *is_fstring = true;
+    if (*s == 'b' || *s == 'B') *is_bytes = true;
     s++;
   }
   return s;
@@ -378,8 +408,8 @@ static char *decode_string_content(const char *s, const char *end, bool is_raw) 
 static Sym *eval_string_pyda(PyDAST *n, PycCompiler &ctx) {
   const char *s = n->str_val;
   if (!s || !*s) return make_string("");
-  bool is_raw, is_fstring;
-  s = skip_string_prefix(s, &is_raw, &is_fstring);
+  bool is_raw, is_fstring, is_bytes;
+  s = skip_string_prefix(s, &is_raw, &is_fstring, &is_bytes);
   // Determine quote character and whether triple-quoted
   char q = *s;
   if (q != '\'' && q != '"') return make_string(s);  // shouldn't happen
@@ -393,7 +423,8 @@ static Sym *eval_string_pyda(PyDAST *n, PycCompiler &ctx) {
   } else {
     while (*end && *end != q && *end != '\n') end++;
   }
-  return make_string(decode_string_content(s, end, is_raw));
+  char *decoded = decode_string_content(s, end, is_raw);
+  return is_bytes ? make_bytes(decoded) : make_string(decoded);
 }
 
 // Append `piece` (a string-typed Sym) to the running f-string concatenation
@@ -508,8 +539,8 @@ static void scan_fstring_field(const char **pp, const char *end, int lineno,
 // order of operations.
 static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   const char *s = n->str_val;
-  bool is_raw, is_fstring;
-  s = skip_string_prefix(s, &is_raw, &is_fstring);
+  bool is_raw, is_fstring, is_bytes;
+  s = skip_string_prefix(s, &is_raw, &is_fstring, &is_bytes);
   char q = *s;
   if (q != '\'' && q != '"') { ast->rval = make_string(s); return; }
   s++;
@@ -568,12 +599,18 @@ static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
 // Check for and handle builtin function calls (super, __pyc_symbol__, etc.)
 static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAST *ast, PycCompiler &ctx) {
   Sym *f = atom_ast->sym;
-  // Collect positional args from the call trailer
+  // Collect positional and keyword args from the call trailer
   Vec<PyDAST *> pos_args;
+  Vec<PyDAST *> kw_keys, kw_vals;
   if (call_trailer && call_trailer->children.n > 0) {
     PyDAST *arglist = call_trailer->children[0];
-    for (auto arg : arglist->children.values())
-      if (arg->kind != PY_keyword_arg) pos_args.add(arg);
+    for (auto arg : arglist->children.values()) {
+      if (arg->kind == PY_keyword_arg) {
+        kw_keys.add(arg->children[0]);
+        kw_vals.add(arg->children[1]);
+      } else
+        pos_args.add(arg);
+    }
   }
   // issues/020: str(x) -- unlike print/super/etc., `str` is a real class
   // (__pyc__/01_str.py), not a compiler-level builtin Sym, so it isn't in
@@ -589,6 +626,72 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       ast->rval = new_sym(ast);
       call_method(&ast->code, ast, a0->rval, sym___str__, ast->rval, 0);
       return 1;
+    }
+  }
+  // bytes(x): same shape as str(x) above -- `bytes` (__pyc__/01b_bytes.py,
+  // backed by the sym_bytes primitive registered in ifa/if1/ast.cc) has
+  // no __init__ that accepts a value to convert, so a 1-arg call would
+  // otherwise fall through to the generic constructor path and silently
+  // drop its argument. Dispatches to __pyc_tobytes__, defined on bytes
+  // (identity), str (latin-1-safe encode), and list (0-255 byte values)
+  // -- mirrors list(x)'s __pyc_tolist__ dispatch just below.
+  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "bytes")) {
+    PycSymbol *bytes_cls = make_PycSymbol(ctx, "bytes", PYC_USE);
+    if (bytes_cls && f == bytes_cls->sym) {
+      PycAST *a0 = getAST(pos_args[0], ctx);
+      ast->rval = new_sym(ast);
+      call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tobytes__"), ast->rval, 0);
+      return 1;
+    }
+  }
+  // open(path, mode) with a LITERAL, non-fstring mode string containing
+  // 'b': lower to open_binary(path, mode) instead (__pyc__/07_file.py),
+  // so `.read()` yields bytes -- matching CPython's real mode-dependent
+  // open() typing. Resolved here, from the literal AST, rather than
+  // inside a shared open()/__pyc_file__.read() body: FA doesn't split
+  // calls to one function by a string CONSTANT's *value* (only by
+  // type -- see the isinstance-in-except-clause comment above on
+  // clone_for_constants' documented unreliability for exactly this
+  // shape of problem), so a runtime `if 'b' in mode:` inside open()
+  // would thread a str|bytes union into every caller instead of a
+  // clean per-call-site type -- the exact bug class this whole bytes
+  // effort exists to fix. A non-literal mode falls back to ordinary
+  // open() (str); every real corpus open(...,'rb'/'wb') call site uses
+  // a literal, so this covers all actual usage.
+  if (f && f->name && !strcmp(f->name, "open")) {
+    PycSymbol *open_sym = make_PycSymbol(ctx, "open", PYC_USE);
+    if (open_sym && f == open_sym->sym) {
+      PyDAST *mode_arg = nullptr;
+      if (pos_args.n >= 2)
+        mode_arg = pos_args[1];
+      else
+        for (int ki = 0; ki < kw_keys.n; ki++)
+          if (kw_keys[ki]->str_val && !strcmp(kw_keys[ki]->str_val, "mode")) mode_arg = kw_vals[ki];
+      bool is_binary = false;
+      if (mode_arg && mode_arg->kind == PY_string && mode_arg->str_val) {
+        bool is_raw, is_fstring, is_bytes;
+        const char *s = skip_string_prefix(mode_arg->str_val, &is_raw, &is_fstring, &is_bytes);
+        char q = *s;
+        if (!is_fstring && (q == '\'' || q == '"')) {
+          s++;
+          const char *end = strchr(s, q);
+          if (end)
+            for (const char *p = s; p < end; p++)
+              if (*p == 'b') { is_binary = true; break; }
+        }
+      }
+      if (is_binary) {
+        PycSymbol *open_bin_sym = make_PycSymbol(ctx, "open_binary", PYC_USE);
+        if (!open_bin_sym) fail("'open_binary' not found (is __pyc__/07_file.py loaded?)");
+        Code *send = if1_send1(if1, &ast->code, ast);
+        if1_add_send_arg(if1, send, open_bin_sym->sym);
+        for (auto a : pos_args.values()) if1_add_send_arg(if1, send, getAST(a, ctx)->rval);
+        for (int ki = 0; ki < kw_vals.n; ki++)
+          if1_add_send_arg(if1, send, getAST(kw_vals[ki], ctx)->rval, cannonicalize_string(kw_keys[ki]->str_val));
+        ast->rval = new_sym(ast);
+        if1_add_send_result(if1, send, ast->rval);
+        return 1;
+      }
     }
   }
   // issue 025 "has no type" bucket: list(iterable) -- `list` is a
@@ -1057,6 +1160,7 @@ static Sym *eval_case_guard(PyDAST *guard, Code **code, PycAST *case_ast, PycCom
 static bool number_pattern_is_float(PyDAST *n) {
   if (n->is_int) return false;
   cchar *s = n->str_val ? n->str_val : "0";
+  if (has_int_literal_base_prefix(s)) return false;
   for (cchar *p = s; *p; p++)
     if (*p == '.' || *p == 'e' || *p == 'E' || *p == 'j' || *p == 'J') return true;
   return false;
@@ -3387,8 +3491,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
 
     case PY_string: {
-      bool is_raw, is_fstring;
-      if (n->str_val) skip_string_prefix(n->str_val, &is_raw, &is_fstring);
+      bool is_raw, is_fstring, is_bytes;
+      if (n->str_val) skip_string_prefix(n->str_val, &is_raw, &is_fstring, &is_bytes);
       else is_fstring = false;
       if (is_fstring)
         build_fstring_pyda(n, ast, ctx);

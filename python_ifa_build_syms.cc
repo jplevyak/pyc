@@ -2008,6 +2008,13 @@ Sym *make_string(cchar *s) {
   return sym;
 }
 
+Sym *make_bytes(cchar *s) {
+  Immediate imm;
+  imm.v_string = s;
+  Sym *sym = if1_const(if1, sym_bytes, s, &imm);
+  return sym;
+}
+
 void call_method(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...) {
   va_list ap;
   Sym *t = new_sym(ast);

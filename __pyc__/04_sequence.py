@@ -64,6 +64,18 @@ class list:
     for x in self:
       r.append(x)
     return r
+  def __pyc_tobytes__(self):
+    # bytes(a_list_of_ints) -- CPython requires every element in
+    # range(0, 256); out-of-range values are truncated to their low 8
+    # bits here rather than raising (pyc has no exception model, issue
+    # 011). Built via chr() (handles the full 0-255 byte range, see
+    # _CG_chr in pyc_c_runtime.h) then reinterpreted as bytes through
+    # str's own encode() -- avoids a second low-level buffer-building
+    # helper alongside _CG_string_identity.
+    r = ""
+    for v in self:
+      r = r + chr(v)
+    return r.encode()
   def __add__(self, l):
     # list + tuple: build the result with append loops (isinstance
     # branch stays dead in list+list contours, same narrowing

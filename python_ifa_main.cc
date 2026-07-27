@@ -14,6 +14,7 @@ static void build_environment(PycModule *mod, PycCompiler &ctx) {
   scope_sym(ctx, sym_float);
   scope_sym(ctx, sym_complex);
   scope_sym(ctx, sym_string);
+  scope_sym(ctx, sym_bytes);
   scope_sym(ctx, sym_list);
   scope_sym(ctx, sym_tuple);
   scope_sym(ctx, sym_bool);

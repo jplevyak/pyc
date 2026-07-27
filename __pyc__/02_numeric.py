@@ -9,10 +9,18 @@ class int:
   def __sub__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
   def __mul__(self, x):
-    # n * [x] / n * (x,): int has no primitive multiply against a
-    # sequence, so reflect to the sequence's __rmul__ (issue 025 R1
-    # "missing sequence ops" -- rubik2/tictactoe's `20*[0]`/`edge*[0]`).
+    # n * [x] / n * (x,) / n * "s" / n * b"s": int has no primitive
+    # multiply against a sequence, so reflect to the sequence's
+    # __rmul__ (issue 025 R1 "missing sequence ops" -- rubik2/
+    # tictactoe's `20*[0]`/`edge*[0]`). str/bytes case: sha.py's
+    # padding idiom `(blocksize - len(s) % blocksize) * b"\x00"` --
+    # without this, the blind __pyc_operator__ fallback below emitted
+    # a raw C `*` between an int and a char*.
     if isinstance(x, list):
+      return x.__rmul__(self)
+    if isinstance(x, str):
+      return x.__rmul__(self)
+    if isinstance(x, bytes):
       return x.__rmul__(self)
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
   def __truediv__(self, x):
@@ -140,8 +148,14 @@ class float:
     return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __ifloordiv__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("/"), x)
-  def __invert__(self):
-    return __pyc_operator__(__pyc_symbol__("~"), self)
+  # NB deliberately no __invert__: CPython's float has no `~` (bitwise
+  # invert is int-only; `~3.14` raises TypeError). float used to define
+  # one anyway, so any receiver whose static type merely *included*
+  # float alongside int let `~x` dispatch to it instead of surfacing as
+  # a type error -- and P_prim_not's float-immediate case was an
+  # unimplemented assert stub (ifa/if1/num.cc), so a constant-folded
+  # `~<float>` crashed the whole compiler (sha.py's `~B`, issue found
+  # digging into that crash).
   def __pos__(self):
     return __pyc_operator__(__pyc_symbol__("+"), self)
   def __neg__(self):

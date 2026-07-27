@@ -299,6 +299,10 @@ typedef float64 _CG_float64;
 typedef complex32 _CG_complex32;
 typedef complex64 _CG_complex64;
 typedef char *_CG_string;
+// bytes shares str's exact length-prefixed char* buffer layout (see
+// sym_bytes registration, ifa/if1/ast.cc) -- same representation, distinct
+// C type name so the two stay type-checked separately by the C compiler.
+typedef char *_CG_bytes;
 typedef void *_CG_ref;
 typedef void *_CG_fun;
 typedef void *_CG_nil_type;
@@ -844,6 +848,21 @@ inline char *_CG_char_from_string(void *s, int i) {
   x[0] = ((char *)s)[i];
   return x;
 }
+
+// `bytes` indexing counterpart to _CG_char_from_string above: `bytes`
+// shares str's exact length-prefixed char* buffer layout (see sym_bytes
+// registration, ifa/if1/ast.cc), but CPython's `bytes[i]` yields a plain
+// int, not a length-1 bytes object -- so no allocation here, unlike the
+// str case (cheaper too).
+inline int64 _CG_int_from_string(void *s, int i) { return (int64)(unsigned char)((char *)s)[i]; }
+
+// `str`/`bytes` share one C representation (both are `_CG_string`-shaped
+// buffers), so converting between the two Python-level types (str.encode(),
+// bytes.decode(), bytes(some_str)) is a pure relabeling -- no bytes moved,
+// no allocation. This exists so `__pyc_c_call__` has a named C function to
+// call for that relabeling rather than reaching for `_CG_strcat`-style
+// helpers that assume two same-typed operands.
+inline char *_CG_string_identity(char *s) { return s; }
 
 // issues/025: plain (non-slice) indexing (`a[-1]`, `s[-1]`) had no
 // negative-index normalization at all -- str.__getitem__/

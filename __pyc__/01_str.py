@@ -34,8 +34,23 @@ class str:
     for c in self:
       r.append(c)
     return r
+  def __pyc_tobytes__(self):
+    # bytes(some_str): same reinterpretation as encode() below (the
+    # bytes(x) builtin call intercepts to x.__pyc_tobytes__(), mirroring
+    # str(x)/list(x)'s existing dispatch).
+    return self.encode()
+  def encode(self, encoding="utf-8"):
+    # ASCII/latin-1-safe byte-for-byte reinterpretation of the same
+    # underlying buffer as bytes -- not real codec-aware encoding.
+    # `encoding` is accepted for call-site compatibility and otherwise
+    # ignored. Mirrors bytes.decode()'s identity cast the other way.
+    return __pyc_c_call__(bytes, "_CG_string_identity", str, self)
   def __mul__(self, l):
     return __pyc_c_call__(str, "_CG_string_mult", str, self, int, l)
+  def __rmul__(self, l):
+    # `n * self` (n an int): string repetition is commutative, so
+    # reuse __mul__ (mirrors list.__rmul__, issue 025 R1).
+    return self.__mul__(l)
   def __hash__(self):
     return __pyc_c_call__(int, "_CG_str_hash", str, self)
   def __eq__(self, x):

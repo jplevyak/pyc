@@ -60,6 +60,64 @@ class __file_iter__:
 def open(path, mode="r"):
   return __pyc_file__(__pyc_c_call__(int, "_CG_fopen", str, path, str, mode))
 
+# Binary-mode counterpart to __pyc_file__/open() above: read()/readline()/
+# readlines() return bytes instead of str. The open(...) builtin-call
+# intercept (python_ifa_build_if1.cc) routes a literal 'rb'/'wb'/etc mode
+# string here at compile time instead of to open() -- see that intercept's
+# comment for why this can't just be a runtime branch inside one shared
+# open()/read(). _CG_fread_all/_CG_fread_n/_CG_freadline are reused
+# unchanged: the underlying C storage is identical (_CG_string-shaped
+# length-prefixed buffer) either way, so this is a pure typing difference,
+# not a new runtime code path.
+class __pyc_binfile__:
+  handle = 0
+  def __init__(self, handle):
+    self.handle = handle
+  def read(self, size=-1):
+    if size < 0:
+      return __pyc_c_call__(bytes, "_CG_fread_all", int, self.handle)
+    return __pyc_c_call__(bytes, "_CG_fread_n", int, self.handle, int, size)
+  def readline(self):
+    return __pyc_c_call__(bytes, "_CG_freadline", int, self.handle)
+  def readlines(self):
+    r = []
+    while True:
+      l = self.readline()
+      if len(l) == 0:
+        break
+      r.append(l)
+    return r
+  def write(self, s):
+    __pyc_c_call__(int, "_CG_fwrite_str", int, self.handle, bytes, s)
+    return None
+  def flush(self):
+    __pyc_c_call__(int, "_CG_fflush", int, self.handle)
+    return None
+  def close(self):
+    __pyc_c_call__(int, "_CG_fclose", int, self.handle)
+    self.handle = 0
+    return None
+  def __iter__(self):
+    return __binfile_iter__(self)
+
+class __binfile_iter__:
+  thefile = None
+  nextline = b""
+  def __iter__(self):
+    return self
+  def __init__(self, f):
+    self.thefile = f
+    self.nextline = f.readline()
+  def __pyc_more__(self):
+    return len(self.nextline) > 0
+  def __next__(self):
+    l = self.nextline
+    self.nextline = self.thefile.readline()
+    return l
+
+def open_binary(path, mode="rb"):
+  return __pyc_binfile__(__pyc_c_call__(int, "_CG_fopen", str, path, str, mode))
+
 def input(prompt=""):
   if len(prompt) > 0:
     __pyc_c_call__(int, "_CG_fwrite_str", int, __pyc_c_call__(int, "_CG_fstd", int, 1), str, prompt)

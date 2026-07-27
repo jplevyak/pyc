@@ -58,6 +58,7 @@ Sym *new_base_instance(Sym *c, PycAST *ast) {
   if (c->type_kind == Type_PRIMITIVE) {
     if (c->num_kind) return if1_const(if1, c, "0");
     if (c == sym_string) return if1_const(if1, c, "");
+    if (c == sym_bytes) return if1_const(if1, c, "");
   }
   if (c == sym_nil_type) return sym_nil;
   if (c == sym_list) return sym_empty_list;
