@@ -3,6 +3,10 @@ __pyc_insert_c_header__('pyc_c_runtime.h')
 class __pyc_any_type__:
   def __null__(self):
     return False
+  def __not__(self):
+    if self.__pyc_to_bool__():
+      return False
+    return True
   def __str__(self):
     return __pyc_primitive__(__pyc_symbol__("__pyc_to_str__"), self)
   def __pyc_tuplify__(self):
