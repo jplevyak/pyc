@@ -167,6 +167,44 @@ class bool:
       return not x
   def __ne__(self, x):
     return not self.__eq__(x)
+  # bool is an int subtype in Python, so ordering compares as 0/1
+  # (`True > False`, `max([some_bools])`). Without these, any
+  # ordering of bool values -- e.g. `max()`/`min()`/`sorted()` over a
+  # list of comparison results, or a bare `a > b` on two bools --
+  # dispatched to nothing ('unresolved call __gt__'); in a large
+  # program that unresolved union also destabilized the splitter and
+  # cascaded into unrelated NOTYPE collapses (shedskin chess's
+  # `nonpawnAttacks` -> `max([... == ...])` poisoning `range(128)`).
+  #
+  # Expressed with the same branch-on-self form as __eq__ above, over
+  # bool results only -- deliberately NOT via `int(self) < int(x)` or
+  # a bare `<` primitive: the numeric comparison primitives reject a
+  # bool operand ("illegal primitive argument type ... bool"), and the
+  # int() route additionally miscompiles on the LLVM backend (int(True)
+  # yields -1 there -- a separate bool sign-extension bug). These four
+  # need no numeric primitive at all. (Mixed bool/int ordering like
+  # `True < 5` is not the target here and is left to whatever the
+  # numeric side supports.)
+  def __lt__(self, x):     # self < x  : only False < True
+    if self:
+      return False
+    else:
+      return x
+  def __le__(self, x):     # self <= x : false only for True <= False
+    if self:
+      return x
+    else:
+      return True
+  def __gt__(self, x):     # self > x  : only True > False
+    if self:
+      return not x
+    else:
+      return False
+  def __ge__(self, x):     # self >= x : false only for False >= True
+    if self:
+      return True
+    else:
+      return not x
   def __str__(self):
     if (self):
       return "True"
