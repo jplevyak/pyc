@@ -2526,21 +2526,24 @@ together they tip FA into issue-033 dup-split churn (24 passes, stuck
    (1); `int(True) == -1` on the LLVM backend (i1 True sign-extends).
    **Fixed** (`e544f6aa`): zero-extend an i1 source in
    `emit_send_coerce`.
-3. **`raise <str>` pollutes `__pyc_exc__`** — OPEN. The decisive
-   experiment: with (1) fixed, rewriting chess's `raise "no move
-   found"` / `raise "faulty castling"` to `raise ValueError(...)`
-   **clears the `squares` NOTYPE**. A raised `str` literal (not
-   `Type_RECORD`) is stored as-is into the global exception slot,
-   making it a `{None, str, ...}` union threaded through every
-   can-raise check.
-4. **empty-list element inference** — OPEN (issue 043). With (1)+(3)
-   worked around, the failure moves to `legalMoves`'s
+3. **`raise <str>` pollutes `__pyc_exc__`** — **fixed** (`4cfe9609`).
+   The decisive experiment: with (1) fixed, rewriting chess's `raise
+   "no move found"` / `raise "faulty castling"` to `raise
+   ValueError(...)` **clears the `squares` NOTYPE**. A raised `str`
+   literal (not `Type_RECORD`) was stored as-is into the global
+   exception slot, making it a `{None, str, ...}` union threaded
+   through every can-raise check. `PY_raise_stmt` now wraps a
+   string/bytes raise operand in `Exception(...)`
+   (`tests/raise_string.py`).
+4. **empty-list element inference** — OPEN (issue 043), **chess's last
+   blocker**. With (1)+(3) fixed, the failure moves to `legalMoves`'s
    `[i for i in pseudoLegalCaptures(board2) if ...]` (chess.py:314),
    the classic `retval = []` filled-later gap.
 
-The two landed fixes are genuine correctness bugs independent of chess
-(`True > False`, `max/min/sorted` over bools, `int(True)`), suite
-232/0 both backends, sweep buckets unchanged. chess itself still FAILs
-(needs (3) and (4)). Full analysis, the corrected root-cause chain, and
-fix directions in
+The three landed fixes are genuine correctness bugs independent of
+chess (`True > False`, `max/min/sorted` over bools, `int(True)`,
+Python-2 string raises), suite 233/0 both backends, sweep buckets
+within parallel-timeout noise. chess itself still FAILs (needs only
+(4) now). Full analysis, corrected root-cause chain, and fix
+directions in
 [ifa/issues/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md).
