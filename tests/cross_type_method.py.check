@@ -1,6 +1,15 @@
-cross_type_method.py:10: illegal call argument type expression illegal: int64 
-cross_type_method.py:10: illegal call argument type expression illegal: closure 
-cross_type_method.py:10: illegal call argument type expression illegal: 
-cross_type_method.py:10: expression has no type
-cross_type_method.py:10: expression has no type
-cross_type_method.py:10: expression has no type
+cross_type_method.py:10:98: warning: illegal call argument type expression illegal: int64 
+    print(a.x(2))
+                 ^
+cross_type_method.py:10:98: warning: illegal call argument type expression illegal: closure 
+    print(a.x(2))
+                 ^
+cross_type_method.py:10:92: warning: illegal call argument type expression illegal: 
+    print(a.x(2))
+                 ^
+cross_type_method.py:10:98: warning: expression has no type
+    print(a.x(2))
+                 ^
+cross_type_method.py:10:92: warning: expression has no type
+    print(a.x(2))
+                 ^
