@@ -2495,3 +2495,53 @@ fractal render, ~2.5 min). `test_pyc.py` both backends 230/230 (new
 test `tests/eq_none.py`); sweep re-run same-shape otherwise (52/77
 compile: 23 clean + 29 warn), no regressions — this was a runtime
 fix the compile-only sweep doesn't itself measure.
+
+### chess dug into: root-caused (not fixed) — a deep setter-stage FA gap, not the frontend one that fixed chaos (2026-07-28)
+
+`chess` (this file's R2 bucket — see the 2026-07-08 triage's
+"COMPILED_C_WARN" listing) compiles with exactly one warning
+(`squares = tuple([i for i in range(128) if not i & 8])`:
+"expression has no type") and exit 0, but the binary aborts on the
+very first line of `main`
+(`Assertion !"runtime error: matching function not found"`).
+
+Traced via the generated C: `squares` is the ONLY place in the whole
+program where `range`'s class-based iterator protocol survives to
+runtime (every other `range(...)` call site has fully-literal args
+and gets constant-folded/unrolled away by the frontend). `range` is
+`clone_methods_per_cs`-flagged ([ifa/issues/closed/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md)),
+so its prototype-init setter has to FA-resolve which
+`__pyc_more__` clone to install as `range`'s sole CreationSet's
+method-pointer slot — and that resolution comes back NOTYPE. Codegen
+then emits `g0->e5 = (_CG_void)((_CG_function*)t2);` with `t2` an
+**uninitialized C local** (nothing ever writes it) — undefined
+behavior, degrading in practice to the observed trap.
+
+This is NOT the same bug class as chaos's (`== None` dispatch, fixed
+above) — it's the setter/mark-stage FA precision gap
+[ifa/issues/063](../ifa/issues/063-no-type-bucket-triage.md)'s own
+2026-07-23 update already flagged as open and deferred ("needs a
+setter-class-keyed routing ledger, a second step"), now confirmed on
+a second setter kind (prototype method-pointer install, not a
+container's `__setitem__`/`__len__`). Repro attempts were sensitive
+to program shape exactly like dijkstra2's documented scale-dependent
+stall — the same lines compile and run fine in isolation; the NOTYPE
+only appears with (something close to) chess's full call graph.
+Along the way, ALSO found — and ruled out as unrelated — a second,
+distinct true gap in a *reduced* repro only: `nonpawnAttacks`'s
+`max()` over `rowAttack`'s `bool | None` return (implicit fall-off-
+the-end `None`) needs ordering (`__gt__`) over a None-inclusive
+union, which pyc doesn't support; this is dynamically dead in real
+CPython for the tested position (a guard short-circuits first) but
+statically reachable, so it's a correctly-flagged gap, not a false
+positive — it just isn't what blocks the real, unmodified
+`chess.py` (only appeared once `nonpawnAttacks`'s callers were
+manually re-added to a trimmed-down call graph during bisection).
+
+Neither gap fixed here — full writeup, two candidate fix directions
+(the deep FA routing fix; a smaller, independent codegen-robustness
+fix turning the UB into a loud `assert` trap matching the issue-056/
+063 convention), and why neither was attempted this session (risk of
+corpus regression without the same multi-day validation issue 063's
+prior attempts needed) in
+[ifa/issues/071](../ifa/issues/071-range-more-vtable-slot-unresolved-setter-stage.md).
