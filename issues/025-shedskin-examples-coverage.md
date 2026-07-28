@@ -2496,7 +2496,7 @@ test `tests/eq_none.py`); sweep re-run same-shape otherwise (52/77
 compile: 23 clean + 29 warn), no regressions — this was a runtime
 fix the compile-only sweep doesn't itself measure.
 
-### chess dug into: two contributing bugs fixed, root is accumulated-union churn (2026-07-28)
+### chess dug into: four contributing bugs fixed, fatal blocker is bool|None representation (2026-07-28)
 
 **Note:** an earlier same-day draft of this entry (and of
 ifa/issues/071) blamed a "setter-stage FA gap" collapsing `range`'s
@@ -2535,15 +2535,25 @@ together they tip FA into issue-033 dup-split churn (24 passes, stuck
    through every can-raise check. `PY_raise_stmt` now wraps a
    string/bytes raise operand in `Exception(...)`
    (`tests/raise_string.py`).
-4. **empty-list element inference** — OPEN (issue 043), **chess's last
-   blocker**. With (1)+(3) fixed, the failure moves to `legalMoves`'s
-   `[i for i in pseudoLegalCaptures(board2) if ...]` (chess.py:314),
-   the classic `retval = []` filled-later gap.
+4. **`not <container>` dispatch** — **fixed** (`8644be59`). With (1)+(3)
+   fixed, the failure moved to `legalMoves`'s `if not [i for i in
+   pseudoLegalCaptures(board2) if ...]:` (chess.py:314). **Initially
+   mis-attributed to the empty-list element-inference family (issue
+   043)** — but it was a plain `not <container>` dispatch gap:
+   containers don't derive from `object` and `__pyc_any_type__` had no
+   `__not__`, so `not <list>` dispatched to nothing for *every* list,
+   empty or not (`not [1,2,3]` failed identically). Fixed by adding
+   `__not__` to `__pyc_any_type__` (`tests/not_container.py`).
 
-The three landed fixes are genuine correctness bugs independent of
+The four landed fixes are genuine correctness bugs independent of
 chess (`True > False`, `max/min/sorted` over bools, `int(True)`,
-Python-2 string raises), suite 233/0 both backends, sweep buckets
-within parallel-timeout noise. chess itself still FAILs (needs only
-(4) now). Full analysis, corrected root-cause chain, and fix
-directions in
-[ifa/issues/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md).
+Python-2 string raises, `not <any container>`), suite 234/0 both
+backends, sweep buckets within parallel-timeout noise. chess itself
+still FAILs — its fatal blocker is now the bool|None representation
+mismatch (issue 018/030), NOT element inference. Full analysis and the
+corrected root-cause chain in
+[ifa/issues/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md);
+the genuine empty-container element-inference family (which turned out
+not to block chess) is scoped with a shedskin-based backward-pass
+design in
+[ifa/issues/072](../ifa/issues/072-empty-container-notype-current-mechanism-and-plan.md).
