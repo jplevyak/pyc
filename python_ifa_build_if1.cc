@@ -3691,9 +3691,36 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         PycAST *v = getAST(n->children[0], ctx);
         if1_gen(if1, &ast->code, v->code);
         exc = v->rval;
+        // Python-2-style `raise "message"` / `raise b"..."` (a bare
+        // string/bytes value -- itself a TypeError in Python 3): wrap
+        // it in Exception(...) so the exception slot stays
+        // exception-typed. Storing a raw str/bytes into the shared
+        // `__pyc_exc__` global widens it to a {None, str, ...} union
+        // that every program-wide `if __pyc_exc__ is not None`
+        // can-raise check then threads; on its own harmless, but
+        // combined with other unions it was enough to tip FA's
+        // splitter into an unrelated NOTYPE cascade
+        // (shedskin_examples/chess's `raise "no move found"`). Wrapping
+        // matches Python-2 string-exception intent -- str(Exception(m))
+        // == m preserves the message -- and keeps the slot a clean
+        // exception union. Only fires when the operand's type is
+        // statically string/bytes here (a literal, or a value already
+        // typed so by build time); a dynamically-str value is left
+        // alone (its type isn't known pre-FA, and the raw-value case is
+        // rare). Ordered before the Type_RECORD case; the two are
+        // mutually exclusive.
+        if (exc && (exc->type == sym_string || exc->type == sym_bytes)) {
+          PycSymbol *ec = make_PycSymbol(ctx, "Exception", PYC_USE);
+          if (!ec) fail("error line %d, builtin Exception not found", ctx.lineno);
+          Code *send = if1_send1(if1, &ast->code, ast);
+          if1_add_send_arg(if1, send, ec->sym);
+          if1_add_send_arg(if1, send, exc);
+          exc = new_sym(ast);
+          if1_add_send_result(if1, send, exc);
+        }
         // `raise Cls` (a bare class reference, Type_RECORD at build
         // time): instantiate with no args, matching CPython.
-        if (exc && exc->type_kind == Type_RECORD) {
+        else if (exc && exc->type_kind == Type_RECORD) {
           Code *send = if1_send1(if1, &ast->code, ast);
           if1_add_send_arg(if1, send, exc);
           exc = new_sym(ast);

@@ -1,0 +1,4 @@
+Python 3 rejects `raise "string"` with TypeError (exceptions must
+derive from BaseException); pyc deliberately accepts the Python-2
+string-exception idiom by wrapping it in Exception(...). So CPython's
+output (a TypeError traceback) differs from pyc's by design.
