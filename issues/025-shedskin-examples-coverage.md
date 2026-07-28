@@ -2467,3 +2467,31 @@ Full triage, remaining residual blockers, and the FA-root fix sketch in
 recovered programs compile and trap *safely* but several don't yet *run*
 correctly — they hit a deeper `getter not resolved` assert from the same
 unresolved-field root.
+
+### chaos's R4 root cause found and fixed: `== None`/`!= None` dispatch crash (2026-07-28)
+
+Dug into `chaos`'s R4 "unattributed cascade" entry (this file's
+2026-07-08 triage, above). `chaos` already **compiled** (warnings only,
+exit 0 — `shedskin_sweep.sh` can't tell this apart from a genuinely
+working build, since it only checks compile success) but the binary
+aborted immediately: `Assertion !"runtime error: getter not resolved"`,
+traced to `Spline.__init__`'s `if knots == None:` (`knots:
+Optional[list]`).
+
+Root cause: `==`/`!=` against a `None` literal were dispatching
+through the generic `__eq__`/`__ne__` method — unlike `is None`/
+`is not None`, which issues 024/025 already lower straight to
+`prim_isinstance(x, sym_nil_type)`, bypassing dispatch. `list.__eq__`
+(`__pyc__/04_sequence.py`) is written assuming its argument is
+another list (`len(l)`, `l[i]`); called with the `None` literal
+argument, IFA monomorphizes that body anyway, and it traps at
+runtime. Fixed by extending the existing `is`/`is not` None-literal
+lowering to also cover `==`/`!=` (`python_ifa_build_if1.cc`'s
+`PY_compare`) — full writeup in
+[031](closed/031-eq-none-dispatch-crash.md). `chaos` now compiles
+with **zero warnings** (`COMPILED_C`, not `COMPILED_C_WARN`) and its
+binary runs to completion (10 iterations of a 2000×2000 chaos-game
+fractal render, ~2.5 min). `test_pyc.py` both backends 230/230 (new
+test `tests/eq_none.py`); sweep re-run same-shape otherwise (52/77
+compile: 23 clean + 29 warn), no regressions — this was a runtime
+fix the compile-only sweep doesn't itself measure.

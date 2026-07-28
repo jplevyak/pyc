@@ -2926,30 +2926,48 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // that IFA's splitter already handles correctly and
         // narrows the operand at the conditional branch (see
         // issue 025 Code_IF narrowing infrastructure).
+        //
+        // `x == None` / `x != None` get the same treatment (not
+        // just `is`/`is not`): a well-behaved __eq__ returns
+        // NotImplemented on a type mismatch and Python falls back
+        // to identity, so for every builtin/user class in this
+        // corpus `x == None` and `x is None` already agree. But
+        // routing `==`/`!=` against a None literal through the
+        // generic __eq__/__ne__ dispatch is actively wrong here:
+        // the receiver's __eq__ (e.g. list.__eq__, `l[i] ==
+        // self[i]`-style bodies) is monomorphized assuming its
+        // argument is ANOTHER instance of the same container, so
+        // passing the None literal straight through crashes at
+        // runtime ("getter not resolved" indexing/len-ing a nil --
+        // shedskin_examples/chaos.py's `if knots == None`, knots:
+        // Optional[list]). isinstance-against-nil sidesteps the
+        // dispatch entirely, matching the `is None` lowering above.
         bool lv_is_none = (lv->rval == sym_nil);
         bool rv_is_none = (rv->rval == sym_nil);
-        if ((op == PY_CMP_IS || op == PY_CMP_IS_NOT) &&
+        bool op_is_eq_like = (op == PY_CMP_IS || op == PY_CMP_EQ);
+        bool op_is_ne_like = (op == PY_CMP_IS_NOT || op == PY_CMP_NE);
+        if ((op_is_eq_like || op_is_ne_like) &&
             (lv_is_none || rv_is_none) &&
             !(lv_is_none && rv_is_none)) {
           Sym *operand = lv_is_none ? rv->rval : lv->rval;
           Sym *iso = make_symbol("isinstance");
-          if (op == PY_CMP_IS) {
-            // x is None  →  isinstance(x, __pyc_None_type__)
+          if (op_is_eq_like) {
+            // x is/== None  →  isinstance(x, __pyc_None_type__)
             if1_send(if1, &ast->code, 4, 1, sym_primitive,
                      iso, operand, sym_nil_type, ast->rval)->ast = ast;
           } else {
-            // x is not None  →  not isinstance(x, __pyc_None_type__)
+            // x is not/!= None  →  not isinstance(x, __pyc_None_type__)
             Sym *tmp = new_sym(ast);
             if1_send(if1, &ast->code, 4, 1, sym_primitive,
                      iso, operand, sym_nil_type, tmp)->ast = ast;
             if1_send(if1, &ast->code, 2, 1,
                      make_symbol("__not__"), tmp, ast->rval)->ast = ast;
           }
-        } else if ((op == PY_CMP_IS || op == PY_CMP_IS_NOT) &&
+        } else if ((op_is_eq_like || op_is_ne_like) &&
                    lv_is_none && rv_is_none) {
-          // None is None  →  True; None is not None  →  False
+          // None is/== None  →  True; None is not/!= None  →  False
           if1_move(if1, &ast->code,
-                   op == PY_CMP_IS ? sym_true : sym_false,
+                   op_is_eq_like ? sym_true : sym_false,
                    ast->rval, ast);
         } else if (op == PY_CMP_IS || op == PY_CMP_IS_NOT) {
           // Issue 028 step 4: real identity comparison for

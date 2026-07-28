@@ -63,6 +63,18 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [031](closed/031-eq-none-dispatch-crash.md) — `x == None` /
+  `x != None` now lower directly to an isinstance-against-nil check,
+  mirroring the existing `is None`/`is not None` treatment, instead
+  of dispatching through the generic `__eq__`/`__ne__` method. The
+  old dispatch monomorphized container methods like `list.__eq__`
+  assuming their argument was another instance of the same
+  container, crashing at runtime (`getter not resolved`) when the
+  argument was the `None` literal — root cause of
+  `shedskin_examples/chaos/chaos.py`'s crash
+  (`Spline.__init__`'s `if knots == None:`, `knots: Optional[list]`).
+  `chaos.py` now runs to completion on both backends. New test:
+  `tests/eq_none.py`.
 - [023](closed/023-structural-pattern-matching.md) — `match`/`case`
   (PEP 634): every pattern kind implemented and matching CPython on
   both backends, including all three rest-capture forms (`*rest`,
