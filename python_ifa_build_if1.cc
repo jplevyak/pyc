@@ -338,12 +338,18 @@ static const char *skip_string_prefix(const char *s, bool *is_raw, bool *is_fstr
 // Decode escape sequences in [s, end) (or copy verbatim if is_raw). Shared
 // by plain string literals and by each literal run between `{expr}`
 // interpolations in an f-string.
-static char *decode_string_content(const char *s, const char *end, bool is_raw) {
+// `out_len`, if non-null, receives the TRUE decoded byte length --
+// callers that only use the returned char* via strlen() silently
+// truncate at an embedded NUL produced by a \x00/\0 escape
+// (ifa/issues/070); this out-param is how make_string/make_bytes now
+// thread the real length through to interning/codegen instead.
+static char *decode_string_content(const char *s, const char *end, bool is_raw, int *out_len = nullptr) {
   int content_len = (int)(end - s);
   char *out = (char *)MALLOC(content_len + 1);
   if (is_raw) {
     memcpy(out, s, content_len);
     out[content_len] = 0;
+    if (out_len) *out_len = content_len;
     return out;
   }
   char *op = out;
@@ -402,6 +408,7 @@ static char *decode_string_content(const char *s, const char *end, bool is_raw) 
     }
   }
   *op = 0;
+  if (out_len) *out_len = (int)(op - out);
   return out;
 }
 
@@ -423,8 +430,9 @@ static Sym *eval_string_pyda(PyDAST *n, PycCompiler &ctx) {
   } else {
     while (*end && *end != q && *end != '\n') end++;
   }
-  char *decoded = decode_string_content(s, end, is_raw);
-  return is_bytes ? make_bytes(decoded) : make_string(decoded);
+  int len;
+  char *decoded = decode_string_content(s, end, is_raw, &len);
+  return is_bytes ? make_bytes(decoded, len) : make_string(decoded, len);
 }
 
 // Append `piece` (a string-typed Sym) to the running f-string concatenation
@@ -558,8 +566,9 @@ static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   const char *p = s;
   auto flush_literal = [&]() {
     if (!lit.n) return;
-    char *decoded = decode_string_content(lit.v, lit.v + lit.n, is_raw);
-    fstring_append_piece(ast, ctx, &result, make_string(decoded));
+    int len;
+    char *decoded = decode_string_content(lit.v, lit.v + lit.n, is_raw, &len);
+    fstring_append_piece(ast, ctx, &result, make_string(decoded, len));
     lit.clear();
   };
   while (p < end) {

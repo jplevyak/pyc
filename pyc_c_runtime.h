@@ -387,6 +387,20 @@ inline char *_CG_String(const void *x) {
   return str;
 }
 
+// Length-aware sibling of _CG_String (ifa/issues/070): `x` is a C string
+// literal escaped from a str/bytes constant that may contain an embedded
+// NUL byte (from a \x00/\0 escape) -- strlen() on it would stop at that
+// NUL regardless of what follows in the source text, since a C string
+// literal is fundamentally NUL-terminated at the language level no
+// matter how faithfully the compiler escaped it. `len` (an integer
+// literal codegen emits alongside `x`) carries the true extent through
+// this final materialization step.
+inline char *_CG_String_n(const void *x, size_t len) {
+  char *str = _CG_string_alloc(len);
+  memcpy(str, x, len);
+  return str;
+}
+
 inline char *_CG_format_string(char *str, ...) {
   int l = _CG_string_len(str) + 24;
   char *s = 0;
@@ -1216,21 +1230,37 @@ inline void *_CG_prim_copy_any(void *p) {
 #define _CG_prim_greaterorequal(_a, _op, _b) ((_a) >= (_b))
 #define _CG_prim_equal(_a, _op, _b) ((_a) == (_b))
 #define _CG_prim_notequal(_a, _op, _b) ((_a) != (_b))
-inline _CG_bool _CG_str_eq(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) == 0); }
-inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) != 0); }
+// ifa/issues/070: str/bytes buffers are length-prefixed (_CG_string_len
+// reads the true length from the header), not NUL-terminated -- these used
+// to be strcmp()-based, which stops comparing at the first embedded NUL and
+// made e.g. b"a\x00b" == b"a\x00c" incorrectly return true. Compare/hash
+// exactly `_CG_string_len` bytes instead.
+inline _CG_bool _CG_str_eq(const char *a, const char *b) {
+  size_t la = _CG_string_len(a), lb = _CG_string_len(b);
+  return (_CG_bool)(la == lb && (la == 0 || memcmp(a, b, la) == 0));
+}
+inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)!_CG_str_eq(a, b); }
 // str.__hash__ (issue 025: hash() builtin). FNV-1a, masked positive:
 // deterministic across runs (unlike CPython's SipHash with
 // PYTHONHASHSEED randomization) -- programs only rely on
 // self-consistency within one run.
 inline long long _CG_str_hash(const char *s) {
+  size_t len = _CG_string_len(s);
   unsigned long long h = 14695981039346656037ULL;
-  for (; *s; s++) h = (h ^ (unsigned char)*s) * 1099511628211ULL;
+  for (size_t i = 0; i < len; i++) h = (h ^ (unsigned char)s[i]) * 1099511628211ULL;
   return (long long)(h & 0x7fffffffffffffffULL);
 }
-inline _CG_bool _CG_str_lt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) < 0); }
-inline _CG_bool _CG_str_le(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) <= 0); }
-inline _CG_bool _CG_str_gt(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) > 0); }
-inline _CG_bool _CG_str_ge(const char *a, const char *b) { return (_CG_bool)(strcmp(a, b) >= 0); }
+inline int _CG_str_cmp(const char *a, const char *b) {
+  size_t la = _CG_string_len(a), lb = _CG_string_len(b);
+  size_t lm = la < lb ? la : lb;
+  int c = lm ? memcmp(a, b, lm) : 0;
+  if (c) return c;
+  return la < lb ? -1 : (la > lb ? 1 : 0);
+}
+inline _CG_bool _CG_str_lt(const char *a, const char *b) { return (_CG_bool)(_CG_str_cmp(a, b) < 0); }
+inline _CG_bool _CG_str_le(const char *a, const char *b) { return (_CG_bool)(_CG_str_cmp(a, b) <= 0); }
+inline _CG_bool _CG_str_gt(const char *a, const char *b) { return (_CG_bool)(_CG_str_cmp(a, b) > 0); }
+inline _CG_bool _CG_str_ge(const char *a, const char *b) { return (_CG_bool)(_CG_str_cmp(a, b) >= 0); }
 #define _CG_prim_paren(_f, _a) ((*(_f))((_f), (_a)))
 #define _CG_prim_set(_a, _b) (_a) = (_b)
 #define _CG_prim_minus(_op, _a) (-(_a))

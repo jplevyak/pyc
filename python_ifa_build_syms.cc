@@ -2001,17 +2001,20 @@ int build_syms(PycModule *x, PycCompiler &ctx) {
   return 0;
 }
 
-Sym *make_string(cchar *s) {
+// `len`: explicit byte length when `s` may contain an embedded NUL (a
+// str/bytes literal decoded from a \x00/\0 escape, ifa/issues/070); -1
+// (default) means "not provided, if1_const falls back to strlen(s)".
+Sym *make_string(cchar *s, int len) {
   Immediate imm;
   imm.v_string = s;
-  Sym *sym = if1_const(if1, sym_string, s, &imm);
+  Sym *sym = if1_const(if1, sym_string, s, &imm, 0, len);
   return sym;
 }
 
-Sym *make_bytes(cchar *s) {
+Sym *make_bytes(cchar *s, int len) {
   Immediate imm;
   imm.v_string = s;
-  Sym *sym = if1_const(if1, sym_bytes, s, &imm);
+  Sym *sym = if1_const(if1, sym_bytes, s, &imm, 0, len);
   return sym;
 }
 
