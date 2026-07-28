@@ -2496,52 +2496,51 @@ test `tests/eq_none.py`); sweep re-run same-shape otherwise (52/77
 compile: 23 clean + 29 warn), no regressions — this was a runtime
 fix the compile-only sweep doesn't itself measure.
 
-### chess dug into: root-caused (not fixed) — a deep setter-stage FA gap, not the frontend one that fixed chaos (2026-07-28)
+### chess dug into: two contributing bugs fixed, root is accumulated-union churn (2026-07-28)
 
-`chess` (this file's R2 bucket — see the 2026-07-08 triage's
-"COMPILED_C_WARN" listing) compiles with exactly one warning
-(`squares = tuple([i for i in range(128) if not i & 8])`:
-"expression has no type") and exit 0, but the binary aborts on the
-very first line of `main`
-(`Assertion !"runtime error: matching function not found"`).
+**Note:** an earlier same-day draft of this entry (and of
+ifa/issues/071) blamed a "setter-stage FA gap" collapsing `range`'s
+`__pyc_more__` method-pointer slot. **That was wrong** — the fieldless,
+argless `range` in the generated C is a *salvage artifact*: `squares`
+goes NOTYPE for an upstream reason, and `convert_NOTYPE_to_void` then
+voids the whole `range(128)` construction feeding it. Corrected below;
+full detail in the rewritten
+[ifa/issues/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md).
 
-Traced via the generated C: `squares` is the ONLY place in the whole
-program where `range`'s class-based iterator protocol survives to
-runtime (every other `range(...)` call site has fully-literal args
-and gets constant-folded/unrolled away by the frontend). `range` is
-`clone_methods_per_cs`-flagged ([ifa/issues/closed/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md)),
-so its prototype-init setter has to FA-resolve which
-`__pyc_more__` clone to install as `range`'s sole CreationSet's
-method-pointer slot — and that resolution comes back NOTYPE. Codegen
-then emits `g0->e5 = (_CG_void)((_CG_function*)t2);` with `t2` an
-**uninitialized C local** (nothing ever writes it) — undefined
-behavior, degrading in practice to the observed trap.
+`chess` compiles with one warning (`squares = tuple([i for i in
+range(128) if not i & 8])`: "expression has no type") and exit 0, then
+aborts on the first line of `main` (`matching function not found`).
+Delta-debugging the *chess source* (not the consumer of `squares`)
+found a multi-root cascade — each contributor alone is survivable, but
+together they tip FA into issue-033 dup-split churn (24 passes, stuck
+~38 violations passes 7–17, 18 dup_splits at pass 19) that salvages
+`squares`:
 
-This is NOT the same bug class as chaos's (`== None` dispatch, fixed
-above) — it's the setter/mark-stage FA precision gap
-[ifa/issues/063](../ifa/issues/063-no-type-bucket-triage.md)'s own
-2026-07-23 update already flagged as open and deferred ("needs a
-setter-class-keyed routing ledger, a second step"), now confirmed on
-a second setter kind (prototype method-pointer install, not a
-container's `__setitem__`/`__len__`). Repro attempts were sensitive
-to program shape exactly like dijkstra2's documented scale-dependent
-stall — the same lines compile and run fine in isolation; the NOTYPE
-only appears with (something close to) chess's full call graph.
-Along the way, ALSO found — and ruled out as unrelated — a second,
-distinct true gap in a *reduced* repro only: `nonpawnAttacks`'s
-`max()` over `rowAttack`'s `bool | None` return (implicit fall-off-
-the-end `None`) needs ordering (`__gt__`) over a None-inclusive
-union, which pyc doesn't support; this is dynamically dead in real
-CPython for the tested position (a guard short-circuits first) but
-statically reachable, so it's a correctly-flagged gap, not a false
-positive — it just isn't what blocks the real, unmodified
-`chess.py` (only appeared once `nonpawnAttacks`'s callers were
-manually re-added to a trimmed-down call graph during bisection).
+1. **bool had no `__lt__/__gt__/__le__/__ge__`** (only `__eq__/__ne__`).
+   `nonpawnAttacks`'s `max([board[ix+i]==color*2 for i in ...])` — max
+   over a **bool** list — makes `max`'s `x > m` an unresolved
+   `bool.__gt__`. **Fixed** (`e544f6aa`): added the four dunders
+   (int-subtype 0/1 ordering). Minimal repro `max([v==0 for v in
+   [1,2,3]])`.
+2. **LLVM sign-extended `int(bool)` to -1** — surfaced while writing
+   (1); `int(True) == -1` on the LLVM backend (i1 True sign-extends).
+   **Fixed** (`e544f6aa`): zero-extend an i1 source in
+   `emit_send_coerce`.
+3. **`raise <str>` pollutes `__pyc_exc__`** — OPEN. The decisive
+   experiment: with (1) fixed, rewriting chess's `raise "no move
+   found"` / `raise "faulty castling"` to `raise ValueError(...)`
+   **clears the `squares` NOTYPE**. A raised `str` literal (not
+   `Type_RECORD`) is stored as-is into the global exception slot,
+   making it a `{None, str, ...}` union threaded through every
+   can-raise check.
+4. **empty-list element inference** — OPEN (issue 043). With (1)+(3)
+   worked around, the failure moves to `legalMoves`'s
+   `[i for i in pseudoLegalCaptures(board2) if ...]` (chess.py:314),
+   the classic `retval = []` filled-later gap.
 
-Neither gap fixed here — full writeup, two candidate fix directions
-(the deep FA routing fix; a smaller, independent codegen-robustness
-fix turning the UB into a loud `assert` trap matching the issue-056/
-063 convention), and why neither was attempted this session (risk of
-corpus regression without the same multi-day validation issue 063's
-prior attempts needed) in
-[ifa/issues/071](../ifa/issues/071-range-more-vtable-slot-unresolved-setter-stage.md).
+The two landed fixes are genuine correctness bugs independent of chess
+(`True > False`, `max/min/sorted` over bools, `int(True)`), suite
+232/0 both backends, sweep buckets unchanged. chess itself still FAILs
+(needs (3) and (4)). Full analysis, the corrected root-cause chain, and
+fix directions in
+[ifa/issues/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md).
