@@ -348,6 +348,10 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // runtime (e.g. the loop never ran), it now holds the float
   // (prints 0.0, not 0) -- the shedskin-style compromise.
   if (fa_coerce_numeric_confluences(type_violations)) again = true;
+  // (4) issue 072: seed nil into never-written container element types
+  // so a downstream read type-checks instead of NOTYPE-ing. No-op
+  // unless --empty_elem_split is on.
+  if (fa_seed_empty_container_elements()) again = true;
   return again;
 }
 

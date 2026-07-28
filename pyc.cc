@@ -67,6 +67,8 @@ static ArgumentDescription arg_desc[] = {
      &ifa_fa_inline, "IFA_FA_INLINE", NULL},
     {"narrow", ' ', "Enable issue-025 per-branch type narrowing recognizer (0/1, default 1)", "I",
      &ifa_narrow, "IFA_NARROW", NULL},
+    {"empty_elem_split", ' ', "Seed nil into never-written container element types (ifa/issues/072, 0/1, default 0)", "I",
+     &ifa_empty_elem_split, "IFA_EMPTY_ELEM_SPLIT", NULL},
     {"runtime_errors", 'r', "Use runtime type checks", "f", &runtime_errors, "PYC_RUNTIME_ERRORS", NULL},
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
     {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
