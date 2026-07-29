@@ -1411,7 +1411,27 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   } else {
     default_ret = sym_nil;
   }
-  if1_move(if1, &body, default_ret, fn->ret, ast);
+  // The fall-off-the-end default move into fn->ret. Normally this
+  // injects None for the implicit-return path (CPython semantics).
+  //
+  // issue 071 fix option 1 (shedskin-style implicit return), opt-in via
+  // `ifa_no_implicit_none`: when a non-generator function has at least
+  // one EXPLICIT value `return` (`fun_returns_value`), skip this nil
+  // move. Otherwise a scalar-returning function that also falls off the
+  // end is typed `T | None`, and pyc cannot lay out a `scalar | None`
+  // union in one unboxed field (chess's fatal `bool | None` closure
+  // field). Dropping the nil arm leaves fn->ret as the union of the
+  // explicit returns only (the fall-through arm contributes nothing) --
+  // the SAME principle goto_exc_target already applies on the raise
+  // edge (see its `!fun_returns_value` guard, python_ifa_build_if1.cc):
+  // a nil arm here manufactures a spurious {result, nil} union. Cost: a
+  // program that actually reaches the end and USES the None replies an
+  // arbitrary-but-typed value instead of None -- a deliberate CPython
+  // divergence, matching shedskin (which fills the path with the return
+  // type's default). Not applied to bare `return`/`return None` (those
+  // are explicit and route through PY_return_stmt, not this default).
+  if (!(ifa_no_implicit_none && fn->fun_returns_value && !fn->is_generator))
+    if1_move(if1, &body, default_ret, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
