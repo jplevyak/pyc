@@ -69,6 +69,8 @@ static ArgumentDescription arg_desc[] = {
      &ifa_narrow, "IFA_NARROW", NULL},
     {"no_implicit_none", ' ', "Shedskin-style: no implicit None for a fall-off return when the fn has an explicit value return (ifa/issues/071, 0/1, default 0)", "I",
      &ifa_no_implicit_none, "IFA_NO_IMPLICIT_NONE", NULL},
+    {"module_lambda_as_def", ' ', "Lower a single-assignment module-level `NAME = lambda` like a def (ifa/issues/071, 0/1, default 0)", "I",
+     &ifa_module_lambda_as_def, "IFA_MODULE_LAMBDA_AS_DEF", NULL},
     {"runtime_errors", 'r', "Use runtime type checks", "f", &runtime_errors, "PYC_RUNTIME_ERRORS", NULL},
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
     {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},

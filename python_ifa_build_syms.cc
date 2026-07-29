@@ -2008,10 +2008,76 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
 
 // ---- Updated build_syms(PycModule*) ----
 
+// ifa/issues/071 fix option 1 (prototype, gated on
+// ifa_module_lambda_as_def). Count how many times `name` is bound at
+// module top level (assignment/augassign target, or def/class name) --
+// a single-assignment lambda global can be lowered like a def.
+static int top_level_binding_count(PyDAST *mod, cchar *name) {
+  int count = 0;
+  for (PyDAST *s : mod->children) {
+    if (!s) continue;
+    if (s->kind == PY_assign) {
+      for (int i = 0; i + 1 < s->children.n; i++)  // targets = all but the last (value)
+        if (s->children[i] && s->children[i]->kind == PY_name && s->children[i]->str_val &&
+            !strcmp(s->children[i]->str_val, name))
+          count++;
+    } else if (s->kind == PY_augassign) {
+      if (s->children.n && s->children[0] && s->children[0]->kind == PY_name && s->children[0]->str_val &&
+          !strcmp(s->children[0]->str_val, name))
+        count++;
+    } else if ((s->kind == PY_funcdef || s->kind == PY_classdef || s->kind == PY_decorated)) {
+      PyDAST *d = (s->kind == PY_decorated && s->children.n) ? s->children.last() : s;
+      if (d && d->children.n && d->children[0] && d->children[0]->str_val && !strcmp(d->children[0]->str_val, name))
+        count++;
+    }
+  }
+  return count;
+}
+
+// Rewrite a top-level `NAME = lambda params: body` (single-assignment)
+// into `def NAME(params): return body`, so calls resolve like a def
+// (direct, via def_internal_fn) rather than dispatching through the
+// name's flow-insensitive {None, closure} global cell. Runs on the
+// module AST before build_syms_pyda, so both symbol passes see a
+// funcdef. See fail.h / ifa/issues/071.
+static void rewrite_module_lambdas_as_defs(PyDAST *mod) {
+  if (!mod || mod->kind != PY_module) return;
+  for (int si = 0; si < mod->children.n; si++) {
+    PyDAST *s = mod->children[si];
+    if (!s || s->kind != PY_assign || s->children.n != 2) continue;
+    PyDAST *tgt = s->children[0], *rhs = s->children[1];
+    if (!tgt || tgt->kind != PY_name || !tgt->str_val) continue;
+    if (!rhs || rhs->kind != PY_lambda) continue;
+    if (top_level_binding_count(mod, tgt->str_val) != 1) continue;  // reassigned -> keep var semantics
+    // lambda children: [varargslist?, body]; body is last.
+    PyDAST *body = rhs->children.n ? rhs->children.last() : nullptr;
+    PyDAST *varargsl = (rhs->children.n == 2) ? rhs->children[0] : nullptr;
+    if (!body) continue;
+    auto mknode = [&](PyASTKind k) {
+      PyDAST *n = new PyDAST();
+      n->kind = k;
+      n->filename = s->filename;
+      n->line = s->line;
+      n->col = s->col;
+      return n;
+    };
+    PyDAST *params = mknode(PY_parameters);
+    if (varargsl) params->children.add(varargsl);
+    PyDAST *ret = mknode(PY_return_stmt);
+    ret->children.add(body);
+    PyDAST *funcdef = mknode(PY_funcdef);
+    funcdef->children.add(tgt);      // NAME node (str_val read by build_syms)
+    funcdef->children.add(params);   // PY_parameters
+    funcdef->children.add(ret);      // body: a single PY_return_stmt (gen_fun_pyda accepts a non-suite child)
+    mod->children[si] = funcdef;
+  }
+}
+
 int build_syms(PycModule *x, PycCompiler &ctx) {
   x->ctx = &ctx;
   ctx.mod = x;
   ctx.filename = x->filename;
+  if (ifa_module_lambda_as_def && !ctx.is_builtin()) rewrite_module_lambdas_as_defs(x->pymod);
   if (!ctx.is_builtin()) import_scope(ctx.modules->v[0], ctx);
   build_module_attributes_syms_pyda(x, ctx);
   ctx.node = x->pymod;
