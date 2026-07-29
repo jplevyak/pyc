@@ -2512,6 +2512,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_lambda: {
       // Re-enter scope from build_syms pass
       reenter_scope_pyda(n, ctx);
+      // A lambda always returns its body expression's value, so it is a
+      // value-returning function. This MUST be set before the body is
+      // walked below: a can-raise call in the body emits goto_exc_target,
+      // whose `!fun_returns_value` guard would otherwise inject a spurious
+      // `sym_nil` into the lambda's ret on the raise edge (giving e.g.
+      // `bool | None`), exactly the nil-move a `def` with an explicit
+      // `return` correctly avoids. (ifa/issues/071 Source B.)
+      ast->rval->fun_returns_value = 1;
       Sym *closure_cls = ast->closure_cls;
       if (closure_cls) {
         // issues/001: fn->self must exist *before* the body is walked
