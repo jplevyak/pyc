@@ -332,15 +332,8 @@ double _CG_get_time(void) {
 
 #ifndef __cplusplus
 void _CG_resume_coro(void* hdl) {
-  printf("_CG_resume_coro called with %p\n", hdl);
   void (**vtable)(void*) = (void (**)(void*))hdl;
-  if (vtable && vtable[0]) {
-    printf("resuming...\n");
-    vtable[0](hdl);
-    printf("resumed.\n");
-  } else {
-    printf("invalid vtable!\n");
-  }
+  if (vtable && vtable[0]) vtable[0](hdl);
 }
 #endif
 
@@ -413,14 +406,8 @@ void _CG_event_loop_run(void* initial_hdl) {
         else timeout_ms = 0;
       }
       
-      printf("Polling %d fds with timeout %d ms\n", nfds, timeout_ms);
       int n = poll(pfds, nfds, timeout_ms);
-      if (n > 0) {
-        for (int i=0; i<nfds; i++) {
-           printf("fd %d revents %d\n", pfds[i].fd, pfds[i].revents);
-        }
-      }
-      
+
       if (n > 0 && nfds > 0) {
         _CG_IoTask* prev = NULL;
         _CG_IoTask* curr = _CG_io_queue_head;
@@ -443,8 +430,7 @@ void _CG_event_loop_run(void* initial_hdl) {
         }
       }
       if (pfds) free(pfds);
-      printf("After free pfds, ready_queue_head is %p\n", _CG_ready_queue_head);
-      
+
       double now = _CG_get_time();
       while (_CG_timer_queue_head && _CG_timer_queue_head->wakeup_time <= now) {
         _CG_TimerTask* task = _CG_timer_queue_head;
@@ -456,12 +442,31 @@ void _CG_event_loop_run(void* initial_hdl) {
   }
 }
 
-void* _CG_run_coro(void* coro_hdl) {
-  _CG_event_loop_run(coro_hdl);
-  // Need to get the return value from the promise...
-  // For LLVM coroutines, the promise is offset from the handle, but we don't have the struct def in C!
-  // Actually, LLVM `coro.promise` intrinsic gets it.
-  // We don't really need to return it for `main()`, but let's return NULL for now in C runtime.
+/* issues/022 (LLVM backend): an `async def` function's side struct --
+ * mirrors _CG_generator_state below, same rationale (no promise
+ * reachable from outside the defining coroutine's own IR). Layout
+ * MUST match cg_emit_llvm.cc's async_state_struct_type() exactly:
+ * {ptr, i64, ptr, i64}. `awaiter` is set by P_prim_await on the
+ * coroutine it's about to hand to the event loop; the is_async
+ * P_prim_reply epilogue reads it on completion to know who to wake.
+ */
+typedef struct {
+  void *coro_hdl;
+  long long value;
+  void *awaiter;
+  long long done;
+} _CG_async_state;
+
+void* _CG_run_coro(void* async_state_ptr) {
+  /* issues/022: main()/any top-level async call now returns a
+   * pointer to its own async_state (not the raw coroutine handle
+   * directly, matching is_generator's identical smuggling shape) --
+   * unwrap it before handing the RAW handle to the event loop, which
+   * deals in raw handles throughout (_CG_resume_coro's vtable-call
+   * convention needs the actual frame pointer, not this wrapper). */
+  _CG_async_state *st = (_CG_async_state *)async_state_ptr;
+  if (!st) return NULL;
+  _CG_event_loop_run(st->coro_hdl);
   return NULL;
 }
 
