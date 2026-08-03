@@ -18,9 +18,12 @@ constant-collapse bug (found while adding `.send()`) were both
 root-caused and fixed the same day — see "What's still missing",
 items 2 and 3. Infinite-loop (`while True:` with no `break`) generator
 bodies fixed 2026-08-03 (both backends) — see "Infinite generator
-loops fixed" near the bottom. `yield from` and generator expressions
-(issue 008, resolved separately via eager materialization — see
-"Remaining work checklist") remain unimplemented.
+loops fixed" near the bottom. `return value` inside a generator now
+raises real `StopIteration(value)` on exhaustion, fixed 2026-08-04
+(both backends) — see "StopIteration.value landed" near the bottom.
+`yield from` and generator expressions (issue 008, resolved separately
+via eager materialization — see "Remaining work checklist") remain
+unimplemented.
 **Affects:** `python_ifa_build_if1.cc:1261` (`PY_yield_stmt` in
 `build_if1_pyda`, shares the `fail()` with issue 011's exception
 kinds); `python_ifa_build_if1.cc:1319-1327` (`PY_yield_expr` falls
@@ -495,11 +498,8 @@ issue's coroutine mechanism — see that item's note below.
       landed" section below.
 - [x] **Infinite generator loops.** **Landed 2026-08-03** — see
       "Infinite generator loops fixed" section below.
-- [ ] **`return value` inside a generator** (→ `StopIteration.value` in
-      real Python) — parsed and lowered, but the value is discarded;
-      only bare `return`/fall-through works. **Difficulty: small.**
-      Same placeholder-swap shape already fixed for the no-explicit-
-      return case (see "The handle value got lost" above).
+- [x] **`return value` inside a generator.** **Landed 2026-08-04** —
+      see "StopIteration.value landed" section below.
 - [ ] **`yield from`** — not attempted, and not even in the grammar
       (`python.g`'s `yield_expr` is `'yield' testlist?`, no `from`
       alternative). **Difficulty: medium-large.** Needs new grammar
@@ -740,3 +740,108 @@ test_pyc.py` each 237 passed / 0 failed / 6 expected fails / 4
 skipped (one more pass than before — the new test). `ifa`'s own unit
 suite (`./ifa --test`, 58 tests, exercises the shared `cg.cc` change)
 also clean.
+
+## StopIteration.value landed (2026-08-04)
+
+`def gen(): yield 1; return 42` now raises real `StopIteration(42)`
+from `.__next__()`/`.send()` on exhaustion, matching CPython, on both
+backends.
+
+### Design
+
+The IF1-level plumbing for the *value itself* was already correct —
+`PY_return_stmt` already moved an explicit `return X`'s real value
+into `fn->ret` (only the bare/fall-through case needed the int64
+placeholder trick). The gap was entirely on the consuming end:
+
+1. **`pyc_c_runtime.h`**: `_CG_Generator::promise_type` switches from
+   `return_void()` to a `return_value(T)` template (a C++ coroutine
+   promise may define exactly one of these, never both) writing into a
+   new `retval` field, plus a `_CG_generator_return_value(handle)`
+   reader. Since *both* the bare/fall-through placeholder and an
+   explicit `return X` already flow a real value through `fn->ret`,
+   `cg.cc`'s `is_generator` `P_prim_reply` handling (both the live and
+   dead-reply sites) collapses to the exact same `co_return %s;` shape
+   `is_async` already used — no more special "discard the value" case.
+2. **`cg_emit_llvm.cc`/`pyc_runtime.c`**: `gen_state`'s struct gained a
+   5th field (`retval`), and the `is_generator` `P_prim_reply` epilogue
+   stores the real value there (same `rvals[3]`-to-i64 conversion
+   `P_prim_yield` already used for yielded values) before marking
+   `done`. New `_CG_generator_return_value` reads it back.
+3. **`__pyc__/08_exception.py`**: `StopIteration` gained a `value`
+   field (`__init__(self, value=0)`, deliberately *not* calling
+   `Exception.__init__` — `args` is a plain string there and `value`
+   is an int, so routing through `args` would need a string|int
+   union this class doesn't need).
+4. **`__pyc__/09_generator.py`**: `__next__`/`.send()` now `raise
+   StopIteration(_CG_generator_return_value(handle))` when advancing
+   reports no more values, instead of silently returning stale
+   `nextval`. `__pyc_more__` (the for-loop peek) is untouched and
+   still never raises — for-loops never call `__next__` past what
+   `__pyc_more__` already confirmed, so this only changes behavior for
+   bare/manual `.__next__()`/`.send()` calls run past exhaustion
+   (previously undefined, matching every other pyc iterator's
+   past-exhaustion behavior; now raises, matching CPython).
+
+Real Python reports `None` for a bare/fall-through generator exit;
+pyc reports `0` there instead — a deliberate v1 compromise, the same
+"smuggle everything through int64" scope the yielded/sent values
+already have (no `int | None` union).
+
+### A second, genuinely separate bug found getting this to actually raise
+
+With the plumbing above in place, `raise StopIteration(...)` compiled
+but **silently did nothing at runtime** — the exception object was
+never constructed, `except StopIteration as e:` blocks around
+`g.__next__()` were entirely absent from the generated code (not even
+dead branches — the `try`/`except` had vanished as if it were never
+written), and the call site just used whatever garbage happened to be
+lying around instead. Isolated with a series of standalone (non-
+generator) repros: `raise` from a user-defined class method, called
+from user code, always worked correctly, including with a
+`__pyc_c_call__`-derived constructor argument and a nested-if/`primed`
+-style structure matching `__pyc_generator__.__next__`'s own shape.
+The one variable that mattered: whether the `raise` statement itself
+lived in **builtin** module code (`__pyc__/09_generator.py`) or user
+code.
+
+Root cause: `pyc_program_has_raise` (`python_ifa_util.cc`) is a
+whole-program gate that skips emitting *all* exception-check machinery
+(`emit_exc_check`, `python_ifa_build_if1.cc`) when nothing in the
+program can ever raise — deliberately armed **only** by user-level
+`raise`/`assert` (`python_ifa_build_syms.cc`), by design excluding
+builtin-module `raise`s: `__pyc_assert_fail__` (loaded into every
+compile) contains its own `raise`, and if that counted, the gate would
+be permanently armed for every program regardless of whether user code
+ever calls `assert`, defeating the entire optimization (confirmed via
+that comment's own note: this was found and fixed once already,
+empirically, during issue 011). `PY_assert_stmt` arms the gate
+instead, exactly at the syntactic point where user code becomes
+reachable to `__pyc_assert_fail__`'s raise. My new
+`__pyc_generator__.__next__`/`.send()` raise is architecturally
+identical — a builtin-module raise reachable only through a piece of
+user syntax — but nothing armed the gate at that reachability point,
+so a program with a generator but no *direct* user-level
+`raise`/`assert` anywhere (exactly `tests/generator_return_value.py`'s
+shape) left `pyc_program_has_raise` false, and the raise, though
+correctly *lowered*, had no post-call check anywhere left to actually
+observe it.
+
+**Fix:** `python_ifa_build_syms.cc`'s `build_syms_pyda` now arms
+`pyc_program_has_raise` on `PY_yield_stmt`/`PY_yield_expr` (both AST
+shapes a generator body can use) in user code, mirroring
+`PY_assert_stmt` exactly — `yield` is the point where user code
+becomes reachable to `StopIteration`'s builtin raise, the same role
+`assert` plays for `__pyc_assert_fail__`.
+
+### Verified
+
+Added `tests/generator_return_value.py` (`.exec.check` committed):
+explicit `return 42` after two yields; the same shape combined with
+issue 014's other recent fix (a conditional `return` inside an
+otherwise-infinite `while True:` loop, exercising both fixes
+together); and a `.send()`-driven exhaustion with a computed return
+value (`x + 1000`). All byte-for-byte matching real `python3` on
+**both** backends. Full regression suite clean on both: `test_pyc.py`
+and `PYC_FLAGS=-b test_pyc.py` each 238 passed / 0 failed / 6 expected
+fails / 4 skipped.

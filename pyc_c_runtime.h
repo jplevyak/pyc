@@ -143,6 +143,18 @@ struct _CG_Generator {
   struct promise_type {
     void* value = nullptr;
     void* sent = nullptr;
+    // issues/014: the generator's `return value` (StopIteration.value
+    // in real Python) -- for BOTH a bare/fall-through exit (holds
+    // gen_fun_pyda's int64 placeholder) and an explicit `return X`
+    // (holds X): both flow a real value through fn->ret at the IF1
+    // level already (only the bare case needed FA-type-anchoring
+    // help), so return_value(T) below can handle them uniformly. A
+    // C++ coroutine promise may define return_void() OR return_value
+    // (T), never both -- switching to return_value(T) here (from the
+    // old return_void()) is what makes `co_return X;` legal for
+    // is_generator functions at all; cg.cc's P_prim_reply handling
+    // was updated to always pass a value, matching is_async.
+    void* retval = nullptr;
 
     struct yield_awaiter {
       promise_type* p;
@@ -159,7 +171,8 @@ struct _CG_Generator {
 
     template<typename T>
     yield_awaiter yield_value(T v) { value = (void*)(uintptr_t)v; return yield_awaiter{this}; }
-    void return_void() {}
+    template<typename T>
+    void return_value(T v) { retval = (void*)(uintptr_t)v; }
     void unhandled_exception() {}
   };
 
@@ -200,17 +213,33 @@ inline long long _CG_generator_value(long long raw_handle) {
   return (long long)(uintptr_t)h.promise().value;
 }
 
-// issues/014: a coroutine body's default/fall-through reply value is
-// never meant to be observed (cg.cc's is_generator handling emits a
-// bare `co_return;`, ignoring it) -- it only exists so FA infers an
-// int return type for the Fun. A literal FA constant there gets
-// constant-folded all the way through a caller (the synthesized
-// wrapper, see python_ifa_build_if1.cc's PY_funcdef case), collapsing
-// the real, dynamic coroutine handle to the same fake value
-// everywhere. Routing the placeholder through a genuine opaque C call
-// (built via the same IF1 shape __pyc_c_call__ produces, see
-// gen_fun_pyda) keeps it int64-typed without FA believing it knows
-// the value.
+// issues/014: the generator's `return value` (StopIteration.value),
+// readable once the generator is exhausted (h.done()) -- set by
+// co_return inside the coroutine body via promise_type::return_value
+// above. __pyc_generator__.__next__()/.send() (09_generator.py) call
+// this exactly once, when advancing reports has_next == False.
+inline long long _CG_generator_return_value(long long raw_handle) {
+  auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
+  return (long long)(uintptr_t)h.promise().retval;
+}
+
+// issues/014: a coroutine body with no EXPLICIT `return X` anywhere
+// (bare fall-through, or a bare `return`) still needs *some* int64
+// value flowing into fn->ret purely so FA infers an int return type
+// for the Fun -- codegen (cg.cc, is_generator) now passes whatever's
+// there through to promise_type::return_value uniformly (see above),
+// so this placeholder's value doubles as that generator's reported
+// StopIteration.value == 0 in the no-explicit-return case (real
+// Python reports None there instead -- a deliberate v1 compromise,
+// same "smuggle through int64" scope as yield/send values).
+//
+// A literal FA constant here gets constant-folded all the way through
+// a caller (the synthesized wrapper, see python_ifa_build_if1.cc's
+// PY_funcdef case), collapsing the real, dynamic coroutine handle to
+// the same fake value everywhere. Routing the placeholder through a
+// genuine opaque C call (built via the same IF1 shape __pyc_c_call__
+// produces, see gen_fun_pyda) keeps it int64-typed without FA
+// believing it knows the value.
 inline long long _CG_generator_placeholder_return() { return 0; }
 
 struct _CG_Await_Net_Read {

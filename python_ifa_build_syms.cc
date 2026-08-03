@@ -1183,10 +1183,44 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       if (!ctx.is_builtin()) pyc_program_has_raise = true;
       goto generic_recurse;
 
+    case PY_yield_stmt:
+      // issues/014: a generator's __next__()/.send() (09_generator.py,
+      // a builtin module) raises StopIteration on exhaustion -- arms
+      // the same gate a direct `raise` would, for the same reason
+      // builtin-module raises are excluded above (__pyc_assert_fail__
+      // would otherwise permanently arm it): `yield` is the point
+      // where a USER module becomes reachable to that builtin raise,
+      // exactly mirroring PY_assert_stmt's role for
+      // __pyc_assert_fail__. Without this, a program with a generator
+      // but no direct user-level raise/assert anywhere (e.g. `def
+      // gen(): yield 1; return 42` driven by manual `.__next__()`
+      // calls to exhaustion) left pyc_program_has_raise false, so
+      // emit_exc_check (python_ifa_build_if1.cc) never emitted the
+      // post-call check needed to actually catch it -- confirmed via
+      // a minimal repro: identical `raise`/try-except code worked
+      // fine when the raise was user-level, and silently produced
+      // garbage instead of raising when the only raise reachable was
+      // this builtin one.
+      if (!ctx.is_builtin()) pyc_program_has_raise = true;
+      goto generic_recurse;
+
+    case PY_yield_expr:
+      // issues/014: same reasoning as PY_yield_stmt above -- `x =
+      // yield foo` is the other AST shape a generator's body can use
+      // (def_fun_pyda's is_generator scan checks both). NOT routed
+      // through generic_recurse: that shared block also does
+      // tuple-expression treatment (ast->rval + sym_tuple-if-all-
+      // children-have-syms) that doesn't apply here -- keep
+      // PY_yield_expr's original plain recursion (this is exactly
+      // where it sat in the `default:` group below before this case
+      // was split out).
+      if (!ctx.is_builtin()) pyc_program_has_raise = true;
+      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      return 0;
+
     case PY_expr_stmt:
     case PY_pass_stmt:
     case PY_del_stmt:
-    case PY_yield_stmt:
     case PY_if_stmt:
     case PY_elif_clause:
     case PY_else_clause:
@@ -1308,7 +1342,6 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_list_if:
     case PY_comp_if:
     case PY_decorator:
-    case PY_yield_expr:
     case PY_dotted_name:
     case PY_dotted_as_name:
     case PY_import_as_name:

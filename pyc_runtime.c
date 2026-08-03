@@ -478,20 +478,21 @@ void* _CG_run_coro(void* coro_hdl) {
  * inside the coroutine's own defining function (where CoroSplit runs)
  * -- it can't be used from here, a separately-compiled, generic C
  * runtime helper with nothing but an opaque handle. So the yielded/
- * sent value and completion state are tracked in pyc's own small
- * heap struct (cg_emit_llvm.cc's gen_state_struct_type), allocated
- * alongside the raw LLVM coroutine handle; that struct's address --
- * not the bare coroutine handle -- is what flows through Python as
- * __pyc_generator__.handle and what these three functions operate
- * on. Layout MUST match gen_state_struct_type()'s {ptr, i64, i64,
- * i64} exactly (all 8-byte-aligned fields, so no padding surprises
- * on either side).
+ * sent value, return value, and completion state are tracked in
+ * pyc's own small heap struct (cg_emit_llvm.cc's
+ * gen_state_struct_type), allocated alongside the raw LLVM coroutine
+ * handle; that struct's address -- not the bare coroutine handle --
+ * is what flows through Python as __pyc_generator__.handle and what
+ * these functions operate on. Layout MUST match
+ * gen_state_struct_type()'s {ptr, i64, i64, i64, i64} exactly (all
+ * 8-byte-aligned fields, so no padding surprises on either side).
  */
 typedef struct {
   void *coro_hdl;
   long long value;
   long long sent;
   long long done;
+  long long retval;  /* issues/014: StopIteration.value */
 } _CG_generator_state;
 
 /* Resume the raw LLVM coroutine directly via the switched-resume ABI
@@ -530,11 +531,27 @@ long long _CG_generator_value(long long raw_handle) {
   return st->value;
 }
 
-/* issues/014: a coroutine body's default/fall-through reply value is
- * never meant to be observed -- it only exists so FA infers an int
- * return type for the Fun (gen_fun_pyda); cg_emit_llvm.cc's
- * is_generator handling ignores its actual runtime content entirely,
- * same as the C backend's identically-named/identically-purposed
- * helper in pyc_c_runtime.h. */
+/* issues/014: the generator's `return value` (StopIteration.value),
+ * readable once the generator is exhausted (st->done) -- set by
+ * cg_emit_llvm.cc's is_generator P_prim_reply epilogue.
+ * __pyc_generator__.__next__()/.send() (09_generator.py) call this
+ * exactly once, when advancing reports has_next == False. */
+long long _CG_generator_return_value(long long raw_handle) {
+  _CG_generator_state *st = (_CG_generator_state *)(intptr_t)raw_handle;
+  if (!st) return 0;
+  return st->retval;
+}
+
+/* issues/014: a coroutine body with no EXPLICIT `return X` anywhere
+ * (bare fall-through, or a bare `return`) still needs *some* int64
+ * value flowing into fn->ret purely so FA infers an int return type
+ * for the Fun -- cg_emit_llvm.cc's is_generator epilogue now stores
+ * whatever's there into gen_state.retval uniformly (see above), so
+ * this placeholder's value doubles as that generator's reported
+ * StopIteration.value == 0 in the no-explicit-return case (real
+ * Python reports None there instead -- a deliberate v1 compromise,
+ * same "smuggle through int64" scope as yield/send values). Matches
+ * the C backend's identically-named/identically-purposed helper in
+ * pyc_c_runtime.h. */
 long long _CG_generator_placeholder_return(void) { return 0; }
 #endif

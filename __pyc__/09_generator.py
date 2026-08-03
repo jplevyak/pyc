@@ -29,10 +29,16 @@
 # real Python code combines either); .send()-driven and for-loop-
 # driven use are independent, not simultaneous, usage modes.
 #
-# No StopIteration/exception signaling on exhaustion (issue 011: pyc
-# has no exception model yet) -- calling __next__/.send() past
-# exhaustion is undefined here, matching every other pyc iterator's
-# current (unchecked) past-exhaustion behavior.
+# StopIteration(value) on exhaustion (issues/014, landed 2026-08-04):
+# __next__/send raise it -- matching real Python's __next__ contract
+# -- once advancing reports no more values. __pyc_more__ (the for-loop
+# peek used by PY_for_stmt) stays a plain boolean and never raises:
+# for-loops never call __next__ past what __pyc_more__ already
+# confirmed, so this doesn't affect them, only bare/repeated manual
+# __next__()/.send() calls run past exhaustion. `value` is int64 only
+# (0 for a bare/fall-through generator exit, matching pyc's existing
+# "smuggle through int64" compromise for yielded/sent values -- real
+# Python reports None there instead of 0).
 
 class __pyc_generator__:
   handle = 0
@@ -56,10 +62,13 @@ class __pyc_generator__:
     if not self.primed:
       self.__pyc_advance__()
     self.primed = False
+    if not self.has_next:
+      raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
     return self.nextval
   def send(self, value):
     self.has_next = __pyc_c_call__(bool, "_CG_generator_send", int, self.handle, int, value)
-    if self.has_next:
-      self.nextval = __pyc_c_call__(int, "_CG_generator_value", int, self.handle)
     self.primed = False
+    if not self.has_next:
+      raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
+    self.nextval = __pyc_c_call__(int, "_CG_generator_value", int, self.handle)
     return self.nextval

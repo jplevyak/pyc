@@ -46,7 +46,19 @@ class KeyboardInterrupt(BaseException):
   pass
 
 class StopIteration(Exception):
-  pass
+  # issues/014: carries a generator's `return value` (int64 only --
+  # same "smuggle everything through int64" v1 compromise as
+  # __pyc_generator__'s yielded/sent values, 09_generator.py). Real
+  # Python's StopIteration().value is None for a bare/fall-through
+  # generator exit; pyc reports 0 there instead -- deliberate, matches
+  # the existing yield-value compromise rather than introducing an
+  # int | None union. Does NOT call Exception.__init__ (args stays the
+  # inherited "" default): args is a plain string there, and value is
+  # an int, so setting args from value would need a string|int union
+  # this class doesn't need.
+  value = 0
+  def __init__(self, value=0):
+    self.value = value
 
 class ArithmeticError(Exception):
   pass
