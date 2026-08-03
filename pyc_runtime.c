@@ -464,3 +464,77 @@ void* _CG_run_coro(void* coro_hdl) {
   // We don't really need to return it for `main()`, but let's return NULL for now in C runtime.
   return NULL;
 }
+
+#ifndef __cplusplus
+/* issues/014 (LLVM backend): generator support.
+ *
+ * A Python generator function's coroutine body is an LLVM coroutine,
+ * same family async/await already uses (llvm.coro.* intrinsics,
+ * cg_emit_llvm.cc). Unlike the C++20-coroutine C backend
+ * (pyc_c_runtime.h's _CG_Generator), where
+ * std::coroutine_handle<promise_type>::promise() lets any code
+ * holding a handle reach a typed promise object, LLVM's
+ * llvm.coro.promise intrinsic only resolves to a real frame offset
+ * inside the coroutine's own defining function (where CoroSplit runs)
+ * -- it can't be used from here, a separately-compiled, generic C
+ * runtime helper with nothing but an opaque handle. So the yielded/
+ * sent value and completion state are tracked in pyc's own small
+ * heap struct (cg_emit_llvm.cc's gen_state_struct_type), allocated
+ * alongside the raw LLVM coroutine handle; that struct's address --
+ * not the bare coroutine handle -- is what flows through Python as
+ * __pyc_generator__.handle and what these three functions operate
+ * on. Layout MUST match gen_state_struct_type()'s {ptr, i64, i64,
+ * i64} exactly (all 8-byte-aligned fields, so no padding surprises
+ * on either side).
+ */
+typedef struct {
+  void *coro_hdl;
+  long long value;
+  long long sent;
+  long long done;
+} _CG_generator_state;
+
+/* Resume the raw LLVM coroutine directly via the switched-resume ABI
+ * (the frame's first pointer-sized slot is the resume function,
+ * called with the handle itself as its one argument) -- the same
+ * convention _CG_resume_coro uses for async, reimplemented quietly
+ * here (that one prints debug trace on every call, which would
+ * corrupt a generator test's captured stdout). */
+static void _CG_generator_resume_raw(void *coro_hdl) {
+  void (**vtable)(void *) = (void (**)(void *))coro_hdl;
+  if (vtable && vtable[0]) vtable[0](coro_hdl);
+}
+
+_Bool _CG_generator_advance(long long raw_handle) {
+  _CG_generator_state *st = (_CG_generator_state *)(intptr_t)raw_handle;
+  if (!st || st->done) return 0;
+  st->sent = 0;
+  _CG_generator_resume_raw(st->coro_hdl);
+  return !st->done;
+}
+
+/* .send(v): like advance, but delivers `v` as the value of the
+ * paused `x = yield foo` expression being resumed into, instead of
+ * None (0). */
+_Bool _CG_generator_send(long long raw_handle, long long value) {
+  _CG_generator_state *st = (_CG_generator_state *)(intptr_t)raw_handle;
+  if (!st || st->done) return 0;
+  st->sent = value;
+  _CG_generator_resume_raw(st->coro_hdl);
+  return !st->done;
+}
+
+long long _CG_generator_value(long long raw_handle) {
+  _CG_generator_state *st = (_CG_generator_state *)(intptr_t)raw_handle;
+  if (!st) return 0;
+  return st->value;
+}
+
+/* issues/014: a coroutine body's default/fall-through reply value is
+ * never meant to be observed -- it only exists so FA infers an int
+ * return type for the Fun (gen_fun_pyda); cg_emit_llvm.cc's
+ * is_generator handling ignores its actual runtime content entirely,
+ * same as the C backend's identically-named/identically-purposed
+ * helper in pyc_c_runtime.h. */
+long long _CG_generator_placeholder_return(void) { return 0; }
+#endif

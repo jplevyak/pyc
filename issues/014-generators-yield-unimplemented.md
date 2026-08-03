@@ -1,9 +1,10 @@
 # Issue 014: Generators (`yield`) are unimplemented
 
-**Status:** core landed and working 2026-07-14, including scalar
-*and* list generator arguments, interleaved manual `next()` calls, and
-`.send()` (C backend only — LLVM is a known, explicit gap, see "What's
-still missing" below). `def gen(): yield 1; yield 2`, loop-embedded
+**Status:** core landed and working 2026-07-14 (C backend), LLVM
+backend landed 2026-08-03 — see "LLVM backend landed" near the
+bottom. Both backends now cover: scalar *and* list generator
+arguments, interleaved manual `next()` calls, and `.send()`.
+`def gen(): yield 1; yield 2`, loop-embedded
 `yield` (`for i in range(n): yield i*i`), argument-taking generators
 (`def counter(start, stop): ...`, `def codes(s): for c in s: yield
 ord(c)`, `def echoer(vals): for v in vals: yield v`), bare repeated
@@ -472,3 +473,173 @@ machinery are additive/gated and introduce no regressions elsewhere.
    `PY_return_stmt` in `python_ifa_build_if1.cc`).
 7. **Infinite generator loops fail to compile** (`while True:` with no
    `break`) — see item 3's "new limitation found" note above.
+
+## Status check (2026-08-03)
+
+Re-verified against current HEAD: rebuilt `pyc` clean (no source changes
+pending), ran `python3 test_pyc.py -k generator_basic` — 1 passed, 0
+failed. No commits have touched generator machinery
+(`is_generator`, `PY_yield_stmt`/`PY_yield_expr`, `09_generator.py`,
+`_CG_Generator`) since the 2026-07-14 landing; confirmed via `git log`
+on those files/symbols. Grepped `cg_emit_llvm.cc` and `pyc_runtime.c`
+for `is_generator`/`_CG_generator` — zero hits, so the LLVM gap (item 1
+below) is still exactly as described. The `20fdc72d` genexpr commit
+(2026-07-18) closed issue 008 via eager materialization, *not* this
+issue's coroutine mechanism — see that item's note below.
+
+### Remaining work checklist
+
+- [x] **LLVM backend.** **Landed 2026-08-03** — see "LLVM backend
+      landed" section below.
+- [ ] **Infinite generator loops** (`while True: yield i`, no `break`)
+      fail to compile (`FA: expression has no type` / "return
+      statement not allowed in coroutine"). **Difficulty: small-medium.**
+      Likely `gen_fun_pyda`'s placeholder-reply path assumes its own
+      fallthrough is reachable; localized to that function, needs
+      investigation to confirm.
+- [ ] **`return value` inside a generator** (→ `StopIteration.value` in
+      real Python) — parsed and lowered, but the value is discarded;
+      only bare `return`/fall-through works. **Difficulty: small.**
+      Same placeholder-swap shape already fixed for the no-explicit-
+      return case (see "The handle value got lost" above).
+- [ ] **`yield from`** — not attempted, and not even in the grammar
+      (`python.g`'s `yield_expr` is `'yield' testlist?`, no `from`
+      alternative). **Difficulty: medium-large.** Needs new grammar
+      plus delegation semantics: forwarding the outer `.send()`/
+      `.__next__()` calls and the sub-generator's return value through
+      to/from the inner generator.
+- [x] **Generator expressions** (issue 008, `(x for x in y)`) —
+      resolved, but *not* via this issue's laziness mechanism: commit
+      `20fdc72d` (2026-07-18) made genexpr eagerly materialize into a
+      list instead, since every corpus use case was consumed
+      immediately by an eager builtin (`dict`/`join`/`sorted`/`sum`/
+      `any`/`all`/`min`/`max`/`tuple`). True lazy genexpr reusing this
+      issue's coroutine mechanism remains theoretically open but
+      nothing currently needs it — leave closed unless a genexpr
+      requiring genuine laziness turns up.
+
+## LLVM backend landed (2026-08-03)
+
+Same architecture as the C backend (an LLVM coroutine, driven
+synchronously via `_CG_generator_advance`/`_CG_generator_send`/
+`_CG_generator_value`, not the async event loop), using
+`llvm.coro.*` intrinsics instead of C++20 `co_yield`/`co_return`.
+`cg_emit_llvm.cc` already had a working `is_async` implementation to
+mirror — verified this by compiling+running a hand-written real-world
+sanity check (`async_simple.py`/`async_suspend.py` both compile and
+run without crashing under `-b`) before starting.
+
+### Design
+
+1. **`EmitCtx::gen_state`** + **`gen_state_struct_type()`**
+   (`cg_emit_llvm.cc`): a heap-allocated `{ptr coro_hdl, i64 value,
+   i64 sent, i64 done}` struct, GC-allocated alongside (not
+   overlapping) the LLVM coroutine's own frame. Needed because LLVM
+   coroutines have no C++-style promise reachable from outside the
+   defining function — `llvm.coro.promise` only resolves within the
+   coroutine's own IR, so a separately-compiled runtime helper
+   (`pyc_runtime.c`, called by `__pyc_generator__`'s methods) can't
+   use it. This struct's *address*, not the raw `coro.begin` handle,
+   is what flows through Python as `__pyc_generator__.handle`
+   (`ptrtoint`'d to int64, matching `build_fun_signature`'s explicit
+   `is_generator` → `i64` return-type override, mirroring
+   `write_c_fun_proto`'s identical override for the C backend).
+2. **`build_fun_signature`/`emit_fun` prologue**: `is_generator` gets
+   the same `coro.id`/`coro.size`/`GC_malloc`-frame/`coro.begin`/
+   initial-suspend sequence `is_async` already had, plus the
+   `gen_state` allocation (storing `coro_hdl` into its field 0).
+3. **`P_prim_yield`** (`emit_send_any_prim`): mirrors `P_prim_await`'s
+   save/suspend/switch/resume shape, but also stores the yielded
+   value (`rvals[2]`) into `gen_state.value` before suspending, and
+   reads `gen_state.sent` into the result (`lvals[0]`) after resuming
+   — the LLVM-side equivalent of `pyc_c_runtime.h`'s
+   `yield_value`/`yield_awaiter`.
+4. **`pyc_runtime.c`**: `_CG_generator_advance`/`_CG_generator_send`/
+   `_CG_generator_value`/`_CG_generator_placeholder_return`, `#ifndef
+   __cplusplus`-guarded plain-C definitions (distinct from
+   `pyc_c_runtime.h`'s C++-only versions of the same names, invisible
+   when `pyc_runtime.c` is compiled as C — no symbol clash). Resume
+   uses the same raw switched-ABI vtable call
+   (`((void(*)(void*))*(void**)hdl)(hdl)`) `_CG_resume_coro` already
+   used for async, reimplemented quietly (`_CG_resume_coro` prints
+   debug trace on every call — harmless for async today since nothing
+   checks its stdout, but would have corrupted a generator test's
+   captured output).
+
+### A genuine, reproducible LLVM CoroSplit bug found and worked around
+
+Got the above compiling and linking on the first attempt, but running
+it revealed a deeper problem: `__pyc_more__()` returned `False`
+immediately for even the simplest possible case (`def gen(): yield
+42`), and disassembling the compiled `.resume()` clone showed it
+jumping straight from entry to the completion/cleanup code, **entirely
+skipping the yield's own body** (the store of the yielded value, and
+the second suspend) — as if the generator ran straight through on its
+first resume. Traced this (via `opt -S -passes='coro-early,cgscc(coro-
+split),coro-cleanup' -print-after-all`, isolating a ~30-line
+hand-written `.ll` repro with no pyc involvement, reproduced
+identically on system LLVM 18, 20, *and* 22) to a genuine bug/sharp
+edge in LLVM's `CoroSplit` pass: giving a mid-body suspend's
+"genuinely suspended" (switch default) case and its "explicitly
+destroyed" (`i8 1`) case **separate** landing blocks, each computing
+and returning a value via `ret <value>`, makes CoroSplit silently
+replace that block with `unreachable` in the `.resume()`/`.destroy()`
+clones — even though it's provably reachable — which then cascades
+into skipping real, live code between suspend points entirely. Both
+the pre-existing `is_async` code and this issue's first draft had this
+same shape (separate `coro_suspend_bb`/`coro_destroy_bb`, each with
+its own `llvm.coro.free`+`GC_free`+`llvm.coro.end`+`ret`), so `is_async`
+carried the same latent bug — invisible until now because no existing
+async test happens to await more than once.
+
+Root-caused by diffing against real clang++-compiled C++20 coroutines
+on the same toolchain (confirmed working end-to-end first, then
+dumped their pre-CoroSplit IR with `-Xclang -disable-llvm-passes`):
+clang **never** gives "genuinely suspended" and "destroyed" separate
+landing pads — every suspend point's default *and* `i8 1` arms funnel
+into one shared block that unconditionally calls `llvm.coro.end` and
+returns, with no `llvm.coro.free`-based branching at all. Fixed by
+restructuring `ensure_coro_suspend_destroy_bbs` (`cg_emit_llvm.cc`) to
+build exactly one shared "coro_cleanup" block (both `coro_suspend_bb`
+and `coro_destroy_bb` now point at it) that calls `llvm.coro.end` and
+returns unconditionally, with **no** `llvm.coro.free`/`GC_free` call
+at all — pyc's GC (Boehm) reclaims the coroutine frame and `gen_state`
+struct once nothing references them, the same "no explicit free"
+model `pyc_c_runtime.h`'s `_CG_Memory_Free` already uses everywhere
+else. (An intermediate attempt that unified the landing blocks but
+kept `llvm.coro.free`-based conditional freeing surfaced a *second*
+bug: the *ramp* function itself would then free the frame immediately
+on construction, before ever suspending for real — dropped by
+removing the free logic entirely rather than chasing that too.) This
+fix also applies to the pre-existing `is_async` epilogue
+(`emit_block_terminator`'s `P_prim_reply` handling), which had the
+same duplicated-per-branch `coro.free`/`GC_free`/`coro.end`/`ret`
+shape — both now branch into the one shared cleanup block instead.
+
+### Verified
+
+`tests/generator_basic.py` (all 7 scenarios: basic multi-yield,
+loop-embedded yield, scalar/string/list-argument generators,
+interleaved manual `.__next__()`, mixing manual calls with a `for`
+loop, `.send()` driving a running accumulator) compiles, links, and
+runs correctly under `pyc -b`, byte-for-byte matching both the
+checked-in `.exec.check` and real `python3` output. Full regression
+suite clean on **both** backends after the fix: `test_pyc.py` and
+`PYC_FLAGS=-b test_pyc.py` each 236 passed / 0 failed / 6 expected
+fails / 4 skipped — including `async_simple.py`/`async_suspend.py`
+still compiling, linking, and running without crashing (they have no
+`.exec.check`, so this doesn't prove multi-await async correctness,
+but confirms the shared coroutine-cleanup rewrite didn't regress the
+single-suspend case those tests do exercise).
+`tests/generator_basic.py.check_fail` (the old "LLVM backend link
+failure expected" marker) removed as no longer accurate.
+
+### What's still missing for LLVM specifically
+
+Nothing generator-specific — the remaining gaps (infinite generator
+loops, `return value`, `yield from`) are frontend-level and, once
+fixed, apply to both backends automatically via the same IF1 lowering
+this issue's C-backend work already established. `is_async` with
+*multiple* awaits in one function remains unverified end-to-end (no
+test exercises it — see the CoroSplit bug section above); worth a
+targeted test if async ever becomes a priority.
