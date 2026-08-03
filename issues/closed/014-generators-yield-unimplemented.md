@@ -1,9 +1,10 @@
 # Issue 014: Generators (`yield`) are unimplemented
 
-**Status:** feature-complete on both backends as of 2026-08-04 — core
-landed 2026-07-14 (C backend), LLVM backend landed 2026-08-03,
-infinite-loop bodies + `StopIteration.value` + `yield from` all landed
-2026-08-04. See "LLVM backend landed", "Infinite generator loops
+**Status:** **closed 2026-08-04** — feature-complete on both backends.
+Core landed 2026-07-14 (C backend, `3e18bcfa`/`afc50bce`); LLVM
+backend `5872fafc`; infinite-loop bodies `a016b9dc`;
+`StopIteration.value` `00f74a26`; `yield from` `676b4fcb` (all
+2026-08-03/04). See "LLVM backend landed", "Infinite generator loops
 fixed", "StopIteration.value landed", and "yield from landed" near the
 bottom for each. Covers: scalar *and* list generator arguments,
 interleaved manual `next()` calls, `.send()`, `while True:` bodies

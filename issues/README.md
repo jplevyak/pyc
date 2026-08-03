@@ -35,10 +35,6 @@ conventions are the same; the only difference is location.
   call doesn't route through constructor lowering), dotted-name
   decorators (silent no-op), and decorated *methods* (legacy
   no-op).
-- [014-generators-yield-unimplemented.md](014-generators-yield-unimplemented.md)
-  — `yield` (generator functions) is unimplemented; needs a
-  resumable-function execution model (state-machine transform or
-  stackful coroutines) not present anywhere else in pyc today.
 - [018-dict-mixed-key-types-boxing-failure.md](018-dict-mixed-key-types-boxing-failure.md)
   — A program using `dict` (or `set`) with two different key/
   element types anywhere fails to compile with a `BOXING`/"mixed
@@ -63,6 +59,32 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [014](closed/014-generators-yield-unimplemented.md) — generators
+  (`yield`) are feature-complete on both backends: core landed
+  2026-07-14 as a C++20-coroutine C backend (`is_generator`
+  split-Fun design, `__pyc_generator__`), then in four more passes:
+  LLVM backend (`5872fafc`, LLVM coroutine intrinsics — surfaced and
+  fixed a genuine LLVM `CoroSplit` bug, also latent in the
+  pre-existing `is_async` path, reproduced independently on LLVM
+  18/20/22); `while True:`-bodied (no `break`) generators (`a016b9dc`
+  — FA only types a Fun's return from a *live* `P_prim_reply` node,
+  fixed via an opaque always-reachable branch to the exit label);
+  real `StopIteration(value)` on exhaustion (`00f74a26` — also found
+  and fixed `pyc_program_has_raise`'s builtin-module raise gating not
+  covering `yield`, the same class of gap `assert` needed for
+  `__pyc_assert_fail__`); and `yield from` (`676b4fcb`, a hand-built
+  delegation loop mirroring `try/except`'s own IF1 shape — also found
+  and fixed a separate, pre-existing bug where *any* `raise` inside a
+  generator body was silently masked as `StopIteration`, since
+  `_CG_generator_advance`/`_CG_generator_send`'s `done` signal alone
+  can't distinguish normal completion from an unwound raise). Known
+  remaining gaps, documented not fixed: `for` loops over a
+  raise-internally generator still don't propagate the exception
+  (a for-loop-lowering gap affecting every iterator type, not
+  generator-specific); `yield from` only supports generator targets,
+  not arbitrary iterables (needs `.send()`). Generator expressions
+  (issue 008, resolved separately via eager `list` materialization)
+  were never part of this issue's own mechanism.
 - [031](closed/031-eq-none-dispatch-crash.md) — `x == None` /
   `x != None` now lower directly to an isinstance-against-nil check,
   mirroring the existing `is None`/`is not None` treatment, instead
