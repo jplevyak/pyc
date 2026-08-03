@@ -352,7 +352,7 @@ static void mark_pattern_captures(PyDAST *n) {
 // inside a nested def/lambda/class belongs to THAT scope, not this one.
 static bool pyda_contains_yield(PyDAST *n) {
   if (!n) return false;
-  if (n->kind == PY_yield_stmt || n->kind == PY_yield_expr) return true;
+  if (n->kind == PY_yield_stmt || n->kind == PY_yield_expr || n->kind == PY_yield_from_expr) return true;
   if (n->kind == PY_funcdef || n->kind == PY_lambda || n->kind == PY_classdef) return false;
   for (auto c : n->children.values())
     if (pyda_contains_yield(c)) return true;
@@ -1214,6 +1214,20 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // PY_yield_expr's original plain recursion (this is exactly
       // where it sat in the `default:` group below before this case
       // was split out).
+      if (!ctx.is_builtin()) pyc_program_has_raise = true;
+      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      return 0;
+
+    case PY_yield_from_expr:
+      // issues/014: `yield from EXPR` -- one child (the sub-iterable
+      // expression). Arms pyc_program_has_raise for the same reason
+      // PY_yield_stmt/PY_yield_expr do: build_if1_pyda desugars this
+      // into a loop that calls EXPR.send(...) and explicitly catches
+      // StopIteration -- that catch's own dispatch code is dead
+      // without the gate armed (emit_exc_check no-ops entirely when
+      // !pyc_program_has_raise), and a program using ONLY `yield from`
+      // (no bare `yield`, no direct user-level raise/assert) would
+      // otherwise never arm it at all.
       if (!ctx.is_builtin()) pyc_program_has_raise = true;
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);
       return 0;

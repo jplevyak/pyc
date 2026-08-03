@@ -4151,6 +4151,104 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
+    case PY_yield_from_expr: {
+      // issues/014: `yield from EXPR` delegates to a sub-generator.
+      // pyc's iterator model is peek-then-fetch (__pyc_more__/
+      // __next__), not exception-based, for ordinary iterables -- this
+      // desugaring specifically needs .send(), which only
+      // __pyc_generator__ instances (09_generator.py) provide, so
+      // delegating to a plain list/range/etc iterable isn't supported
+      // (a v1 scope limit, consistent with this issue's other
+      // compromises: EXPR must itself be a generator).
+      //
+      // Desugars (mirrors PEP 380's own reference expansion, minus
+      // .throw()/GeneratorExit -- pyc has neither) to:
+      //
+      //   __yf_sub = EXPR
+      //   __yf_sent = 0                          # None
+      // Lloop:
+      //   __yf_val = __yf_sub.send(__yf_sent)    # may raise StopIteration
+      //   [post-call check, exactly emit_exc_check's own shape --
+      //    ANY pending exception jumps to Ldispatch below; __yf_val is
+      //    only defined/read on the fallthrough (no-exception) edge]
+      //   __yf_sent = yield __yf_val
+      //   goto Lloop
+      // Ldispatch:
+      //   __yf_exc = __pyc_exc__
+      //   if isinstance(__yf_exc, StopIteration):
+      //     __pyc_exc__ = None
+      //     result = __yf_exc.value
+      //     goto Ldone
+      //   else:
+      //     goto <outer exception target>        # not ours to handle
+      // Ldone:
+      //   (this expression's value is `result`)
+      //
+      // Uses a real ctx.try_stack frame (PycTryFrame{Ldispatch,
+      // ctx.fun()}), exactly PY_try_stmt's own mechanism, so the
+      // ordinary post-call exception check inserted after the
+      // `.send()` call (emit_exc_check, invoked below with no
+      // known_callee since this is a dynamic method dispatch) routes
+      // here instead of just propagating past this expression.
+      build_if1_pyda(n->children[0], ctx);
+      PycAST *sub_ast = getAST(n->children[0], ctx);
+      if1_gen(if1, &ast->code, sub_ast->code);
+      Sym *sub = sub_ast->rval;
+
+      Sym *sent = new_sym(ast);
+      if1_move(if1, &ast->code, int64_constant(0), sent, ast);
+
+      Label *Lloop = if1_alloc_label(if1);
+      Label *Ldispatch = if1_alloc_label(if1);
+      Label *Ldone = if1_alloc_label(if1);
+
+      if1_label(if1, &ast->code, ast, Lloop);
+      ctx.try_stack.add(PycTryFrame{Ldispatch, ctx.fun()});
+      Sym *val = new_sym(ast);
+      call_method(&ast->code, ast, sub, make_symbol("send"), val, 1, sent);
+      emit_exc_check(&ast->code, ast, ctx);
+      ctx.try_stack.n--;
+
+      // Fallthrough: .send() returned normally (no exception pending)
+      // -- yield the delegated value out to OUR OWN caller, then feed
+      // whatever THEY send back into the sub-generator next iteration.
+      Sym *new_sent = new_sym(ast);
+      Code *yfsend = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), val, new_sent);
+      yfsend->ast = ast;
+      if1_move(if1, &ast->code, new_sent, sent, ast);
+      if1_goto(if1, &ast->code, Lloop)->ast = ast;
+
+      if1_label(if1, &ast->code, ast, Ldispatch);
+      Sym *exc = new_sym(ast);
+      if1_move(if1, &ast->code, exc_slot(ctx), exc, ast);
+      int silvl = 0;
+      PycSymbol *si_cls_ps = find_PycSymbol(ctx, cannonicalize_string("StopIteration"), &silvl);
+      if (!si_cls_ps || !si_cls_ps->sym)
+        fail("error line %d, internal: StopIteration not found (issues/014)", ctx.lineno);
+      Sym *is_si = new_sym(ast);
+      if1_send(if1, &ast->code, 4, 1, sym_primitive, make_symbol("isinstance"), exc, si_cls_ps->sym, is_si)->ast = ast;
+      Code *ifc = if1_if_goto(if1, &ast->code, is_si, ast);
+      Label *Lmatch = if1_alloc_label(if1);
+      Label *Lpropagate = if1_alloc_label(if1);
+      if1_if_label_true(if1, ifc, Lmatch, ast);
+      if1_if_label_false(if1, ifc, Lpropagate, ast);
+
+      Sym *result = new_sym(ast);
+      if1_label(if1, &ast->code, ast, Lmatch);
+      if1_move(if1, &ast->code, sym_nil, exc_slot(ctx), ast);
+      Sym *retval = build_attribute_get(exc, "value", &ast->code, ast);
+      if1_move(if1, &ast->code, retval, result, ast);
+      if1_goto(if1, &ast->code, Ldone)->ast = ast;
+
+      if1_label(if1, &ast->code, ast, Lpropagate);
+      goto_exc_target(&ast->code, ast, ctx, exc_transfer_target(ctx));
+
+      if1_label(if1, &ast->code, ast, Ldone);
+      ast->rval = result;
+      ast->sym = ast->rval;
+      return 0;
+    }
+
     case PY_slice:
     case PY_subscriptlist:
     case PY_dotted_name:

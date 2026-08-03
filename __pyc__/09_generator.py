@@ -39,6 +39,27 @@
 # (0 for a bare/fall-through generator exit, matching pyc's existing
 # "smuggle through int64" compromise for yielded/sent values -- real
 # Python reports None there instead of 0).
+#
+# issues/014 (yield from): `has_next == False` after advancing means
+# EITHER the generator body ran to completion OR it raised some OTHER
+# exception internally -- both reach the coroutine's co_return/done
+# state identically (see cg.cc/cg_emit_llvm.cc's is_generator
+# P_prim_reply handling: a raise inside the body sets __pyc_exc__,
+# a global, then unwinds to the SAME exit label normal completion
+# uses). __pyc_exc__ is an ordinary builtin-module global
+# (08_exception.py), directly readable here: checking it distinguishes
+# the two cases. When set, this is NOT exhaustion -- return without
+# raising StopIteration (masking the real exception would be wrong)
+# and let it flow out normally; the CALLER's own post-call check
+# (emit_exc_check, python_ifa_build_if1.cc -- inserted automatically
+# after any user-code call once pyc_program_has_raise is armed)
+# propagates it from there, the same mechanism every other raise
+# already relies on. Without this check, __next__/.send() would
+# incorrectly raise StopIteration instead, masking the real exception
+# -- confirmed via a direct repro (`raise` inside a generator body,
+# no yield from involved, caught by an outer try/except of the SAME
+# exception class: without this fix the wrong exception type reached
+# the handler and propagated unhandled instead).
 
 class __pyc_generator__:
   handle = 0
@@ -63,12 +84,16 @@ class __pyc_generator__:
       self.__pyc_advance__()
     self.primed = False
     if not self.has_next:
+      if __pyc_exc__ is not None:
+        return 0
       raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
     return self.nextval
   def send(self, value):
     self.has_next = __pyc_c_call__(bool, "_CG_generator_send", int, self.handle, int, value)
     self.primed = False
     if not self.has_next:
+      if __pyc_exc__ is not None:
+        return 0
       raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
     self.nextval = __pyc_c_call__(int, "_CG_generator_value", int, self.handle)
     return self.nextval

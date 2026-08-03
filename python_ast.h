@@ -55,6 +55,12 @@ enum PyASTKind {
   PY_list_for, PY_list_if,
   PY_subscriptlist,
   PY_star_expr,
+  // issues/014: appended at the end (not grouped with PY_yield_expr
+  // above) deliberately -- python.g's pyast_kind_name debug table is
+  // indexed positionally by this enum's own values, so inserting a
+  // new kind anywhere but the end would silently misalign every name
+  // after the insertion point.
+  PY_yield_from_expr,
   PY_MAX
 };
 

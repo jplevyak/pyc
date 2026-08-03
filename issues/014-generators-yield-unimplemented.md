@@ -1,9 +1,21 @@
 # Issue 014: Generators (`yield`) are unimplemented
 
-**Status:** core landed and working 2026-07-14 (C backend), LLVM
-backend landed 2026-08-03 — see "LLVM backend landed" near the
-bottom. Both backends now cover: scalar *and* list generator
-arguments, interleaved manual `next()` calls, and `.send()`.
+**Status:** feature-complete on both backends as of 2026-08-04 — core
+landed 2026-07-14 (C backend), LLVM backend landed 2026-08-03,
+infinite-loop bodies + `StopIteration.value` + `yield from` all landed
+2026-08-04. See "LLVM backend landed", "Infinite generator loops
+fixed", "StopIteration.value landed", and "yield from landed" near the
+bottom for each. Covers: scalar *and* list generator arguments,
+interleaved manual `next()` calls, `.send()`, `while True:` bodies
+with no `break`, explicit `return value` (→ real `StopIteration`,
+raised on exhaustion), and `yield from` (delegating values, `.send()`,
+and the sub-generator's return value both ways). Only generator
+expressions (issue 008, resolved separately via eager materialization
+— see "Remaining work checklist") remain genuinely out of this issue's
+scope; "yield from landed" below notes two small known limitations
+found along the way (for-loop-over-a-raising-generator,
+non-generator `yield from` targets) that don't block anything
+currently exercised.
 `def gen(): yield 1; yield 2`, loop-embedded
 `yield` (`for i in range(n): yield i*i`), argument-taking generators
 (`def counter(start, stop): ...`, `def codes(s): for c in s: yield
@@ -16,14 +28,7 @@ correct output matching CPython, verified end-to-end, committed as
 (found while adding argument support) and a `.send()`-breaking FA
 constant-collapse bug (found while adding `.send()`) were both
 root-caused and fixed the same day — see "What's still missing",
-items 2 and 3. Infinite-loop (`while True:` with no `break`) generator
-bodies fixed 2026-08-03 (both backends) — see "Infinite generator
-loops fixed" near the bottom. `return value` inside a generator now
-raises real `StopIteration(value)` on exhaustion, fixed 2026-08-04
-(both backends) — see "StopIteration.value landed" near the bottom.
-`yield from` and generator expressions (issue 008, resolved separately
-via eager materialization — see "Remaining work checklist") remain
-unimplemented.
+items 2 and 3.
 **Affects:** `python_ifa_build_if1.cc:1261` (`PY_yield_stmt` in
 `build_if1_pyda`, shares the `fail()` with issue 011's exception
 kinds); `python_ifa_build_if1.cc:1319-1327` (`PY_yield_expr` falls
@@ -500,12 +505,8 @@ issue's coroutine mechanism — see that item's note below.
       "Infinite generator loops fixed" section below.
 - [x] **`return value` inside a generator.** **Landed 2026-08-04** —
       see "StopIteration.value landed" section below.
-- [ ] **`yield from`** — not attempted, and not even in the grammar
-      (`python.g`'s `yield_expr` is `'yield' testlist?`, no `from`
-      alternative). **Difficulty: medium-large.** Needs new grammar
-      plus delegation semantics: forwarding the outer `.send()`/
-      `.__next__()` calls and the sub-generator's return value through
-      to/from the inner generator.
+- [x] **`yield from`.** **Landed 2026-08-04** — see "yield from landed"
+      section below.
 - [x] **Generator expressions** (issue 008, `(x for x in y)`) —
       resolved, but *not* via this issue's laziness mechanism: commit
       `20fdc72d` (2026-07-18) made genexpr eagerly materialize into a
@@ -845,3 +846,153 @@ value (`x + 1000`). All byte-for-byte matching real `python3` on
 **both** backends. Full regression suite clean on both: `test_pyc.py`
 and `PYC_FLAGS=-b test_pyc.py` each 238 passed / 0 failed / 6 expected
 fails / 4 skipped.
+
+## yield from landed (2026-08-04)
+
+`x = yield from EXPR` (and bare `yield from EXPR`) now delegates to a
+sub-generator: forwards yielded values out, forwards `.send()` values
+in, and the delegation expression's own value is the sub-generator's
+`StopIteration.value` once it's exhausted — matching CPython, on both
+backends. Scope: `EXPR` must itself be a generator (a
+`__pyc_generator__` instance) — pyc's iterator protocol for *ordinary*
+iterables is peek-then-fetch (`__pyc_more__`/`__next__`), not
+exception-based, so this desugaring's use of `.send()` genuinely needs
+a real generator; delegating to a plain list/range/etc iterable isn't
+supported.
+
+### Design: desugars to a hand-built IF1 loop, not an AST rewrite
+
+Considered two implementation strategies: (A) hand-build the
+delegation loop's IF1 directly in `PY_yield_from_expr`'s
+`build_if1_pyda` case, or (B) synthesize an equivalent Python AST
+subtree (a `while`/`try`/`except` loop) and let the *existing*
+`PY_while_stmt`/`PY_try_stmt` lowering handle it. Went with (A): this
+codebase has no precedent anywhere for AST-to-AST desugaring — every
+construct lowers directly to IF1 in its own `build_if1_pyda` case —
+and (B) would need the synthesized subtree to *also* run through
+`build_syms_pyda`'s separate scope-resolution pass before
+`build_if1_pyda` could reuse it (the two-pass split means a subtree
+built only at IF1-generation time has no resolved `PycAST`/symbol
+info for `PY_try_stmt`'s `getAST(child, ctx)` calls to find), which is
+more coordination than it's worth for one construct.
+
+`python_ast.h` gained `PY_yield_from_expr`, deliberately appended at
+the very end of the `PyASTKind` enum (not grouped with
+`PY_yield_expr`) — `python.g`'s `pyast_kind_name` debug table is
+indexed positionally by this enum's own values, so inserting a new
+kind anywhere but the end would have silently misaligned every debug
+name after the insertion point. `python.g`'s `yield_stmt` and
+`yield_expr` rules both gained a `'yield' 'from' test` alternative
+(unambiguous against the existing `'yield' testlist?` alternative:
+`from` is already a reserved keyword elsewhere, so a `testlist` can't
+start with it) producing this new kind.
+
+`PY_yield_from_expr`'s `build_if1_pyda` case hand-builds (mirroring
+`PY_try_stmt`'s own exact mechanism — a real `ctx.try_stack` frame,
+`isinstance` dispatch, `goto_exc_target`) the loop PEP 380's reference
+implementation describes, minus `.throw()`/`GeneratorExit` (pyc has
+neither):
+
+```
+__yf_sub = EXPR
+__yf_sent = 0                          # None
+Lloop:
+  __yf_val = __yf_sub.send(__yf_sent)  # may raise StopIteration
+  [post-call check: emit_exc_check, invoked with a ctx.try_stack
+   frame pointing at Ldispatch active for exactly this call --
+   any pending exception jumps there instead of just propagating]
+  __yf_sent = yield __yf_val
+  goto Lloop
+Ldispatch:
+  __yf_exc = __pyc_exc__
+  if isinstance(__yf_exc, StopIteration):
+    __pyc_exc__ = None
+    result = __yf_exc.value
+    goto Ldone
+  else:
+    goto <outer exception target>       # not ours to handle -- propagate
+Ldone:
+  (this expression's value is `result`)
+```
+
+`call_method`/`build_attribute_get` (both pre-existing internal
+helpers — the latter already used by class-pattern matching to read
+`.x`/`.y` off a match subject with no source-text token to hang a real
+AST node off) construct the `.send()` call and the `.value` read with
+no user-visible identifiers needed. Always uses `.send()`, even for
+the very first pull (seeded with `0` for `None`) — verified this is
+safe: a not-yet-started `__pyc_generator__.send()` and `.__next__()`
+are identical up to the first real resume (the delivered "sent" value
+is only read once the coroutine reaches its own first paused `yield`,
+which can't happen before the first resume), matching CPython's own
+`next(gen) == gen.send(None)` equivalence.
+
+### A second, pre-existing bug found and fixed along the way: raises inside a generator body were masked as StopIteration
+
+Testing exception propagation *through* a delegated sub-generator
+(the PEP 380 behavior `except X:` around a `yield from` block should
+transparently see an `X` raised inside the sub-generator) surfaced a
+bug with nothing to do with `yield from` itself: a bare `raise` inside
+*any* generator body, driven by direct `.__next__()` calls (no
+delegation involved), was **silently swallowed** — caught by the
+wrong exception type where it should have propagated, or reaching
+`__pyc_unhandled_exception__` where it should have been caught.
+Confirmed via an isolated repro with no `yield from` anywhere: `def
+gen(): yield 1; raise Boom(77)`, driven by two bare `g.__next__()`
+calls under `try/except Boom`, printed "Unhandled exception:" instead
+of catching it.
+
+Root cause: a `raise` inside a generator's body correctly sets
+`__pyc_exc__` (the global exception slot, unaffected by coroutine
+suspension) and correctly unwinds to the function's own exit label —
+but for an `is_generator` function, that exit label is the *same* one
+normal completion uses (`co_return`/the `P_prim_reply` epilogue,
+landed in this issue's earlier LLVM-backend and `StopIteration.value`
+work). `_CG_generator_advance`/`_CG_generator_send`'s only signal back
+to `__pyc_generator__` is `!h.done()` — indistinguishable between "the
+body finished" and "the body's exit was actually an unwound raise".
+`__pyc_advance__` saw `has_next == False` either way and `__next__`/
+`.send()` unconditionally raised `StopIteration`, masking whatever
+exception was actually pending.
+
+**Fix:** `__pyc_generator__.__next__`/`.send()` (`09_generator.py`)
+now check `__pyc_exc__` (an ordinary builtin-module global,
+`08_exception.py` — directly readable from any `__pyc__/*.py` file,
+no special access needed) before deciding to raise `StopIteration`: if
+it's already set, return without raising anything and let it flow out
+normally — the *caller's* own post-call check (`emit_exc_check`,
+inserted automatically after any user-code method call once
+`pyc_program_has_raise` is armed) propagates it from there, the exact
+mechanism every other raise in the program already relies on. This
+also directly fixes `yield from`'s own exception-transparency: the
+delegation loop's `.send()` call already had its own `emit_exc_check`
++ `isinstance(exc, StopIteration)` dispatch (the design above), which
+only needed the callee to stop lying about `StopIteration` to work
+correctly.
+
+**Known related gap, not fixed here:** `for` loops over a generator
+that raises internally have the *same* underlying issue and are still
+broken — `PY_for_stmt`'s lowering calls `__pyc_more__`/`__next__` via
+plain `call_method` with no `emit_exc_check` inserted at all (unlike
+direct `.__next__()`/`.send()` calls in user code, or this issue's own
+`yield from` loop, both of which go through normal call sites that do
+get checked). Out of scope here — it's a for-loop-lowering gap
+affecting every iterator type, not specific to generators or `yield
+from` — but worth its own pass if generator+exception interaction
+needs to be airtight.
+
+### Verified
+
+Added `tests/generator_yield_from.py` (`.exec.check` committed):
+basic delegation driven by a `for` loop; capturing the sub-generator's
+return value via `result = yield from ...`; `.send()` forwarding
+bidirectionally through two levels of delegation; and an exception
+raised inside the delegated generator propagating out through the
+outer one, uncaught by it. All byte-for-byte matching real `python3`
+on **both** backends (the bare-fall-through `0`-vs-`None`
+`StopIteration.value` divergence from the previous landing was
+deliberately kept out of this test, same reasoning as
+`generator_return_value.py`'s). Full regression suite clean on both:
+`test_pyc.py` and `PYC_FLAGS=-b test_pyc.py` each 239 passed / 0
+failed / 6 expected fails / 4 skipped. `ifa`'s own unit suite (58
+tests) also clean.

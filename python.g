@@ -164,6 +164,16 @@ raise_stmt: 'raise' (test ('from' test)?)? {
 };
 yield_stmt: 'yield' testlist {
   $$.ast = new_pyast_collect(PY_yield_stmt, &$n);
+}
+| 'yield' 'from' test {
+  // issues/014: `yield from EXPR` as a bare statement -- 'from' is
+  // already a reserved keyword elsewhere (raise_stmt, import_from),
+  // so this alternative is unambiguous against the plain `'yield'
+  // testlist` one above (a testlist can't start with the literal
+  // token `from`). build_if1_pyda desugars this into a delegation
+  // loop over EXPR's own .send()/.__next__() protocol; see
+  // PY_yield_from_expr there.
+  $$.ast = new_pyast_collect(PY_yield_from_expr, &$n);
 };
 import_stmt: import_name | import_from;
 import_name: 'import' dotted_as_names {
@@ -520,6 +530,13 @@ comp_if: 'if' or_test comp_iter? {
 encoding_decl: NAME;
 yield_expr: 'yield' testlist? {
   $$.ast = new_pyast_collect(PY_yield_expr, &$n);
+}
+| 'yield' 'from' test {
+  // issues/014: `x = yield from EXPR` / `(yield from EXPR)` -- see
+  // yield_stmt's identical alternative above for the bare-statement
+  // form and PY_yield_from_expr's build_if1_pyda case for the
+  // delegation-loop desugaring both forms share.
+  $$.ast = new_pyast_collect(PY_yield_from_expr, &$n);
 };
 
 
@@ -831,6 +848,7 @@ Ldone:;
       "comp_for", "comp_if", "list_for", "list_if",
       "subscriptlist",
       "star_expr",
+      "yield_from_expr",
     };
     if (k < 0 || k >= PY_MAX) return "?";
     return names[k];
