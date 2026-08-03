@@ -1366,15 +1366,6 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
         if1_move(if1, &ast->code, a->rval, g, ast);
       }
   Sym *in = ctx.scope_stack[ctx.scope_stack.n - 2]->in;
-  // Process body (may be PY_suite or single statement)
-  if (n->children.n >= 3) {
-    PyDAST *body_node = n->children[2];
-    if (body_node->kind == PY_suite) {
-      for (auto c : body_node->children.values()) if1_gen(if1, &body, getAST(c, ctx)->code);
-    } else {
-      if1_gen(if1, &body, getAST(body_node, ctx)->code);
-    }
-  }
   // issues/014: a generator body's reply value is never the user's --
   // it's the raw coroutine-handle int the synthesized wrapper (see
   // build_if1_pyda's PY_funcdef) reads to construct a
@@ -1395,6 +1386,21 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // shape __pyc_c_call__ produces from Python source, see PY_power's
   // sym___pyc_c_call__ case above) so FA anchors the type without
   // believing it knows the value.
+  //
+  // issues/014 (infinite generator loops): computed and moved into
+  // fn->ret BEFORE the user's body is processed below -- NOT after,
+  // unlike the non-generator fall-through-None default further down.
+  // A generator body whose own control flow never falls through
+  // (`while True: yield i`, no `break`) has no reachable path to
+  // whatever comes after the body; appending this there (as it used
+  // to) made the placeholder move dead code, and FA infers fn->ret as
+  // bottom/NOTYPE with no live move reaching it. The synthesized
+  // wrapper's `handle_result = call this_fn(...)` then can't be
+  // typed, and constructing __pyc_generator__(handle_result) fails
+  // downstream ("matching function not found" at codegen). Placing
+  // the move first makes it unconditionally reachable regardless of
+  // the generator's own loop shape -- free to do, since this value is
+  // never runtime-observed either way.
   Sym *default_ret;
   if (fn->is_generator) {
     int lvl = 0;
@@ -1408,8 +1414,53 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     default_ret = new_sym(ast);
     if1_add_send_result(if1, placeholder_send, default_ret);
     placeholder_send->rvals.v[2]->is_fake = 1;
+    if1_move(if1, &body, default_ret, fn->ret, ast);
+    // issues/014 (infinite generator loops): FA only ever flows a
+    // Fun's return type from a LIVE P_prim_reply node (fa.cc's
+    // P_prim_reply case flows straight into es->rets -- never visited
+    // if the reply itself is unreachable). The move above alone isn't
+    // enough: a body whose control flow never falls through to the
+    // reply at label[0] (an unconditional `while True:` with no
+    // `break`/`return` anywhere -- no CFG edge out of the loop exists
+    // at all) leaves that reply dead, so FA never visits it and
+    // infers fn->ret as bottom/NOTYPE regardless of the move --
+    // breaking the synthesized wrapper's `handle_result = call
+    // this_fn(...)` (build_if1_pyda's PY_funcdef) the same way the
+    // unfixed placeholder ordering did. (Confirmed as a pure
+    // reachability issue, not a value/type mismatch: a loop with a
+    // technically-reachable-but-never-taken `break` compiles and
+    // runs correctly; an unconditional one didn't, until this fix.)
+    //
+    // Fix: an opaque conditional branch straight to label[0],
+    // structurally present in the CFG so FA can't prune it away --
+    // using default_ret itself (the SAME `_CG_generator_placeholder_
+    // return()` opaque call above, __pyc_to_bool__-coerced the same
+    // way PY_while_stmt/PY_if_stmt coerce any condition) keeps its
+    // value exactly as unknowable to FA as it already is for the
+    // fn->ret move (that's the whole reason it's routed through an
+    // opaque C call rather than a literal constant), so FA can't fold
+    // this branch to "always taken" or "never taken" either -- both
+    // arms (the jump to label[0], and the fall-through into the
+    // user's body below) stay live. At actual runtime the call always
+    // literally returns 0 (falsy), so the branch is never really
+    // taken -- purely a reachability signal for FA, zero behavior
+    // change.
+    Sym *never_cond = new_sym(ast);
+    call_method(&body, ast, default_ret, sym___pyc_to_bool__, never_cond, 0);
+    Code *never_ifcode = if1_if_goto(if1, &body, never_cond, ast);
+    if1_if_label_true(if1, never_ifcode, ast->label[0]);
+    if1_if_label_false(if1, never_ifcode, if1_label(if1, &body, ast));
   } else {
     default_ret = sym_nil;
+  }
+  // Process body (may be PY_suite or single statement)
+  if (n->children.n >= 3) {
+    PyDAST *body_node = n->children[2];
+    if (body_node->kind == PY_suite) {
+      for (auto c : body_node->children.values()) if1_gen(if1, &body, getAST(c, ctx)->code);
+    } else {
+      if1_gen(if1, &body, getAST(body_node, ctx)->code);
+    }
   }
   // The fall-off-the-end default move into fn->ret. Normally this
   // injects None for the implicit-return path (CPython semantics).
@@ -1430,7 +1481,13 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // divergence, matching shedskin (which fills the path with the return
   // type's default). Not applied to bare `return`/`return None` (those
   // are explicit and route through PY_return_stmt, not this default).
-  if (!(ifa_no_implicit_none && fn->fun_returns_value && !fn->is_generator))
+  //
+  // issues/014: generators already got their placeholder moved into
+  // fn->ret above, before the body -- unconditionally reachable, so
+  // this fall-through move would just be a redundant (same value,
+  // same type) second write, dead code whenever the body's own
+  // control flow doesn't fall through. Skipped for them entirely.
+  if (!fn->is_generator && !(ifa_no_implicit_none && fn->fun_returns_value))
     if1_move(if1, &body, default_ret, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;

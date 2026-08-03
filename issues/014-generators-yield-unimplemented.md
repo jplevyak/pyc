@@ -16,9 +16,11 @@ correct output matching CPython, verified end-to-end, committed as
 (found while adding argument support) and a `.send()`-breaking FA
 constant-collapse bug (found while adding `.send()`) were both
 root-caused and fixed the same day — see "What's still missing",
-items 2 and 3. `yield from`, generator expressions (issue 008), and
-infinite-loop (`while True:` with no `break`) generator bodies remain
-unimplemented/broken.
+items 2 and 3. Infinite-loop (`while True:` with no `break`) generator
+bodies fixed 2026-08-03 (both backends) — see "Infinite generator
+loops fixed" near the bottom. `yield from` and generator expressions
+(issue 008, resolved separately via eager materialization — see
+"Remaining work checklist") remain unimplemented.
 **Affects:** `python_ifa_build_if1.cc:1261` (`PY_yield_stmt` in
 `build_if1_pyda`, shares the `fail()` with issue 011's exception
 kinds); `python_ifa_build_if1.cc:1319-1327` (`PY_yield_expr` falls
@@ -491,12 +493,8 @@ issue's coroutine mechanism — see that item's note below.
 
 - [x] **LLVM backend.** **Landed 2026-08-03** — see "LLVM backend
       landed" section below.
-- [ ] **Infinite generator loops** (`while True: yield i`, no `break`)
-      fail to compile (`FA: expression has no type` / "return
-      statement not allowed in coroutine"). **Difficulty: small-medium.**
-      Likely `gen_fun_pyda`'s placeholder-reply path assumes its own
-      fallthrough is reachable; localized to that function, needs
-      investigation to confirm.
+- [x] **Infinite generator loops.** **Landed 2026-08-03** — see
+      "Infinite generator loops fixed" section below.
 - [ ] **`return value` inside a generator** (→ `StopIteration.value` in
       real Python) — parsed and lowered, but the value is discarded;
       only bare `return`/fall-through works. **Difficulty: small.**
@@ -636,10 +634,109 @@ failure expected" marker) removed as no longer accurate.
 
 ### What's still missing for LLVM specifically
 
-Nothing generator-specific — the remaining gaps (infinite generator
-loops, `return value`, `yield from`) are frontend-level and, once
-fixed, apply to both backends automatically via the same IF1 lowering
-this issue's C-backend work already established. `is_async` with
-*multiple* awaits in one function remains unverified end-to-end (no
-test exercises it — see the CoroSplit bug section above); worth a
-targeted test if async ever becomes a priority.
+Nothing generator-specific — the remaining gaps (`return value`,
+`yield from`) are frontend-level and, once fixed, apply to both
+backends automatically via the same IF1 lowering this issue's
+C-backend work already established. `is_async` with *multiple* awaits
+in one function remains unverified end-to-end (no test exercises it —
+see the CoroSplit bug section above); worth a targeted test if async
+ever becomes a priority.
+
+## Infinite generator loops fixed (2026-08-03)
+
+`def gen(): i = 0; while True: yield i; i += 1` (no `break`, no
+`return` anywhere) used to fail to compile: `FA: expression has no
+type` warnings at every `.__next__()` call site, then a hard C++
+error (`return statement not allowed in coroutine`) or, for the LLVM
+backend, a mistyped wrapper local and a `"matching function not
+found"` runtime trap baked into the generated code.
+
+### Root cause
+
+Two independent bugs, both in code this issue's original landing
+wrote, both triggered by the same root cause: a `while True:` loop
+with no exit anywhere creates **no CFG edge at all** from inside the
+loop to whatever code follows it in `gen_fun_pyda`'s IF1 — not "an
+edge FA proves is dead," a genuinely absent edge, since the loop's own
+IF1 lowering (shared, non-generator-specific `while`-loop code) simply
+never generates one when there's no `break`.
+
+1. **FA infers the coroutine body's return type as bottom/NOTYPE.**
+   `gen_fun_pyda` appended the type-anchoring placeholder computation
+   (`_CG_generator_placeholder_return()`) and the move into `fn->ret`
+   *after* the user's body, same textual position as the ordinary
+   fall-through-None default every function gets. For an infinite
+   loop, that whole tail is unreachable, so FA's `P_prim_reply`
+   handling (`ifa/analysis/fa.cc`) — which flows a Fun's return type
+   *only* from a live reply node it actually visits — never sees it,
+   and infers `fn->ret` as bottom. The synthesized wrapper
+   (`build_if1_pyda`'s `PY_funcdef` case)'s `handle_result = call
+   this_fn(...)` then can't be typed, and constructing
+   `__pyc_generator__(handle_result)` fails downstream on both
+   backends (C: `_CG_void_type` local assigned an `_CG_int64` call
+   result, hard compile error; LLVM: the analogous mistyped local plus
+   a dispatch-failure runtime trap).
+2. **The C backend's dead-reply codegen path had no `is_generator`
+   case.** `cg.cc`'s `write_c_pnode` has two separate P_prim_reply
+   handling sites — one for a *live* reply (already correctly emits
+   `co_return;` for `is_generator`, from the original landing), and a
+   second, separate one for a *dead* reply (a normal Fun's genuinely
+   unused/constant-folded return) that only checked `is_async`, falling
+   through to a plain `return %s;` for everything else including
+   generators. A plain `return` — even in code that's syntactically
+   unreachable — is a hard C++ error in any function containing
+   `co_yield` ("did you mean `co_return`?"), so a dead generator reply
+   broke compilation outright once bug 1 stopped masking it with an
+   earlier, different error.
+
+### Fix
+
+1. **`python_ifa_build_syms.cc` (`gen_fun_pyda`), two parts:**
+   - Compute the placeholder and move it into `fn->ret` *before*
+     processing the user's body (not after) — unconditionally
+     reachable regardless of what the body's own control flow does,
+     free to do since the value is never runtime-observed either way
+     (codegen replaces the real reply mechanics with
+     `co_yield`/`co_return` on both backends). The old fall-through
+     tail move is now skipped entirely for generators (redundant, same
+     value, same type).
+   - This alone wasn't sufficient: FA needs the *reply node itself* to
+     be live, not just an earlier move into `fn->ret` — confirmed
+     empirically (a loop with a technically-reachable-but-never-taken
+     `break` compiled and ran correctly *before* this second part
+     existed; an unconditional one didn't). Fixed by inserting an
+     **opaque conditional branch straight to the function's exit label
+     (`ast->label[0]`)**, structurally present in the CFG so FA can't
+     prune it away: the branch condition is `default_ret`
+     (`__pyc_to_bool__`-coerced) — the *same* opaque
+     `_CG_generator_placeholder_return()` call already used to anchor
+     the placeholder's type, so FA treats its value as exactly as
+     unknowable as it already did for the `fn->ret` move, and can't
+     fold either arm away. At actual runtime the call always literally
+     returns `0` (falsy), so the branch is never really taken — purely
+     a reachability signal for FA, zero behavior change.
+2. **`ifa/codegen/cg.cc` (`write_c_pnode`):** added the missing
+   `is_generator` case to the dead-reply fallback, emitting
+   `co_return;` (mirroring the live-reply arm) instead of falling
+   through to a plain `return`.
+
+The LLVM backend needed **no changes at all** — its `is_generator`
+`P_prim_reply` handling (`emit_block_terminator`, from the LLVM
+backend's own landing above) never reads the reply's value (`rvals[3]`)
+in the first place, so it was already agnostic to whether the reply
+node was live or dead; once the frontend fix gave FA a correctly-typed
+`fn->ret`, both backends worked without further changes.
+
+### Verified
+
+Added `tests/generator_infinite.py` (`.exec.check` committed): an
+unconditional `while True: yield i` counter driven by repeated
+`.__next__()`, plus an unconditional-loop generator driven by
+`.send()` into a paused `x = yield total` expression (exercising the
+infinite-loop fix together with the existing `.send()` mechanism) —
+both byte-for-byte matching real `python3` on **both** backends. Full
+regression suite clean on both: `test_pyc.py` and `PYC_FLAGS=-b
+test_pyc.py` each 237 passed / 0 failed / 6 expected fails / 4
+skipped (one more pass than before — the new test). `ifa`'s own unit
+suite (`./ifa --test`, 58 tests, exercises the shared `cg.cc` change)
+also clean.
