@@ -1,6 +1,9 @@
 # Issue 030: `with` never calls `__exit__` when the body raises
 
-**Status:** open. Found 2026-07-20 while auditing
+**Status:** **closed 2026-08-03** — fixed via option 1 of the
+proposed fix sketch (direct IF1-level desugaring, not literal
+try/except AST synthesis). See "Fix landed" below.
+Found 2026-07-20 while auditing
 [closed/012](closed/012-with-statement-unimplemented.md) (`with`
 statement) for staleness — its own original text anticipated exactly
 this gap and deferred it pending exception support, but that
@@ -152,3 +155,116 @@ program relying on `with` for exception-safe cleanup (the majority of
 its real-world motivation) gets silently-wrong-instead-of-crashing
 behavior: no diagnostic, just a resource leak or a suppressed
 exception that should have propagated.
+
+## Fix landed (2026-08-03)
+
+**"Investigation notes" resolved first:** checked how `finally` is
+implemented (`PY_try_stmt` in `python_ifa_build_if1.cc`) before
+writing any code. It's built entirely inline and statement-position-
+specific — a local `Lresume`/`Ldispatch` label pair and `try_stack`
+frame scoped to that one AST node — there is no general, reusable
+"run this on any unwind past this point" hook to plug `with` into.
+That ruled out the fix sketch's option 2 (extend finally's existing
+hook) and confirmed option 1 (desugar `with` to reuse the *mechanism*
+`try`/`except` already has, i.e. `ctx.try_stack`/`exc_slot`/
+`goto_exc_target`/`emit_exc_check`) was the only one actually
+available, done as **direct IF1 construction** rather than literal
+AST-to-AST synthesis — this codebase has no precedent for the latter
+(every construct lowers straight to IF1 in its own `build_if1_pyda`
+case), and issue 014's `yield from` had already established the exact
+template for a try/except-shaped desugaring built this way (a real
+`ctx.try_stack` frame + `emit_exc_check`/`goto_exc_target`, mirrored
+here almost line-for-line).
+
+### Design
+
+`build_if1_with_items` (`python_ifa_build_if1.cc`) now wraps each
+with-item's body/nested-items in a real `ctx.try_stack` frame before
+recursing, exactly `PY_try_stmt`'s own approach — so a `raise`
+anywhere inside (direct, or via any nested call's post-call
+`emit_exc_check`) routes to a new `Ldispatch` label instead of
+propagating untouched:
+
+```
+cm = EXPR.__enter__() result already bound (unchanged)
+try_stack.push({Ldispatch, fun})
+<recurse into nested with-items / body>
+try_stack.pop()
+# normal completion (no exception): unconditional __exit__(None, None, None), unchanged
+goto Ldone
+
+Ldispatch:
+  exc = __pyc_exc__; __pyc_exc__ = None      # save + clear
+  suppress = cm.__exit__(None, exc, None)     # real exception VALUE passed
+  if to_bool(suppress): goto Ldone
+  __pyc_exc__ = exc                           # restore
+  goto <outer exc target, computed AFTER this item's try_stack pop>
+
+Ldone:
+```
+
+`ctx.with_stack` (the pre-existing mechanism `return`/`break`/
+`continue` use) is left completely untouched, running alongside the
+new `try_stack`-based path — the two mechanisms track the same
+nesting for different unwind reasons, exactly as `try_stack` and
+`with_stack` already coexisted independently before this fix.
+Recursion naturally gives correct nested-`with`/comma-form ordering
+(innermost `__exit__` first) for free, the same way `PY_try_stmt`'s
+own nesting does, with no extra bookkeeping.
+
+**Deliberately out of scope** (matching the fix sketch's own "either
+way" framing on this point): `__exit__`'s `type`/`traceback`
+arguments stay `sym_nil` always — pyc's exception model has no
+type()-of-instance or traceback-object concept to construct them
+from; only `value` (the real exception instance) is passed, which is
+what every practical `__exit__` implementation actually inspects.
+`__exit__` itself raising is not specially chained (no post-call
+check on that call) — unchanged from the pre-existing normal-
+completion `__exit__` call just above it, which never checked either.
+
+**No syms-pass change needed.** Checked whether `with` needs to arm
+`pyc_program_has_raise` (`python_ifa_build_syms.cc`) the way issue
+014's `yield`/`yield from` had to — it doesn't: unlike a generator's
+`StopIteration` (raised from *builtin* module code invisible to the
+"any user-level raise" scan), `with`'s new dispatch relies on
+`emit_exc_check` firing for calls *inside the user's own with-body*,
+and any user-level `raise`/`assert` anywhere in the reachable program
+already arms the gate globally (confirmed `PY_try_stmt`/`PY_with_stmt`
+themselves don't arm it either, in `build_syms_pyda` — same
+"nothing to catch if nothing can raise" reasoning already applies to
+plain `try`/`except`, `with` just needed to match it).
+
+### Verified
+
+All six verification-plan items, each checked against real `python3`
+output on **both** backends:
+1. The issue's own repro (`__exit__` returns `True`) — `enter / body /
+   exit / after with / done`, byte-for-byte.
+2. `__exit__` returns `False` — exception still propagates to the
+   outer `try`/`except`, `__exit__` still ran first with the real
+   exception value.
+3. `__exit__` receives the real exception *value* (confirmed:
+   `print("exit", b)` inside `__exit__` prints the actual message,
+   not `None`) — `type`/`traceback` remain `None` per the documented
+   scope limit above.
+4. Nested `with`s: innermost `__exit__` runs first, then each
+   enclosing one, before reaching the outer `try`/`except` — verified
+   3 levels deep (2 nested `with`s + outer `try`).
+5. Comma-form `with A, B:` additionally verified: when the inner
+   item's `__exit__` suppresses, the outer item's `__exit__` still
+   runs normally afterward with `(None, None, None)` (its own child
+   block completed "normally" from its perspective) — matches
+   CPython exactly.
+6. `tests/with_basic.py`, `with_break.py`, `with_return.py` (the
+   non-exception paths) pass unchanged on both backends.
+7. New test `tests/with_exception.py` + `.exec.check` added, covering
+   suppress / propagate / nested / comma-form-inner-suppress in one
+   file, byte-for-byte matching real `python3` on both backends (no
+   `.python.expect_fail` needed — plain Python, no pyc-only FFI).
+
+Full regression suite clean on both: `test_pyc.py` and `PYC_FLAGS=-b
+test_pyc.py` each 238 passed / 0 failed / 11 expected fails / 4
+skipped (one more pass than before — the new test). `ifa`'s own unit
+suite (`./ifa --test`, 58 tests) also clean. Grepped the shedskin
+corpus for `with` usage — zero hits, so no corpus regression surface
+for this change.

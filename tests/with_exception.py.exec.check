@@ -1,0 +1,25 @@
+== suppressed ==
+enter-suppress
+body-suppressed
+exit-suppress boom1
+after-suppressed
+== propagated ==
+enter-nosuppress
+body-propagated
+exit-nosuppress boom2
+caught: boom2
+== nested ==
+enter-nosuppress
+enter-nosuppress
+body-nested
+exit-nosuppress boom3
+exit-nosuppress boom3
+caught: boom3
+== comma form, inner suppresses ==
+enter-nosuppress
+enter-suppress
+body-comma
+exit-suppress boom4
+exit-nosuppress None
+after-comma
+done

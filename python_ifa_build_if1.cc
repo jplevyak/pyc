@@ -2173,12 +2173,72 @@ static void build_if1_with_items(PyDAST *stmt_node, int item_idx, PycCompiler &c
     build_if1_assign_target(tgt, &temp_v, ast, ctx);
   }
   
+  // issues/030: `with`'s cleanup used to only fire on normal
+  // fallthrough, `return`, and loop `break`/`continue` (via
+  // ctx.with_stack below, unchanged) -- a `raise` inside the body (or
+  // any call it makes) unwound straight past every enclosing
+  // `__exit__` untouched, dropping its side effects AND its ability
+  // to suppress the exception by returning truthy. Fixed by wrapping
+  // the body/nested-items in a real ctx.try_stack frame, exactly
+  // PY_try_stmt's own mechanism (see that case's comment for the
+  // general shape): any raise or post-call check inside now routes to
+  // Ldispatch instead of propagating untouched. Mirrors CPython's own
+  // desugaring (PEP 343):
+  //   VAR = EXPR.__enter__()
+  //   try:
+  //     BODY
+  //   except BaseException as e:
+  //     if not EXPR.__exit__(None, e, None): raise
+  //   else:
+  //     EXPR.__exit__(None, None, None)
+  // -- built directly via IF1 primitives rather than literal AST
+  // synthesis (this codebase has no AST-to-AST desugaring precedent;
+  // issue 014's `yield from` established the same direct-construction
+  // pattern for an equivalent try/except-shaped desugaring).
+  // Deliberately out of scope: `type`/`traceback` are always sym_nil
+  // (pyc's exception model has no type()-of-instance or traceback
+  // object to pass -- only `value` carries the real exception, the
+  // one piece every practical `__exit__` actually inspects); and
+  // __exit__ itself raising is not specially chained here, same as
+  // the pre-existing normal-completion call just below never checked
+  // that either.
+  Label *Ldispatch = if1_alloc_label(if1);
+  Label *Ldone = if1_alloc_label(if1);
+
   ctx.with_stack.add(WithCleanup{cm->rval, ctx.loop_depth});
+  ctx.try_stack.add(PycTryFrame{Ldispatch, ctx.fun()});
   build_if1_with_items(stmt_node, item_idx + 1, ctx, ast);
+  ctx.try_stack.n--;
   ctx.with_stack.n--;
-  
+
+  // Normal completion (body/nested items ran with no exception
+  // pending) -- the original unconditional __exit__ call, unchanged.
   Sym *exit_val = new_sym(ast);
   call_method(&ast->code, ast, cm->rval, make_symbol("__exit__"), exit_val, 3, sym_nil, sym_nil, sym_nil);
+  if1_goto(if1, &ast->code, Ldone)->ast = ast;
+
+  if1_label(if1, &ast->code, ast, Ldispatch);
+  Sym *exc = new_sym(ast);
+  if1_move(if1, &ast->code, exc_slot(ctx), exc, ast);
+  if1_move(if1, &ast->code, sym_nil, exc_slot(ctx), ast);
+  Sym *suppress_raw = new_sym(ast);
+  call_method(&ast->code, ast, cm->rval, make_symbol("__exit__"), suppress_raw, 3, sym_nil, exc, sym_nil);
+  Sym *suppress_bool = new_sym(ast);
+  call_method(&ast->code, ast, suppress_raw, sym___pyc_to_bool__, suppress_bool, 0);
+  Label *Lpropagate = if1_alloc_label(if1);
+  Code *ifcode = if1_if_goto(if1, &ast->code, suppress_bool, ast);
+  if1_if_label_true(if1, ifcode, Ldone);
+  if1_if_label_false(if1, ifcode, Lpropagate);
+  if1_label(if1, &ast->code, ast, Lpropagate);
+  if1_move(if1, &ast->code, exc, exc_slot(ctx), ast);
+  // exc_transfer_target computed AFTER this with-item's own try_stack
+  // frame was popped above, so it correctly resolves to whatever
+  // encloses THIS with statement (an outer try/with, the function's
+  // return label, or module-unhandled) -- exactly PY_try_stmt's
+  // `escape` computation.
+  goto_exc_target(&ast->code, ast, ctx, exc_transfer_target(ctx));
+
+  if1_label(if1, &ast->code, ast, Ldone);
 }
 
 // issue 027 feature: find the function stored under `name` on class
