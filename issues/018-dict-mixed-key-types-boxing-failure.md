@@ -102,6 +102,40 @@ same-container-type CreationSets with divergent element types) and
 should resolve this issue's BOXING failure as a side effect once it
 lands, without this issue needing its own separate fix.
 
+## Scope confirmed broader (2026-08-03): a single heterogeneous `list` literal hits this too, not just cross-instance dict/set
+
+Found while investigating an apparent `isinstance(x, list)`-vs-union
+bug (`ifa/issues/025`), which turned out to be a downstream symptom of
+this exact issue reached through a different, previously-untested
+shape. This issue's own filing and repro are about **two separate,
+internally-consistent** containers (an all-`int`-keyed dict and an
+all-`str`-keyed dict) sharing a method across instances. A **single
+`list` literal whose own elements already mix basic types** hits the
+identical BOXING violation and crash, with no cross-instance sharing
+involved at all:
+
+```python
+lst = [1, "hello"]
+for v in lst:
+    print(v)
+```
+
+Compiles with the same `warning: 'v' has mixed basic types:( int64
+str )`, and **crashes at runtime**: `assert(!"runtime error: matching
+function not found")` — worse than this issue's own original repro
+(a clean compile failure), since it compiles "successfully" (with
+warnings) and only fails when actually run. Confirmed independent of
+`isinstance`: `print(v)` alone triggers it; `len(lst)` (which never
+touches an individual element) does not. Likely the harder of the two
+shapes for `075`'s CSM to resolve on its own — CSM specializes a
+*shared method* per receiver element-CS, which presumes each
+*instance* is internally monomorphic to begin with (matching this
+issue's own original dict/set repro); a list literal whose elements
+are already a mixed-basic-type union within one instance has no
+consistent per-instance element-CS to specialize by in the first
+place. Worth reconfirming against 075's design once that work is
+picked up — flagging now so it isn't assumed covered "for free."
+
 ## Verification plan
 
 1. The repro above compiles and both `squares[3]` (9) and
