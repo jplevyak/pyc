@@ -436,7 +436,12 @@ void _CG_event_loop_run(void* initial_hdl) {
         _CG_TimerTask* task = _CG_timer_queue_head;
         _CG_timer_queue_head = task->next;
         _CG_event_loop_spawn(task->hdl);
-        free(task);
+        /* task is GC_MALLOC'd, not malloc'd -- issues/022 follow-up:
+         * found while wiring up the first real caller of
+         * _CG_event_loop_sleep; mirrors the "removed free(task)"
+         * convention already used for _CG_ReadyTask/_CG_IoTask just
+         * above in this same function -- calling libc free() on
+         * Boehm-GC memory is undefined behavior, not a no-op. */
       }
     }
   }

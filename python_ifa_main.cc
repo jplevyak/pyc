@@ -65,6 +65,10 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
     fprintf(fp, "co_await _CG_Await_Net_Write{(int)%s};\n", n->rvals[5]->cg_string);
     return;
   }
+  if (name && !strcmp(name, "__pyc_sleep__")) {
+    fprintf(fp, "co_await _CG_Await_Sleep{(double)%s};\n", n->rvals[5]->cg_string);
+    return;
+  }
   fputs(name, fp);
   fputs("(", fp);
   int first = 1;
@@ -137,6 +141,7 @@ static void add_primitive_transfer_functions() {
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
   prim_reg(cannonicalize_string("__pyc_net_wait_read__"), return_nil_transfer_function)->is_visible = 1;
   prim_reg(cannonicalize_string("__pyc_net_wait_write__"), return_nil_transfer_function)->is_visible = 1;
+  prim_reg(cannonicalize_string("__pyc_sleep__"), return_nil_transfer_function)->is_visible = 1;
 }
 
 /*

@@ -1,5 +1,5 @@
 async def my_io():
-    f = open("tests/async_simple.py", "r")
+    f = open("async_simple.py", "r")
     return f.read(10)
 
 async def main():
@@ -7,4 +7,4 @@ async def main():
     val = await my_io()
     print(val)
 
-main()
+res = __pyc_c_call__(int, "_CG_run_coro", int, main())

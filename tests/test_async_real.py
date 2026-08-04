@@ -10,4 +10,4 @@ async def main():
     val = await get_value(get_arg())
     print("Value:", val)
 
-main()
+res = __pyc_c_call__(int, "_CG_run_coro", int, main())

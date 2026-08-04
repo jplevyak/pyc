@@ -260,6 +260,21 @@ struct _CG_Await_Net_Write {
   int await_resume() const noexcept { return 0; }
 };
 
+// issues/022 follow-up: mirrors _CG_Await_Net_Read/Write -- registers
+// a timed wakeup (_CG_event_loop_sleep, pyc_runtime.c) instead of an
+// fd, so `await`ing this actually suspends the coroutine and lets the
+// event loop's poll() timeout carry it back at (or after) the
+// requested time, rather than resuming immediately like a bare
+// value-returning stub would.
+struct _CG_Await_Sleep {
+  double seconds;
+  bool await_ready() const noexcept { return false; }
+  void await_suspend(std::coroutine_handle<> h) noexcept {
+    _CG_event_loop_sleep(h.address(), seconds);
+  }
+  void await_resume() const noexcept {}
+};
+
 #endif
 
 /* --- Micro-Core: Memory Interface --- */
