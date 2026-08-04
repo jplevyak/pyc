@@ -653,6 +653,39 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       return 1;
     }
   }
+  // ifa/issues/025 Case 2 (cross-referenced from ifa/issues/030):
+  // isinstance(obj, cls) used to always route through
+  // __pyc__/05_builtins.py's one-line Python wrapper
+  // (`__pyc_primitive__(__pyc_symbol__("isinstance"), obj,
+  // __pyc_clone_constants__(ci))`), which suffers the exact
+  // clone-sharing risk PY_try_stmt's except-clause dispatch (below)
+  // already avoids: once a program checks TWO different classes
+  // anywhere, FA can generalize both calls into ONE shared clone
+  // taking a runtime class value instead of a separate monomorphic
+  // clone per distinct class argument -- confirmed via a concrete
+  // repro (ifa/issues/025) that this shared clone gets mis-folded to
+  // an unconditional `return 0`, so `isinstance(a, Dog)` and
+  // `isinstance(a, Cat)` both silently returned False for a
+  // union-typed `a` (e.g. iterating a heterogeneous list), even
+  // against a genuine Dog/Cat instance. Fixed the same way every
+  // OTHER isinstance check in this file already works around it (see
+  // the raw-send comment on the except-clause case below, and the `x
+  // is None`/match-case/yield-from StopIteration sites): build the
+  // `sym_primitive`/"isinstance" send directly at THIS call site
+  // instead of going through the shared wrapper -- each call site
+  // then gets its own genuinely monomorphic send with a compile-time-
+  // constant class operand, nothing left to merge across call sites.
+  if (f && pos_args.n == 2 && f->name && !strcmp(f->name, "isinstance")) {
+    PycSymbol *isinstance_sym = make_PycSymbol(ctx, "isinstance", PYC_USE);
+    if (isinstance_sym && f == isinstance_sym->sym) {
+      PycAST *obj_ast = getAST(pos_args[0], ctx);
+      PycAST *cls_ast = getAST(pos_args[1], ctx);
+      ast->rval = new_sym(ast);
+      if1_send(if1, &ast->code, 4, 1, sym_primitive, make_symbol("isinstance"), obj_ast->rval, cls_ast->rval,
+                ast->rval)->ast = ast;
+      return 1;
+    }
+  }
   // open(path, mode) with a LITERAL, non-fstring mode string containing
   // 'b': lower to open_binary(path, mode) instead (__pyc__/07_file.py),
   // so `.read()` yields bytes -- matching CPython's real mode-dependent
