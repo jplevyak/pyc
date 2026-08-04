@@ -34,6 +34,7 @@ extern char *_CG_str_from_int(int64 x);
 extern char *_CG_str_from_float(double d);
 extern double _CG_str_to_float64(char *s);
 extern int64 _CG_str_to_int64(char *s);
+extern int64 _CG_str_to_int64_base(char *s, int base);
 extern char *_CG_group_digits(const char *core, char sep);
 extern char *_CG_pad_align(const char *core, int width, char align, char fill, int sign_len);
 extern void  _CG_parse_format_spec(const char *spec, _CG_FormatSpec *out);
@@ -306,6 +307,51 @@ int _CG_net_write_str(int fd, const char* str) {
     printf("write failed: %s\n", strerror(errno));
   }
   return res;
+}
+
+int _CG_net_socket(int family, int type, int proto) {
+  return socket(family, type, proto);
+}
+
+int _CG_net_bind(int fd, const char* host, int port) {
+  struct sockaddr_in server;
+  memset(&server, 0, sizeof(server));
+  server.sin_family = AF_INET;
+  server.sin_port = htons((uint16_t)port);
+  if (!host || strlen(host) == 0 || strcmp(host, "0.0.0.0") == 0) {
+    server.sin_addr.s_addr = INADDR_ANY;
+  } else {
+    inet_pton(AF_INET, host, &server.sin_addr);
+  }
+#ifdef __APPLE__
+  server.sin_len = sizeof(server);
+#endif
+  int opt = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+  return bind(fd, (struct sockaddr *)&server, sizeof(server));
+}
+
+int _CG_net_listen(int fd, int backlog) {
+  return listen(fd, backlog);
+}
+
+int _CG_net_accept(int fd) {
+  struct sockaddr_in client;
+  socklen_t len = sizeof(client);
+  return accept(fd, (struct sockaddr *)&client, &len);
+}
+
+int _CG_net_close(int fd) {
+  return close(fd);
+}
+
+int _CG_net_poll_read(int fd, int timeout_ms) {
+  struct pollfd pfd;
+  pfd.fd = fd;
+  pfd.events = POLLIN;
+  pfd.revents = 0;
+  int res = poll(&pfd, 1, timeout_ms);
+  return (res > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) ? 1 : 0;
 }
 
 void _CG_event_loop_register_io(void* hdl, int fd, int events) {

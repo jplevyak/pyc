@@ -50,7 +50,15 @@ class list:
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
                              __pyc_clone_constants__(key), value)
   def __delitem__(self, key):
-    pass
+    return self.__pyc_setslice__(key, key + 1, 1, [])
+  def remove(self, item):
+    i = 0
+    while i < self.__len__():
+      if self[i] == item:
+        self.__delitem__(i)
+        return None
+      i += 1
+    return None
   def __iter__(self):
     return __list_iter__(self)
   def __contains__(self, item):

@@ -13,6 +13,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <poll.h>
+#include <arpa/inet.h>
 
 #ifdef __cplusplus
 #include <coroutine>
@@ -27,6 +29,12 @@ void __pyc_net_wait_read__(int fd);
 int _CG_net_connect(int fd, const char* host, int port);
 char* _CG_net_read_str(int fd, int size);
 int _CG_net_write_str(int fd, const char* data);
+int _CG_net_socket(int family, int type, int proto);
+int _CG_net_bind(int fd, const char* host, int port);
+int _CG_net_listen(int fd, int backlog);
+int _CG_net_accept(int fd);
+int _CG_net_close(int fd);
+int _CG_net_poll_read(int fd, int timeout_ms);
 
 #ifdef __cplusplus
 }
@@ -517,6 +525,7 @@ inline char *_CG_str_from_float(double d) {
 // string yields 0.0 / 0 rather than raising ValueError.
 inline double _CG_str_to_float64(char *s) { return strtod(s, 0); }
 inline int64 _CG_str_to_int64(char *s) { return (int64)strtoll(s, 0, 10); }
+inline int64 _CG_str_to_int64_base(char *s, int base) { return (int64)strtoll(s, 0, base); }
 
 // File I/O helpers for the library-level file object (__pyc__/07_file.py:
 // open(), read/readline/write/close, sys.std{in,out,err}, input()).

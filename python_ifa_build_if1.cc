@@ -850,6 +850,35 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
         return 1;
       }
     }
+  }
+  // int(x, base): a direct 2-arg call, e.g. int(hexStr, 16). Like the
+  // zero-arg forms above, int is Type_ALIAS (not Type_RECORD, see the
+  // comment above this function's `if (f && pos_args.n == 0)` block) so
+  // it never gets a __new__/__init__ dispatch target -- build the raw
+  // __pyc_c_call__("_CG_str_to_int64_base", ...) send directly, the same
+  // shape build_if1_pyda's own sym___pyc_c_call__ case builds for a
+  // literal __pyc_c_call__(...) call.
+  if (f && f->name && !strcmp(f->name, "int") && pos_args.n == 2) {
+    PycSymbol *int_cls = make_PycSymbol(ctx, "int", PYC_USE);
+    if (int_cls && f == int_cls->sym) {
+      PycAST *a0 = getAST(pos_args[0], ctx);
+      PycAST *a1 = getAST(pos_args[1], ctx);
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, sym_primitive);
+      if1_add_send_arg(if1, send, sym___pyc_c_call__);
+      if1_add_send_arg(if1, send, sym_int64);
+      if1_add_send_arg(if1, send, make_string("_CG_str_to_int64_base"));
+      if1_add_send_arg(if1, send, sym_string);
+      if1_add_send_arg(if1, send, a0->rval);
+      if1_add_send_arg(if1, send, sym_int64);
+      if1_add_send_arg(if1, send, a1->rval);
+      ast->rval = new_sym(ast);
+      if1_add_send_result(if1, send, ast->rval);
+      send->rvals.v[2]->is_fake = 1;
+      return 1;
+    }
+  }
+  if (f && pos_args.n == 0) {
     if (f->name && !strcmp(f->name, "float")) {
       PycSymbol *float_cls = make_PycSymbol(ctx, "float", PYC_USE);
       if (float_cls && f == float_cls->sym) {

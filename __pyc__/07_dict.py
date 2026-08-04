@@ -102,6 +102,8 @@ class dict:
       i += 1
     return default
   def update(self, other):
+    if other is None:
+      return self
     for k in other:
       self[k] = other[k]
     return self
