@@ -12,7 +12,31 @@
 that fix; reproduces identically with two plain flat dict literals
 and zero comprehension code involved. Also affects `set` (issue
 008's new class) identically — same shared-linear-scan-comparison
-shape, same failure.
+shape, same failure. Not a literal duplicate of any single
+`ifa/issues/` file, but the same underlying gap as
+[ifa/issues/063](../ifa/issues/063-no-type-bucket-triage.md) (diagnosis)
+/ [ifa/issues/075](../ifa/issues/075-element-cs-method-split-idempotent-plan.md)
+(concrete build plan) — pyc's shared `list`/`dict` container methods
+aren't cloned per element/key-CS, so a program with two
+differently-keyed dict instances gets one merged AVar for `key`
+across both; 063 states this almost verbatim ("the single
+`dict.__getitem__` contour reads one element AVar that is the union
+of [multiple element types]") for the object-key/NOTYPE flavor, and
+this issue is the basic-scalar-key/BOXING flavor of the identical
+mechanism — 075's CSM (clone container methods per element-CS)
+should fix both together. Also already informally paired with
+[ifa/issues/030](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+elsewhere in the tree (`ifa/issues/073`, `ifa/issues/README.md` both
+say "the 018/030 heterogeneous-union boxing family") — 030's classtag
+dispatch is for object/class receivers though, so it doesn't directly
+cover this issue's raw `int`/`str` scalar union; it's the sibling
+bucket, not the fix vehicle. Confirmed via code: `__pyc__/04_sequence.py`
+(list) already opts into `__pyc_clone_constants__`/`clone_methods_per_cs`
+(closed [ifa/issues/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md));
+`__pyc__/07_dict.py` has none — but 045's mechanism is
+receiver-*identity*-based (same type, different instance, e.g.
+empty vs non-empty list), not element-*type*-based, so opting dict
+into it alone would not fix this issue even if done.
 
 ## Symptom
 
@@ -69,6 +93,14 @@ per-key-type specialization" (mirroring how other generic containers
 apparently already get this right, e.g. `list` holding different
 element types across separate instances works fine per the existing
 test suite and this session's issue 017 stress-testing).
+
+**Update:** the second option is the one already being pursued, one
+level down — see the "Related" cross-references above. `ifa/issues/075`'s
+CSM (element-CS container-method separation) is designed for exactly
+this shape (a shared `list`/`dict` method whose receiver is a union of
+same-container-type CreationSets with divergent element types) and
+should resolve this issue's BOXING failure as a side effect once it
+lands, without this issue needing its own separate fix.
 
 ## Verification plan
 
