@@ -110,12 +110,31 @@ def run_test(g, args, envs):
     # SKIP_DET_CHECK=1.
     if not os.environ.get("SKIP_DET_CHECK"):
         det_base = name[:-3] if name.endswith(".py") else name
-        art = None
-        for cand in (f"{name}.c", f"{det_base}.ll"):
-            p = os.path.join(build_dir, cand)
-            if os.path.exists(p):
-                art = p
-                break
+        # Root-caused 2026-08-04: this used to probe for *either*
+        # artifact by existence (`.c` first, then `.ll`) and take
+        # whichever was found -- if a build_dir isn't perfectly clean
+        # between a C-backend run and an LLVM-backend run for the same
+        # test name (--keep across a backend switch, or a partial
+        # shutil.rmtree that leaves a few files behind under
+        # ignore_errors=True), the CURRENT backend's compile never
+        # touches the OTHER backend's stale leftover file, so the
+        # probe finds and "recompiles" a file the current run's `cmd`
+        # can never regenerate -- an artifact that is genuinely
+        # missing after the second compile, misreported as
+        # "DET-RECOMPILE: second identical compile had a different
+        # outcome" even though nothing about the compiler was
+        # nondeterministic. Select the candidate deterministically
+        # from the backend actually being invoked instead of probing:
+        # a C-backend run only ever considers `.c`, an LLVM-backend
+        # run only ever considers `.ll`, so a same-name leftover from
+        # the other backend is never mistaken for this run's own
+        # artifact.
+        # Check the actual assembled `cmd` (covers a per-test `.flags`
+        # override too, not just the global PYC_FLAGS env var).
+        is_llvm = "-b" in cmd or "--llvm" in cmd
+        cand = f"{det_base}.ll" if is_llvm else f"{name}.c"
+        p = os.path.join(build_dir, cand)
+        art = p if os.path.exists(p) else None
         if art:
             first = art + ".det1"
             shutil.move(art, first)
