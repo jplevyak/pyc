@@ -18,8 +18,6 @@ class __set_iter__:
     return self._items[self._pos - 1]
 
 class set:
-  _items = []
-  _len = 0
   def __init__(self):
     # issues/017: see dict.__init__'s comment in __pyc__/07_dict.py --
     # without this, a second set instance constructed after a first one

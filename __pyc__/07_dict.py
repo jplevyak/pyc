@@ -55,22 +55,35 @@ class __dict_items_iter__:
     return r
 
 class dict:
-  _keys = []
-  _vals = []
-  _len = 0
   def __init__(self):
-    # issues/017: without this, _keys/_vals/_len stay bare class-body
-    # attributes -- shared (via the prototype-clone instantiation model)
-    # across every dict instance until each one's first write, exactly
-    # like Python's classic mutable-class-attribute footgun. A second
-    # instance constructed after a first one has already been written to
-    # silently reads/writes the wrong data (see issues/017 for the full
-    # trace). __new__() already calls __init__ fresh per instance
-    # (mirroring __dict_iter__'s own __init__ above, which has the same
-    # class-body-default-immediately-overwritten shape); giving each
-    # instance its own list objects here, rather than relying on
-    # list.append()'s return value to implicitly decouple from the
-    # shared default on first write, closes the gap.
+    # issues/017: without this, _keys/_vals/_len would need to be bare
+    # class-body attributes -- shared (via the prototype-clone
+    # instantiation model) across every dict instance until each one's
+    # first write, exactly like Python's classic mutable-class-attribute
+    # footgun. __new__() already calls __init__ fresh per instance, so
+    # giving each instance its own list objects here, rather than a
+    # class-body default, closes that gap.
+    #
+    # ifa/issues/076: _keys/_vals/_len are deliberately NOT also
+    # declared as class-body defaults (`_keys = []` above the
+    # constructor, as this class and 08_set.py's `set` both used to
+    # have). Runtime correctness didn't depend on that pair existing --
+    # __init__ always overwrites it before any instance is observable --
+    # but pyc's flow analysis models a field's type as the UNION of every
+    # setter that can reach it, not a temporal overwrite; a bare
+    # class-body default is itself a setter (the prototype-clone step
+    # copies it into every new instance before __init__ runs), so the
+    # class-level default's type NEVER left the field's inferred type
+    # even after __init__'s own fresh assignment landed. Confirmed root
+    # cause of two dict literals with different key types
+    # (`{1:1}`/`{"a":1}`) merging int/str into one union and hard-failing
+    # the C build -- removing the redundant class-body defaults here
+    # (keeping only __init__'s assignment, which was already the actual
+    # fix for issue 017's runtime bug) resolves it. Corpus effect
+    # verified net-positive, including recovering dijkstra2 (issue 075's
+    # own target) from FAIL to compiling; see that issue's doc for the
+    # one accepted trade-off (sudoku2, an already-fragile, unrelated
+    # program shifted by the changed convergence timing).
     self._keys = []
     self._vals = []
     self._len = 0
