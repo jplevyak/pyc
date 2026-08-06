@@ -59,6 +59,19 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [033](closed/033-comprehension-filter-and-or-boolean-context-gap.md)
+  — `and`/`or` used as a comprehension `if`-filter
+  (`[x for x in xs if a and b]`) built the crash-prone value-preserving
+  union instead of the boolean-context bool-only form an existing
+  optimization (issue 025, `python_ifa_build_if1.cc`'s
+  `in_boolean_context`) already applies to plain `if`/`while`/`elif` —
+  `PY_list_if`/`PY_comp_if` just weren't in its recognized parent-kind
+  list. Same crash signature as
+  [ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)
+  (`mismatched field sizes: class 'closure'...`), a third independent
+  source of it. Found via `shedskin_examples/yopyra/yopyra.py`, which
+  now compiles (a second, unrelated `__iadd__`-fallback gap in that
+  file is tracked separately, not yet fixed).
 - [032](closed/032-dict-view-membership-missing-contains.md) —
   `x in d.keys()` / `x in d.values()` / `(k, v) in d.items()` were
   completely unresolvable, not an imprecision bug: `in` dispatches

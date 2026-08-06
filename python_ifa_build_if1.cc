@@ -2974,7 +2974,21 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // motivating case (pyc issues/025).
       auto in_boolean_context = [](PyDAST *nn) {
         for (PyDAST *p = nn->parent; p; nn = p, p = p->parent) {
-          if ((p->kind == PY_if_stmt || p->kind == PY_while_stmt || p->kind == PY_elif_clause) &&
+          // PY_list_if/PY_comp_if (a comprehension's `if <test>` filter
+          // clause) share the same "children[0] is the condition" shape
+          // as PY_if_stmt/PY_while_stmt/PY_elif_clause (see
+          // build_list_comp_inner_pyda's own comment: "children =
+          // [test, list_iter?]") and are exactly as boolean-context as
+          // those -- the filter's operand VALUE is never observed, only
+          // its truthiness. Missing this case meant `if A and B:` inside
+          // a comprehension still built the value-preserving union this
+          // whole optimization exists to avoid, hitting the identical
+          // "mismatched field sizes" closure-layout crash this comment
+          // block already describes (found via
+          // shedskin_examples/yopyra/yopyra.py's `if l.strip() and
+          // l.strip()[0] != "#"` filter, str | bool).
+          if ((p->kind == PY_if_stmt || p->kind == PY_while_stmt || p->kind == PY_elif_clause ||
+               p->kind == PY_list_if || p->kind == PY_comp_if) &&
               p->children.n && p->children[0] == nn)
             return true;
           if (p->kind == PY_bool_not) return true;
