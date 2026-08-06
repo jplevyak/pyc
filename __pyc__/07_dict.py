@@ -28,6 +28,21 @@ class __dict_iter__:
     while self.__pyc_more__():
       r = r.append(self.__next__())
     return r
+  def __contains__(self, key):
+    # `x in d.keys()` / `x in d.values()`: python_ifa_build_if1.cc
+    # lowers `in` unconditionally to a direct __contains__ dispatch on
+    # the right operand (no fallback to the general iterable
+    # protocol when __contains__ is absent), and this class had none
+    # -- the dispatch could never resolve, degrading to "no type"
+    # (webserver.py's `s in self.mapSocks.keys()`). Linear scan,
+    # matching dict.__contains__'s own style below -- this is a
+    # snapshot, not CPython's O(1) hash-backed view.
+    i = 0
+    while i < self._len:
+      if self._keys[i] == key:
+        return True
+      i += 1
+    return False
 
 class __dict_items_iter__:
   _keys = []
@@ -53,6 +68,15 @@ class __dict_items_iter__:
     while self.__pyc_more__():
       r = r.append(self.__next__())
     return r
+  def __contains__(self, item):
+    # `(k, v) in d.items()` -- same gap/rationale as
+    # __dict_iter__.__contains__ above.
+    i = 0
+    while i < self._len:
+      if self._keys[i] == item[0] and self._vals[i] == item[1]:
+        return True
+      i += 1
+    return False
 
 class dict:
   def __init__(self):

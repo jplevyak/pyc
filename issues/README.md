@@ -59,6 +59,20 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [032](closed/032-dict-view-membership-missing-contains.md) —
+  `x in d.keys()` / `x in d.values()` / `(k, v) in d.items()` were
+  completely unresolvable, not an imprecision bug: `in` dispatches
+  directly to the right operand's `__contains__`
+  (`python_ifa_build_if1.cc:168`, no iterable-protocol fallback), and
+  `__pyc__/07_dict.py`'s `__dict_iter__`/`__dict_items_iter__` (what
+  those three methods return) never defined one. Found via
+  `shedskin_examples/webserver/webserver.py`
+  (`s in self.mapSocks.keys()`), reduced to a 5-line module-level
+  repro. Fixed by adding a linear-scan `__contains__` to both classes,
+  matching `dict.__contains__`'s own style. New test:
+  `tests/dict_keys_values_membership.py`. `webserver.py` now compiles
+  with zero warnings and actually serves a real HTTP request
+  end-to-end.
 - [014](closed/014-generators-yield-unimplemented.md) — generators
   (`yield`) are feature-complete on both backends: core landed
   2026-07-14 as a C++20-coroutine C backend (`is_generator`
