@@ -1872,6 +1872,58 @@ static void synthesize_derived_compare(PycCompiler &ctx, PyDAST *cdef, PycAST *a
       ->ast = ast;
 }
 
+// issue 034: CPython's data model falls back from `__i<op>__` to
+// `__<op>__` (then reassigns) when a class defines the latter but not
+// the former -- `c += x` on a class with only `__add__` is exactly
+// `c = c.__add__(x)`, not an error. pyc's augmented-assignment
+// lowering (PY_augassign, python_ifa_build_if1.cc) always sends
+// `__i<op>__` directly with no such fallback, so ANY class defining
+// only the non-in-place dunder (the common case -- most classes never
+// bother writing a separate in-place method solely for `+=`) hit an
+// unconditionally unresolvable call, degrading to a runtime assert
+// (found via shedskin_examples/yopyra/yopyra.py's `color`/`punto3d`,
+// which each define `__add__` alone). Unlike synthesize_derived
+// _compare (opt-in, `@pyc_compare` -- Python's REAL default for
+// `__eq__`/ordering is identity/unimplemented, so synthesizing them
+// unconditionally would change semantics), this reproduces CPython's
+// own UNCONDITIONAL default behavior, so it always runs when the
+// asymmetry exists -- there is no "opt out" of `+=` falling back to
+// `+` in real Python. `iopname`'s check mirrors
+// synthesize_derived_compare's "skipped if the class defines its
+// own" (own-scope only, not inherited -- same precedent, same
+// rationale: this file's existing pattern for this exact question).
+static void synthesize_default_iop(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody,
+                                    cchar *iopname, cchar *opname) {
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, iopname))) return;  // user-defined __i<op>__
+  if (!ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, opname))) return;   // no __<op>__ to fall back to
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Sym *other = new_sym(ast);  // second formal, any type
+  other->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, iopname));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, iopname));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  as.add(other);
+  Code *b = 0;
+  Sym *res = new_sym(ast);
+  call_method(&b, ast, mfn->self, if1_make_symbol(if1, opname), res, 1, other);  // return self.__<op>__(other)
+  if1_move(if1, &b, res, mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(iopname)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, iopname), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size, bool derive_compare) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
@@ -2018,6 +2070,23 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__gt__");
     synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__le__");
     synthesize_derived_compare(ctx, cdef, ast, cls, fn, &body, "__ge__");
+  }
+  // issue 034: unconditional (not opt-in, see synthesize_default_iop's
+  // own comment) -- every class that defines the non-in-place operator
+  // alone gets CPython's real default `__i<op>__` = `__<op>__` fallback.
+  if (is_record) {
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__iadd__", "__add__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__isub__", "__sub__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__imul__", "__mul__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__itruediv__", "__truediv__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__imod__", "__mod__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__ipow__", "__pow__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__ilshift__", "__lshift__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__irshift__", "__rshift__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__ior__", "__or__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__ixor__", "__xor__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__iand__", "__and__");
+    synthesize_default_iop(ctx, ast, cls, fn, &body, "__ifloordiv__", "__floordiv__");
   }
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);

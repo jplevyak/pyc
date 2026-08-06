@@ -59,6 +59,20 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [034](closed/034-iadd-fallback-and-mixed-numeric-regression.md) —
+  `+=`/`-=`/etc. against a class defining only the non-in-place
+  operator (`__add__` without `__iadd__`, the common case — CPython
+  falls back to it automatically) always failed with "unresolved call
+  '__iadd__'"; fixed by auto-synthesizing the 12 `__i<op>__` →
+  `__<op>__` fallback methods (`gen_class_pyda`, unconditional, same
+  shape as `__deepcopy__`'s existing auto-synthesis). Verifying it
+  surfaced a real regression in
+  [ifa/077](../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)'s
+  own recent type-mismatch guard — it flagged ordinary `int * float`
+  as a mismatch via raw C-type-string comparison; fixed with the same
+  num_kind-based numeric tolerance 077's other half already used.
+  Found via `shedskin_examples/yopyra/yopyra.py`, which now compiles
+  with zero warnings on both backends and runs.
 - [033](closed/033-comprehension-filter-and-or-boolean-context-gap.md)
   — `and`/`or` used as a comprehension `if`-filter
   (`[x for x in xs if a and b]`) built the crash-prone value-preserving
