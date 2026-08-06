@@ -8,7 +8,17 @@ class __set_iter__:
     # .reduce, issue 025).
     return self
   def __init__(self, items, n):
-    self._items = items
+    # ifa/issues/045 (same lever __list_iter__/range and
+    # __dict_iter__ use, __pyc__/04_sequence.py/05_builtins.py/
+    # 07_dict.py): this class is shared program-wide -- every set's
+    # iteration (__iter__, __pyc_tolist__ via list(s), etc.)
+    # constructs one, so `_items`'s field type is inherently the
+    # union of every calling set's element type unless something
+    # splits them apart. __pyc_clone_constants__ on the ctor param
+    # puts this class on the clone_methods_per_cs track
+    # (gen_class_pyda): each creating contour gets its OWN iterator
+    # CS, and __pyc_more__/__next__ split per receiver CS too.
+    self._items = __pyc_clone_constants__(items)
     self._len = n
     self._pos = 0
   def __pyc_more__(self):

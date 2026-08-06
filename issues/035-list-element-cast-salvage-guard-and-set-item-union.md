@@ -4,7 +4,12 @@
 (both branches of `P_prim_set_index_object`) is fixed and verified.
 `shedskin_examples/tictactoe/tictactoe.py` now compiles clean with
 zero warnings on both backends — it does **not** yet run to
-completion; see "What's still open" below.
+completion; see "What's still open" below. A second, independent
+fix (`__pyc_clone_constants__` on `__dict_iter__`/
+`__dict_items_iter__`/`__set_iter__`'s constructors) closes the
+`webserver.py` regression a first attempt at the `set`-element-union
+gap caused — see "The `webserver.py` regression: root-caused and
+fixed" below.
 **Affects:** `ifa/codegen/cg.cc`'s `P_prim_set_index_object` (both
 the general list branch and the fixed-size tuple-list constant-index
 branch).
@@ -80,52 +85,111 @@ supplying the float remained unidentified after a `grep`-based
 search; would need the same kind of FA-level instrumentation 071's
 dig used to pin down precisely.
 
-**A promising-looking lead was tried and reverted.**
-`__set_iter__`/`__dict_iter__`/`__dict_items_iter__`
-(`__pyc__/08_set.py`/`07_dict.py`) still had the exact class-body-
-default-plus-`__init__`-override shape
-[076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md)
-fixed for `dict`/`set` themselves — flagged at the time as "not
-surveyed" in
+### The `webserver.py` regression: root-caused and fixed, 2026-08-06
+
+A first attempt removed `__set_iter__`/`__dict_iter__`/
+`__dict_items_iter__`'s class-body defaults, mirroring
+[076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md)'s
+exact `dict`/`set` fix — these three classes still had that exact
+shape, flagged at the time as "not surveyed" in
 [078](../ifa/issues/closed/078-class-body-default-plus-init-override-permanently-unions.md).
-Removing those class-body defaults (mirroring 076's exact fix)
-**did** additionally fix `shedskin_examples/loop/loop.py` (FAIL →
-`COMPILED_C`) — but did **not** fix `tictactoe.py`'s runtime crash
-(identical assert, identical contour), and **caused a real
-regression**: `shedskin_examples/webserver/webserver.py` (fixed by
-[032](closed/032-dict-view-membership-missing-contains.md), earlier
-this session) went from compiling clean back to a hard `_CG_str_eq`
-compile error (`incomplete type '_CG_any'` where `const char *` was
-expected). Reverted per this session's established rule (verify
-first, ship only if zero regressions) rather than trade one corpus
-win for another corpus loss. `__pyc__/08_set.py`/`07_dict.py` are
-unchanged from before this issue. Whoever picks this up next should
-budget for both: (a) finding *why* removing those class-body
-defaults broke `webserver.py` specifically (a `dict`-side effect,
-plausibly involving `__dict_iter__`'s own field precision feeding
-into something `parseParams`/`headers.keys()` relies on) before
-re-attempting it, and (b) the deeper `set`-element-union dig above,
-independently of whether (a) is resolved.
+That **did** additionally fix `shedskin_examples/loop/loop.py` (FAIL
+→ `COMPILED_C`) but did **not** fix `tictactoe.py`'s runtime crash,
+and **regressed `shedskin_examples/webserver/webserver.py`** (fixed
+by [032](closed/032-dict-view-membership-missing-contains.md),
+earlier this session) back to a hard `_CG_str_eq` compile error.
+Reverted at the time rather than ship a regression.
+
+**Root cause, found by direct reduction of `webserver.py` itself:**
+076's mechanism doesn't apply here the way it does to `dict`/`set`
+themselves. `dict`/`set`'s class-body defaults were *spurious* —
+`__init__` always overwrote them before any instance was observable,
+so the class-body write was provably dead weight, and removing it
+was a strict improvement. `__dict_iter__`/`__dict_items_iter__`/
+`__set_iter__` are different: they're **shared program-wide** — every
+`dict.keys()`/`.values()`/`.items()` call (and every `set` iteration)
+constructs one, so their `_keys`/`_vals`/`_items` fields are
+inherently the union of *every calling dict/set's* key/value/element
+type, not a same-instance artifact. `webserver.py` has exactly two
+such callers with genuinely different key types: `self.mapSocks.keys()`
+(int-keyed, socket file descriptors) and `headers.keys()`/
+`responseParams.keys()` (str-keyed). With the class-body defaults
+*present*, that cross-instance union happened to land on a
+salvage-friendly `_CG_any` representation everywhere it was used;
+removing them changed the union's shape into something the
+`_CG_str_eq` call site couldn't cast into — an accidental, not
+principled, interaction. Confirmed via direct reduction: a two-line
+repro (`{1: "a"}.keys()` and `{"x": 1}.keys()` both iterated in the
+same program) reproduces the identical `_CG_str_eq`/`_CG_any` error
+independent of `webserver.py` or even classes at all.
+
+**Fix:** `__list_iter__` (`__pyc__/04_sequence.py`) and `range`
+(`__pyc__/05_builtins.py`) already solve this *exact* class of
+problem — shared, program-wide iterator classes whose fields would
+otherwise union every caller's element type — via
+`__pyc_clone_constants__` on the constructor parameter
+([ifa/issues/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md)):
+it puts the class on the `clone_methods_per_cs` track in
+`gen_class_pyda`, giving each *creating contour* its own iterator
+CreationSet, with methods split per receiver CS too. Applied the same
+lever to `__dict_iter__`/`__dict_items_iter__`/`__set_iter__`'s
+`__init__` (`self._keys = __pyc_clone_constants__(keys)` etc.),
+leaving their class-body defaults untouched (reverting to the
+original, pre-076-style shape — correct here, since unlike `dict`/
+`set` themselves these classes' class-body defaults were never the
+actual problem).
+
+**Verified working, with one known, narrower, pre-existing
+limitation.** `webserver.py` and the direct two-dict-key-type repro
+both compile clean and run correctly *when the `.keys()` calls happen
+inside a function or method* — matching `webserver.py`'s actual
+structure (`WebServer.poll()`) and every corpus example's typical
+shape. The `clone_methods_per_cs` per-receiver-CS split this fix
+relies on needs a per-call-site contour to split *by*; bare top-level
+(`__main__`) code doesn't get the same per-invocation specialization
+ordinary function bodies do, so the identical `.keys()` calls written
+directly at module level (not inside any `def`) still reproduce the
+original error. Confirmed this is **pre-existing, not introduced or
+worsened** by this fix — the same module-level repro fails identically
+against the baseline *without* this change too. Not investigated
+further; `tests/dict_iter_cross_instance_keytype.py` is deliberately
+wrapped in a function to test the case this fix actually addresses.
+
+This did **not** fix `tictactoe.py`'s runtime crash (identical assert,
+identical contour before and after) — that remains the deeper
+`set`-element-union gap described above, unrelated to the iterator
+classes' own field-union mechanism.
 
 ## Verification
 
 - `ifa --test`: 58/58.
 - `tests/list_element_type_mismatch_salvage.py` (new): ordinary,
-  uniformly-typed list/tuple-list mutation through both fixed
-  branches, confirming the new guard doesn't disturb normal usage.
-  Compiles with zero warnings, output matches `python3` exactly.
+  uniformly-typed list/tuple-list mutation through both
+  `P_prim_set_index_object` branches, confirming that guard doesn't
+  disturb normal usage. Compiles with zero warnings, output matches
+  `python3` exactly.
+- `tests/dict_iter_cross_instance_keytype.py` (new): an int-keyed and
+  a str-keyed dict both calling `.keys()`/`.items()`/`in` inside a
+  function — the exact `webserver.py` regression shape. Compiles with
+  zero warnings, output matches `python3` exactly.
 - `tictactoe.py`: compiles with **zero** warnings on both backends
-  (was a hard compile error); does not yet run to completion (see
-  above).
-- `test_pyc.py`, C and LLVM backends, `PYC_CSM` unset: 243/11/0/4
-  both (242 baseline + 1 new test, 0 regressions).
-- `test_pyc.py`, C and LLVM backends, `PYC_CSM=2`: 239/11/4/4 both,
+  (was a hard compile error); does not yet run to completion (the
+  separate, still-open `set`-element-union gap above).
+- `webserver.py`: compiles with **zero** warnings on both backends and
+  runs correctly end-to-end (started the compiled binary, `curl`'d
+  it, got the correct response) — confirmed *with* the
+  `__pyc_clone_constants__` fix applied, i.e. the regression a first
+  attempt caused is closed.
+- `test_pyc.py`, C and LLVM backends, `PYC_CSM` unset: 244/11/0/4
+  both (242 baseline + 2 new tests, 0 regressions).
+- `test_pyc.py`, C and LLVM backends, `PYC_CSM=2`: 240/11/4/4 both,
   same 4 pre-existing failures.
-- `shedskin_sweep.sh`, both `PYC_CSM` settings: one clean, isolated
-  gain each (`tictactoe`: `FAIL` → `COMPILED_C`), zero regressions,
-  diffed directly against saved pre-fix `results.tsv` — confirmed
-  *after* reverting the `__set_iter__`/`__dict_iter__` attempt, so
-  this reflects only the `P_prim_set_index_object` guard.
+- `shedskin_sweep.sh`, both `PYC_CSM` settings: byte-identical to the
+  `P_prim_set_index_object`-only baseline (diffed directly against
+  saved `results.tsv`) — the `__pyc_clone_constants__` fix is
+  corpus-sweep-neutral (neither a new win nor a new loss there; its
+  value is confirmed via the direct `webserver.py` compile+run check
+  and the new regression test, not the sweep).
 
 ## What this unblocks
 
@@ -134,6 +198,12 @@ speculatively pointer/scalar-mismatched against a stored value no
 longer hits a hard build failure — matches the established
 compile-clean-but-may-runtime-assert convention (issue 056) already
 applied at every other salvage-reachable call site this investigation
-has covered. Doesn't fix the underlying `set`-element-union precision
-gap (or the `__set_iter__`/`webserver.py` interaction) — both remain
-open, described above for whoever picks them up next.
+has covered. Any program (not just `webserver.py`) with two or more
+dicts/sets of genuinely different key/value/element types calling
+`.keys()`/`.values()`/`.items()`/iterating from inside a function or
+method no longer risks the same cross-instance union — this was a
+general gap, not `webserver.py`-specific, just first found there.
+Doesn't fix the underlying `set`-element-union precision gap
+(`tictactoe.py`'s remaining runtime crash) or the narrower,
+pre-existing module-level-code limitation described above — both
+remain open for whoever picks them up next.

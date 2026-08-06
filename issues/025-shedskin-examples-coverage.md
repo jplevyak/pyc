@@ -2662,16 +2662,41 @@ specific program ever dispatches to them) — not fully traced to a
 single call site, structurally similar to
 [ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)'s
 "accumulated union, no single root cause" shape rather than a narrow
-bug. **A promising lead was tried and reverted**: `__set_iter__`/
-`__dict_iter__`/`__dict_items_iter__` (`__pyc__/08_set.py`/
-`07_dict.py`) still had the exact class-body-default-plus-`__init__`
-shape [ifa/076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md)
+bug. **A first attempt at this gap was tried and reverted**:
+`__set_iter__`/`__dict_iter__`/`__dict_items_iter__`
+(`__pyc__/08_set.py`/`07_dict.py`) still had the exact
+class-body-default-plus-`__init__` shape
+[ifa/076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md)
 fixed for `dict`/`set` themselves (flagged as "not surveyed" when
 [ifa/078](../ifa/issues/closed/078-class-body-default-plus-init-override-permanently-unions.md)
-landed). Removing them additionally fixed **`loop.py`** (FAIL →
-`COMPILED_C`, a genuine bonus corpus win) but did not fix tictactoe's
-crash and **regressed webserver.py** (032, back to a hard
-`_CG_str_eq` compile error) — reverted per this session's
-verify-before-ship rule rather than trade one corpus win for another
-loss. Full trace, including what the next attempt needs to account
-for, in [035](035-list-element-cast-salvage-guard-and-set-item-union.md).
+landed). Removing them additionally fixed `loop.py` (FAIL →
+`COMPILED_C`, a genuine bonus) but did not fix tictactoe's crash and
+regressed webserver.py (032, back to a hard `_CG_str_eq` compile
+error) — reverted per this session's verify-before-ship rule.
+
+**The webserver.py regression was then root-caused and fixed
+(2026-08-06).** 076's mechanism doesn't transfer to these iterator
+classes: `dict`/`set`'s class-body defaults were spurious (always
+overwritten before any instance was observable), but
+`__dict_iter__`/`__dict_items_iter__`/`__set_iter__` are *shared
+program-wide* — every dict's `.keys()`/`.values()`/`.items()` call
+constructs one, so their fields are a genuine cross-instance union
+(`webserver.py`'s int-keyed `self.mapSocks` and str-keyed `headers`
+both call `.keys()`), not a same-instance artifact. Confirmed via a
+minimal reduction independent of classes or `webserver.py` entirely.
+The actual fix: `__list_iter__`/`range` already solve this exact
+"shared iterator class unions every caller's element type" problem
+via `__pyc_clone_constants__` on the constructor parameter
+([ifa/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md),
+`clone_methods_per_cs` per-receiver-CS splitting) — applying the same
+lever to the three dict/set iterator classes' `__init__` fixes
+`webserver.py` without reintroducing the regression, verified via a
+new dedicated regression test and a direct compile+run+`curl` check.
+One narrower, pre-existing limitation found along the way (not
+introduced by this fix, confirmed against the prior baseline too):
+the per-receiver-CS split needs a per-call-site contour, so identical
+`.keys()` calls written directly at module level (not inside any
+function) still hit the same error — not investigated further. Full
+trace in [035](035-list-element-cast-salvage-guard-and-set-item-union.md).
+tictactoe's own runtime crash (the `set`-element union above) is
+unrelated to this mechanism and remains open.

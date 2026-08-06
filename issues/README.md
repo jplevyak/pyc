@@ -33,12 +33,22 @@ conventions are the same; the only difference is location.
   tictactoe.py` now compiles clean. Does **not** yet run: a genuine
   `set`-element type union (int64 vs float64, reachable through
   `set`'s own generic `union()`/`intersection()`/`__pyc_set_from
-  _iterable__`) still crashes it at runtime, not fully traced. A
-  promising-looking `__set_iter__`/`__dict_iter__` class-body-default
-  fix (mirroring [ifa/076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md))
-  was tried, additionally fixed `loop.py`, but regressed `webserver.py`
-  ([032](closed/032-dict-view-membership-missing-contains.md)) and was
-  reverted — full trace in the issue.
+  _iterable__`) still crashes it at runtime, not fully traced.
+  Separately: a first attempt at that gap (removing
+  `__set_iter__`/`__dict_iter__`'s class-body defaults, mirroring
+  [ifa/076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md))
+  regressed `webserver.py`
+  ([032](closed/032-dict-view-membership-missing-contains.md)) — root-
+  caused (these iterator classes are shared program-wide, so their
+  fields are a genuine cross-instance union unlike `dict`/`set`'s own
+  same-instance artifact 076 fixed) and fixed instead via
+  `__pyc_clone_constants__` per-receiver-CS splitting, the same lever
+  `__list_iter__`/`range` already use
+  ([ifa/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md)).
+  `webserver.py` now compiles and runs correctly again. One narrower,
+  pre-existing (not newly introduced) limitation remains: bare
+  module-level `.keys()` calls (outside any function) don't get the
+  same per-call-site splitting. Full trace in the issue.
 - [007-decorators-not-applied.md](007-decorators-not-applied.md)
   — **Largely fixed** by the split-identity rework: user-defined
   function decorators now apply (closure-wrapping, replacement,

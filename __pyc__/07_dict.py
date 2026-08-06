@@ -8,7 +8,24 @@ class __dict_iter__:
     # .reduce, issue 025).
     return self
   def __init__(self, keys, n):
-    self._keys = keys
+    # ifa/issues/045 (same lever __list_iter__/range already use,
+    # __pyc__/04_sequence.py and 05_builtins.py): this class is
+    # SHARED program-wide -- every dict's .keys()/.values() call
+    # constructs one, so `_keys`'s field type is inherently the union
+    # of every calling dict's key/value type, unless something splits
+    # them apart. __pyc_clone_constants__ on the ctor param puts this
+    # class on the clone_methods_per_cs track (gen_class_pyda): each
+    # creating contour gets its OWN iterator CS, and
+    # __pyc_more__/__next__/__contains__ split per receiver CS too --
+    # without it, self.mapSocks.keys() (int-keyed) and headers.keys()
+    # (str-keyed) share one CreationSet whose _keys unions int64 and
+    # str across BOTH, unrelated dicts (found via
+    # shedskin_examples/webserver/webserver.py: removing the class-
+    # body defaults below, mirroring issue 076's dict/set fix, was
+    # tried first and made this WORSE -- that fix's premise doesn't
+    # hold here, since this union is a genuine cross-instance one, not
+    # a same-instance class-body-vs-__init__ artifact).
+    self._keys = __pyc_clone_constants__(keys)
     self._len = n
     self._pos = 0
   def __pyc_more__(self):
@@ -52,8 +69,11 @@ class __dict_items_iter__:
   def __iter__(self):
     return self
   def __init__(self, keys, vals, n):
-    self._keys = keys
-    self._vals = vals
+    # ifa/issues/045: same lever, same rationale as __dict_iter__'s
+    # own __init__ above (this class is shared across every dict's
+    # .items() call the same way).
+    self._keys = __pyc_clone_constants__(keys)
+    self._vals = __pyc_clone_constants__(vals)
     self._len = n
     self._pos = 0
   def __pyc_more__(self):
