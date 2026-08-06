@@ -132,21 +132,31 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
         mismatch = !(declared->num_kind && actual->num_kind);
       } else {
         cchar *dc = declared->cg_string, *ac = actual->cg_string;
-        // _CG_any is pyc's boxed/generic placeholder (a `void*`,
-        // used whenever a union/heterogeneous value's exact type
-        // isn't statically resolved to one concrete representation,
-        // e.g. list_resize's declared `list` element vs a real
-        // call's boxed-element list) -- C implicitly, safely
-        // converts void* to/from any OTHER pointer type with no
-        // cast needed, unlike genuinely unrelated pointer types, so
-        // it's never a real mismatch paired with anything else
-        // already established as non-numeric/pointer-representable
-        // above. Confirmed a real false positive without this:
-        // __pyc__/04_sequence.py's merge/merge_in-family calls
-        // (list.__add__ and friends) declare `list` but a real
-        // call's element type can resolve to _CG_any.
-        bool either_any = (dc && !strcmp(dc, "_CG_any")) || (ac && !strcmp(ac, "_CG_any"));
-        mismatch = !either_any && dc && ac && strcmp(dc, ac);
+        // NOTE: no `_CG_any` exemption here, unlike a general
+        // declared-vs-actual comparison might want. `_CG_any` is
+        // `void*` (pyc_c_runtime.h), which C++ converts implicitly
+        // FROM any other pointer type but never TO one -- safe to
+        // exempt only when the DECLARED side's own C representation
+        // is itself void*-typedef'd (list/dict/set/tuple/... all
+        // are), so an incoming `_CG_any` argument is a void*-to-void*
+        // no-op. `strict_c_call` above scopes this entire loop to
+        // str's `_CG_str_*` comparison family exclusively, whose
+        // declared argument type is unconditionally `str` --
+        // `_CG_string`, i.e. `char*`, NOT void* -- so `dc` can never
+        // legitimately be `_CG_any` here, and an actual (`ac`) of
+        // `_CG_any` reaching one of these calls is exactly the unsafe
+        // void*-to-char* direction C++ refuses to convert implicitly.
+        // A first version of this check exempted either side being
+        // `_CG_any` unconditionally (reasoning from the list/dict/set
+        // case, where it genuinely is safe) and that masked a real
+        // bug: sudoku2.py's str.__ne__ contour, called with an actual
+        // argument that had salvaged to _CG_any, produced
+        // `_CG_str_ne(t2, t3)` with t3 typed `_CG_any` -- a hard
+        // "cannot convert 'void *' to 'const char *'" C++ compile
+        // error, not a warning, because this exemption skipped the
+        // guard str.__eq__'s sibling contour (same shape, no `_CG_any`
+        // involved that time) correctly caught.
+        mismatch = dc && ac && strcmp(dc, ac);
       }
     }
     if (mismatch) {

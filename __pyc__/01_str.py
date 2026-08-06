@@ -207,6 +207,21 @@ class str:
         return i
       i += 1
     return -1
+  def index(self, sub):
+    # str had no .index() at all -- only find() -- so `s.index(x)`
+    # fell through to whatever OTHER class's .index() dispatch
+    # resolved to (sudoku2.py's `lines[row].index(str(digit))`,
+    # `lines[row]` a str, landed in list.index's body treating the
+    # string as a list, corrupting the receiver's inferred type
+    # program-wide). Unlike list.index()'s "-1 instead of raising"
+    # (chosen before issue 011's exception support existed), str.index
+    # matches CPython exactly: raises ValueError on a missing
+    # substring, since callers rely on catching it (sudoku2.py's
+    # `except ValueError: pass` around exactly this call).
+    i = self.find(sub)
+    if i < 0:
+      raise ValueError("substring not found")
+    return i
   def replace(self, old, new):
     n = len(self)
     m = len(old)
