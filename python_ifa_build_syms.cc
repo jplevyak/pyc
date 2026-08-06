@@ -451,6 +451,136 @@ static void collect_can_raise(PyDAST *n, PycCompiler &ctx, Sym *current_fn, Map<
   for (auto c : n->children.values()) collect_can_raise(c, ctx, current_fn, resolved_calls, call_edges, raisers);
 }
 
+// issues/011/049: pyc_program_has_raise (python_ifa_build_if1.cc,
+// gates whether emit_exc_check emits ANYTHING at all) is armed by
+// build_syms_pyda at 5 specific user-code AST shapes (bare raise,
+// assert, yield/yield-expr/yield-from) -- each deliberately re-arming
+// the gate at the exact point user code becomes reachable to a
+// BUILTIN raiser (__pyc_assert_fail__, generator StopIteration),
+// since a builtin-module raise itself is excluded there (else it
+// would permanently arm every program regardless of whether user code
+// ever uses it -- see PY_raise_stmt's own comment in
+// build_syms_pyda). An ORDINARY call from user code into a builtin
+// method that raises -- e.g. str.index() (issues/037) -- was never
+// given the same treatment: no AST shape special-cased "this call's
+// target can raise". A program whose only reachable raise is through
+// such a call never armed pyc_program_has_raise, so emit_exc_check
+// skipped every exception check in the whole program -- including the
+// user's own try/except around that exact call -- and the raise's
+// own (correct in isolation) "leave fn->ret undefined on this path"
+// behaviour (goto_exc_target) became a genuine uninitialized-memory
+// read at runtime, silently, with zero compile warnings. Confirmed via
+// direct reduction: `for d in "123456789": try: s.index(d) except
+// ValueError: ...` at module level compiled clean and returned
+// garbage instead of ever reaching the except clause.
+//
+// FIRST ATTEMPT (reverted): a scanner mirroring collect_can_raise's
+// own conservative "unresolved call -> assume it can raise" rule,
+// using Sym::can_raise (transitive) for resolved plain calls. Both
+// halves turned out too broad: Sym::can_raise is TRANSITIVE (set the
+// same way for "this function directly raises" and "this function
+// calls something unresolved, e.g. a polymorphic __repr__ dispatch"
+// -- collect_can_raise conflates the two on purpose, since ITS
+// consumer, the per-call-site known_callee optimization, only cares
+// whether a check can be SKIPPED, where over-approximating is cheap).
+// `print` doesn't raise directly but calls unresolved dispatch
+// internally, so its Sym::can_raise is true -- newly arming
+// pyc_program_has_raise for every program that calls print (i.e.
+// nearly all of them) regressed --test_scoping golden traces (a new
+// __pyc_exc__ symbol lookup appears) and, worse, broke async/coroutine
+// codegen outright (`co_await t4` on a `_CG_nil_type` -- inserting
+// exception-check control flow into an async body in a new place
+// isn't safe in general). Treating every unresolved (method-dispatch)
+// call as conservative "could raise" made it worse: virtually any
+// non-trivial program calls at least one method.
+//
+// FIX: use Sym::direct_raise (ifa/if1/sym.h) instead -- set only when
+// a function's OWN body textually contains a raise (build_if1_pyda's
+// PY_raise_stmt case), not propagated through calls -- and handle
+// method calls (unresolvable to a specific Sym pre-FA; `s.index(x)`
+// could be any class's `.index`) by NAME instead of by Sym: collect
+// every builtin method name with direct_raise set (once, in
+// ast_to_if1_baseline, after the builtin module's own build_if1 has
+// run so direct_raise is populated -- see pyc_builtin_raise_names
+// below) and match a user-code method-call's attribute name against
+// that set. This precisely catches str.index() (name "index" is in
+// the set) without touching print (not in the set: print is a native
+// compiler intercept, sym_print, not a PY_funcdef-backed Sym at all,
+// so it was never a "direct_raise" candidate to begin with) or any
+// other call that merely transitively depends on something raise-
+// capable. User-level direct raisers don't need either path: a
+// user-defined function/method with its own `raise` already arms the
+// gate unconditionally via PY_raise_stmt's existing build_syms_pyda
+// case, regardless of whether it's ever called.
+static void collect_raise_names(PyDAST *n, PycCompiler &ctx, Vec<cchar *> &out) {
+  if (!n) return;
+  if (n->kind == PY_funcdef) {
+    Sym *fn_sym = getAST(n, ctx)->sym;
+    if (fn_sym && fn_sym->direct_raise && fn_sym->name) out.add(cannonicalize_string(fn_sym->name));
+  }
+  for (auto c : n->children.values()) collect_raise_names(c, ctx, out);
+}
+
+// Populated once from the builtin module, after its own build_if1 has
+// run (ast_to_if1_baseline) -- see collect_raise_names's comment
+// above. Names are cannonicalize_string-interned, so pointer equality
+// is safe for lookup.
+Vec<cchar *> pyc_builtin_raise_names;
+
+void collect_builtin_raise_names(PyDAST *builtin_pymod, PycCompiler &ctx) {
+  collect_raise_names(builtin_pymod, ctx, pyc_builtin_raise_names);
+}
+
+static bool ast_reaches_raise(PyDAST *n, PycCompiler &ctx) {
+  if (!n) return false;
+  switch (n->kind) {
+    case PY_raise_stmt:
+    case PY_assert_stmt:
+    case PY_yield_stmt:
+    case PY_yield_expr:
+    case PY_yield_from_expr:
+      return true;
+    case PY_power:
+      for (int i = 1; i < n->children.n; i++) {
+        PyDAST *trailer = n->children[i];
+        if (trailer->kind != PY_call) continue;
+        PyDAST *prev = n->children[i - 1];
+        if (prev->kind == PY_attribute && prev->children.n && prev->children[0]->str_val) {
+          // method call: `<expr>.<name>(...)` -- name isn't resolvable
+          // to a specific Sym pre-FA (any class could define it), so
+          // match by name against the builtin direct-raiser set.
+          cchar *attr = cannonicalize_string(prev->children[0]->str_val);
+          for (auto raiser : pyc_builtin_raise_names.values())
+            if (raiser == attr) return true;
+        } else if (i == 1 && n->children[0]->kind == PY_name && n->children[0]->ctx != PY_STORE) {
+          // plain call: `name(...)` -- resolvable, check direct_raise
+          // on the actual target (covers a hypothetical builtin free
+          // function that raises directly; none exist today, but this
+          // costs nothing and needs no separate name-matching path).
+          Sym *ref = getAST(n->children[0], ctx)->sym;
+          Sym *callee = nullptr;
+          if (ref) {
+            Sym *ifn = ctx.def_internal_fn.get(ref);
+            callee = ifn ? ifn : (ref->is_fun ? ref : nullptr);
+          }
+          if (callee && callee->direct_raise) return true;
+        }
+      }
+      break;
+    default:
+      break;
+  }
+  for (auto c : n->children.values())
+    if (ast_reaches_raise(c, ctx)) return true;
+  return false;
+}
+
+bool user_code_reaches_raise(Vec<PycModule *> &mods, PycCompiler &ctx) {
+  for (auto m : mods.values())
+    if (ast_reaches_raise(m->pymod, ctx)) return true;
+  return false;
+}
+
 // issue 011: compute Sym::can_raise (see its declaration, ifa/if1/sym.h)
 // for every function found across `mods` via collect_can_raise, then
 // a simple worklist fixed point propagating along call_edges --

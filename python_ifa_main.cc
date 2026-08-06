@@ -373,6 +373,12 @@ BaselineIF1State ast_to_if1_baseline(Vec<PycModule *> &builtin_mods) {
   ctx->mod = builtin_mods[0];
   build_module_attributes_if1(builtin_mods[0], *ctx, &code);
   build_if1_module_pyda(builtin_mods[0]->pymod, *ctx, &code);
+  // issues/011/049: Sym::direct_raise is only set once build_if1 has
+  // walked a function's body (PY_raise_stmt), so this has to run after
+  // the call just above, not alongside compute_can_raise near the top
+  // of this function. See user_code_reaches_raise's own comment
+  // (python_ifa_build_syms.cc) for why.
+  collect_builtin_raise_names(builtin_mods[0]->pymod, *ctx);
   finalize_types(if1);
   return {ctx, code};
 }
@@ -401,6 +407,12 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
     Vec<PycModule *> user_mods;
     for (int i = 1; i < all_mods.n; i++) user_mods.add(all_mods[i]);
     compute_can_raise(user_mods, *ctx);
+    // issues/011/049: the 5 AST-shape-specific arms in build_syms_pyda
+    // (raise/assert/yield family) miss an ordinary call into a
+    // builtin method that raises (str.index(), issues/037) -- see
+    // user_code_reaches_raise's own comment (python_ifa_build_syms.cc)
+    // for the full story.
+    if (user_code_reaches_raise(user_mods, *ctx)) pyc_program_has_raise = true;
   }
   finalize_types(if1);
   for (int i = 1; i < n_user; i++) {

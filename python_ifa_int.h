@@ -233,6 +233,25 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx);
 // over the builtin module (ast_to_if1_baseline) and once over user
 // modules (ast_to_if1_extend); see its definition for why the split.
 void compute_can_raise(Vec<PycModule *> &mods, PycCompiler &ctx);
+// issues/011/049: call once, from ast_to_if1_baseline, after the
+// builtin module's own build_if1 has run (Sym::direct_raise needs
+// PY_raise_stmt to have been walked) -- collects every builtin
+// method/function name whose OWN body directly raises, for
+// user_code_reaches_raise's method-call-by-name matching below. See
+// that function's comment (python_ifa_build_syms.cc) for the full
+// story.
+void collect_builtin_raise_names(PyDAST *builtin_pymod, PycCompiler &ctx);
+// issues/011/049: whole-program precise scan -- true if user code
+// (module top level or inside any def/lambda/method) directly raises,
+// or calls something whose target directly raises (a plain call
+// resolved to a Sym with direct_raise, or a method call whose
+// attribute name matches collect_builtin_raise_names's set). Call
+// once, after collect_builtin_raise_names, to arm pyc_program_has_raise
+// for the ordinary-call-into-a-builtin-raiser gap the 5 AST-shape arms
+// in build_syms_pyda don't cover (see this function's definition,
+// python_ifa_build_syms.cc, for why Sym::can_raise itself is too
+// broad for this).
+bool user_code_reaches_raise(Vec<PycModule *> &mods, PycCompiler &ctx);
 
 // From python_ifa_build_if1.cc:
 int build_if1_module_pyda(PyDAST *mod, PycCompiler &ctx, Code **code);

@@ -2785,3 +2785,67 @@ unrelated examples improved as a side effect of the constant-fold
 alone (`brainfuck`/`kanoodle`: warned → clean; `rubik`: FAIL →
 compiles). Full writeup:
 [036](closed/036-list-pop-insert-tuple-hash-and-unary-literal-defaults.md).
+
+### sudoku2: an unsound salvage-guard exemption and a missing `str.index()` fixed; the real runtime blocker turned out to be a third bug (2026-08-06)
+
+`sudoku2.py` hit a hard C++ compile error, `_CG_str_ne(t2, t3)`:
+`cannot convert 'void *' to 'const char *'`. Root cause:
+[ifa/077](../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)'s
+`str`-comparison salvage guard (`python_ifa_main.cc`) exempted either
+argument being `_CG_any` (`void*`) unconditionally, reasoning "void*
+converts implicitly to any pointer type" — true for `list`/`dict`/
+`set`/... (literally `typedef void *_CG_list`), false for `str`/
+`bytes` (`typedef char *_CG_string`, a genuinely different pointer
+type C++ won't implicitly convert). Since the guard is already scoped
+exclusively to `str`'s six comparison primitives, the exemption could
+only ever fire in the unsafe direction; removed it. Also added
+`str.index()` (same "missing sequence op" bucket as `list.pop`/
+`insert` above): `lines[row].index(str(digit))` was silently
+dispatching into **`list.index`'s own body**, treating the string as
+a list — the actual source of "mixed basic types (list int64 str)"
+warnings on `self.final`. With both fixes `sudoku2.py` compiled with
+zero warnings but **segfaulted at runtime** — at first attributed to
+[ifa/049](../ifa/issues/049-raise-only-contour-notype.md)'s
+raise-only-contour mechanism (three repros added to that doc), but
+that attribution was **wrong**, corrected the same day once the real
+cause was found — see the next entry. Full writeup, including the
+correction:
+[037](closed/037-sudoku2-str-ne-void-cast-and-str-index.md).
+
+### `pyc_program_has_raise` never armed for an ordinary call into a builtin raiser — sudoku2's actual blocker, fixed (2026-08-06)
+
+The real cause of sudoku2's segfault above: `pyc_program_has_raise`
+(the whole-program gate deciding whether *any* exception-checking code
+gets emitted) is armed by five specific user-code AST shapes (`raise`/
+`assert`/the three `yield` forms), each re-arming the gate at the
+point user code becomes reachable to a *builtin* raiser
+(`__pyc_assert_fail__`, generator `StopIteration`) — builtin-module
+raises are excluded from arming it directly, else `assert`'s own
+internal raise would permanently arm every program. Nobody added the
+same treatment for an *ordinary call* into a builtin method that
+raises, because until `str.index()` (the entry above) no such call
+existed. A program whose only raise is reachable that way never armed
+the gate, so no exception-checking code existed anywhere — including
+around the user's own `try`/`except` — and the raise's own,
+correct-in-isolation "leave `fn->ret` undefined" behavior became a
+silent uninitialized-memory read, zero compile warnings. A first fix
+attempt (mirroring `collect_can_raise`'s conservative "unresolved call
+→ assume it raises" rule via `Sym::can_raise`) regressed 11 tests
+(`scope_*`'s `--test_scoping` golden traces, and — more seriously —
+broke async/coroutine codegen outright): `Sym::can_raise` is
+transitive, conflating "raises directly" with "calls something
+unresolved," so `print` (which internally dispatches to unresolved
+`__repr__`/`__str__` implementations but never raises directly) looked
+like a raiser, newly arming the gate for nearly every program that
+prints anything. Landed fix uses `Sym::direct_raise` (only-this-
+function's-own-body-has-a-raise) instead, plus name-matching for
+method calls (unresolvable to a specific Sym pre-FA) against a set of
+builtin method names collected once, after the builtin module's own
+`direct_raise` bits are populated. **`sudoku2.py` now runs to
+completion, output byte-identical to `python3`.** Verified via the
+full suite (both backends, both `PYC_CSM` settings, all previously-
+regressed tests restored exactly) and a clean before/after corpus
+sweep: a single, cosmetic line-number-only diff across all 77
+examples. `ifa/049`'s own doc corrected to remove the mis-attribution;
+its actual root-cause repro (`risky`) re-verified unaffected. Full
+writeup: [038](closed/038-pyc-program-has-raise-builtin-call-gap.md).

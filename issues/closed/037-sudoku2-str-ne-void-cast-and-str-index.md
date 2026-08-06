@@ -89,42 +89,39 @@ real thing).
 With both fixes, `sudoku2.py` **compiles with zero warnings** (was a
 hard compile error).
 
-## Issue 3: a deeper, pre-existing FA bug remains — NOT fixed, mapped to `ifa/049`
+## Issue 3: a deeper, pre-existing FA bug remains — NOT fixed, mapped to `ifa/049` — CORRECTED 2026-08-06, was actually a different bug, now fixed
 
-`sudoku2.py` compiles clean but **segfaults at runtime** during
-`fread()`, before the first `print`. Root-caused (by direct reduction,
-not full FA tracing) to a shape [ifa/049](../../ifa/issues/049-raise-only-contour-notype.md)
-doesn't yet document: `fread`'s `try/except ValueError` around the new
-`str.index()` call, exercised across a loop where the digit is
-sometimes present (returns normally) and sometimes absent (raises),
-hits the same "raise path contributes nothing to `fn->ret`" FA gap
-049 already tracks — but in a shape 049's own fix verification doesn't
-cover. Confirmed via three separate minimal repros, added to 049's own
-doc:
+`sudoku2.py` compiled clean but **segfaulted at runtime** during
+`fread()`, before the first `print`. Originally attributed here to
+[ifa/049](../../ifa/issues/049-raise-only-contour-notype.md)'s
+"raise path contributes nothing to `fn->ret`" mechanism, based on
+three minimal repros that all seemed to rhyme with that bug. **That
+attribution was wrong.** The actual, sole cause, found and fixed the
+same day: [issues/038](038-pyc-program-has-raise-builtin-call-gap.md)
+— `pyc_program_has_raise` (the whole-program gate deciding whether
+*any* exception-checking code gets emitted) was never armed for an
+*ordinary call* into a builtin method that raises (`str.index()`
+above is exactly this shape), so `fread`'s own `try`/`except`
+around it had no exception-checking machinery to actually catch
+anything, and the raise's own correct-in-isolation "leave `fn->ret`
+undefined" behavior became a plain uninitialized-memory read. This is
+a build-time gate-arming gap, not an FA convergence issue — unrelated
+to 049's actual mechanism (049's own root-cause repro was re-verified
+unaffected by issue 038's fix). Of the three repros this section
+originally listed, only #3 (the loop-shaped one) was genuinely this
+bug; #1/#2 were a coincidental, separate observation (see the
+correction now in `ifa/049`'s own doc — that specific two-raiser repro
+no longer reproduces on current HEAD, apparently fixed as an
+incidental side effect of this issue's own two fixes shifting FA's
+splitting trajectory, not by design; treat as unconfirmed, not
+resolved-by-principle).
 
-1. Two independent raise-capable functions (a free function and an
-   unrelated record-class method), each individually fine, each called
-   from two *static* call sites (one raising, one not) — fails to type
-   when both exist in the same program. Confirmed pre-existing on
-   unmodified HEAD, unrelated to this issue's two fixes.
-2. The same, in miniature, is what `sudoku2.py` itself hits:
-   `fread`'s try/except is effectively a second independent raiser
-   once `str.index()` (fix #2 above) gives it something to raise.
-3. An even simpler variant found while writing this issue's own
-   regression test: **one** call site, in a loop, with a
-   runtime-varying (not literal) argument that sometimes raises and
-   sometimes doesn't — compiles with **zero warnings** but silently
-   returns garbage instead of ever reaching the `except` branch. No
-   crash, no diagnostic — a strictly worse failure mode than the other
-   two shapes' loud NOTYPE/assert.
-
-Not attempted here — this is squarely the kind of deep, whole-program
-FA convergence issue 049 already flags as needing dedicated
-instrumentation to root-cause, not a narrow fix discoverable by
-inspection. `tests/str_index.py` was deliberately trimmed to only the
-non-raising path (`.find()`/`.index()` on a present substring) once
-this surfaced, rather than asserting behavior that doesn't reliably
-work yet.
+**With issue 038's fix, `sudoku2.py` now runs to completion, output
+byte-identical to `python3`.** `tests/str_index.py` remains
+deliberately limited to the non-raising path (see that file) since
+it predates 038's fix and there was no reason to revisit its scope
+once 038 landed elsewhere; a fuller raise-path test lives in
+issue 038's own verification instead.
 
 ## Verification
 
@@ -145,8 +142,10 @@ work yet.
   (confirmed both fixes are needed together — the void*-cast fix alone
   gets a clean-with-warnings compile with `list`/`str` dispatch
   confusion still visible; adding `str.index()` clears the warnings
-  entirely) but **does not yet run to completion** (Issue 3, segfault
-  in `fread()`, mapped to `ifa/049`'s now-expanded doc).
+  entirely) and, as of [issues/038](038-pyc-program-has-raise-builtin-call-gap.md),
+  **now runs to completion, output byte-identical to `python3`** (see
+  Issue 3's correction above — the segfault was 038's bug, not a
+  separate open FA issue).
 
 ## What this unblocks
 
@@ -163,8 +162,7 @@ work yet.
   convention finally having a real counterpart for `str`).
 - `sudoku5` (a related corpus example) also progressed, apparently for
   free.
-- `ifa/049` now has three concrete, minimal, corpus-independent repros
-  for a previously single-shape-documented bug — meaningfully lowers
-  the bar for whoever picks that issue up next.
-- Does **not** unblock `sudoku2.py` running to completion — that
-  remains gated on `ifa/049`'s open FA work.
+- `sudoku2.py` running to completion — closed by
+  [issues/038](038-pyc-program-has-raise-builtin-call-gap.md), not by
+  anything in this issue directly, but `str.index()`'s introduction
+  here is what exposed 038's gap in the first place.
