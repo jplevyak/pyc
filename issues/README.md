@@ -23,6 +23,18 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [039-list-mul-shared-element-type-cross-contamination.md](039-list-mul-shared-element-type-cross-contamination.md)
+  — `list.__mul__`/`__rmul__` (`n * [x]`) shares a CreationSet/element-
+  type representation across unrelated call sites: `bh.py`'s genuinely
+  heterogeneous `Cell.subp = [None] * Cell.NSUB` (`Body | Cell`) leaks
+  into the unrelated, genuinely homogeneous `Tree.bodies = [None] *
+  nbody` (`Body`-only), producing spurious "illegal call argument
+  type... Cell" warnings. Same architectural gap as 035's tictactoe
+  finding, traced one step further and pinned specifically to
+  `list.__mul__`'s construction path. Also see
+  [ifa/079](../ifa/issues/079-single-candidate-dispatch-unchecked-cast.md),
+  a related but independent dispatch-codegen bug this same corpus
+  example exposed.
 - [035-list-element-cast-salvage-guard-and-set-item-union.md](035-list-element-cast-salvage-guard-and-set-item-union.md)
   — partially fixed: `P_prim_set_index_object` (both branches) cast
   an assigned value into a list/tuple-list's element type with no

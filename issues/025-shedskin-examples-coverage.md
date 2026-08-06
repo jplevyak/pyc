@@ -2849,3 +2849,41 @@ sweep: a single, cosmetic line-number-only diff across all 77
 examples. `ifa/049`'s own doc corrected to remove the mis-attribution;
 its actual root-cause repro (`risky`) re-verified unaffected. Full
 writeup: [038](closed/038-pyc-program-has-raise-builtin-call-gap.md).
+
+### bh: two distinct bugs found and root-caused, neither fixed yet (2026-08-06)
+
+`bh.py` (Barnes-Hut N-body simulation) compiles with two spurious
+warnings ("illegal call argument type 'b'/'q' illegal: Cell", on
+`b.hack_gravity(...)`/`q.expand_box(...)`, both methods defined only
+on `Body`, never `Cell`) and then segfaults immediately at runtime,
+no output. Two independent causes, both root-caused via direct source
+reduction, neither fixed (documented as issues per user request, not
+attempted — the first is the same deferred architecture gap
+`tictactoe.py` already has open; the second touches one of the
+hottest paths in codegen and needs its own careful pass):
+
+1. **The warnings**: `Cell.subp` (`bh.py:399`) is a genuinely
+   heterogeneous list (`Body | Cell`, a real tree-node-children field)
+   built via `[None] * Cell.NSUB`. `Tree.bodies` (`bh.py:499`) should
+   be `Body`-only, built the same way (`[None] * nbody`). Confirmed by
+   direct edit: replacing `Cell.subp`'s construction with an explicit
+   list literal (bypassing `list.__mul__`) makes both warnings vanish
+   with nothing else changed — `list.__mul__`'s shared implementation
+   is leaking `Cell.subp`'s legitimate heterogeneity into the
+   unrelated `Tree.bodies`. Same root cause `tictactoe.py`'s still-open
+   runtime crash has ([035](closed/035-list-element-cast-salvage-guard-and-set-item-union.md)),
+   traced one step further and pinned to `list.__mul__` specifically —
+   a much cleaner reproduction than tictactoe's tangled one. Full
+   writeup: [039](039-list-mul-shared-element-type-cross-contamination.md).
+2. **The segfault**: independent of #1. `b.hack_gravity(...)`'s
+   generated C is a raw, unchecked cast straight to
+   `Body::hack_gravity`'s parameter type, no runtime discrimination —
+   `cg.cc`'s polymorphic-dispatch emitter has a "single candidate"
+   fast path that assumes "no other implementation exists, so no
+   check needed," which is unsound specifically when the receiver's
+   type union has a member (here, `Cell`) with *no* implementation of
+   the method at all, rather than its own separate one. A new instance
+   of the "missing salvage guard, degrade to assert instead of unsafe
+   C" pattern issues 077/034/035/037 already fixed at other call
+   sites — this one's in method dispatch itself. Full writeup:
+   [ifa/079](../ifa/issues/079-single-candidate-dispatch-unchecked-cast.md).
