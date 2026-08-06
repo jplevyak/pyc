@@ -69,6 +69,103 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
     fprintf(fp, "co_await _CG_Await_Sleep{(double)%s};\n", n->rvals[5]->cg_string);
     return;
   }
+  // issue 077: __pyc_c_call__(ret_type, name, type1, arg1, type2, arg2,
+  // ...) declares each argument's expected type explicitly (the Vars
+  // at rvals[4], rvals[6], ... -- the odd offsets from 5 below are
+  // the actual argument VALUES). Dispatch that picked this
+  // __pyc_c_call__-based dunder body (e.g. str.__eq__) only checked
+  // the RECEIVER's type; nothing has ever verified the OTHER
+  // arguments still match what's declared here. A salvage-degraded
+  // operand reaching a comparison dunder (issue 076's mechanism, or
+  // any similar imprecision) can let them diverge -- printing the
+  // mismatched argument verbatim produces C the call was never built
+  // to accept (e.g. _CG_str_eq(t2, <int64 value>)).
+  //
+  // Deliberately scoped to a whitelist of specific target names
+  // (str's comparison family -- issue 077's own stated target),
+  // NOT applied to every __pyc_c_call__ site. Discovered the hard
+  // way (three rounds of false positives against the full corpus,
+  // ~200 failures down to 14, before finding this): some
+  // __pyc_c_call__ sites declare a type that DOESN'T match what's
+  // actually passed, on purpose, because the underlying C macro
+  // does its own internal conversion -- e.g. __pyc__/04_sequence.py's
+  // `list.__add__` declares `int, l` for `l`, a whole LIST, because
+  // `_CG_list_add`'s macro (pyc_c_runtime.h) runs each side through
+  // `_CG_to_list(...)` regardless of the nominal declared type. A
+  // per-argument type check can't distinguish "this declared type is
+  // a real constraint" from "this declared type is a placeholder the
+  // macro will reinterpret" without per-call-site knowledge nothing
+  // in the IR currently carries -- so this only runs for names known,
+  // by inspection, to take their declared types literally.
+  bool strict_c_call = name && (!strcmp(name, "_CG_str_eq") || !strcmp(name, "_CG_str_ne") ||
+                                 !strcmp(name, "_CG_str_lt") || !strcmp(name, "_CG_str_le") ||
+                                 !strcmp(name, "_CG_str_gt") || !strcmp(name, "_CG_str_ge"));
+  // The declared-type argument is a bare class reference (e.g. `str`,
+  // `int`) -- for `int` specifically that's a Type_ALIAS (Python's
+  // arbitrary-precision int aliased to pyc's fixed-width `int64`,
+  // ifa/if1/sym.cc's unalias_type), never itself the concrete
+  // specialization any real value resolves to, so a first attempt at
+  // this fix (raw cg_string / ->specializers.set_in() comparisons
+  // against the declared Sym as-is) false-positived on ~200 corpus
+  // programs before this was diagnosed. unalias_type() resolves that
+  // (confirmed empirically: unalias_type(int) and a real int64
+  // value's ->type match exactly -- name, type_kind, num_kind,
+  // num_index, cg_string). Comparing num_kind rather than requiring
+  // exact Sym/cg_string agreement tolerates the OTHER thing that
+  // turned out not to be a real mismatch: two scalar types of
+  // different width/precision (e.g. declared int64 vs an actual
+  // int32, or int vs float) -- always safely C-castable, matching
+  // how cg_emit_llvm.cc's emit_send_binop already treats int<->float
+  // and int-width differences as coercible, not an error. Only a
+  // pointer-representable type (num_kind == 0: str, bytes, records,
+  // ...) paired with a scalar one is flagged -- that's the actual
+  // danger (a straight C assignment/comparison between a pointer and
+  // an integer, this issue's whole symptom), so for two non-numeric
+  // types this still requires their C representations to agree
+  // exactly (cg_string).
+  for (int i = 5; strict_c_call && i < n->rvals.n; i += 2) {
+    Sym *declared = unalias_type(n->rvals[i - 1]->sym);
+    Sym *actual = n->rvals[i]->type;
+    bool mismatch = false;
+    if (declared && actual && declared != actual) {
+      if (declared->num_kind || actual->num_kind) {
+        mismatch = !(declared->num_kind && actual->num_kind);
+      } else {
+        cchar *dc = declared->cg_string, *ac = actual->cg_string;
+        // _CG_any is pyc's boxed/generic placeholder (a `void*`,
+        // used whenever a union/heterogeneous value's exact type
+        // isn't statically resolved to one concrete representation,
+        // e.g. list_resize's declared `list` element vs a real
+        // call's boxed-element list) -- C implicitly, safely
+        // converts void* to/from any OTHER pointer type with no
+        // cast needed, unlike genuinely unrelated pointer types, so
+        // it's never a real mismatch paired with anything else
+        // already established as non-numeric/pointer-representable
+        // above. Confirmed a real false positive without this:
+        // __pyc__/04_sequence.py's merge/merge_in-family calls
+        // (list.__add__ and friends) declare `list` but a real
+        // call's element type can resolve to _CG_any.
+        bool either_any = (dc && !strcmp(dc, "_CG_any")) || (ac && !strcmp(ac, "_CG_any"));
+        mismatch = !either_any && dc && ac && strcmp(dc, ac);
+      }
+    }
+    if (mismatch) {
+      if (!fruntime_errors) fail("argument type mismatch at C call '%s'", name ? name : "?");
+      // write_c_prim's P_prim_primitive case (this function's only
+      // caller) already wrote the "lval = " prefix -- or, if the
+      // result is dead, just "  " -- before invoking this cgfn, so
+      // this has to complete a valid C EXPRESSION, not a standalone
+      // statement. The comma operator lets the always-firing assert
+      // run first; the trailing dummy value is never reached (assert
+      // aborts) and only needs to typecheck against the destination.
+      if (n->lvals.n && n->lvals[0]->cg_string)
+        fprintf(fp, "(assert(!\"runtime error: C call argument type mismatch\"), (%s)0);\n",
+                n->lvals[0]->type ? n->lvals[0]->type->cg_string : "int");
+      else
+        fputs("(assert(!\"runtime error: C call argument type mismatch\"), 0);\n", fp);
+      return;
+    }
+  }
   fputs(name, fp);
   fputs("(", fp);
   int first = 1;
