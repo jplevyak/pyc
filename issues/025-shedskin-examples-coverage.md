@@ -2632,3 +2632,46 @@ yopyra.py scene.txt` run is slow enough (didn't produce output in
 30s) that a side-by-side comparison wasn't done. Worth a follow-up
 dig before treating yopyra as fully correct, not just "compiles and
 doesn't crash."
+
+### tictactoe: fatal compile crash fixed; a genuine runtime `set`-union crash remains (2026-08-06)
+
+`tictactoe.py` (also in the original D-bucket "syntax errors"
+grouping, also not actually a grammar gap) failed with a hard C
+error: `((_CG_void*)(...))[...] = (_CG_void)t156;` — "cannot cast
+from type '_CG_float64' to pointer type '_CG_void'". Same bug *class*
+as issue 056 (a salvage-degraded value reaching an unguarded C cast)
+but at the *value* being stored into a list, not the index —
+[056](056-degraded-index-type-raw-c-compile-error.md) only ever
+covered the index argument at these two call sites
+(`P_prim_set_index_object`'s two branches). Fixed with the same
+`num_kind`-based tolerance 077/034 already established: degrade to
+`assert(!"runtime error: list element type mismatch")` instead of
+emitting an invalid cast. **tictactoe now compiles with zero warnings
+on both backends** — full trace:
+[035](035-list-element-cast-salvage-guard-and-set-item-union.md).
+
+It does not yet *run*: the compiled binary aborts on this same new
+guard, catching a **genuine** (not salvage-artifact) `set`-element
+type union — `set`'s `_items` field needs to hold both `int64`
+(`set(fields).difference(set([0]))`, all board-cell ints) and
+`float64` (traced to a *different*, internally-shared `set()`
+construction inside `set`'s own `union()`/`intersection()`/
+`__pyc_set_from_iterable__` methods, analyzed for their own type
+while building the class's method table regardless of whether this
+specific program ever dispatches to them) — not fully traced to a
+single call site, structurally similar to
+[ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)'s
+"accumulated union, no single root cause" shape rather than a narrow
+bug. **A promising lead was tried and reverted**: `__set_iter__`/
+`__dict_iter__`/`__dict_items_iter__` (`__pyc__/08_set.py`/
+`07_dict.py`) still had the exact class-body-default-plus-`__init__`
+shape [ifa/076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md)
+fixed for `dict`/`set` themselves (flagged as "not surveyed" when
+[ifa/078](../ifa/issues/closed/078-class-body-default-plus-init-override-permanently-unions.md)
+landed). Removing them additionally fixed **`loop.py`** (FAIL →
+`COMPILED_C`, a genuine bonus corpus win) but did not fix tictactoe's
+crash and **regressed webserver.py** (032, back to a hard
+`_CG_str_eq` compile error) — reverted per this session's
+verify-before-ship rule rather than trade one corpus win for another
+loss. Full trace, including what the next attempt needs to account
+for, in [035](035-list-element-cast-salvage-guard-and-set-item-union.md).

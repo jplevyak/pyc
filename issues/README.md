@@ -23,6 +23,22 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [035-list-element-cast-salvage-guard-and-set-item-union.md](035-list-element-cast-salvage-guard-and-set-item-union.md)
+  — partially fixed: `P_prim_set_index_object` (both branches) cast
+  an assigned value into a list/tuple-list's element type with no
+  compatibility check, producing a hard C compile error on a
+  pointer/scalar mismatch (same bug class as
+  [056](056-degraded-index-type-raw-c-compile-error.md), the value
+  rather than the index) — fixed, `shedskin_examples/tictactoe/
+  tictactoe.py` now compiles clean. Does **not** yet run: a genuine
+  `set`-element type union (int64 vs float64, reachable through
+  `set`'s own generic `union()`/`intersection()`/`__pyc_set_from
+  _iterable__`) still crashes it at runtime, not fully traced. A
+  promising-looking `__set_iter__`/`__dict_iter__` class-body-default
+  fix (mirroring [ifa/076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md))
+  was tried, additionally fixed `loop.py`, but regressed `webserver.py`
+  ([032](closed/032-dict-view-membership-missing-contains.md)) and was
+  reverted — full trace in the issue.
 - [007-decorators-not-applied.md](007-decorators-not-applied.md)
   — **Largely fixed** by the split-identity rework: user-defined
   function decorators now apply (closure-wrapping, replacement,
