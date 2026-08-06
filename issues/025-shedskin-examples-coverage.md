@@ -2700,3 +2700,88 @@ function) still hit the same error — not investigated further. Full
 trace in [035](035-list-element-cast-salvage-guard-and-set-item-union.md).
 tictactoe's own runtime crash (the `set`-element union above) is
 unrelated to this mechanism and remains open.
+
+### tictactoe's "set-element union" crash: fully root-caused — it isn't about `set` at all (2026-08-06)
+
+Continued digging on the runtime crash above. **The `set`-specific
+framing was wrong about where the float comes from** (the
+"`union()`/`intersection()`/`__pyc_set_from_iterable__` analyzed
+regardless of dispatch" theory was never confirmed and turned out to
+be a red herring). Root-caused by direct reduction of `tictactoe.py`
+itself in a scratch copy, not further hand-decoding of the generated
+C. The minimal repro has nothing to do with `set`, classes, or
+tictactoe at all:
+
+```python
+n = 3
+x = n * [0]
+i = 0
+x[i] += 1.5
+```
+
+pyc backs a list with one concrete unboxed C array element type; a
+list that starts homogeneous (`int64`, `n * [0]`) and is mutated in
+place with a genuinely different scalar kind (`float64`) can't be
+represented, so FA falls back to a non-scalar element type, which
+trips `P_prim_set_index_object`'s guard (035's own fix, working as
+designed). tictactoe's actual trigger is `doRow`'s
+`scores[rown][coln] += 15 * sig(...)` (`scores` starts as
+`self.edge * [0]`, all-int). Confirmed by direct source-level
+bisection: removing both float-producing branches in `doRow` removes
+the crash with every `set(...)` call in the file untouched; the
+converse also holds — pre-typing `scores` as uniformly `float64` from
+construction removes the crash with `doRow`/`sig`/every `set(...)`
+call untouched. `set`'s `_items` field never actually receives a
+float; pyc's list-element-type inference for the general dynamic-list
+shape isn't scoped per allocation site, so `scores`'s heterogeneity
+corrupts a representation `_items` happens to share, and whichever
+list-write executes first at runtime (here, `set(row)` inside
+`isvictory()`, before `doRow` ever runs) is what's observed to
+assert — which is why the trace pointed at `set::add`→`list::append`
+and looked `set`-specific. It isn't; `set` is the first victim, not
+the source. Same class of gap as
+[018](018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+(no boxed/tagged representation for a genuine scalar-kind union); a
+silent-widening shortcut was considered and rejected (would change
+observable output, `0` → `0.0`, the same principle 035's own guard
+embodies). Left as a documented, deferred limitation per user
+direction — full writeup in
+[035](035-list-element-cast-salvage-guard-and-set-item-union.md).
+
+### sudoku1: four independent missing-builtin/compiler gaps found and fixed (2026-08-06)
+
+`sudoku1.py` (a recursive-backtracking-with-lookahead solver, in the
+same historical "getter not resolved"/D-bucket grouping as
+chaos/lz2/sokoban above) failed to compile: `list.pop(index)` and
+`list.insert(index, value)` didn't exist at all (only `set.pop()`,
+the unrelated zero-arg form, did); `tuple`/`list` had no `__hash__`
+(needed because pyc's own `tuple(dynamic_iterable)` compromise
+returns a `list`, and `sudoku1` hashes exactly that,
+`hash(tuple(puzzle[c]))`, as a board-row memo key); and — found while
+fixing the first gap — a negative-literal method default
+(`pop(self, index=-1)`) never worked on `list`/`tuple`/`str`, a
+narrower, previously-unfixed corner of this doc's own earlier
+"default arguments on non-record builtin classes never worked" note
+(that fix explicitly scoped itself to *literal* defaults and left
+*computed* ones, its own `size=-1` example, unfixed for non-record
+builtins). Root cause: `PY_unaryop` always lowered even a bare
+numeric literal under `-`/`+` to a runtime `__neg__`/`__pos__` send,
+so `-1`'s rval was never a plain constant Sym for the existing
+literal-default fast path to recognize. Fixed by constant-folding a
+literal operand directly in `PY_unaryop` (general win: removes a
+needless runtime dispatch for every negative/positive numeric literal
+anywhere in any pyc program, not just default args) plus adding
+`list.pop`/`insert`/`__hash__` and `tuple.__hash__`
+(`__pyc__/04_sequence.py`). **`sudoku1.py` now compiles and runs to
+completion, output byte-identical to `python3`** (including the exact
+solver iteration count), and faster. One harmless warning remains (an
+`l == []` empty-list comparison inside `list.__eq__`'s dead branch) —
+confirmed to be the already-tracked, already-negative-prototyped
+[ifa/072](../ifa/issues/072-empty-container-notype-current-mechanism-and-plan.md)
+empty-container-element-inference family, not a new gap; left as-is.
+Verified corpus-neutral via a clean before/after sweep from the same
+commit (not a diff against a stale snapshot): zero regressions, three
+unrelated examples improved as a side effect of the constant-fold
+alone (`brainfuck`/`kanoodle`: warned → clean; `rubik`: FAIL →
+compiles). Full writeup:
+[036](closed/036-list-pop-insert-tuple-hash-and-unary-literal-defaults.md).

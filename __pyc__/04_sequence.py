@@ -163,6 +163,44 @@ class list:
     for x in other:
       self.append(x)
     return None
+  def insert(self, index, value):
+    # issue 025 R1 "missing sequence ops": insert was an unknown
+    # method on list (sudoku1's `u.insert(c, (inew, jnew))` /
+    # `l.insert(m, backup)`). Grow by one via append (mutates self's
+    # backing store in place, see extend's comment above), using
+    # `value` itself as the placeholder so the appended slot is
+    # already correctly typed, then shift the old tail right by one
+    # to open a gap at `i`. Index clamped to CPython's actual
+    # `insert` behaviour: negative counts from the end (floored at
+    # 0), and past-the-end indices insert at the end.
+    n = len(self)
+    i = index
+    if i < 0:
+      i += n
+      if i < 0:
+        i = 0
+    if i > n:
+      i = n
+    self.append(value)
+    j = n
+    while j > i:
+      self[j] = self[j - 1]
+      j -= 1
+    self[i] = value
+    return None
+  def pop(self, index=-1):
+    # issue 025 R1 "missing sequence ops": pop(index) was an unknown
+    # method on list (sudoku1's `backup = l.pop(m)`; only set.pop()
+    # -- no-arg -- existed). Negative index normalized up front so
+    # __delitem__ (self.__pyc_setslice__(key, key+1, 1, [])) only
+    # ever sees a non-negative key, matching remove()'s own usage.
+    n = len(self)
+    i = index
+    if i < 0:
+      i += n
+    x = self[i]
+    self.__delitem__(i)
+    return x
   def index(self, x):
     # Returns -1 when absent instead of raising ValueError (no
     # exception model, issue 011).
@@ -239,6 +277,22 @@ class list:
       x += self[k].__repr__()
     x += "]"
     return x
+  def __hash__(self):
+    # Real Python lists aren't hashable (mutability), but pyc's own
+    # `tuple(iterable)` intercept (issue 025: dynamic-length tuple()
+    # can't be a true fixed-arity tuple struct, see tuple's
+    # __pyc_tolist__ comment above) returns a LIST standing in for
+    # what the caller thinks is an immutable tuple -- so
+    # `hash(tuple(a_list))` (sudoku1/sudoku2's
+    # `hash(tuple(puzzle[c]))` board-row memo key) needs list to be
+    # hashable too, or the compromise leaks. Same algorithm as
+    # tuple.__hash__ above (see its comment for why an index loop and
+    # an inexact-vs-CPython value are both fine here).
+    h = 0
+    n = len(self)
+    for k in range(n):
+      h = h * 1000003 + self[k].__hash__()
+    return h
   def __deepcopy__(self):
     # issues/029: element-recursive list copy. Elements dispatch
     # their own __deepcopy__ (records: synthesized per-class;
@@ -287,6 +341,23 @@ class tuple:
     return False
   def __pyc_to_bool__(self):
     return self.__len__() != 0
+  def __hash__(self):
+    # issue 025 R1 "missing sequence ops": tuple had no __hash__ at
+    # all (sudoku1/sudoku2's `hash(tuple(puzzle[c]))` board-row memo
+    # key). INDEX loop, like __str__/__contains__ above -- safe here
+    # (unlike __eq__/__lt__, which need the per-arity unrolled
+    # generated form) because the only operation on self[k] is
+    # dispatching its own __hash__(), whose result type doesn't
+    # depend on which heterogeneous branch is taken. Simple
+    # polynomial combiner (CPython's pre-SipHash tuple multiplier);
+    # exact values don't need to match CPython, only be
+    # self-consistent within one run (see hash()'s own comment,
+    # __pyc__/05_builtins.py).
+    h = 0
+    n = len(self)
+    for k in range(n):
+      h = h * 1000003 + self[k].__hash__()
+    return h
   def __pyc_tolist__(self):
     # list(t) and dynamic tuple(xs) both land here via the
     # list()/tuple() intercepts (python_ifa_build_if1.cc, issue

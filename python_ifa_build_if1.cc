@@ -3266,6 +3266,40 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_unaryop: {
+      // A numeric literal under a leading +/- (`-1`, `+2.5`) is a
+      // compile-time constant in Python, but always lowered to a
+      // runtime __neg__/__pos__ send regardless of the operand --
+      // even a bare number literal. That's not just a missed
+      // constant fold: gen_fun_pyda's default-arg fast path
+      // (python_ifa_build_syms.cc, PY_arg_default) special-cases
+      // "rval is a plain literal, no code" to skip the global+MOVE
+      // path non-record builtin classes' methods (list/tuple/str)
+      // can never run defaults through -- so `def pop(self,
+      // index=-1)` fell into the "computed default" path and any
+      // call omitting the argument died with NOTYPE (issue 025's
+      // documented gap: "Computed defaults (size=-1) ... non-record
+      // builtin methods still can't use"). Fold the literal case
+      // directly into a constant Sym (no code, no send) so it's
+      // indistinguishable from a bare literal token downstream.
+      // Chained/non-literal operands (`-x`, `--1`, `~n`) still take
+      // the general runtime-dispatch path below.
+      if ((n->op == PY_OP_USUB || n->op == PY_OP_UADD) && n->children[0]->kind == PY_number) {
+        Sym *lit = make_num_pyda(n->children[0], ctx);
+        if (n->op == PY_OP_USUB) {
+          Immediate imm = lit->imm;
+          char buf[80];
+          if (lit->type == sym_float64) {
+            imm.v_float64 = -imm.v_float64;
+            sprintf(buf, "%g", imm.v_float64);
+          } else {
+            imm.v_int64 = -imm.v_int64;
+            sprintf(buf, "%ld", (long)imm.v_int64);
+          }
+          lit = if1_const(if1, lit->type, buf, &imm);
+        }
+        ast->rval = lit;
+        return 0;
+      }
       build_if1_pyda(n->children[0], ctx);
       PycAST *v = getAST(n->children[0], ctx);
       if1_gen(if1, &ast->code, v->code);

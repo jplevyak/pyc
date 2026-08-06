@@ -67,23 +67,101 @@ scalar-vs-pointer crossing is flagged.
 ## What's still open
 
 With the compile fix alone, `tictactoe.py` compiles clean but the
-binary aborts at runtime on this same new guard — a **genuine**
-`set`-element type divergence, not a salvage artifact: `set`'s
-`_items` field ends up needing to hold both `int64` (from
-`set(fields).difference(set([0]))`, `doRow`'s all-int board-cell
-sets) and `float64` (traced to `set.__init__`'s `_items` literal
-resolving to `_CG_prim_list(_CG_float64, 0)` in a *different*,
-internally-shared `set()` construction reachable through `set`'s own
-generic `union()`/`intersection()`/`__pyc_set_from_iterable__`
-methods — these get analyzed for their own type as part of building
-every class's method table regardless of whether any call site in
-this specific program ever dispatches to them, similar in shape to
-[ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)'s
-"accumulated union, no single root cause" pattern rather than a
-narrow, one-off bug). Not fully traced — the exact call site
-supplying the float remained unidentified after a `grep`-based
-search; would need the same kind of FA-level instrumentation 071's
-dig used to pin down precisely.
+binary aborts at runtime on this same new guard.
+
+### Root-caused, 2026-08-06: not a `set` bug at all — a general heterogeneous-list gap, `set` is an innocent bystander
+
+The `set`-element-union framing above was wrong about *where* the
+float comes from (it does not come from `union()`/`intersection()`/
+`__pyc_set_from_iterable__`'s method-table-installation-time
+analysis — that theory was never confirmed and turned out to be a
+red herring). Root-caused by direct reduction of `tictactoe.py`
+itself (progressively stripped in a scratch copy, not the committed
+example) rather than by further hand-decoding the generated C:
+
+**The minimal repro has nothing to do with `set`, classes, or
+tictactoe:**
+
+```python
+def make_heterogeneous_list():
+    n = 3
+    x = n * [0]
+    i = 0
+    x[i] += 1.5
+    return x
+
+def main():
+    y = make_heterogeneous_list()
+    print(y)
+
+if __name__ == '__main__':
+    main()
+```
+
+Six lines, zero relation to `tictactoe.py`. This alone reproduces
+the identical `assert(!"runtime error: list element type
+mismatch")`. Real Python's list is heterogeneous by design —
+`n * [0]` then `x[0] += 1.5` legitimately produces `[1.5, 0, 0]`,
+one `float` element among `int` elements — but pyc represents a
+list's backing store as one concrete, unboxed C array type. A list
+literal that starts homogeneous (`n * [0]`, all `int64`) and is
+later mutated in place with a genuinely different scalar *kind*
+(`float64`, via `+=`) can't be represented without boxing: unlike a
+struct field (where 077/034/035's `num_kind`-scalar-tolerance rule
+already lets two different scalar kinds share one field via a cast),
+a list/array needs one element size and layout for *every* slot, so
+FA has to fall back to a non-scalar/pointer (`_CG_void`) element
+representation for the array itself — which is exactly what trips
+`P_prim_set_index_object`'s (correct, working-as-designed) guard on
+the next write.
+
+**Why the crash surfaces via `set::add` → `list::append`, not
+directly at the `scores[...] += ...` site that actually causes it:**
+`tictactoe.py`'s `doRow` does exactly this — `scores` starts as
+`[self.edge * [0] for i in range(self.edge)]` (all-`int64`,
+`self.edge` a runtime variable so it's the dynamic/general list
+representation, not a small compile-time-sized tuple-list), then
+`scores[rown][coln] += 15 * sig(...)` (or the sibling `else` branch,
+`+= 15 * fields.count(...) / float(self.edge)`) stores a genuine
+`float64` into it. Confirmed both branches independently suffice
+(removing either alone still crashes; removing both makes the crash
+disappear even with `doRow`/`makeAImove` otherwise unchanged and
+still called). Confirmed the converse too: pre-typing `scores` as
+uniformly `float64` from construction
+(`[[0.0 for j in range(self.edge)] for i in range(self.edge)]`
+instead of `[self.edge * [0] ...]` + `+=`) removes the crash with
+*everything else in the file, including every `set(...)` call,
+unchanged*. `doRow` never calls `.append()` and never touches `set`
+at all — but pyc's list-element-type inference for the general
+dynamic-list representation isn't scoped tightly per allocation
+site; `scores`'s rows and `set`'s `_items` field (itself grown via
+`self._items = self._items.append(item)` in `08_set.py`) end up
+sharing enough of that inference that `scores`'s genuine
+int/float heterogeneity degrades `_items`'s element type to
+`_CG_void` too, even though no float value is ever actually stored
+into `_items`. Whichever list-write happens to execute first at
+runtime is what's observed to assert — in `tictactoe.py`'s actual
+run it's `set(row)`'s construction inside `isvictory()`, well before
+`doRow` ever runs, which is why the crash trace pointed at
+`set::add`/`list::append` and looked `set`-specific. It isn't: `set`
+is not the source, just the first victim in this program's
+particular execution order.
+
+This is the same class of gap [018](018-dict-mixed-key-types-boxing-failure.md)
+/ [ifa/030](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+already track (no boxed/tagged representation for a genuinely
+heterogeneous scalar union) and the same *category* of finding as
+[ifa/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md)
+chess.py's dig (an unrelated site's union reaching into a shared
+structure) — but unlike 071, this one **does** reduce to a small,
+fully general, non-program-specific minimal repro; it isn't an
+"accumulated churn, no single root cause" situation. Not fixed here:
+the durable fix is the same boxed/tagged `scalar` representation
+018/030 already call for; a narrower option (silently widening
+`scores`'s whole array to `float64`, including its originally-`int`
+slots) would change observable output (`0` → `0.0` in `repr`/`print`)
+and was rejected for the same reason issue 035's own guard exists —
+prefer a loud runtime assert over a silently wrong value.
 
 ### The `webserver.py` regression: root-caused and fixed, 2026-08-06
 
