@@ -2557,3 +2557,78 @@ the genuine empty-container element-inference family (which turned out
 not to block chess) is scoped with a shedskin-based backward-pass
 design in
 [ifa/issues/072](../ifa/issues/072-empty-container-notype-current-mechanism-and-plan.md).
+
+### webserver and yopyra: three more corpus-wide gaps found and fixed (2026-08-05/06)
+
+Both examples were in the D-bucket's original 2026-07 "syntax errors"
+grouping above (a coarse first-pass triage) — neither actually needed
+a grammar fix; both hit genuine frontend/codegen gaps, unrelated to
+each other, found by digging into each program individually rather
+than by bucket.
+
+**webserver** (`elif s in self.mapSocks.keys():`): `illegal call
+argument type` / `expression has no type`, traced to `x in y`
+lowering unconditionally to `y.__contains__(x)`
+(`python_ifa_build_if1.cc:168`, no iterable-protocol fallback) while
+`__pyc__/07_dict.py`'s `__dict_iter__`/`__dict_items_iter__` (what
+`.keys()`/`.values()`/`.items()` return) never defined
+`__contains__` — not an imprecision bug, the method simply didn't
+exist, so `x in d.keys()` was unconditionally broken for *every*
+program, not webserver-specific. Fixed by adding a linear-scan
+`__contains__` to both classes. **webserver now compiles with zero
+warnings and actually serves a real HTTP request end-to-end**
+(started the compiled binary, `curl`'d it, got the correct response).
+Full trace: [032](closed/032-dict-view-membership-missing-contains.md).
+
+**yopyra** had two independent core issues, both now fixed:
+
+1. A **fatal compile crash** (`fail: mismatched field sizes: class
+   'closure' field '<anon>' mixes 8- and 1-byte members ('bool')`) —
+   the same crash signature
+   [ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)
+   root-caused for chess's `bool | None`, here from
+   `if l.strip() and l.strip()[0] != "#":` as a **comprehension
+   filter** (`Scene.__init__`'s scene-file parser), building a `bool
+   | str` union. `python_ifa_build_if1.cc` already has a "boolean
+   context" optimization for exactly this shape (issue 025's own
+   R1 items, `in_boolean_context`) that avoids the union when an
+   `and`/`or` result only feeds an `if`/`while`/`elif` condition — but
+   its parent-kind check never included `PY_list_if`/`PY_comp_if`, a
+   comprehension's `if`-filter, which has the identical
+   children[0]-is-the-condition shape and is exactly as
+   boolean-context. One-line fix (add the two missing node kinds).
+   Full trace: [033](closed/033-comprehension-filter-and-or-boolean-context-gap.md).
+2. With (1) fixed, yopyra compiled but warned `unresolved call
+   '__iadd__'` on `c += luz.color` — `color`/`punto3d` define
+   `__add__` but not `__iadd__`, and pyc's augmented-assignment
+   lowering had no fallback to the non-in-place operator the way
+   CPython's data model does (`c += x` is `c = c.__add__(x)` when
+   `__iadd__` is absent — universal default, not opt-in). Fixed by
+   auto-synthesizing the 12 `__i<op>__` → `__<op>__` fallback methods
+   in `gen_class_pyda` (same shape as the existing `__deepcopy__`/
+   comparison-family auto-synthesis). **Verifying this fix surfaced a
+   real regression** in
+   [ifa/077](../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)'s
+   type-mismatch guard from the prior session: with zero compile
+   warnings, the binary aborted at runtime on `int.__mul__` hitting a
+   plain `2 * <float>`, flagged as a "mismatch" by `cg.cc`'s
+   `emit_send_default_prim` because it compared raw C-type *strings*
+   — the exact false-positive class 077's own `c_call_codegen` half
+   had already needed `num_kind`-based numeric tolerance to avoid,
+   just never carried over to this sibling call site. Neither
+   `test_pyc.py` nor the corpus sweep had exercised a case reaching
+   this fallback with genuinely-different-but-compatible numeric
+   types before yopyra (only reachable after (1)+(2) unblocked
+   further compilation) — fixed with the same tolerance. Full trace:
+   [034](closed/034-iadd-fallback-and-mixed-numeric-regression.md).
+
+**yopyra now compiles with zero warnings on both backends and the
+compiled binary runs a full raytrace against `scene.txt` to
+completion (no crash).** One thing found but **not yet
+investigated**: the rendered pixel values in the PPM output looked
+wrong (e.g. `622879781` where a 0–255 channel is expected) during a
+spot check. Not confirmed as a pyc bug — the reference `python3
+yopyra.py scene.txt` run is slow enough (didn't produce output in
+30s) that a side-by-side comparison wasn't done. Worth a follow-up
+dig before treating yopyra as fully correct, not just "compiles and
+doesn't crash."
