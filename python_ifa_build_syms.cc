@@ -1654,6 +1654,78 @@ static void collect_self_store_fields(PyDAST *n, Vec<cchar *> &fields) {
   for (auto c : n->children.values()) collect_self_store_fields(c, fields);
 }
 
+// issues/078: does `n` (an expression subtree) reference the name
+// `self` anywhere? Used below to check whether an __init__ field
+// assignment's RHS is self-independent -- if it read `self`, treating
+// the corresponding class-body default as safely elidable from the
+// clone step isn't sound to reason about with this conservative,
+// purely-syntactic check.
+static bool pyast_references_self(PyDAST *n) {
+  if (!n) return false;
+  if (n->kind == PY_name && n->str_val && !strcmp(n->str_val, "self")) return true;
+  for (auto c : n->children.values())
+    if (pyast_references_self(c)) return true;
+  return false;
+}
+
+// issues/078: is `stmt` a `self.NAME = <expr>` statement (same target
+// shape as collect_self_store_fields) whose RHS doesn't read `self`?
+// If so, return NAME (canonicalized); otherwise nullptr. Such a
+// statement unconditionally overwrites NAME with a value that can't
+// itself depend on NAME's (or any other field's) prior value -- a
+// necessary condition for treating the __new__ clone step's copy of
+// NAME into a fresh instance as dead.
+static cchar *simple_self_field_overwrite(PyDAST *stmt) {
+  if (!stmt || stmt->kind != PY_assign || stmt->children.n != 2) return nullptr;
+  PyDAST *tgt = stmt->children[0], *val = stmt->children[1];
+  if (!(tgt->kind == PY_power && tgt->children.n == 2 && tgt->children[0]->kind == PY_name &&
+        tgt->children[0]->str_val && !strcmp(tgt->children[0]->str_val, "self") &&
+        tgt->children[1]->kind == PY_attribute && tgt->children[1]->children.n &&
+        tgt->children[1]->children[0]->str_val))
+    return nullptr;
+  if (pyast_references_self(val)) return nullptr;
+  return if1_cannonicalize_string(if1, tgt->children[1]->children[0]->str_val);
+}
+
+// issues/078: is `__init__`'s ENTIRE body just a sequence of
+// `self.NAME = <self-independent expr>` statements (plus `pass`)?
+// This is a conservative stand-in for a full "definitely reassigned
+// before any use" dominance analysis -- sufficient to cover the known
+// real cases (dict.__init__, set.__init__, and issue 078's MiniDict
+// repro all have exactly this shape) without attempting one. When
+// true, every field named this way is collected into `out`: on every
+// real construction (__new__ clones the prototype, then unconditionally
+// calls __init__ on the clone, no branching in between), the clone
+// step's copy of NAME is immediately overwritten before the resulting
+// instance is observable anywhere. Any unrecognized statement (a
+// conditional, a loop, a call, a self-referencing RHS, ...) bails the
+// WHOLE analysis, leaving `out` empty: a bail means we can no longer
+// prove any single field is safe (e.g. an early return inside a loop
+// could skip a later assignment this walk would otherwise have
+// credited), so partial credit isn't sound. NB this says nothing
+// about the PROTOTYPE's own field (still seeded normally by the
+// class-body statement, untouched by this analysis) -- only about
+// what a freshly cloned instance's field should be credited with; see
+// issue 078's "Option D" for why that distinction is load-bearing.
+static void compute_init_elidable_fields(PyDAST *init_def, Vec<cchar *> &out) {
+  if (!init_def || init_def->children.n < 3) return;
+  PyDAST *ibody = init_def->children[2];
+  Vec<PyDAST *> stmts;
+  if (ibody->kind == PY_suite)
+    for (auto c : ibody->children.values()) stmts.add(c);
+  else
+    stmts.add(ibody);
+  for (auto stmt : stmts.values()) {
+    if (stmt->kind == PY_pass_stmt) continue;
+    cchar *field = simple_self_field_overwrite(stmt);
+    if (!field) {
+      out.clear();
+      return;
+    }
+    if (!out.in(field)) out.add(field);
+  }
+}
+
 // issues/023: read back a class-body `__match_args__ = ("x", "y")`
 // literal at compile time -- positional class patterns
 // (`case Point(0, 0):`) need to map position -> attribute name, and
@@ -1961,6 +2033,32 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
   if (is_record) {
     if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_new, cls, proto)->ast = ast;
     if1_send(if1, &ast->code, 2, 1, fn, proto, new_sym(ast))->ast = ast;
+  }
+  // issue 078 (Option D): if this class defines its OWN __init__
+  // whose entire body is safe, self-independent field-literal
+  // assignments (compute_init_elidable_fields), record which fields
+  // fa.cc's structural_assignment (P_prim_clone) may skip copying
+  // when cloning FROM this exact prototype Sym -- structurally, that
+  // can only ever be the __new__-synthesized `clone(proto, t)` below,
+  // never a user clone() call (the prototype Sym is never reachable
+  // from Python source). This does NOT touch the class-body statement
+  // loop above -- the prototype's OWN field is still seeded normally,
+  // so the inherited-field copy loop above (for subclasses) and
+  // direct `ClassName.attr` reads still see a real value. Scope
+  // deliberately conservative for a first cut: vector classes (clone
+  // via sym_clone_vector, a different primitive) and inherited-only
+  // __init__ (no OWN textual funcdef here) are excluded -- see issue
+  // 078's "Option D" writeup for why.
+  if (is_record && !cls->is_vector) {
+    PyDAST *body_node = cdef->children.last();
+    if (body_node->kind == PY_suite)
+      for (auto c : body_node->children.values()) {
+        PyDAST *d = (c->kind == PY_decorated) ? c->children.last() : c;
+        if (d->kind == PY_funcdef && d->children[0]->str_val && !strcmp(d->children[0]->str_val, "__init__")) {
+          compute_init_elidable_fields(d, proto->clone_elides_fields);
+          break;
+        }
+      }
   }
   // Find __init__: own scope first, else inherited. A `pass`-only
   // subclass has no OWN scope entry -- this used to fall straight to
