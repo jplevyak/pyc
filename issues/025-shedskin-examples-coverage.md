@@ -1381,13 +1381,17 @@ Continuing the dig after the six fixes above:
     dup-aware stall guard's extra passes left holes. Compiler
     SIGSEGV -> fixed.
 
-Filed [ifa/issues/047](../ifa/issues/047-DISPATCH-different-arity-tuple-iteration-shared-cs.md):
-iterating two DIFFERENT-ARITY tuples in one program segfaults
+Filed [ifa/issues/047](../ifa/issues/closed/047-different-arity-tuple-iteration-shared-cs.md)
+(closed 2026-08-06, confirmed fixed):
+iterating two DIFFERENT-ARITY tuples in one program segfaulted
 (shared `__tuple_iter__` CS: void `thetuple`, per-arity folded
 lengths, prototype method-pointer slots cross-wired) -- pre-existing
 at user level (4-line repro on main), sidestepped in
 `tuple.__pyc_tolist__` via an index loop; the `clone_methods_per_cs`
-lever does NOT work for the prototype-instantiation path.
+lever did NOT work for the prototype-instantiation path. Later found
+fixed incidentally (each loop's iterator now gets its own
+CreationSet via other per-creation-site splitting work), unrelated
+to any deliberate fix for this specific issue.
 
 New regression test: tests/genetic2_idioms.py (max/min key=,
 method-named-like-module, dynamic tuple()/list()/+, Optional-field
