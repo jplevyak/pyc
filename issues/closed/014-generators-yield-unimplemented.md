@@ -568,6 +568,19 @@ run without crashing under `-b`) before starting.
 
 ### A genuine, reproducible LLVM CoroSplit bug found and worked around
 
+(Cross-referenced 2026-08-07: [ifa/issues/closed/038](../../ifa/issues/closed/038-LLVM-coro-split-second-suspend-unreachable.md)
+hit this identical mechanism independently from the `is_async` side —
+found 2026-07-12, before the fix below landed — and was closed
+2026-08-06 once re-verified against the fix landed here. Its own
+"Resolution Summary" frames the reproducer as non-conformant IR
+(missing `llvm.coro.end`/a shared cleanup block, both confirmed
+against LLVM's own docs and source there); that framing and this
+section's "genuine bug" framing describe the same observed behavior
+from two angles — the trigger condition is non-conformant input, but
+CoroSplit's response to it is a silent miscompile of a live block,
+not a diagnostic. See that doc for the fuller writeup of that
+distinction.)
+
 Got the above compiling and linking on the first attempt, but running
 it revealed a deeper problem: `__pyc_more__()` returned `False`
 immediately for even the simplest possible case (`def gen(): yield
