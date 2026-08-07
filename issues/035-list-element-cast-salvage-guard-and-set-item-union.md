@@ -13,7 +13,7 @@ fixed" below.
 **Affects:** `ifa/codegen/cg.cc`'s `P_prim_set_index_object` (both
 the general list branch and the fixed-size tuple-list constant-index
 branch).
-**Related:** [056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md) —
+**Related:** [056](../ifa/issues/closed/056-CGEN-degraded-index-type-raw-c-compile-error.md) —
 the established precedent and convention this issue extends to a new
 call site (the *value* being stored, not the index argument, which
 056 already covers at the same two call sites);

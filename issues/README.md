@@ -40,7 +40,7 @@ conventions are the same; the only difference is location.
   an assigned value into a list/tuple-list's element type with no
   compatibility check, producing a hard C compile error on a
   pointer/scalar mismatch (same bug class as
-  [056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md), the value
+  [056](../ifa/issues/closed/056-CGEN-degraded-index-type-raw-c-compile-error.md), the value
   rather than the index) — fixed, `shedskin_examples/tictactoe/
   tictactoe.py` now compiles clean. Does **not** yet run: a genuine
   `set`-element type union (int64 vs float64, reachable through

@@ -106,9 +106,14 @@ def run_test(g, args, envs):
     # byte-compare the generated code. Heap-layout-dependent
     # iteration order in the compiler once made codegen — and
     # occasionally correctness — vary between identical runs; this
-    # keeps that class of bug from returning silently. Opt out with
-    # SKIP_DET_CHECK=1.
-    if not os.environ.get("SKIP_DET_CHECK"):
+    # keeps that class of bug from returning silently. Opt out
+    # globally with SKIP_DET_CHECK=1, or per-test with a
+    # `.skip_det_check` sidecar (for a test whose whole point is
+    # something other than determinism -- e.g. a vendored program
+    # kept verbatim as a regression repro for an unrelated bug,
+    # where a pre-existing, separately-tracked nondeterminism in
+    # that same file would otherwise mask the test's own result).
+    if not os.environ.get("SKIP_DET_CHECK") and not os.path.exists(f"{g}.skip_det_check"):
         det_base = name[:-3] if name.endswith(".py") else name
         # Root-caused 2026-08-04: this used to probe for *either*
         # artifact by existence (`.c` first, then `.ll`) and take

@@ -1631,7 +1631,7 @@ confirmed it segfaults on the pre-fix binary and runs correctly
 shape -- crashes during the very first `apply_move`, before this
 fix's `sizeof_element` path is meaningfully exercised, so an
 `.exec.check` here would make `PYC_FLAGS=-b ./test_pyc.py` red.
-Filed as [ifa/issues/051](../ifa/issues/051-LLVM-nested-list-index-mixed-union-crash.md).
+Filed as [ifa/issues/051](../ifa/issues/closed/051-LLVM-nested-list-index-mixed-union-crash.md).
 
 **Net effect**: rubik2 now compiles with zero violations (`-r`) and
 zero warnings (default), and runs without crashing -- it correctly
@@ -2218,7 +2218,7 @@ each of the three, once past its `.items()`/`.values()` blocker,
 progresses far enough to hit a *different*, separate, pre-existing
 bug that happens to be compile-time-unsalvageable (a real C compile
 error for `loop.py` -- `_CG_norm_idx` given a non-integer `_CG_any`
-index, filed as [ifa/issues/056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md);
+index, filed as [ifa/issues/056](../ifa/issues/closed/056-CGEN-degraded-index-type-raw-c-compile-error.md);
 an internal `fail()` for `sunfish.py` --
 `"sizeof_element of non-container type"` in `__add__`, not
 investigated further; an `int`/`float` mixed `-=`/`*` gap for
@@ -2363,7 +2363,7 @@ before undefined behavior":
   branch entirely with **no runtime-error guard at all**: no `assert`,
   no `goto`, the function just falls off its end. Same general
   "salvage-reachable site missing a guard" family as
-  [ifa/issues/056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md),
+  [ifa/issues/056](../ifa/issues/closed/056-CGEN-degraded-index-type-raw-c-compile-error.md),
   different specific location (dead loop bodies via `mark_live_code`,
   not an index/getter site). Filed as a known gap, not fixed this
   round -- lower urgency than `kanoodle`'s bug since it degrades to
@@ -2645,7 +2645,7 @@ error: `((_CG_void*)(...))[...] = (_CG_void)t156;` — "cannot cast
 from type '_CG_float64' to pointer type '_CG_void'". Same bug *class*
 as issue 056 (a salvage-degraded value reaching an unguarded C cast)
 but at the *value* being stored into a list, not the index —
-[056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md) only ever
+[056](../ifa/issues/closed/056-CGEN-degraded-index-type-raw-c-compile-error.md) only ever
 covered the index argument at these two call sites
 (`P_prim_set_index_object`'s two branches). Fixed with the same
 `num_kind`-based tolerance 077/034 already established: degrade to
