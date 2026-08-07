@@ -13,7 +13,7 @@ fixed" below.
 **Affects:** `ifa/codegen/cg.cc`'s `P_prim_set_index_object` (both
 the general list branch and the fixed-size tuple-list constant-index
 branch).
-**Related:** [056](056-degraded-index-type-raw-c-compile-error.md) —
+**Related:** [056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md) —
 the established precedent and convention this issue extends to a new
 call site (the *value* being stored, not the index argument, which
 056 already covers at the same two call sites);
@@ -148,10 +148,10 @@ is not the source, just the first victim in this program's
 particular execution order.
 
 This is the same class of gap [018](018-dict-mixed-key-types-boxing-failure.md)
-/ [ifa/030](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+/ [ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 already track (no boxed/tagged representation for a genuinely
 heterogeneous scalar union) and the same *category* of finding as
-[ifa/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md)
+[ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)
 chess.py's dig (an unrelated site's union reaching into a shared
 structure) — but unlike 071, this one **does** reduce to a small,
 fully general, non-program-specific minimal repro; it isn't an

@@ -1,6 +1,6 @@
 # Issue 021: `PycScope::map` hashes on pointer value, causing run-to-run nondeterminism in the frontend
 
-**Status:** closed — the final known surface-level instance of pointer-hashing nondeterminism (`EdgeHash` in `ifa/analysis/fa.h`) was fixed by introducing an ID-based `AEdgeHashFns`. As recommended, full build reproducibility (i.e. replacing pointer hashes in the remaining ~150+ sites) is formally deferred to `ifa/issues/010-vec-set-api-cleanup.md`'s planned codebase audit.
+**Status:** closed — the final known surface-level instance of pointer-hashing nondeterminism (`EdgeHash` in `ifa/analysis/fa.h`) was fixed by introducing an ID-based `AEdgeHashFns`. As recommended, full build reproducibility (i.e. replacing pointer hashes in the remaining ~150+ sites) is formally deferred to `ifa/issues/010-CLEANUP-vec-set-api-cleanup.md`'s planned codebase audit.
 **Affects:** `python_ifa_int.h:20` (`PycScope::map`, a
 `Map<cchar *, PycSymbol *>`) and every unsorted iteration over it
 throughout `python_ifa_build_syms.cc`/`python_ifa_build_if1.cc`;
@@ -213,7 +213,7 @@ one of these unfixed sets, the resulting id-assignment order shifts
 between runs, and every downstream id-keyed structure — even ones
 with a correct `PointerHash` specialization — inherits the drift.
 
-This is not a new problem: it is [ifa/issues/010-vec-set-api-cleanup.md](../../ifa/issues/010-vec-set-api-cleanup.md)'s
+This is not a new problem: it is [ifa/issues/010-CLEANUP-vec-set-api-cleanup.md](../../ifa/issues/010-CLEANUP-vec-set-api-cleanup.md)'s
 already-deferred audit (Task A/B, "~244 `set_add`/`set_in` call
 sites... every one is a potential non-determinism source"),
 confirmed here for the first time to actually reach pyc's *emitted

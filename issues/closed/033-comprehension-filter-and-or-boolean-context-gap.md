@@ -6,7 +6,7 @@
 8- and 1-byte members ('bool')`).
 **Affects:** `python_ifa_build_if1.cc`'s `PY_bool_and`/`PY_bool_or`
 case, specifically the `in_boolean_context` lambda (~2975-2985).
-**Related:** [ifa/issues/closed/071](../../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)
+**Related:** [ifa/issues/closed/071](../../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)
 — the *exact same* crash signature (`mismatched field sizes: class
 'closure'...`), a different union (`bool | None` there vs. `bool |
 str` here) reaching the same `clone.cc:determine_layouts` failure via

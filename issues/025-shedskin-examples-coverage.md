@@ -1001,7 +1001,7 @@ stereo) were FA's splitting loop failing to reach a fixed point:
 split decisions are not idempotent across passes, so ess/violation
 counts oscillate while per-pass cost grows superlinearly. Full
 analysis and the real-fix plan live in
-[../ifa/issues/033-splitter-non-idempotent-divergence.md](../ifa/issues/033-splitter-non-idempotent-divergence.md);
+[../ifa/issues/closed/033-splitter-non-idempotent-divergence.md](../ifa/issues/closed/033-splitter-non-idempotent-divergence.md);
 the stall guard (IFA_STALL_LIMIT) mitigates it. After the guard:
 stereo COMPILES; fysphun converges to 0 violations in <1s (the
 guard un-starves the numeric-coercion reanalyze callback) and now
@@ -1132,7 +1132,7 @@ backends -- only affects printing a truly mixed-type tuple.
 design limit. Handling recursion is core IFA design; the recursive-
 ES splitting fix below makes deepcopy compile and run correctly.
 Point 1 (genetic2's separate optional-None crash) stands -- filed
-as [ifa/issues/046](../ifa/issues/046-optional-none-field-inline-type-sum-assert.md).
+as [ifa/issues/046](../ifa/issues/closed/046-optional-none-field-inline-type-sum-assert.md).
 
 This item was filed as SUSPECT (first-diag + shim inspection, no
 micro) and turns out to be wrong on both counts once verified:
@@ -1247,7 +1247,7 @@ test-unit` 58/0, `make test-ir` clean, corpus sweep unchanged at
 pylife/stereo all ~1s. genetic2 now compiles PAST its old
 `inline.cc:407` crash into later, separate blockers; the
 optional-None micro still reproduces standalone --
-[ifa/issues/046](../ifa/issues/046-optional-none-field-inline-type-sum-assert.md).
+[ifa/issues/046](../ifa/issues/closed/046-optional-none-field-inline-type-sum-assert.md).
 
 ### 043 shape C resolved: iterator-CS re-fusion; `for x in obj` recursion works (2026-07-16)
 
@@ -1381,7 +1381,7 @@ Continuing the dig after the six fixes above:
     dup-aware stall guard's extra passes left holes. Compiler
     SIGSEGV -> fixed.
 
-Filed [ifa/issues/047](../ifa/issues/047-different-arity-tuple-iteration-shared-cs.md):
+Filed [ifa/issues/047](../ifa/issues/047-DISPATCH-different-arity-tuple-iteration-shared-cs.md):
 iterating two DIFFERENT-ARITY tuples in one program segfaults
 (shared `__tuple_iter__` CS: void `thetuple`, per-arity folded
 lengths, prototype method-pointer slots cross-wired) -- pre-existing
@@ -1426,7 +1426,7 @@ Corpus effect: genetic2's deepcopy SEMANTICS are now correct (the
 runtime cyclic-tree crash is structurally impossible), but its
 compile currently diverges in FA flow over the copy-chain unions --
 filed with analysis and fix directions as
-[ifa/issues/048](../ifa/issues/048-deepcopy-flow-divergence-genetic2.md);
+[ifa/issues/048](../ifa/issues/048-FA-deepcopy-flow-divergence-genetic2.md);
 genetic2 drops out of the compiled column until 048 lands (24/77;
 its previous "compiled" state ran on miscompiled shallow copies).
 
@@ -1627,7 +1627,7 @@ confirmed it segfaults on the pre-fix binary and runs correctly
 shape -- crashes during the very first `apply_move`, before this
 fix's `sizeof_element` path is meaningfully exercised, so an
 `.exec.check` here would make `PYC_FLAGS=-b ./test_pyc.py` red.
-Filed as [ifa/issues/051](../ifa/issues/051-llvm-nested-list-index-mixed-union-crash.md).
+Filed as [ifa/issues/051](../ifa/issues/051-LLVM-nested-list-index-mixed-union-crash.md).
 
 **Net effect**: rubik2 now compiles with zero violations (`-r`) and
 zero warnings (default), and runs without crashing -- it correctly
@@ -1935,7 +1935,7 @@ no-op `if key < 0: pass` inside `list.__getitem__` was enough to
 break `b = [2, 3]; print(b); k = []; print(k)`. A ternary form
 (`key = key + self.__len__() if key < 0 else key`) hit the identical
 failure. Reverted both. Filed as its own tracked issue --
-[ifa/issues/052](../ifa/issues/052-shared-method-branch-reopens-empty-list-fragility.md)
+[ifa/issues/052](../ifa/issues/052-FA-shared-method-branch-reopens-empty-list-fragility.md)
 -- since this reopens issue 040's own verification repro with an
 otherwise-unrelated change, a real constraint on future work touching
 any `clone_methods_per_cs` class's shared methods, not just something
@@ -2001,7 +2001,7 @@ above applies. Fixed directly in Python source instead
 `range.__getitem__`'s existing pattern) -- safe here specifically
 because `bytearray`, unlike `list`, is **not**
 `clone_methods_per_cs`-flagged, so it isn't exposed to
-[ifa/issues/052](../ifa/issues/052-shared-method-branch-reopens-empty-list-fragility.md)'s
+[ifa/issues/052](../ifa/issues/052-FA-shared-method-branch-reopens-empty-list-fragility.md)'s
 fragility. Confirmed empirically before landing: an
 empty-plus-non-empty `bytearray` in one program (`bytearray(5)`
 alongside `bytearray(0)`) compiles and runs clean with the new
@@ -2064,7 +2064,7 @@ ones that end up in a heterogeneous-arity union -- provably safe
 (field access doesn't care what's behind the pointer) but broader
 than strictly necessary; a precise version needs FA to flag which
 tuple types actually need one, deliberately deferred, see
-[ifa/issues/054](../ifa/issues/054-remove-unconditional-tuple-list-header.md).
+[ifa/issues/054](../ifa/issues/054-CGEN-remove-unconditional-tuple-list-header.md).
 
 New test `tests/tuple_arity_union.py` (both backends, verified wrong
 on the pre-fix binary, correct after, matches CPython). Corpus
@@ -2138,7 +2138,7 @@ operator dispatch now having one more polymorphic candidate
 including all the unrelated integer arithmetic. **Reverted** (`git
 checkout -- __pyc__/08_set.py`) rather than shipped with a live
 compiler-crash regression; filed as
-[ifa/issues/055](../ifa/issues/055-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)
+[ifa/issues/055](../ifa/issues/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)
 with the full bisection trail. `set.__sub__` remains unimplemented.
 
 With `__pyc__/08_set.py` reverted (the actual committed state),
@@ -2214,7 +2214,7 @@ each of the three, once past its `.items()`/`.values()` blocker,
 progresses far enough to hit a *different*, separate, pre-existing
 bug that happens to be compile-time-unsalvageable (a real C compile
 error for `loop.py` -- `_CG_norm_idx` given a non-integer `_CG_any`
-index, filed as [ifa/issues/056](../ifa/issues/056-degraded-index-type-raw-c-compile-error.md);
+index, filed as [ifa/issues/056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md);
 an internal `fail()` for `sunfish.py` --
 `"sizeof_element of non-container type"` in `__add__`, not
 investigated further; an `int`/`float` mixed `-=`/`*` gap for
@@ -2240,12 +2240,12 @@ every new dict-method code path together, found that combining
 `sorted()` on a plain string list with `list(d.items())` +
 `sorted()` on the resulting tuple list hangs the compiler (same
 worklist-churn-without-bound signature as
-[ifa/issues/055](../ifa/issues/055-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md),
+[ifa/issues/055](../ifa/issues/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md),
 confirmed via the same printf-bisection technique) -- but reproduces
 in **4 lines**, no 500-line real program needed, and isn't
 dict-specific (a bare `sorted(["p","q"])` triggers it just as well as
 `sorted(d.keys())`). Filed as
-[ifa/issues/057](../ifa/issues/057-sorted-tolist-fa-nonconvergence.md)
+[ifa/issues/057](../ifa/issues/closed/057-sorted-tolist-fa-nonconvergence.md)
 and cross-linked with 055 as likely the better repro to start from.
 **Not shipped in the committed test**: `tests/dict_items_keys_values.py`
 deliberately avoids this exact combination (see its own comment) so
@@ -2271,7 +2271,7 @@ just slow: confirmed genuine -- RSS grew past 1GB and was still
 climbing after 280 wall-clock seconds with zero termination in
 sight, `fa->ess.n` never once changing from 97 the entire time.
 Root-causing *why* the underlying type union never stabilizes would
-need instrumentation at [033](../ifa/issues/033-splitter-non-idempotent-divergence.md)'s
+need instrumentation at [033](../ifa/issues/closed/033-splitter-non-idempotent-divergence.md)'s
 scale (that issue alone runs ~2000 lines and spans weeks investigating
 the analogous disease in the *outer* splitting loop) -- out of scope
 for landing today, but a real, scoped, low-risk improvement was:
@@ -2299,7 +2299,7 @@ the routine corpus was anywhere close to tripping this). Not added
 as an automated test (the ~2-minute cost to actually trigger the
 guard doesn't fit the routine ~30s suite); 057's own file carries the
 full verification record instead. Re-tested against
-[055](../ifa/issues/055-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)'s
+[055](../ifa/issues/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)'s
 `plcfrs.py`/`set.__sub__` repro directly: the new guard does **not**
 help there -- that repro segfaults in ~7s (a fast crash, not the slow
 zero-`ess.n`-growth stall this guard targets), so 055 stays open and
@@ -2359,7 +2359,7 @@ before undefined behavior":
   branch entirely with **no runtime-error guard at all**: no `assert`,
   no `goto`, the function just falls off its end. Same general
   "salvage-reachable site missing a guard" family as
-  [ifa/issues/056](../ifa/issues/056-degraded-index-type-raw-c-compile-error.md),
+  [ifa/issues/056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md),
   different specific location (dead loop bodies via `mark_live_code`,
   not an index/getter site). Filed as a known gap, not fixed this
   round -- lower urgency than `kanoodle`'s bug since it degrades to
@@ -2438,11 +2438,11 @@ itself is correct (homogeneous, heterogeneous, and nested tuple sorts
 all match CPython), but `tictactoe` still fails LLVM verification due to
 a *separate, pre-existing* mixed int/float scalar-arithmetic coercion
 gap unrelated to tuples — filed as
-[ifa/issues/062](../ifa/issues/062-llvm-mixed-int-float-scalar-coercion.md).
+[ifa/issues/062](../ifa/issues/062-LLVM-mixed-int-float-scalar-coercion.md).
 Also surfaced (pre-existing, reproduces at baseline) a C-backend
 list-of-tuples element-type naming bug when several distinct tuple types
 coexist with a `.sort()` — filed as
-[ifa/issues/061](../ifa/issues/061-c-backend-multi-tuple-list-null-element-type.md).
+[ifa/issues/061](../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md).
 
 ### "no type" bucket triaged: root-caused + three codegen-robustness fixes (39 → 51 compiled) (2026-07-22)
 
@@ -2463,7 +2463,7 @@ getter into a nameless destination is skipped instead of emitting
 `(null) = ...` (amaze, othello, voronoi2). Net: **39 → 51 pyc→C
 compiles, zero regressions**; full `test_pyc.py` both backends 227/227.
 Full triage, remaining residual blockers, and the FA-root fix sketch in
-[ifa/issues/063](../ifa/issues/063-no-type-bucket-triage.md). Note the
+[ifa/issues/063](../ifa/issues/closed/063-no-type-bucket-triage.md). Note the
 recovered programs compile and trap *safely* but several don't yet *run*
 correctly — they hit a deeper `getter not resolved` assert from the same
 unresolved-field root.
@@ -2505,7 +2505,7 @@ argless `range` in the generated C is a *salvage artifact*: `squares`
 goes NOTYPE for an upstream reason, and `convert_NOTYPE_to_void` then
 voids the whole `range(128)` construction feeding it. Corrected below;
 full detail in the rewritten
-[ifa/issues/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md).
+[ifa/issues/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md).
 
 `chess` compiles with one warning (`squares = tuple([i for i in
 range(128) if not i & 8])`: "expression has no type") and exit 0, then
@@ -2552,11 +2552,11 @@ backends, sweep buckets within parallel-timeout noise. chess itself
 still FAILs — its fatal blocker is now the bool|None representation
 mismatch (issue 018/030), NOT element inference. Full analysis and the
 corrected root-cause chain in
-[ifa/issues/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md);
+[ifa/issues/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md);
 the genuine empty-container element-inference family (which turned out
 not to block chess) is scoped with a shedskin-based backward-pass
 design in
-[ifa/issues/072](../ifa/issues/072-empty-container-notype-current-mechanism-and-plan.md).
+[ifa/issues/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md).
 
 ### webserver and yopyra: three more corpus-wide gaps found and fixed (2026-08-05/06)
 
@@ -2585,7 +2585,7 @@ Full trace: [032](closed/032-dict-view-membership-missing-contains.md).
 1. A **fatal compile crash** (`fail: mismatched field sizes: class
    'closure' field '<anon>' mixes 8- and 1-byte members ('bool')`) —
    the same crash signature
-   [ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)
+   [ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)
    root-caused for chess's `bool | None`, here from
    `if l.strip() and l.strip()[0] != "#":` as a **comprehension
    filter** (`Scene.__init__`'s scene-file parser), building a `bool
@@ -2641,7 +2641,7 @@ error: `((_CG_void*)(...))[...] = (_CG_void)t156;` — "cannot cast
 from type '_CG_float64' to pointer type '_CG_void'". Same bug *class*
 as issue 056 (a salvage-degraded value reaching an unguarded C cast)
 but at the *value* being stored into a list, not the index —
-[056](056-degraded-index-type-raw-c-compile-error.md) only ever
+[056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md) only ever
 covered the index argument at these two call sites
 (`P_prim_set_index_object`'s two branches). Fixed with the same
 `num_kind`-based tolerance 077/034 already established: degrade to
@@ -2660,7 +2660,7 @@ construction inside `set`'s own `union()`/`intersection()`/
 while building the class's method table regardless of whether this
 specific program ever dispatches to them) — not fully traced to a
 single call site, structurally similar to
-[ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)'s
+[ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)'s
 "accumulated union, no single root cause" shape rather than a narrow
 bug. **A first attempt at this gap was tried and reverted**:
 `__set_iter__`/`__dict_iter__`/`__dict_items_iter__`
@@ -2740,7 +2740,7 @@ list-write executes first at runtime (here, `set(row)` inside
 assert — which is why the trace pointed at `set::add`→`list::append`
 and looked `set`-specific. It isn't; `set` is the first victim, not
 the source. Same class of gap as
-[018](018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+[018](018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 (no boxed/tagged representation for a genuine scalar-kind union); a
 silent-widening shortcut was considered and rejected (would change
 observable output, `0` → `0.0`, the same principle 035's own guard
@@ -2777,7 +2777,7 @@ completion, output byte-identical to `python3`** (including the exact
 solver iteration count), and faster. One harmless warning remains (an
 `l == []` empty-list comparison inside `list.__eq__`'s dead branch) —
 confirmed to be the already-tracked, already-negative-prototyped
-[ifa/072](../ifa/issues/072-empty-container-notype-current-mechanism-and-plan.md)
+[ifa/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)
 empty-container-element-inference family, not a new gap; left as-is.
 Verified corpus-neutral via a clean before/after sweep from the same
 commit (not a diff against a stale snapshot): zero regressions, three
@@ -2805,7 +2805,7 @@ dispatching into **`list.index`'s own body**, treating the string as
 a list — the actual source of "mixed basic types (list int64 str)"
 warnings on `self.final`. With both fixes `sudoku2.py` compiled with
 zero warnings but **segfaulted at runtime** — at first attributed to
-[ifa/049](../ifa/issues/049-raise-only-contour-notype.md)'s
+[ifa/049](../ifa/issues/049-FA-raise-only-contour-notype.md)'s
 raise-only-contour mechanism (three repros added to that doc), but
 that attribution was **wrong**, corrected the same day once the real
 cause was found — see the next entry. Full writeup, including the
@@ -2886,4 +2886,4 @@ hottest paths in codegen and needs its own careful pass):
    of the "missing salvage guard, degrade to assert instead of unsafe
    C" pattern issues 077/034/035/037 already fixed at other call
    sites — this one's in method dispatch itself. Full writeup:
-   [ifa/079](../ifa/issues/079-single-candidate-dispatch-unchecked-cast.md).
+   [ifa/079](../ifa/issues/079-DISPATCH-single-candidate-dispatch-unchecked-cast.md).

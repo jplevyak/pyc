@@ -260,7 +260,7 @@ consulted by `fa.cc`'s own `P_prim_isinstance` transfer function
 architecture discussion that led to it, a real null-pointer bug found
 along the way (`EntrySet::out_edges` can contain null entries), and
 verification are recorded in
-[ifa/issues/050](../../ifa/issues/050-general-constant-propagation-unreachable-code.md)'s
+[ifa/issues/050](../../ifa/issues/050-FA-general-constant-propagation-unreachable-code.md)'s
 3a section (it's an ifa-core feature, not pyc-specific, so it lives
 there rather than being duplicated here). **Does not replace Tier
 2** — confirmed empirically that Tier 3a's native fold alone doesn't
@@ -270,7 +270,7 @@ run, each doing genuinely non-redundant work.
 
 Investigating this surfaced a pre-existing, unrelated FA convergence
 gap — filed as
-[ifa/issues/049](../../ifa/issues/049-raise-only-contour-notype.md): a
+[ifa/issues/049](../../ifa/issues/049-FA-raise-only-contour-notype.md): a
 function whose only call site(s) in the whole program reach its
 raising branch (no call anywhere reaches the normal `return`) gets a
 bottom-typed return and spurious NOTYPE violations, since the raise

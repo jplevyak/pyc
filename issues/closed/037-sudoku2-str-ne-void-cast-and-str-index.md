@@ -13,7 +13,7 @@ attempted here). Found investigating
 [ifa/077](../../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)
 — the guard this issue found a real gap in, one call away from its
 own stated scope;
-[ifa/049](../../ifa/issues/049-raise-only-contour-notype.md) — the
+[ifa/049](../../ifa/issues/049-FA-raise-only-contour-notype.md) — the
 pre-existing, still-open FA bug this issue's third finding maps onto
 (now with two new trigger variants, see that doc).
 
@@ -93,7 +93,7 @@ hard compile error).
 
 `sudoku2.py` compiled clean but **segfaulted at runtime** during
 `fread()`, before the first `print`. Originally attributed here to
-[ifa/049](../../ifa/issues/049-raise-only-contour-notype.md)'s
+[ifa/049](../../ifa/issues/049-FA-raise-only-contour-notype.md)'s
 "raise path contributes nothing to `fn->ret`" mechanism, based on
 three minimal repros that all seemed to rhyme with that bug. **That
 attribution was wrong.** The actual, sole cause, found and fixed the

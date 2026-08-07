@@ -147,7 +147,7 @@ argument's bottom/no element type — even though that loop is
 provably dead whenever the comparison actually reaches it (arities
 differ, or `range(0)` is empty). This is **not** a new bug: it's the
 well-tracked, already-designed-and-negative-prototyped
-[ifa/072](../../ifa/issues/072-empty-container-notype-current-mechanism-and-plan.md)/[ifa/043](../../ifa/issues/closed/043-empty-container-inference-options.md)
+[ifa/072](../../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)/[ifa/043](../../ifa/issues/closed/043-empty-container-inference-options.md)
 "empty container element inference" family (a *read that returns the
 element as a value* on a never-written container has no type; 072's
 own prototyped fix for this exact shape measured net-negative on the

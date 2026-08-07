@@ -32,7 +32,7 @@ conventions are the same; the only difference is location.
   type... Cell" warnings. Same architectural gap as 035's tictactoe
   finding, traced one step further and pinned specifically to
   `list.__mul__`'s construction path. Also see
-  [ifa/079](../ifa/issues/079-single-candidate-dispatch-unchecked-cast.md),
+  [ifa/079](../ifa/issues/079-DISPATCH-single-candidate-dispatch-unchecked-cast.md),
   a related but independent dispatch-codegen bug this same corpus
   example exposed.
 - [035-list-element-cast-salvage-guard-and-set-item-union.md](035-list-element-cast-salvage-guard-and-set-item-union.md)
@@ -40,7 +40,7 @@ conventions are the same; the only difference is location.
   an assigned value into a list/tuple-list's element type with no
   compatibility check, producing a hard C compile error on a
   pointer/scalar mismatch (same bug class as
-  [056](056-degraded-index-type-raw-c-compile-error.md), the value
+  [056](../ifa/issues/056-CGEN-degraded-index-type-raw-c-compile-error.md), the value
   rather than the index) — fixed, `shedskin_examples/tictactoe/
   tictactoe.py` now compiles clean. Does **not** yet run: a genuine
   `set`-element type union (int64 vs float64, reachable through
@@ -119,7 +119,7 @@ commit ref recorded in each file's status line.
   `in_boolean_context`) already applies to plain `if`/`while`/`elif` —
   `PY_list_if`/`PY_comp_if` just weren't in its recognized parent-kind
   list. Same crash signature as
-  [ifa/071](../ifa/issues/closed/071-chess-accumulated-union-notype-cascade.md)
+  [ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)
   (`mismatched field sizes: class 'closure'...`), a third independent
   source of it. Found via `shedskin_examples/yopyra/yopyra.py`, which
   now compiles (a second, unrelated `__iadd__`-fallback gap in that

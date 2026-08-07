@@ -7,7 +7,7 @@
 `ifa/codegen/codegen_common.cc` (`cg_build_new_to_val_map`, the
 shared method-pointer-slot registry both backends' `P_prim_clone`
 slot-store emission reads from).
-**Related:** [ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+**Related:** [ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 (the classtag dispatch mechanism this bug lived in); found while
 stress-testing
 [closed/003-subclass-struct-layout-mismatch.md](003-subclass-struct-layout-mismatch.md)

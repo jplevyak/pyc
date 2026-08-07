@@ -4,7 +4,7 @@
 commit `97f6a6c` (the `update_in` guard, landed before this doc was
 ever updated to say so — caught during a 2026-07 re-check); the
 guard was then structurally subsumed in `2b3bcd3` by
-[ifa/issues/031](../../ifa/issues/031-globals-outside-fa-precision.md)
+[ifa/issues/031](../../ifa/issues/closed/031-globals-outside-fa-precision.md)
 step 1: `GLOBAL_CONTOUR` is now a real singleton EntrySet
 (`fa->global_es`) whose `in_es_worklist` is permanently 1, so the
 deref that used to segfault is safe and the enqueue self-suppresses.

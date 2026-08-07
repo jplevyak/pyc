@@ -128,7 +128,7 @@ PY_CMP_IS_NOT)`, non-None operands) is also untouched.
   and [closed/004](closed/004-is-operator-unimplemented.md) — the
   `is`/`is not` → `prim_isinstance`/`prim_is` lowering this fix
   mirrors.
-- [ifa/issues/063](../../ifa/issues/063-no-type-bucket-triage.md) —
+- [ifa/issues/063](../../ifa/issues/closed/063-no-type-bucket-triage.md) —
   the degrade-to-runtime-trap convention that turned this into a
   clean assertion instead of miscompiled C, and the broader
   "unattributed cascade" bucket `chaos` was filed under

@@ -1,7 +1,7 @@
 # 038 — `pyc_program_has_raise` never armed for an ordinary call into a builtin method that raises (uninitialized-memory read, zero warnings)
 
 **Status: FIXED 2026-08-06.** Found while digging into
-[ifa/049](../../ifa/issues/049-raise-only-contour-notype.md) at the
+[ifa/049](../../ifa/issues/049-FA-raise-only-contour-notype.md) at the
 user's request; turned out to be the actual, sole cause of
 `shedskin_examples/sudoku2/sudoku2.py`'s remaining runtime blocker
 (previously mis-attributed to 049's own mechanism in
@@ -14,7 +14,7 @@ open" section — see the correction there).
 **Related:** [037](037-sudoku2-str-ne-void-cast-and-str-index.md) —
 `str.index()`, added there, is what exposed this (a builtin method
 that raises, invoked via an ordinary call — a shape that didn't exist
-in `__pyc__` before that fix); [ifa/049](../../ifa/issues/049-raise-only-contour-notype.md)
+in `__pyc__` before that fix); [ifa/049](../../ifa/issues/049-FA-raise-only-contour-notype.md)
 — the separate, still-open FA bug this was originally (wrongly)
 thought to be part of.
 
@@ -68,7 +68,7 @@ false, so `emit_exc_check` emitted nothing anywhere in the program —
 including around the user's own `try`/`except` — and `str.index`'s own
 raise path (correctly, per `goto_exc_target`'s design: "leave
 `fn->ret` undefined here, the caller's check reads it first" — see
-[ifa/049](../../ifa/issues/049-raise-only-contour-notype.md)'s root
+[ifa/049](../../ifa/issues/049-FA-raise-only-contour-notype.md)'s root
 cause section) became a read of a C local that was never assigned,
 because the check that would have short-circuited before that read
 was never emitted in the first place.
@@ -134,7 +134,7 @@ raisers need neither path: a user function/method with its own
   `python3` (was documented in
   [037](037-sudoku2-str-ne-void-cast-and-str-index.md) as compiling
   clean but segfaulting — that segfault was misdiagnosed there as
-  [ifa/049](../../ifa/issues/049-raise-only-contour-notype.md)'s
+  [ifa/049](../../ifa/issues/049-FA-raise-only-contour-notype.md)'s
   mechanism; it was entirely this bug, now closed. See the correction
   in 037.
 

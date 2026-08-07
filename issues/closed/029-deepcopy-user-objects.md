@@ -36,7 +36,7 @@ strings/tuples); `pyc_lib/copy.py`'s deepcopy is now just
 cycles don't terminate -- corpus need is trees.
 
 Landing it surfaced and fixed FIVE latent compiler bugs:
-[ifa/issues/046](../../ifa/issues/046-optional-none-field-inline-type-sum-assert.md)
+[ifa/issues/046](../../ifa/issues/closed/046-optional-none-field-inline-type-sum-assert.md)
 (inline chain Type_SUM assert -> pre-checked, un-inlined),
 [ifa/issues/044](../../ifa/issues/closed/044-mixed-length-tuple-list-len-miscompile.md)
 (listish-tuple literal length off-by-one -> phantom elements),
@@ -54,7 +54,7 @@ of-self] trees, copy-of-copy, mutation isolation; deterministic,
 both backends), suites 200/0 x2, unit 58/0. genetic2 itself now has
 correct deepcopy SEMANTICS but its compile diverges in FA flow
 (unbounded matcher allocation over the copy-chain unions) --
-[ifa/issues/048](../../ifa/issues/048-deepcopy-flow-divergence-genetic2.md).
+[ifa/issues/048](../../ifa/issues/048-FA-deepcopy-flow-divergence-genetic2.md).
 
 Original report follows.
 

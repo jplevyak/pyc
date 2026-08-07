@@ -16,14 +16,14 @@ allocation site"), first found via `tictactoe.py`'s `scores`/`set`
 a single call site." **This issue traces it further**: `bh.py` gives a
 much cleaner, more precise trigger, and pins the mechanism specifically
 to `list.__mul__`/`__rmul__` (an `n * [x]`-shaped construction) rather
-than list construction/mutation in general. [018](018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+than list construction/mutation in general. [018](018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 — the general heterogeneous-container-representation gap this is a
 member of.
 
 ## Symptom
 
 `bh.py` compiles with two spurious warnings and then segfaults at
-runtime (the segfault is [ifa/079](../ifa/issues/079-single-candidate-dispatch-unchecked-cast.md),
+runtime (the segfault is [ifa/079](../ifa/issues/079-DISPATCH-single-candidate-dispatch-unchecked-cast.md),
 a related but independently-filed issue — this issue is about the
 warnings' root cause, which also feeds that one):
 
@@ -89,7 +89,7 @@ identical `scores`/`set._items` symptom, now traced one level further.
 
 Not traced past this point into `fa.cc`/`ifa/if1` internals (would
 need the same kind of FA-level instrumentation
-[ifa/071](../ifa/issues/071-chess-accumulated-union-notype-cascade.md)'s
+[ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)'s
 chess.py dig used) — the leading hypothesis, unconfirmed: `list.__mul__`'s
 `__pyc_primitive__(__pyc_symbol__("merge"), self, self)` operand (the
 first argument to its `__pyc_c_call__`) causes FA to treat the result
@@ -128,7 +128,7 @@ step_system(i)` loop) rather than the from-scratch attempt above.
 
 - Would unblock `bh.py` (a corpus benchmark) from at least reaching
   runtime cleanly typed — the segfault itself is a separate, additional
-  gap ([ifa/079](../ifa/issues/079-single-candidate-dispatch-unchecked-cast.md)),
+  gap ([ifa/079](../ifa/issues/079-DISPATCH-single-candidate-dispatch-unchecked-cast.md)),
   so fixing this alone doesn't make `bh.py` run, but removes a
   confusing, misleading warning and the CreationSet-sharing bug this
   issue is actually about.

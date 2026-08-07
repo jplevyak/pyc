@@ -14,8 +14,8 @@ and zero comprehension code involved. Also affects `set` (issue
 008's new class) identically — same shared-linear-scan-comparison
 shape, same failure. Not a literal duplicate of any single
 `ifa/issues/` file, but the same underlying gap as
-[ifa/issues/063](../ifa/issues/063-no-type-bucket-triage.md) (diagnosis)
-/ [ifa/issues/075](../ifa/issues/075-element-cs-method-split-idempotent-plan.md)
+[ifa/issues/063](../ifa/issues/closed/063-no-type-bucket-triage.md) (diagnosis)
+/ [ifa/issues/075](../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
 (concrete build plan) — pyc's shared `list`/`dict` container methods
 aren't cloned per element/key-CS, so a program with two
 differently-keyed dict instances gets one merged AVar for `key`
@@ -25,7 +25,7 @@ of [multiple element types]") for the object-key/NOTYPE flavor, and
 this issue is the basic-scalar-key/BOXING flavor of the identical
 mechanism — 075's CSM (clone container methods per element-CS)
 should fix both together. Also already informally paired with
-[ifa/issues/030](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+[ifa/issues/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 elsewhere in the tree (`ifa/issues/073`, `ifa/issues/README.md` both
 say "the 018/030 heterogeneous-union boxing family") — 030's classtag
 dispatch is for object/class receivers though, so it doesn't directly

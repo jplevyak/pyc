@@ -83,7 +83,7 @@ is one of the blockers found here — closure-wrapping decorators
 (the most common decorator shape) hit it directly.
 [ifa/issues/closed/029-polymorphic-dispatch.md](../ifa/issues/closed/029-polymorphic-dispatch.md)
 /
-[ifa/issues/030-polymorphic-dispatch-fat-pointers.md](../ifa/issues/030-polymorphic-dispatch-fat-pointers.md)
+[ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 already track and design the general "call site resolves to ≥2
 candidate `Fun`s" problem for method-call-through-receiver shapes;
 this issue's Finding 2 is the same architectural gap for a shape
