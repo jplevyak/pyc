@@ -23,6 +23,17 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [041-stdlib-shim-stubs-silently-wrong.md](041-stdlib-shim-stubs-silently-wrong.md)
+  — `pyc_lib/struct.py`, `colorsys.py`, `getopt.py`, and `os.py`'s
+  filesystem functions all exist as importable shims but are no-op
+  stubs (`struct.pack` returns `b""`, `colorsys.hsv_to_rgb` always
+  `(0.0, 0.0, 0.0)`, `getopt.getopt` always `([], [])`, `os.listdir`
+  always `[]`) — silent wrong output, zero diagnostic, confirmed
+  load-bearing in `minpng.py`/`sha.py`/`mandelbrot2.py`. `fnmatch` and
+  `os.path`'s string functions are, by contrast, genuinely correct;
+  `array`/`re` are real but incompletely-featured. Found while
+  auditing [issues/025](025-shedskin-examples-coverage.md)'s TODO
+  list (item 14).
 - [040-percent-format-float-arg-int-specifier-garbage.md](040-percent-format-float-arg-int-specifier-garbage.md)
   — `"%d" % <float>` (Python truncates; valid and common) produces
   deterministic garbage instead of the truncated integer, on both

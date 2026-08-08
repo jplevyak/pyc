@@ -3100,8 +3100,28 @@ through (or move to a "filed" note) as each gets its own issue.
     which is exactly why the bug went unnoticed. Full `test_pyc.py`
     both backends: 256/11/0/4 (255 baseline + 1 new test), zero
     regressions.
-14. **stdlib long tail**: `struct`, `colorsys`, `array`, `re`,
-    `getopt`, `os.path`, `fnmatch` — no shims.
+14. ~~**stdlib long tail**~~ — **STALE claim at the file level;
+    real, more precise gap found and FILED 2026-08-08 as
+    [041](041-stdlib-shim-stubs-silently-wrong.md).** All seven named
+    modules already have a `pyc_lib/*.py` shim (most since `ed00e7c5`,
+    2026-07-08 — same commit item 13's itertools fix traced back to).
+    Auditing each one's actual behavior found they're NOT uniform:
+    `fnmatch` and `os.path`'s string functions (`join`/`split`/
+    `dirname`/`basename`/`splitext`) are genuinely correct, verified
+    byte-identical to CPython. `array` and `re` are real but
+    incompletely-featured (documented gaps, fail loudly/absently, not
+    silently). `struct`, `colorsys`, `getopt`, and `os`'s
+    filesystem-touching functions (`listdir`, `exists`, `system`,
+    etc.) are **no-op stubs** — they compile, run, and return
+    plausible-looking but completely wrong values with zero
+    diagnostic (`struct.pack('>I', 42)` returns `b''` instead of the
+    packed bytes; `colorsys.hsv_to_rgb` always returns `(0.0, 0.0,
+    0.0)`; `getopt.getopt` always returns `([], [])`). Confirmed
+    load-bearing in real corpus examples: `minpng.py`/`sha.py`
+    (struct), `mandelbrot2.py` (colorsys) would currently run to
+    completion and emit plausible-looking but silently corrupt output
+    — same severity class as item 10's `%d`-float bug. See 041 for
+    the full per-module breakdown and verified repros.
 15. **Package-directory import resolution** (multi-file packages —
     `minilight/ml/`, `quameon/jastrow/`, `tarsalzp/com/…`) — the last
     structural import blocker, named explicitly, no issue.
