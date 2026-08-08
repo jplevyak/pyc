@@ -23,6 +23,16 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [043-slice-target-augmented-assignment-silently-wrong.md](043-slice-target-augmented-assignment-silently-wrong.md)
+  — `a[i:j] += x` silently corrupts the list: the existing code
+  comment claimed it just "acts like `=`" (drops the operator), but
+  it's worse — the RHS is applied twice, once as a wrong full-slice
+  replacement and again via a genuine `__iadd__` mistakenly called
+  against the whole list rather than the extracted slice, appending
+  to the end regardless of the original slice bounds. Confirmed via
+  generated C. Found while auditing
+  [issues/025](025-shedskin-examples-coverage.md)'s TODO list (item
+  17) — the gap was already documented inline but never filed.
 - [042-package-directory-import-resolution.md](042-package-directory-import-resolution.md)
   — no support for directory-based Python packages (`pkg/__init__.py`
   + submodule files) — every import resolves as a single flat

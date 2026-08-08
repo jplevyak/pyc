@@ -3168,9 +3168,25 @@ through (or move to a "filed" note) as each gets its own issue.
     must be given in declaration order today; out-of-order still
     fails (safely)") — confirming this was a known, accepted gap, just
     never filed.
-17. **Slice-target augmented assignment** (`a[i:j] |= x`) —
-    "documented gap (comment in the code)," never promoted to an
-    issue.
+17. ~~**Slice-target augmented assignment**~~ — **CONFIRMED worse than
+    documented, FILED 2026-08-08 as
+    [043](043-slice-target-augmented-assignment-silently-wrong.md).**
+    The existing code comment claims `a[i:j] += x` "acts like `=`"
+    (drops the in-place operator entirely). Verified via generated C
+    that it's actually worse: `b = [1,2,3,4,5]; b[1:3] += [10,20]`
+    gives `[1, 10, 20, 4, 5, 10, 20]` on pyc (CPython:
+    `[1, 2, 3, 10, 20, 4, 5]`) — `[10, 20]` is applied **twice**: once
+    as the documented wrong full-replacement, then again via a genuine
+    `list.__iadd__` call that's mistakenly run against the *whole
+    list* (not the extracted slice), appending to the end regardless
+    of the original slice bounds. Genuine list corruption, not just a
+    dropped operator. (Also noted: the doc's own illustrative example,
+    `a[i:j] |= x`, isn't actually valid CPython for lists at all —
+    `|=` is for sets/ints; `+=` is the operator that actually
+    demonstrates this.) `tests/augassign_subscript.py` (added
+    alongside the sibling plain-index fix this gap was deferred from)
+    covers plain-index only, confirmed by reading it — no slice
+    notation appears anywhere in that file.
 18. **sudoku3, rubik/hq2x** (the R2 heterogeneous-union bucket) —
     umbrella (030/072/074/075) exists, the specific case doesn't.
 19. **Issue 043's own "unmeasured" follow-up** — the closed doc states
