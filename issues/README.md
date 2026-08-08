@@ -141,6 +141,24 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [044](closed/044-list-add-mutates-receiver.md) — `list.__add__`
+  (`+`) mutated its left operand's list header in place and returned
+  that same object, instead of allocating an independent result —
+  invisible whenever the left operand went unread afterward, silent
+  data corruption the moment it was aliased elsewhere (an object
+  field, another variable). Root cause of
+  [issues/025](025-shedskin-examples-coverage.md)'s TODO item 2
+  (rubik2's ~7675-move degenerate phase-0 "solution", vs.
+  Thistlethwaite's proven ≤7-move bound). Fixed in
+  `pyc_c_runtime.h`/`pyc_runtime.c` (both backends carry independent
+  copies of this primitive); new regression test
+  `tests/list_add_no_mutate.py`; full suite clean on both backends
+  (257/11/0/4, no regressions). rubik2.py itself still doesn't
+  complete in reasonable time post-fix — separate, not-yet-root-caused
+  (044's "Residual" section) — and a related LLVM-backend segfault
+  (a class constructed both with and without its default-`None`
+  constructor arg) was found and filed separately as
+  [ifa/issues/088](../ifa/issues/088-llvm-class-list-field-plus-construct-segfault.md).
 - [034](closed/034-iadd-fallback-and-mixed-numeric-regression.md) —
   `+=`/`-=`/etc. against a class defining only the non-in-place
   operator (`__add__` without `__iadd__`, the common case — CPython

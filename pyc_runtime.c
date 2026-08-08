@@ -115,19 +115,28 @@ static inline unsigned int _PYC_list_len(void *l) {
   return l ? _CG_LIST_HDR_LEN(l) : 0;
 }
 
+/* issues/044: was writing the concatenated result into l1's own
+ * header and returning l1 -- correct for list.append()'s in-place
+ * contract (_CG_list_resize below) but wrong for list.__add__ (`+`),
+ * which CPython never lets mutate either operand. Any receiver
+ * aliased elsewhere (an object field, another variable) silently
+ * gained the concatenation as a side effect of merely evaluating
+ * `+`. Fresh-allocate the header too, mirroring _CG_list_getslice's
+ * pattern just below (already correct for `list[a:b]`). */
 void *_CG_list_add(void *l1, void *l2, int64 size1, int64 size2) {
   unsigned int s1 = _PYC_list_len(l1);
   unsigned int s2 = _PYC_list_len(l2);
   size_t size = (size_t)(size1 ? size1 : size2);
-  void *x = GC_MALLOC(size * (s1 + s2));
-  if (s1) memcpy(x, _CG_LIST_HDR_PTR(l1), (size_t)s1 * size);
+  char *base = (char *)GC_MALLOC(size * (s1 + s2) + _CG_SIZEOF_LIST_HDR);
+  void *x = base + _CG_SIZEOF_LIST_HDR;
+  _CG_LIST_HDR_LEN(x) = s1 + s2;
+  _CG_LIST_HDR_TOTAL(x) = s1 + s2;
+  _CG_LIST_HDR_PTR(x) = x;
+  if (s1) memcpy(_CG_LIST_HDR_PTR(x), _CG_LIST_HDR_PTR(l1), (size_t)s1 * size);
   if (s2)
-    memcpy(((char *)x) + (size_t)s1 * size,
+    memcpy(((char *)_CG_LIST_HDR_PTR(x)) + (size_t)s1 * size,
            _CG_LIST_HDR_PTR(l2), (size_t)s2 * size);
-  _CG_LIST_HDR_LEN(l1) = s1 + s2;
-  _CG_LIST_HDR_TOTAL(l1) = s1 + s2;
-  _CG_LIST_HDR_PTR(l1) = x;
-  return l1;
+  return x;
 }
 
 void *_CG_list_resize(void *l1, int64 size1, int64 new_len) {

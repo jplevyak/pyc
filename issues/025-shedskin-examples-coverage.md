@@ -2926,12 +2926,36 @@ through (or move to a "filed" note) as each gets its own issue.
    fractal output) still compiles and runs **byte-identical to
    CPython** (only the final `TIME` line differs, as expected). The
    design gap this TODO worried about is closed; no new issue filed.
-2. **rubik2's degenerate BFS solution** — ~7675-move phase-0 solve,
-   `state_ids` dedup apparently not pruning. Flagged as "a third,
-   separate issue worth flagging for whoever picks this up next."
-   (Also only cited as a symptom instance under the open FA-precision
-   umbrella issues 030/072/074/075 — no dedicated tracking of this
-   specific case.)
+2. ~~**rubik2's degenerate BFS solution**~~ — **root cause found and
+   fixed 2026-08-08, filed as
+   [issues/044](closed/044-list-add-mutates-receiver.md).** The "`state_ids`
+   dedup apparently not pruning" guess was on the right track but
+   not the actual mechanism: `list.__add__` (`+`) mutated its left
+   operand's own list header in place and returned that same object,
+   instead of allocating an independent result (verified: plain `a =
+   [1]; b = a + [2]; print(a)` printed `[1, 2]` on pyc, not CPython's
+   `[1]`). rubik2's `cube_state.apply_move` builds each successor via
+   `self.route+[move]` against the *same* `cur_state` inside the
+   inner `for move in phase_moves[phase]` loop, so every successor's
+   `.route` collapsed onto one shared, ever-growing list — and (very
+   likely, though not separately re-confirmed after the fix) the same
+   mechanism corrupted the `state.id_(phase)` tuples `state_ids` keys
+   off, explaining why dedup looked broken. Fixed in
+   `pyc_c_runtime.h`/`pyc_runtime.c` (both backends carry independent
+   copies of this primitive); confirmed against a faithful mini-BFS
+   isolate (4-int state space, matching this rubik2 shape) that now
+   finds the correct 12-move solution instead of a degenerate
+   2112-move cycle. New regression test
+   `tests/list_add_no_mutate.py`; full suite clean on both backends
+   (257/11/0/4, no regressions).
+   **Not fully closed**: the full rubik2.py program still doesn't
+   complete in reasonable time even after this fix (a *different*,
+   not-yet-root-caused issue — leading hypothesis is `set.__contains__`
+   being an O(n) linear scan, see issue 044's "Residual" section) —
+   and a related-but-distinct LLVM-backend segfault (a class
+   constructed both with and without its default-`None` constructor
+   arg in the same program) was found and filed separately as
+   [ifa/issues/088](../ifa/issues/088-llvm-class-list-field-plus-construct-segfault.md).
 3. **mastermind2's int/float mixed `-=`/`*` gap** — "not investigated
    further" (its own line 77). (Umbrella-only, as #2.)
 4. **sunfish's `"sizeof_element of non-container type"` internal

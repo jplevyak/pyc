@@ -1094,16 +1094,25 @@ typedef struct _CG_list_struct {
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
 
 
+// issues/044: unlike _CG_list_resize_internal (backing list.append(),
+// which correctly mutates in place -- CPython's append() does too),
+// this backs list.__add__ (`+`), which CPython never lets mutate
+// either operand. The old body wrote the concatenated result into
+// l1's own header and returned l1 itself -- any receiver aliased
+// elsewhere (an object field, another variable) silently gained the
+// concatenation as an in-place side effect of merely evaluating `+`.
+// Fresh-allocate the header too, mirroring _CG_list_getslice_internal
+// below (which already gets this right for `list[a:b]`).
 static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 size1, uint32 size2) {
   uint32 s1 = _CG_prim_len(0, l1), s2 = _CG_prim_len(0, l2);
   uint32 size = size1 ? size1 : size2;
-  _CG_list x = (_CG_list)MALLOC(size * (s1 + s2));
-  if (s1) memcpy(x, _CG_list_ptr(l1), s1 * size);
-  if (s2) memcpy(((char *)x) + s1 * size, _CG_list_ptr(l2), s2 * size);
-  _CG_list_len(l1) = s1 + s2;
-  _CG_list_total_len(0, l1) = s1 + s2;
-  _CG_list_ptr(l1) = x;
-  return l1;
+  _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * (s1 + s2) + SIZEOF_LIST_HEADER));
+  _CG_list_len(x) = s1 + s2;
+  _CG_list_total_len(0, x) = s1 + s2;
+  _CG_list_ptr(x) = x;
+  if (s1) memcpy(_CG_list_ptr(x), _CG_list_ptr(l1), s1 * size);
+  if (s2) memcpy(((char *)_CG_list_ptr(x)) + s1 * size, _CG_list_ptr(l2), s2 * size);
+  return x;
 }
 
 static inline _CG_list _CG_list_resize_internal(_CG_list l1, uint32 size1, uint32 new_len) {
