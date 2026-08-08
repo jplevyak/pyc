@@ -6,7 +6,7 @@ class count:
     def __iter__(self):
         return self
         
-    def next(self):
+    def __next__(self):
         v = self.n
         self.n += self.step
         return v

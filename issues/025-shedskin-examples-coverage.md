@@ -3077,8 +3077,29 @@ through (or move to a "filed" note) as each gets its own issue.
     the wider "D — grammar/scanner" investigation named
     (astar/neural1/path_tracing/plcfrs/solitaire/rdb) — out of scope
     for this specific item, which only named mao/voronoi2 by number.
-13. **`itertools` module** — never given even a partial shim
-    (`product` etc.).
+13. ~~**`itertools` module**~~ — **STALE claim + a real bug found and
+    FIXED 2026-08-08.** `pyc_lib/itertools.py` already existed
+    (`count`, `product` up to 4 args), added `ed00e7c5` (2026-07-08,
+    same commit as items 14's `struct`/`select` and `functools`/
+    `collections` — the "never given even a partial shim" claim was
+    wrong from the start, and this same commit quietly resolves most
+    of item 14 too, see there). `product` worked correctly on both
+    backends already. `count` did not: its shim defined a Python-2-
+    style `next(self)` method instead of Python 3's `__next__` — every
+    other iterator class in `__pyc__/` uses `__next__`, so pyc's
+    `next()` builtin never found a match and `count()` aborted at
+    runtime with `assert(!"runtime error: getter not resolved")`.
+    One-line fix (`pyc_lib/itertools.py`: `next` → `__next__`).
+    Verified: new regression test `tests/itertools_module.py`
+    (`count` + `product` 2-arg and 3-arg forms), byte-identical to
+    CPython on both backends; real corpus example
+    `shedskin_examples/sunfish/sunfish.py` (which imports
+    `itertools.count`) no longer has any itertools-related blocker
+    after the fix (still blocked by an unrelated `in`/`__contains__`
+    gap). No existing test exercised `itertools` at all before this,
+    which is exactly why the bug went unnoticed. Full `test_pyc.py`
+    both backends: 256/11/0/4 (255 baseline + 1 new test), zero
+    regressions.
 14. **stdlib long tail**: `struct`, `colorsys`, `array`, `re`,
     `getopt`, `os.path`, `fnmatch` — no shims.
 15. **Package-directory import resolution** (multi-file packages —
