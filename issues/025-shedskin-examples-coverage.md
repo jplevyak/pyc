@@ -2997,8 +2997,23 @@ through (or move to a "filed" note) as each gets its own issue.
    already-tracked, still-open gap — not a new bug, and not the
    `if __name__`/comprehension mechanism originally guessed. No new
    issue needed; already covered by 035.
-9. **sudoku4** — never diagnosed beyond being named in a bucket list.
-   (Umbrella-only, as #2.)
+9. ~~**sudoku4**~~ — **DIAGNOSED and FILED 2026-08-07 as
+   [ifa/086](../ifa/issues/086-FA-self-recursive-copy-arg-notype-cascade.md).**
+   Direct fresh diagnosis (never done before): with real test data,
+   `sudoku4.py` now compiles with warnings but **crashes at runtime**
+   (`assert(!"runtime error: getter not resolved")` inside `search`
+   itself — CPython solves all puzzles, pyc dies almost immediately).
+   Traced to a clean, general, minimal repro (3-line function body,
+   nothing sudoku-specific): a self-recursive function whose recursive
+   call passes `arg.copy()` (not the parameter directly) degrades
+   *entirely* to NOTYPE and crashes on its first call, every time —
+   confirmed not container-specific (dict and list both trigger it),
+   not about `None`-guard narrowing, and specifically about routing
+   the recursive argument through a method call on the parameter
+   rather than passing it straight through (which works fine). A
+   plausible cause for `sudoku2` too (same Norvig-solver-with-`.copy()`
+   shape, not independently confirmed) and for other still-undiagnosed
+   corpus examples using the same backtracking-search idiom.
 10. **yopyra's rendered-pixel-values-look-wrong concern** — explicitly
     left open ("worth a follow-up dig before treating yopyra as fully
     correct"), not confirmed either way.
