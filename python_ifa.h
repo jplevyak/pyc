@@ -15,6 +15,11 @@ class PyDAST;
 class PycCallbacks : public IFACallbacks {
  public:
   virtual ~PycCallbacks();
+  // Python's bool is a genuine int subtype (isinstance(True, int) is
+  // True) -- opt into ifa's numeric lattice for bool (ifa.h, ifa/issues/081)
+  // so int/bool arithmetic folds and types correctly instead of either
+  // crashing (081) or silently salvaging to an untyped expression.
+  bool bool_is_numeric() { return true; }
 };
 
 class PycSymbol : public IFASymbol {
