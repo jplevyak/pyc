@@ -199,12 +199,64 @@ static void to_str_transfer_function(PNode *pn, EntrySet *es) {
   update_gen(result, make_abstract_type(sym_string));
 }
 
+// issues/040: a %d/%i/%o/%x/%X/%u/%c spec receiving a float argument
+// (or %f/%e/%g/%E/%G receiving an int argument) is undefined behavior
+// in C -- vsnprintf's va_arg(int)/va_arg(double) reads the wrong
+// register class (x86-64 SysV: float/double varargs pass via XMM,
+// while an integer specifier's va_arg reads the general-purpose/stack
+// save area) -- garbage, not a truncated or promoted value, unlike
+// Python's own %d/%f which happily accept either. Only fixable when
+// the format string is a compile-time constant we can parse here
+// (matches this same primitive's existing %s-stringification scope
+// boundary, python_ifa_build_if1.cc's __mod__ handling -- non-constant
+// formats keep the old, unchecked behavior; per-argument types, by
+// contrast, are only known this late, post-FA, not at that frontend
+// site).
+static void collect_format_convs(cchar *fmt, Vec<char> &convs) {
+  for (cchar *p = fmt; *p; p++) {
+    if (*p != '%') continue;
+    p++;
+    if (*p == '%') continue;
+    while (*p && (strchr("-+ #0", *p) || (*p >= '0' && *p <= '9') || *p == '.')) p++;
+    if (*p) convs.add(*p);
+  }
+}
+
+static void format_string_emit_arg(FILE *fp, Var *av, char conv) {
+  fputs(", ", fp);
+  if (av->type) {
+    if (strchr("diouxXc", conv) && av->type->num_kind == IF1_NUM_KIND_FLOAT)
+      fputs("(int64)", fp);
+    else if (strchr("feEgGF", conv) && (av->type->num_kind == IF1_NUM_KIND_INT || av->type->num_kind == IF1_NUM_KIND_UINT))
+      fputs("(double)", fp);
+  }
+  fputs(av->cg_string, fp);
+}
+
 static void format_string_codegen(FILE *fp, PNode *n, Fun *f) {
   fputs("_CG_format_string(", fp);
   fputs(n->rvals[2]->cg_string, fp);
   Var *v = n->rvals[3];
+  cchar *fmt = n->rvals[2]->sym->constant;
+  Vec<char> convs;
+  if (fmt) collect_format_convs(fmt, convs);
   if (v->type->type_kind == Type_RECORD) {
-    for (int i = 0; i < v->type->has.n; i++) fprintf(fp, ", %s->e%d", v->cg_string, i);
+    for (int i = 0; i < v->type->has.n; i++) {
+      if (i < convs.n && v->type->has[i]->type) {
+        char conv = convs[i];
+        Sym *field_type = v->type->has[i]->type;
+        fputs(", ", fp);
+        if (strchr("diouxXc", conv) && field_type->num_kind == IF1_NUM_KIND_FLOAT)
+          fputs("(int64)", fp);
+        else if (strchr("feEgGF", conv) && (field_type->num_kind == IF1_NUM_KIND_INT || field_type->num_kind == IF1_NUM_KIND_UINT))
+          fputs("(double)", fp);
+        fprintf(fp, "%s->e%d", v->cg_string, i);
+      } else {
+        fprintf(fp, ", %s->e%d", v->cg_string, i);
+      }
+    }
+  } else if (convs.n == 1) {
+    format_string_emit_arg(fp, v, convs[0]);
   } else {
     fputs(", ", fp);
     fputs(n->rvals[3]->cg_string, fp);

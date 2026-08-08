@@ -1,9 +1,10 @@
 # 040 — `"%d" % <float>` produces garbage output instead of Python's truncate-to-int (both backends)
 
-**Status:** open, found 2026-08-07 while diagnosing
-[issues/025](025-shedskin-examples-coverage.md)'s `yopyra` entry (TODO
-list item 10 — "rendered pixel values look wrong," left unconfirmed
-since the reference `python3` run hadn't been compared side-by-side).
+**Status:** fixed 2026-08-08. Found 2026-08-07 while diagnosing
+[issues/025](../025-shedskin-examples-coverage.md)'s `yopyra` entry
+(TODO list item 10 — "rendered pixel values look wrong," left
+unconfirmed since the reference `python3` run hadn't been compared
+side-by-side).
 
 **Affects:** `pyc_c_runtime.h`'s `_CG_format_string` (both backends
 call this at runtime); `python_ifa_main.cc`'s `format_string_codegen`
@@ -137,3 +138,82 @@ render output, not caught by "compiles and doesn't crash") and
 plausibly other corpus examples using similar formatted-output code
 that haven't been checked pixel-for-pixel/byte-for-byte against
 CPython.
+
+## Fix (2026-08-08)
+
+Implemented at the codegen sites, per the second option above (not
+the frontend `__mod__` lowering) — the frontend's own existing
+per-spec handling (the `%s`-stringification fix this file's "Root
+cause" section references) can only see argument types for
+compile-time-constant literals; a general expression's resolved type
+isn't known until after FA, which is exactly when codegen runs.
+
+Both `format_string_codegen` (`python_ifa_main.cc`, C backend) and the
+LLVM backend's `__pyc_format_string__` handler (`ifa/codegen/cg_emit_llvm.cc`)
+now: parse the format string's `%`-specifiers when it's a compile-time
+constant (`Var->sym->constant` — the same field
+`c_call_codegen`/`cg.cc` already use elsewhere for this), and, for
+each corresponding argument (tuple fields exploded, or the single
+value), insert an explicit `(int64)` cast (C backend) /
+`CreateFPToSI` (LLVM) when a `d`/`i`/`o`/`u`/`x`/`X`/`c` spec receives
+a `float`-`num_kind` argument, or the reverse — `(double)` /
+`CreateSIToFP` — when an `f`/`e`/`g`/`E`/`G`/`F` spec receives an
+`int`/`uint`-`num_kind` argument. A non-constant format string (or a
+spec/argument-count mismatch) falls back to the old, unchecked
+behavior unchanged — same scope boundary the existing `%s` fix
+already accepts.
+
+**One correction to this file's own "what a fix needs" scope**: real
+Python actually only accepts a float for `%d`/`%i`/`%u` (truncates,
+matching this fix) — `%o`/`%x`/`%X`/`%c` with a float argument is a
+`TypeError` in CPython (`"%x" % 255.0` raises), not the "same class of
+mismatch" this file assumed. Since pyc has no exception model
+(consistent with how this codebase already handles other
+CPython-would-raise cases, e.g. issue 006's `__format__`), the cast is
+applied uniformly to all of `dioxXuc` anyway — turning UB/register-
+garbage into *some* defined, deterministic value even for the
+technically-invalid float+`%x`/`%o`/`%X`/`%c` combination, which is a
+strict improvement (there was never a CPython reference value to
+match for those anyway) without pretending to reproduce a
+`TypeError` pyc can't raise.
+
+**Verified:**
+- The minimal repro (`"%d" % 3.7`) → `3` on both backends, matching
+  CPython.
+- Survey of the other specifier combinations from the verification
+  plan (`%i`, `%u`, `%f`, `%e`, `%g`, plus a tuple of three floats
+  through `%d %d %d`, and a mixed `%s`/`%d` — the exact `%s`-then-`%d`
+  shape the existing frontend fix already special-cases) — all match
+  CPython exactly on both backends. New regression test
+  `tests/format_string_int_float_mismatch.py`.
+- `color.__str__`'s *exact* shape from this file's own root-cause
+  section (`"%d %d %d" % (max(0.0, min(self.r*255.0, 255.0)), ...)`,
+  reconstructed standalone) — matches CPython exactly on the C
+  backend.
+- Full `test_pyc.py`, both backends: clean, no regressions.
+
+**yopyra's own full/downscaled render — genuine progress, not fully
+resolved, and not further chased here**: re-ran the downscaled
+spot-check this file's verification plan describes. The original
+garbage signature (`622879781` repeating for every pixel) is
+**completely gone** — confirms the UB is fixed. But the resulting
+pixel values, while all in-range and plausible-looking, still don't
+match CPython's reference numbers, even though the isolated
+`color.__str__`-shaped test above (using the identical expression)
+matches CPython exactly. This means the residual mismatch is **not**
+this format-string bug — it's some other, separate, not-yet-diagnosed
+divergence elsewhere in yopyra's ray-tracing math, unmasked now that
+the format-string UB no longer swamps it. Not investigated further
+here (out of this issue's scope); worth its own issue if someone
+picks up yopyra again.
+
+**Separately discovered, unrelated, not fixed here**: verifying
+yopyra's render also surfaced that `print(x, file=some_file_object)`
+does not actually write to `some_file_object` — output goes to
+stdout regardless of the `file=` keyword argument. Confirmed via
+yopyra's own `print(renderPixel(x, y), end=' ', file=fileout)`
+(intended to build the `.ppm` file's pixel data) writing to the
+terminal instead, leaving the target file empty. A completely
+separate bug from this issue's format-string UB; not filed as its own
+issue, just flagged here since it was found in the course of this
+verification and would otherwise be easy to lose track of.

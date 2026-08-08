@@ -3117,8 +3117,10 @@ through (or move to a "filed" note) as each gets its own issue.
    shape, not independently confirmed) and for other still-undiagnosed
    corpus examples using the same backtracking-search idiom.
 10. ~~**yopyra's rendered-pixel-values-look-wrong concern**~~ —
-    **CONFIRMED as a real bug 2026-08-07 and FILED as
-    [040](040-percent-format-float-arg-int-specifier-garbage.md).**
+    **CONFIRMED as a real bug 2026-08-07, FILED as
+    [040](closed/040-percent-format-float-arg-int-specifier-garbage.md), and
+    FIXED 2026-08-08 (see that file's closed status for the fix and
+    verification detail).** Original finding below, unedited:
     The original spot-check was never compared against CPython (the
     real `scene.txt` render was too slow); re-ran today with a scaled-
     down scene (small image, no oversampling, a 3-line renderslice) so

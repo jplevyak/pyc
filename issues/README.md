@@ -67,19 +67,6 @@ conventions are the same; the only difference is location.
   `array`/`re` are real but incompletely-featured. Found while
   auditing [issues/025](025-shedskin-examples-coverage.md)'s TODO
   list (item 14).
-- [040-percent-format-float-arg-int-specifier-garbage.md](040-percent-format-float-arg-int-specifier-garbage.md)
-  — `"%d" % <float>` (Python truncates; valid and common) produces
-  deterministic garbage instead of the truncated integer, on both
-  backends. Root cause: `_CG_format_string` forwards the Python format
-  string and raw C varargs directly to `vsnprintf`, and a `double`
-  argument reaching a `%d` specifier is undefined behavior in C (ABI
-  mismatch — float varargs and `%d`'s `va_arg(int)` read from
-  different register classes on x86-64 SysV). Silent wrong output, no
-  diagnostic. Found while confirming
-  [issues/025](025-shedskin-examples-coverage.md)'s `yopyra` "pixel
-  values look wrong" concern was a real bug, not a stale spot-check —
-  `color.__str__`'s `"%d %d %d" % (float, float, float)` hits this on
-  every pixel.
 - [039-list-mul-shared-element-type-cross-contamination.md](039-list-mul-shared-element-type-cross-contamination.md)
   — `list.__mul__`/`__rmul__` (`n * [x]`) shares a CreationSet/element-
   type representation across unrelated call sites: `bh.py`'s genuinely
@@ -154,6 +141,29 @@ conventions are the same; the only difference is location.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [040](closed/040-percent-format-float-arg-int-specifier-garbage.md)
+  — `"%d" % <float>` (Python truncates; valid and common) produced
+  deterministic garbage instead of the truncated integer, on both
+  backends. Root cause: `_CG_format_string` forwarded the Python
+  format string and raw C varargs directly to `vsnprintf`, and a
+  `double` argument reaching a `%d` specifier is undefined behavior in
+  C (ABI mismatch — float varargs and `%d`'s `va_arg(int)` read from
+  different register classes on x86-64 SysV). Fixed at both backends'
+  codegen sites (not the frontend `__mod__` lowering — argument types
+  aren't known until post-FA): parse the format string's specifiers
+  when it's a compile-time constant, insert an explicit `(int64)` /
+  `(double)` cast when a specifier and its argument's resolved type
+  disagree. New regression test
+  `tests/format_string_int_float_mismatch.py`; full suite clean, both
+  backends. yopyra's downscaled render no longer shows the garbage
+  signature but still doesn't byte-match CPython — confirmed **not**
+  this bug (an isolated test of the exact `color.__str__` expression
+  matches CPython exactly) — some other, separate, not-yet-diagnosed
+  divergence in yopyra's ray-tracing math, not chased further.
+  Separately (and unrelated): `print(x, file=some_file_object)`
+  doesn't actually write to `some_file_object` — output goes to
+  stdout regardless — found via yopyra's own `.ppm`-writing code;
+  flagged, not filed, not fixed.
 - [044](closed/044-list-add-mutates-receiver.md) — `list.__add__`
   (`+`) mutated its left operand's list header in place and returned
   that same object, instead of allocating an independent result —
