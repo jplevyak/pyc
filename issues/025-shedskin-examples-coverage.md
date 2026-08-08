@@ -2975,9 +2975,28 @@ through (or move to a "filed" note) as each gets its own issue.
    future reader isn't confused if they stumble on it independently.
    (rdb's remaining `os.path`/`getopt`/`fnmatch` stdlib needs are
    separate, tracked at #14 below.)
-8. **pisang's module-level `if __name__` globals feeding
-   comprehension chains** — its "next layer," mentioned once.
-   (Umbrella-only, as #2.)
+8. ~~**pisang's module-level `if __name__` globals feeding
+   comprehension chains**~~ — **COVERED, verified 2026-08-07 (already
+   tracked, doc's original guess was wrong).** That "next layer" theory
+   was a same-day guess (2026-07-14), never actually confirmed. Direct
+   re-verification today with the real test data
+   (`testdata/uuf250-010.cnf`): `pisang.py` now compiles with **zero**
+   pyc-level warnings (only two harmless clang "expression result
+   unused" notes) — no sign of the guessed `if __name__`/comprehension
+   type-inference gap at all — but the compiled binary **aborts at
+   runtime**: `assert(!"runtime error: list element type mismatch")`,
+   inside `list::append`. That is the *exact* assert text, and the
+   *exact* "crash surfaces via `list::append`, not the real culprit
+   site" signature, [035](035-list-element-cast-salvage-guard-and-set-item-union.md)'s
+   own "What's still open" section already documents in detail (a list
+   that starts homogeneous, e.g. `n * [0]`, then gets mutated with a
+   genuinely different scalar kind via `+=`, can't be represented
+   without boxing pyc doesn't have) — 035 explicitly frames this as "a
+   general gap, not tictactoe-specific," still open as of its own
+   2026-08-06 status. pisang is simply another instance of that same,
+   already-tracked, still-open gap — not a new bug, and not the
+   `if __name__`/comprehension mechanism originally guessed. No new
+   issue needed; already covered by 035.
 9. **sudoku4** — never diagnosed beyond being named in a bucket list.
    (Umbrella-only, as #2.)
 10. **yopyra's rendered-pixel-values-look-wrong concern** — explicitly
