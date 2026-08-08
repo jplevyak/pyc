@@ -3145,8 +3145,29 @@ through (or move to a "filed" note) as each gets its own issue.
     suite exercises package-directory imports at all today (confirmed
     by grep) — part of why this was never caught by anything but the
     corpus sweep.
-16. **Out-of-order keyword arguments** (`f(high=9, low=2)`) — "still
-    fail to compile (safely — no miscompile)."
+16. ~~**Out-of-order keyword arguments**~~ — **CONFIRMED still real
+    and FILED 2026-08-08 as
+    [ifa/087](../ifa/issues/087-DISPATCH-out-of-order-keyword-args.md).**
+    Re-verified directly: `f(low=2, high=9)` (matching declaration
+    order) works; `f(high=9, low=2)` (reversed) compiles with `illegal
+    call argument type` warnings and, if reached at runtime, traps via
+    a guarded `assert(!"runtime error: matching function not found")`
+    — confirmed genuinely "safe" (not a whole-program crash): checked
+    with unbuffered output that every statement before the bad call
+    still executes and prints. Traced the frontend
+    (`python_ifa_build_if1.cc`) and confirmed it's **not** the source
+    — every keyword argument is tagged with its name at the SEND
+    regardless of call-site order; the bug is in
+    `ifa/if1/pattern.cc`'s matcher (`pattern_match` →
+    `Matcher::find_all_matches`), not traced to the exact line (a
+    substantial, general, recursive-backtracking matcher shared by
+    every ifa-based frontend, not pyc-specific — warrants its own
+    dedicated trace, same depth as item 9's investigation, not
+    attempted here). `tests/keyword_args.py`'s own header comment
+    already documented this exact limitation verbatim ("keyword args
+    must be given in declaration order today; out-of-order still
+    fails (safely)") — confirming this was a known, accepted gap, just
+    never filed.
 17. **Slice-target augmented assignment** (`a[i:j] |= x`) —
     "documented gap (comment in the code)," never promoted to an
     issue.
