@@ -2954,9 +2954,27 @@ through (or move to a "filed" note) as each gets its own issue.
    compiler warning at the exact flagged line — the other two are
    suspected benign constant-folding, not this bug). Filed with that
    distinction made explicit rather than re-citing rsync as the repro.
-7. **rdb's `\x`-string-escape parse bug** — mentioned once, no issue
-   (separate from its `os.path`/`getopt`/`fnmatch` stdlib needs, #14
-   below).
+7. ~~**rdb's `\x`-string-escape parse bug**~~ — **STALE, verified
+   resolved 2026-08-07, no issue needed.** Re-verified: `rdb.py`'s
+   exact trigger line (`.write(\` backslash-continuation followed by
+   `b"\xff"*3` on the next line, `rdb.py:400`) now parses and compiles
+   with no warning at that location; a full fresh compile of the whole
+   file reaches the end (`rc=0`, `.c` + executable produced), and an
+   isolated minimal repro matching the precise shape (line-continuation
+   immediately followed by a `\x`-escaped bytes literal) runs and
+   matches CPython exactly (`36` bytes both). Whatever DParser grammar
+   fix landed since 2026-07 (likely incidental — several other grammar
+   gaps were fixed in that window, e.g. the triple-quote bug earlier
+   in this doc) also covers this shape; not worth a dedicated issue
+   for something no longer reproducible.
+   **Side note, not this item's concern:** the same repro surfaced a
+   separate, unrelated bug while verifying — `print()`/`bytes.__repr__`
+   on a `bytes` value writes the *raw bytes* to stdout instead of
+   Python's `b'\x02\x00...'`-style hex-escaped repr. Not investigated
+   or filed here (out of scope for a parse-bug item); flagged so a
+   future reader isn't confused if they stumble on it independently.
+   (rdb's remaining `os.path`/`getopt`/`fnmatch` stdlib needs are
+   separate, tracked at #14 below.)
 8. **pisang's module-level `if __name__` globals feeding
    comprehension chains** — its "next layer," mentioned once.
    (Umbrella-only, as #2.)
