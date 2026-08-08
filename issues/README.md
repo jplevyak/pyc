@@ -23,6 +23,19 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [040-percent-format-float-arg-int-specifier-garbage.md](040-percent-format-float-arg-int-specifier-garbage.md)
+  — `"%d" % <float>` (Python truncates; valid and common) produces
+  deterministic garbage instead of the truncated integer, on both
+  backends. Root cause: `_CG_format_string` forwards the Python format
+  string and raw C varargs directly to `vsnprintf`, and a `double`
+  argument reaching a `%d` specifier is undefined behavior in C (ABI
+  mismatch — float varargs and `%d`'s `va_arg(int)` read from
+  different register classes on x86-64 SysV). Silent wrong output, no
+  diagnostic. Found while confirming
+  [issues/025](025-shedskin-examples-coverage.md)'s `yopyra` "pixel
+  values look wrong" concern was a real bug, not a stale spot-check —
+  `color.__str__`'s `"%d %d %d" % (float, float, float)` hits this on
+  every pixel.
 - [039-list-mul-shared-element-type-cross-contamination.md](039-list-mul-shared-element-type-cross-contamination.md)
   — `list.__mul__`/`__rmul__` (`n * [x]`) shares a CreationSet/element-
   type representation across unrelated call sites: `bh.py`'s genuinely

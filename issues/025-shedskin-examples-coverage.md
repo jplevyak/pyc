@@ -3014,9 +3014,27 @@ through (or move to a "filed" note) as each gets its own issue.
    plausible cause for `sudoku2` too (same Norvig-solver-with-`.copy()`
    shape, not independently confirmed) and for other still-undiagnosed
    corpus examples using the same backtracking-search idiom.
-10. **yopyra's rendered-pixel-values-look-wrong concern** — explicitly
-    left open ("worth a follow-up dig before treating yopyra as fully
-    correct"), not confirmed either way.
+10. ~~**yopyra's rendered-pixel-values-look-wrong concern**~~ —
+    **CONFIRMED as a real bug 2026-08-07 and FILED as
+    [040](040-percent-format-float-arg-int-specifier-garbage.md).**
+    The original spot-check was never compared against CPython (the
+    real `scene.txt` render was too slow); re-ran today with a scaled-
+    down scene (small image, no oversampling, a 3-line renderslice) so
+    a genuine side-by-side comparison was possible in seconds instead
+    of minutes. Confirmed: CPython produces valid, varied 0-255 RGB
+    triples; pyc produces the *identical* garbage triple
+    (`622879781 8 622879781`) for **every single pixel**, on both
+    backends (with a different, equally-wrong, but still deterministic
+    garbage value on LLVM). Root-caused to a 2-line, yopyra-unrelated,
+    general repro: `"%d" % <float>` — Python truncates a float for
+    `%d` (valid, common), but pyc's `_CG_format_string` forwards the
+    format string and argument straight to C's `vsnprintf`, and a
+    `double` reaching a C `%d` (which expects `int`) is undefined
+    behavior — an ABI/register-class mismatch, not a rounding
+    quirk. `color.__str__`'s `"%d %d %d" % (float, float, float)` hits
+    this on every pixel it formats. Silent wrong output, zero compiler
+    diagnostic — worse than the crashes most other TODO items here
+    describe.
 11. **Mixed-element-type tuple printing** (`str((1, None))` aborts at
     runtime) — a known, non-regressing gap, distinct from the general
     tagged-dispatch problem in issue 030.
