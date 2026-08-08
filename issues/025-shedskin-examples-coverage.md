@@ -3034,15 +3034,29 @@ through (or move to a "filed" note) as each gets its own issue.
    2-call repro; not root-caused past "stalls somewhere in
    `InitDecoder()`/the Huffman decode loop." Filed as
    [issues/045](045-tonyjpegdecoder-second-call-hangs.md), which also
-   notes a separate, un-investigated oddity: `-r` (runtime-error
-   salvage) makes the compile *fail outright* with the exact
-   "unable to resolve to a single function at call site" message
-   [ifa/issues/090](../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md)
-   documents — backwards from that fail's own `if (!fruntime_errors)`
-   guard, which should suppress it under `-r`, not trigger it.
+   noted a separate oddity, now explained (2026-08-08, while
+   implementing [ifa/085](../ifa/issues/closed/085-CGEN-dead-if-unresolved-condition-no-guard.md)'s
+   fix): `-r`/`--runtime_errors` is a **negative** flag — confirmed via
+   `pyc.cc`'s `ArgumentDescription` entry, type code `'f'`, "set off,
+   default true" (`ifa/common/arg.cc`: lowercase `'f'` sets its
+   variable to `false` when the flag is given; the default, unset
+   value is `true`, per `defs.h`). So the *default* (no `-r`) is
+   actually the tolerant, salvage-and-continue mode
+   (`fruntime_errors == true`), and passing `-r` **disables** it,
+   forcing hard compile-time errors instead — the opposite of what the
+   flag's own name suggests. That resolves the "backwards from
+   expectation" framing this entry originally used: `-r` triggering
+   "unable to resolve to a single function at call site" isn't
+   backwards at all once the flag's real polarity is known — `-r`
+   makes violations fail loudly instead of being salvaged.
 6. ~~**rsync's dead-loop-body-with-no-runtime-guard codegen gap**~~ —
-   **FILED 2026-08-07 as [ifa/085](../ifa/issues/085-CGEN-dead-if-unresolved-condition-no-guard.md),
-   with a correction.** Re-verified first: `rsync.py`'s ORIGINAL
+   **FILED 2026-08-07 as [ifa/085](../ifa/issues/closed/085-CGEN-dead-if-unresolved-condition-no-guard.md),
+   with a correction, and FIXED 2026-08-08** (both backends now trap
+   correctly, distinguishing a genuinely-unresolved condition from
+   ordinary dead-code elimination via `Var::type`; see that file's own
+   closing entry — including a false-positive-then-corrected fix
+   caught by a full corpus regression sweep, not just the original
+   3 known instances). Re-verified first: `rsync.py`'s ORIGINAL
    symptom (silent `SIGSEGV`, zero diagnostic) is actually gone today
    — it now aborts cleanly via an unrelated, pre-existing "getter not
    resolved" guard reached earlier in the same function, so rsync

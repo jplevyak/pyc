@@ -71,20 +71,26 @@ pattern), and no obvious `list + [...]` accumulation pattern
 (044's shape) appears in the decode path on a quick read. This is a
 **hypothesis to check first**, not a confirmed cause.
 
-## The `-r` flag oddity (separate observation, not chased)
+## The `-r` flag oddity, explained (2026-08-08, while implementing ifa/085's fix)
 
-`pyc -r tonyjpegdecoder.py` (WITH runtime-error salvage) fails
-outright at compile time: `fail: unable to resolve to a single
-function at call site` — the exact message
+`pyc -r tonyjpegdecoder.py` (with `-r` passed) fails outright at
+compile time: `fail: unable to resolve to a single function at call
+site` — the exact message
 [ifa/issues/090](../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md)
-(filed this session for item 4) documents, guarded by `if
-(!fruntime_errors) fail(...)` in `ifa/codegen/cg.cc:956` — meaning
-this fail should be *suppressed* when `-r` is passed (`fruntime_errors
-= true`), not caused by it. Backwards from what the guard's own logic
-suggests. Not investigated — flagged in case it's a useful clue for
-whoever picks up 090 or this issue, since tonyjpegdecoder now
-reproduces the exact same fail-string as that issue's own repros, just
-with the flag polarity apparently inverted from expectation.
+documents. This originally looked backwards against `if
+(!fruntime_errors) fail(...)` (`ifa/codegen/cg.cc:956`) — passing `-r`
+seemed like it should *suppress* this fail, not cause it. Resolved
+while implementing [ifa/085](../ifa/issues/closed/085-CGEN-dead-if-unresolved-condition-no-guard.md)'s
+fix: `-r`/`--runtime_errors` is a **negative** flag — `pyc.cc`'s
+`ArgumentDescription` entry uses type code `'f'` (lowercase), which
+`ifa/common/arg.cc` sets to `false` when the flag is *given*; the
+default (unset) value is `true` (`defs.h`). So the *default* (no `-r`)
+is the tolerant, salvage-and-continue mode
+(`fruntime_errors == true`), and passing `-r` **disables** that,
+forcing hard compile-time errors — the opposite of what the flag's
+name suggests. Not backwards at all once the polarity is known: `-r`
+turning a salvageable violation into a hard fail is exactly what a
+"stop tolerating type violations" flag should do.
 
 ## Why not root-caused further here
 
