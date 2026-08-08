@@ -3122,9 +3122,29 @@ through (or move to a "filed" note) as each gets its own issue.
     completion and emit plausible-looking but silently corrupt output
     — same severity class as item 10's `%d`-float bug. See 041 for
     the full per-module breakdown and verified repros.
-15. **Package-directory import resolution** (multi-file packages —
-    `minilight/ml/`, `quameon/jastrow/`, `tarsalzp/com/…`) — the last
-    structural import blocker, named explicitly, no issue.
+15. ~~**Package-directory import resolution**~~ — **CONFIRMED still
+    real and FILED 2026-08-08 as
+    [042](042-package-directory-import-resolution.md).**
+    Re-verified both example shapes directly: `minilight.py` (`from ml
+    import entry`, a 1-level package with `__init__.py` + submodule
+    files) still fails with `cannot find module 'ml'`; `tarsalzp.py`
+    fails on a genuinely **4-level-deep** dotted import (`com.github.
+    tarsa.tarsalzp.Main`), confirming the gap needs recursive nesting
+    support, not just one level. Root cause traced precisely:
+    `build_import_syms` (`python_ifa_build_syms.cc:62`) treats every
+    dotted import name as one flat `<mod>.py` filename, and explicitly
+    **skips** any search-path entry that's a package directory
+    (`if (file_exists(p, "/__init__.py")) continue;`) — there is no
+    code path anywhere that looks inside a package directory for
+    `__init__.py` or a submodule file. `build_import_if1` mirrors the
+    same assumption for the IF1-building pass; both need the fix.
+    Filed with the precise design shape needed (recursive
+    directory-and-`__init__.py`-aware search composing with the
+    *existing* single-file module machinery, not replacing it) and
+    both real corpus shapes as verification targets. No test in the
+    suite exercises package-directory imports at all today (confirmed
+    by grep) — part of why this was never caught by anything but the
+    corpus sweep.
 16. **Out-of-order keyword arguments** (`f(high=9, low=2)`) — "still
     fail to compile (safely — no miscompile)."
 17. **Slice-target augmented assignment** (`a[i:j] |= x`) —

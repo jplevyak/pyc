@@ -23,6 +23,16 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [042-package-directory-import-resolution.md](042-package-directory-import-resolution.md)
+  — no support for directory-based Python packages (`pkg/__init__.py`
+  + submodule files) — every import resolves as a single flat
+  `<mod>.py` filename, and package directories are explicitly skipped
+  during search. Confirmed real on two corpus examples: `minilight`
+  (`from ml import entry`, 1-level) and `tarsalzp` (a 4-level-deep
+  dotted import), so any fix needs recursive nesting, not just one
+  level. "The last structural import blocker" per
+  [issues/025](025-shedskin-examples-coverage.md)'s own 2026-07-22
+  note — named then, never filed until now.
 - [041-stdlib-shim-stubs-silently-wrong.md](041-stdlib-shim-stubs-silently-wrong.md)
   — `pyc_lib/struct.py`, `colorsys.py`, `getopt.py`, and `os.py`'s
   filesystem functions all exist as importable shims but are no-op
