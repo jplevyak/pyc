@@ -3059,10 +3059,24 @@ through (or move to a "filed" note) as each gets its own issue.
     addendum on 035 rather than a new issue, since the underlying gap
     is already the subject of three open, cross-referenced issues
     (018/030/035); no new filing needed.
-12. **mao/voronoi2's D-bucket grammar/scanner constructs** — includes
-    the minimized DParser repro (`[1e5]` fails to parse, `[1e5 ]` with
-    a trailing space parses) — explicitly deferred grammar/scanner
-    work.
+12. ~~**mao/voronoi2's D-bucket grammar/scanner constructs**~~ —
+    **STALE, verified resolved 2026-08-08, no issue needed.**
+    Re-verified the minimized DParser repro directly: `z = [1e5]`
+    (no space) now compiles and runs correctly, byte-identical to
+    CPython (`[100000.0]`) — the exponent-float-abutting-`]` scanner
+    ambiguity is gone. Re-verified `mao.py` and `voronoi2.py`
+    themselves (the two examples this item says still had their own
+    distinct, un-diagnosed constructs beyond the shared `[1e5]` bug):
+    both now compile **all the way through the grammar** with zero
+    syntax/parse errors — `mao.py`'s current blocker is an unrelated
+    missing `array("B", img).tofile(fout)` builtin gap, `voronoi2.py`'s
+    is an unrelated missing `property()` builtin-descriptor gap.
+    Whatever DParser/scanner work landed since 2026-07 (the same
+    window that incidentally fixed item 7's `rdb` `\x`-escape bug)
+    also cleared these. Not re-verified here: the other six examples
+    the wider "D — grammar/scanner" investigation named
+    (astar/neural1/path_tracing/plcfrs/solitaire/rdb) — out of scope
+    for this specific item, which only named mao/voronoi2 by number.
 13. **`itertools` module** — never given even a partial shim
     (`product` etc.).
 14. **stdlib long tail**: `struct`, `colorsys`, `array`, `re`,
