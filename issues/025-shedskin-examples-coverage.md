@@ -2956,8 +2956,28 @@ through (or move to a "filed" note) as each gets its own issue.
    constructed both with and without its default-`None` constructor
    arg in the same program) was found and filed separately as
    [ifa/issues/088](../ifa/issues/088-llvm-class-list-field-plus-construct-segfault.md).
-3. **mastermind2's int/float mixed `-=`/`*` gap** — "not investigated
-   further" (its own line 77). (Umbrella-only, as #2.)
+3. ~~**mastermind2's int/float mixed `-=`/`*` gap**~~ — **STALE claim,
+   re-verified 2026-08-08: mastermind2.py no longer reaches its own
+   line 77 at all.** It now fails much earlier — `defaultdict(int)`
+   (line 68) followed by `b[compare(play, poss)] += 1` (line 70)
+   drives `pyc_lib/collections.py:33`'s `if self.factory:`, which
+   fails to type: a first-class function/closure value (here, the
+   builtin `int` passed as `defaultdict`'s factory) has no
+   `__pyc_to_bool__` dispatch candidate at all, so *any* boolean-context
+   use of a callable value (`if fn:`, `bool(fn)`, not just builtins —
+   a plain `def` function in a variable fails identically) doesn't
+   type. Confirmed general, not `int`-specific, via a from-scratch
+   isolate. Filed as
+   [ifa/issues/089](../ifa/issues/089-DISPATCH-closure-pyc-to-bool-no-candidate.md)
+   (a DISPATCH/FA-level gap, not investigated to a fix — the matcher
+   finds zero candidates for this one symbol on a closure receiver,
+   while `__str__` on the same receiver resolves fine, so there's an
+   asymmetry worth tracing rather than a total absence of closure
+   method support). Separately confirmed and flagged in that issue:
+   even past this gap, calling a *builtin type* stored as a callable
+   (`self.factory()` where `factory = int`) also fails, while calling
+   a *user-defined function* stored the same way works — `defaultdict`
+   would need both fixed to actually work.
 4. **sunfish's `"sizeof_element of non-container type"` internal
    fail** in `__add__` — "not investigated further." (Umbrella-only,
    as #2.)
