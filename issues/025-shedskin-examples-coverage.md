@@ -2891,3 +2891,102 @@ hottest paths in codegen and needs its own careful pass):
    C" pattern issues 077/034/035/037 already fixed at other call
    sites — this one's in method dispatch itself. Full writeup:
    [ifa/079](../ifa/issues/079-DISPATCH-single-candidate-dispatch-unchecked-cast.md).
+
+### Coverage audit — items with no dedicated issue filed (2026-08-07)
+
+Full read-through of this entire document, cross-referenced against
+every issue in `issues/`, `issues/closed/`, `ifa/issues/`,
+`ifa/issues/closed/`. The items below are described somewhere above as
+open, unresolved, or "worth its own issue," but — as of this audit —
+have no matching issue filed anywhere (verified by grep for the
+example name / technical description before concluding "not covered,"
+not just absence of a cross-reference). Numbered for tracking; strike
+through (or move to a "filed" note) as each gets its own issue.
+
+1. ~~**The "untyped numeric constant" lattice element**~~ — **STALE,
+   verified resolved 2026-08-07, no issue needed.** This TODO was
+   written immediately after the "Type-resolution investigation —
+   mandelbrot vertical slice" section's three-dead-ends analysis
+   concluded a new lattice element was "the correct and *stable*
+   shape." But the doc's OWN later "7. type resolution — LANDED
+   2026-07" entry (a few sections below that one, easy to miss since
+   the doc is a single long narrative) records that a **fourth,
+   different, working design actually shipped instead**: a
+   between-passes `AVar::num_coerce` annotation
+   (`fa_coerce_numeric_confluences`, `ifa/analysis/fa.cc`) that
+   widens BOTH constant and runtime numeric members to the confluence
+   type, then forces a full reanalysis from scratch (`clear_results()`)
+   — sidestepping the "shrinking a type mid-fixpoint segfaults"
+   problem the dead-end attempts hit, by never shrinking a type
+   in-flight at all. Re-verified today, independent of the doc's own
+   claim: `tests/numeric_unification.py` (exercises the exact
+   `x = 0; while ...: x = x*2.0+1.0` shape) passes; the actual
+   `shedskin_examples/mandelbrot/mandelbrot.py` (15,600 lines of
+   fractal output) still compiles and runs **byte-identical to
+   CPython** (only the final `TIME` line differs, as expected). The
+   design gap this TODO worried about is closed; no new issue filed.
+2. **rubik2's degenerate BFS solution** — ~7675-move phase-0 solve,
+   `state_ids` dedup apparently not pruning. Flagged as "a third,
+   separate issue worth flagging for whoever picks this up next."
+   (Also only cited as a symptom instance under the open FA-precision
+   umbrella issues 030/072/074/075 — no dedicated tracking of this
+   specific case.)
+3. **mastermind2's int/float mixed `-=`/`*` gap** — "not investigated
+   further" (its own line 77). (Umbrella-only, as #2.)
+4. **sunfish's `"sizeof_element of non-container type"` internal
+   fail** in `__add__` — "not investigated further." (Umbrella-only,
+   as #2.)
+5. **tonyjpegdecoder crashes the compiler with an FPE** — never
+   revisited after being noted. (Umbrella-only, as #2.)
+6. ~~**rsync's dead-loop-body-with-no-runtime-guard codegen gap**~~ —
+   **FILED 2026-08-07 as [ifa/085](../ifa/issues/085-CGEN-dead-if-unresolved-condition-no-guard.md),
+   with a correction.** Re-verified first: `rsync.py`'s ORIGINAL
+   symptom (silent `SIGSEGV`, zero diagnostic) is actually gone today
+   — it now aborts cleanly via an unrelated, pre-existing "getter not
+   resolved" guard reached earlier in the same function, so rsync
+   itself no longer demonstrates this. But the underlying MECHANISM
+   this entry described (`Code_IF` whose own condition FA couldn't
+   resolve gets no salvage guard, on both backends, when exactly one
+   successor is control-flow-live) is real and still present —
+   confirmed by direct code reading plus an instrumented full
+   corpus+test-suite sweep, which found 3 live occurrences today (one,
+   `shedskin_examples/msp_ss`, backed by a genuine "unresolved call"
+   compiler warning at the exact flagged line — the other two are
+   suspected benign constant-folding, not this bug). Filed with that
+   distinction made explicit rather than re-citing rsync as the repro.
+7. **rdb's `\x`-string-escape parse bug** — mentioned once, no issue
+   (separate from its `os.path`/`getopt`/`fnmatch` stdlib needs, #14
+   below).
+8. **pisang's module-level `if __name__` globals feeding
+   comprehension chains** — its "next layer," mentioned once.
+   (Umbrella-only, as #2.)
+9. **sudoku4** — never diagnosed beyond being named in a bucket list.
+   (Umbrella-only, as #2.)
+10. **yopyra's rendered-pixel-values-look-wrong concern** — explicitly
+    left open ("worth a follow-up dig before treating yopyra as fully
+    correct"), not confirmed either way.
+11. **Mixed-element-type tuple printing** (`str((1, None))` aborts at
+    runtime) — a known, non-regressing gap, distinct from the general
+    tagged-dispatch problem in issue 030.
+12. **mao/voronoi2's D-bucket grammar/scanner constructs** — includes
+    the minimized DParser repro (`[1e5]` fails to parse, `[1e5 ]` with
+    a trailing space parses) — explicitly deferred grammar/scanner
+    work.
+13. **`itertools` module** — never given even a partial shim
+    (`product` etc.).
+14. **stdlib long tail**: `struct`, `colorsys`, `array`, `re`,
+    `getopt`, `os.path`, `fnmatch` — no shims.
+15. **Package-directory import resolution** (multi-file packages —
+    `minilight/ml/`, `quameon/jastrow/`, `tarsalzp/com/…`) — the last
+    structural import blocker, named explicitly, no issue.
+16. **Out-of-order keyword arguments** (`f(high=9, low=2)`) — "still
+    fail to compile (safely — no miscompile)."
+17. **Slice-target augmented assignment** (`a[i:j] |= x`) —
+    "documented gap (comment in the code)," never promoted to an
+    issue.
+18. **sudoku3, rubik/hq2x** (the R2 heterogeneous-union bucket) —
+    umbrella (030/072/074/075) exists, the specific case doesn't.
+19. **Issue 043's own "unmeasured" follow-up** — the closed doc states
+    the cross-product-dead-combination imprecision shape's bucket
+    share is "unmeasured"; that measurement was never turned into its
+    own issue.
