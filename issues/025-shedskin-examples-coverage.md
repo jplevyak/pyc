@@ -2442,7 +2442,8 @@ itself is correct (homogeneous, heterogeneous, and nested tuple sorts
 all match CPython), but `tictactoe` still fails LLVM verification due to
 a *separate, pre-existing* mixed int/float scalar-arithmetic coercion
 gap unrelated to tuples — filed as
-[ifa/issues/062](../ifa/issues/062-LLVM-mixed-int-float-scalar-coercion.md).
+[ifa/issues/062](../ifa/issues/closed/062-LLVM-mixed-int-float-scalar-coercion.md)
+(since closed).
 Also surfaced (pre-existing, reproduces at baseline) a C-backend
 list-of-tuples element-type naming bug when several distinct tuple types
 coexist with a `.sort()` — filed as
@@ -2875,7 +2876,7 @@ hottest paths in codegen and needs its own careful pass):
    with nothing else changed — `list.__mul__`'s shared implementation
    is leaking `Cell.subp`'s legitimate heterogeneity into the
    unrelated `Tree.bodies`. Same root cause `tictactoe.py`'s still-open
-   runtime crash has ([035](closed/035-list-element-cast-salvage-guard-and-set-item-union.md)),
+   runtime crash has ([035](035-list-element-cast-salvage-guard-and-set-item-union.md)),
    traced one step further and pinned to `list.__mul__` specifically —
    a much cleaner reproduction than tictactoe's tangled one. Full
    writeup: [039](039-list-mul-shared-element-type-cross-contamination.md).
@@ -3035,9 +3036,29 @@ through (or move to a "filed" note) as each gets its own issue.
     this on every pixel it formats. Silent wrong output, zero compiler
     diagnostic — worse than the crashes most other TODO items here
     describe.
-11. **Mixed-element-type tuple printing** (`str((1, None))` aborts at
-    runtime) — a known, non-regressing gap, distinct from the general
-    tagged-dispatch problem in issue 030.
+11. ~~**Mixed-element-type tuple printing**~~ — **COVERED, verified
+    2026-08-08 (already tracked; original "distinct from issue 030"
+    claim corrected).** Re-verified `str((1, None))`/`print((1, None))`:
+    still aborts on the C backend
+    (`assert(!"runtime error: matching function not found")`), traced
+    via the generated C to `__pyc_any_type__::__repr__(_CG_int64 a1)`
+    — the shared generic boxed-value repr dispatcher — failing to
+    match a candidate. That's the *same* "no boxed/tagged
+    representation for a genuinely heterogeneous scalar union" family
+    [035](035-list-element-cast-salvage-guard-and-set-item-union.md)'s
+    own "Root cause" section already documents in detail (and which
+    035 itself explicitly groups with 018 and `ifa/030` as one
+    family) — not distinct from issue 030 after all; that framing here
+    predates 035's later, more complete classification. **New finding
+    while re-checking:** the LLVM backend doesn't crash here at all —
+    `print((1, None))` compiles and runs clean on `-b` but silently
+    prints `(, )` instead of `(1, None)`, no diagnostic whatsoever.
+    Same "C loud failure, LLVM silent corruption" split
+    [ifa/061](../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md)
+    already documents for the list-of-tuples case. Recorded as a dated
+    addendum on 035 rather than a new issue, since the underlying gap
+    is already the subject of three open, cross-referenced issues
+    (018/030/035); no new filing needed.
 12. **mao/voronoi2's D-bucket grammar/scanner constructs** — includes
     the minimized DParser repro (`[1e5]` fails to parse, `[1e5 ]` with
     a trailing space parses) — explicitly deferred grammar/scanner

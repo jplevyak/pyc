@@ -285,3 +285,36 @@ Doesn't fix the underlying `set`-element-union precision gap
 (`tictactoe.py`'s remaining runtime crash) or the narrower,
 pre-existing module-level-code limitation described above — both
 remain open for whoever picks them up next.
+
+### Another confirmed instance, 2026-08-08: mixed-type tuple printing, and a new LLVM divergence
+
+[issues/025](025-shedskin-examples-coverage.md) separately
+noted (2026-07-16) that `print()`/`str()` of a tuple with genuinely
+mixed element types — `(1, None)` — aborts at runtime
+("matching function not found"), framed there as "distinct from the
+general tagged-dispatch problem in issue 030." Re-verified 2026-08-08
+while auditing that doc's own TODO list: still reproduces identically
+on the C backend, and it's the *same* family this issue's "Root cause"
+section already describes, not a distinct gap — traced via the
+generated C to `__pyc_any_type__::__repr__(_CG_int64 a1)` (the generic
+boxed-value repr dispatcher every corpus program shares) failing to
+match a candidate for the tuple's `int64` element, i.e. exactly "no
+boxed/tagged representation for a genuinely heterogeneous scalar
+union" playing out at a tuple-print call site instead of a list-write
+one. The 025 doc's "distinct from issue 030" framing predates this
+issue's own later (2026-08-06) explicit grouping of 018/030 into the
+same family above; treat this tuple-printing instance as another
+confirmed member of that family, not a separate gap.
+
+**New finding: the LLVM backend does not crash here at all — it
+silently produces wrong output.** `print((1, None))` compiles and runs
+clean on `-b` (exit 0), but prints `(, )` instead of `(1, None)` —
+the tuple's fields print as empty strings rather than triggering any
+guard. Matches the same "C backend fails loud, LLVM backend fails
+silent" divergence already documented for
+[061](../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md)'s
+list-of-tuples case — worth keeping in mind if/when this family's
+underlying boxed/tagged-scalar gap is eventually fixed: the fix needs
+to give LLVM a genuine salvage guard here too, not just close the C
+side's `assert`, since LLVM's current behavior is arguably worse (no
+diagnostic at all, not even a crash).
