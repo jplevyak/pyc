@@ -3008,8 +3008,38 @@ through (or move to a "filed" note) as each gets its own issue.
      genuine architectural limit (tuples are fixed-arity types) rather
      than a fixable bug. Filed as
      [ifa/issues/090](../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md).
-5. **tonyjpegdecoder crashes the compiler with an FPE** — never
-   revisited after being noted. (Umbrella-only, as #2.)
+5. ~~**tonyjpegdecoder crashes the compiler with an FPE**~~ — **STALE
+   claim, re-verified 2026-08-08: the compiler does not crash at all
+   today.** Two real bugs found and fixed getting to the actual
+   current blocker:
+   - `bytes(x)` never checked for a user-defined `__bytes__` — pyc's
+     `bytes(x)` intercept dispatches to its own internal
+     `__pyc_tobytes__` name, never CPython's real `__bytes__` dunder,
+     so `BMPFile.__bytes__` (this file) had no way to be reached.
+     Fixed with a default `object.__pyc_tobytes__` that calls
+     `self.__bytes__()`. New test `tests/bytes_user_dunder.py`.
+   - LLVM backend: `_CG_string_identity` (backing `bytes()`'s
+     identity case) was defined `inline` in `pyc_c_runtime.h` but
+     missing from `pyc_runtime.c`'s force-export list, so it was
+     never linkable — a plain `undefined reference` at link time for
+     any `bytes(already_a_bytes_value)` call. Added the missing
+     `extern` declaration.
+   Both fixed; full suite clean, both backends (260/11/0/4).
+   **Not fully closed**: with both fixed, the program compiles clean
+   (without `-r`) and runs correctly through one full decode-and-write
+   cycle matching CPython — but a *second* call to `main()` (in the
+   source's own 20-iteration timing loop) hangs: sustained 100% CPU,
+   zero progress, for 20+ seconds (CPython: ~150ms/call), even though
+   each call constructs entirely fresh objects. Minimized to a clean
+   2-call repro; not root-caused past "stalls somewhere in
+   `InitDecoder()`/the Huffman decode loop." Filed as
+   [issues/045](045-tonyjpegdecoder-second-call-hangs.md), which also
+   notes a separate, un-investigated oddity: `-r` (runtime-error
+   salvage) makes the compile *fail outright* with the exact
+   "unable to resolve to a single function at call site" message
+   [ifa/issues/090](../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md)
+   documents — backwards from that fail's own `if (!fruntime_errors)`
+   guard, which should suppress it under `-r`, not trigger it.
 6. ~~**rsync's dead-loop-body-with-no-runtime-guard codegen gap**~~ —
    **FILED 2026-08-07 as [ifa/085](../ifa/issues/085-CGEN-dead-if-unresolved-condition-no-guard.md),
    with a correction.** Re-verified first: `rsync.py`'s ORIGINAL

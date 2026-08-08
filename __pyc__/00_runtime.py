@@ -59,6 +59,16 @@ class object:
     return False
   def __str__(self):
     return "<object>"
+  def __pyc_tobytes__(self):
+    # bytes(x) (python_ifa_build_if1.cc) dispatches to __pyc_tobytes__,
+    # not CPython's real __bytes__ -- bytes/str/list define their own
+    # __pyc_tobytes__ overrides below/elsewhere, but a plain user class
+    # defining the real __bytes__ dunder (issues/025 TODO item 5,
+    # tonyjpegdecoder's BMPFile) had no way to be reached. This default
+    # bridges the two names; a class with neither gets the usual
+    # "unresolved call '__bytes__'" compile-time reject, matching every
+    # other unimplemented-dunder case in this codebase.
+    return self.__bytes__()
   def __bool__(self):
     return True
   def __len__(self):

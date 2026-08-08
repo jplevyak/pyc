@@ -42,6 +42,7 @@ extern char *_CG_format_int_spec(int64 val, const char *spec_str);
 extern char *_CG_format_float_spec(double val, const char *spec_str);
 extern char *_CG_format_str_spec(const char *val, const char *spec_str);
 extern char *_CG_string_mult(char *str, int64 n);
+extern char *_CG_string_identity(char *s);
 extern void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v);
 extern char *_CG_strcat(const char *a, const char *b);
 extern char *_CG_char_from_string(void *s, int i);

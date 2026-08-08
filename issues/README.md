@@ -23,6 +23,19 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [045-tonyjpegdecoder-second-call-hangs.md](045-tonyjpegdecoder-second-call-hangs.md)
+  — a second call to `main()` in tonyjpegdecoder.py hangs (sustained
+  100% CPU, no progress) even though each call constructs entirely
+  fresh objects; the first call runs correctly, matching CPython.
+  Found while confirming the doc's "crashes the compiler with an FPE"
+  claim (TODO item 5) was stale — the compiler doesn't crash at all
+  today; two real bugs were found and fixed getting to this actual
+  current blocker (`bytes(x)` never checked for a user-defined
+  `__bytes__`; the LLVM backend's `_CG_string_identity` was never
+  linkable). Not root-caused past "stalls in `InitDecoder()`/the
+  Huffman decode loop" — possibly another instance of the
+  shared-prototype-state bug family (closed-017, closed-044), not
+  confirmed.
 - [043-slice-target-augmented-assignment-silently-wrong.md](043-slice-target-augmented-assignment-silently-wrong.md)
   — `a[i:j] += x` silently corrupts the list: the existing code
   comment claimed it just "acts like `=`" (drops the operator), but
