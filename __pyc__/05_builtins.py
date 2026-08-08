@@ -193,10 +193,10 @@ def enumerate(seq):
     i = i + 1
   return r
 
-def sum(seq):
+def sum(seq, start=0):
   # int seed + float elements resolves to float via the numeric
-  # unification (AVar::num_coerce).
-  t = 0
+  # unification (AVar::num_coerce); `start` also covers `sum(list_of_lists, [])`.
+  t = start
   for x in seq:
     t = t + x
   return t

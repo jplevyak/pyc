@@ -97,6 +97,21 @@ class str:
       else:
         r = r + c
     return r
+  def isupper(self):
+    # ASCII-only, matching upper()/lower() above. CPython: True iff
+    # every cased character is uppercase AND at least one cased
+    # character exists (digits/punctuation don't count either way).
+    n = len(self)
+    has_cased = False
+    i = 0
+    while i < n:
+      o = ord(self[i])
+      if o >= 97 and o <= 122:
+        return False
+      if o >= 65 and o <= 90:
+        has_cased = True
+      i += 1
+    return has_cased
   def __contains__(self, x):
     # Substring search by char compare; str has no working slice path
     # yet (the __pyc_any_type__ fallback mis-routes slices of str into

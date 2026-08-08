@@ -2978,9 +2978,36 @@ through (or move to a "filed" note) as each gets its own issue.
    (`self.factory()` where `factory = int`) also fails, while calling
    a *user-defined function* stored the same way works — `defaultdict`
    would need both fixed to actually work.
-4. **sunfish's `"sizeof_element of non-container type"` internal
-   fail** in `__add__` — "not investigated further." (Umbrella-only,
-   as #2.)
+4. ~~**sunfish's `"sizeof_element of non-container type"` internal
+   fail**~~ — **STALE claim, re-verified 2026-08-08: this specific
+   internal fail no longer appears anywhere in sunfish.py's compile
+   output.** It now fails at FA/type-checking time, before ever
+   reaching that codegen-time fail. Two real, distinct gaps found and
+   one fixed:
+   - **Fixed**: `sum()` (`__pyc__/05_builtins.py`) only ever accepted
+     one argument, hardcoding an `int(0)` accumulator seed — Python's
+     2-arg form (`sum(seq, start)`, needed for the common
+     `sum(list_of_lists, [])` flatten idiom, which sunfish's `pst`
+     construction uses) wasn't supported at all. Added the missing
+     `start=0` parameter; verified against CPython for int, float, and
+     list-flatten cases. New regression test `tests/sum_start_arg.py`.
+     Also, separately, `str.isupper()` was entirely missing (blocked
+     `sunfish.py:164`'s `p.isupper()`) — added, ASCII-only matching
+     the existing `upper()`/`lower()`, verified against CPython
+     including edge cases (no cased chars, mixed case, empty string).
+     New regression test `tests/str_isupper.py`. Both backends,
+     full suite clean (259/11/0/4, +2 from these two new tests, no
+     regressions).
+   - **Filed, not fixed**: even past both of the above, sunfish still
+     doesn't compile — a loop-carried variable whose tuple arity grows
+     each iteration (`padrow`'s `(0,) + tuple(...) + (0,)` fed into
+     `sum(..., ())`) or whose type spans `None`/tuple
+     (`while move not in hist[-1].gen_moves():`, `move` starting as
+     `None`) hits "unable to resolve to a single function at call
+     site" — a clean compile-time reject, not a crash, but possibly a
+     genuine architectural limit (tuples are fixed-arity types) rather
+     than a fixable bug. Filed as
+     [ifa/issues/090](../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md).
 5. **tonyjpegdecoder crashes the compiler with an FPE** — never
    revisited after being noted. (Umbrella-only, as #2.)
 6. ~~**rsync's dead-loop-body-with-no-runtime-guard codegen gap**~~ —
