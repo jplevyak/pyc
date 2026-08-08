@@ -3187,9 +3187,71 @@ through (or move to a "filed" note) as each gets its own issue.
     alongside the sibling plain-index fix this gap was deferred from)
     covers plain-index only, confirmed by reading it — no slice
     notation appears anywhere in that file.
-18. **sudoku3, rubik/hq2x** (the R2 heterogeneous-union bucket) —
-    umbrella (030/072/074/075) exists, the specific case doesn't.
-19. **Issue 043's own "unmeasured" follow-up** — the closed doc states
-    the cross-product-dead-combination imprecision shape's bucket
-    share is "unmeasured"; that measurement was never turned into its
-    own issue.
+18. ~~**sudoku3, rubik/hq2x** (the R2 heterogeneous-union bucket)~~ —
+    **RE-SURVEYED 2026-08-08; the corpus has moved on since
+    2026-07-15, mostly for the better.** Re-tested the named examples
+    plus the other two original R2 members (pygmy, pygasus) directly:
+    - **rubik** — now compiles (was fully blocked before), but crashes
+      at runtime with the exact `assert(!"runtime error: list element
+      type mismatch")` signature — confirmed the same already-tracked
+      family as [035](035-list-element-cast-salvage-guard-and-set-item-union.md)
+      (items 8 and 11 above are two other confirmed instances this
+      same audit found). Umbrella coverage is accurate for this one.
+    - **hq2x** — no longer reaches the "mixed basic types" gap at
+      all; the *compile itself* now times out (>90s, no diagnostic
+      whatsoever) — a completely different, unrelated
+      compile-performance problem, not surveyed further here.
+    - **sudoku3** (mentioned in the R2 discussion, not named in this
+      TODO item's own title, but the same bucket) — still has
+      warnings and crashes at runtime, but with a *different*, more
+      generic message (`assert(!"runtime error: getter not
+      resolved")`) — not confirmed to be the same 035 family; "getter
+      not resolved" is a shared salvage message covering many
+      unrelated root causes (confirmed elsewhere this same audit, item
+      9's sudoku4 dig), so this is left as a distinct, un-root-caused
+      case, not folded into 035.
+    - **pygmy** (also R2, not in this item's title) — fully resolved:
+      compiles with **zero** warnings and runs to completion (`100%`,
+      real output). No longer blocked at all.
+    - **pygasus** (also R2) — the actual computational file is
+      `pygasus.py` (not `pygasus_main.py`, which needs `pygame` —
+      permanently out of scope, not a pyc bug). `pygasus.py` itself
+      now compiles nearly clean (3 warnings, down from the original
+      "int64/str" mixed-type gap) but times out after 15s at runtime
+      rather than crashing — inconclusive (likely just a long-running
+      simulation loop, not investigated further).
+    Net: of the four original R2 members, only rubik still cleanly
+    demonstrates the umbrella-covered gap; pygmy is fully fixed,
+    pygasus and hq2x are now blocked by unrelated things. sudoku3
+    crashes for a reason not confirmed to be the same family. No new
+    issue filed — rubik is genuinely covered by 035; the rest either
+    don't exercise this gap anymore or weren't root-caused far enough
+    to claim coverage.
+19. ~~**Issue 043's own "unmeasured" follow-up**~~ —
+    **CORRECTED premise, spot-checked 2026-08-08, full measurement
+    still not attempted (honestly out of scope here).** First
+    correction: the "unmeasured" line is this *doc's own* prose
+    (line 851 above, dated 2026-07-15) summarizing
+    [ifa/issues/closed/043](../ifa/issues/closed/043-empty-container-inference-options.md)'s
+    finding — it isn't a quote from 043's own file, which doesn't
+    contain the word "unmeasured" at all (checked directly). A true
+    corpus-wide measurement (root-causing every one of the 86
+    examples' current failures to confirm or rule out the specific
+    "union cross-product dead combination" shape) is a substantial
+    undertaking on its own — not attempted here, genuinely out of
+    scope for a spot-check. What *was* checked: `dijkstra2.py` itself,
+    the flagship example that originally identified this shape.
+    It now compiles with only **2** minor warnings (both `expression
+    has no type` at one line) — down from its original description
+    needing "dict-with-object-keys + heapq-of-tuples + empty-dict
+    element inference (deep)." Runtime comparison was inconclusive
+    (both CPython and pyc time out at 15s on the same real benchmark
+    workload — matching, not diverging, but not a positive
+    confirmation either). Given how many other items in this same
+    audit turned out to be stale (12 of the preceding 18), it's
+    plausible this bucket's actual share has shrunk substantially
+    since 2026-07-15, but that's an informed guess, not a
+    measurement — a real answer needs the full sweep+triage this item
+    originally asked for, which remains a legitimately separate,
+    bounded task if ever actually needed, not something to file
+    speculatively without doing it.
