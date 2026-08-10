@@ -1277,7 +1277,30 @@ inline void *_CG_prim_copy_any(void *p) {
 #define _CG_prim_rsh(_a, _op, _b) ((_a) >> (_b))
 #define _CG_prim_lsh(_a, _op, _b) ((_a) << (_b))
 #define _CG_prim_mult(_a, _op, _b) ((_a) * (_b))
+// found while porting issues/041's colorsys shim: raw C `%` is invalid
+// for floating operands (needs fmod), AND -- separately, pre-existing,
+// confirmed via `-7 % 3` giving C's -1 instead of Python's 2 -- C's
+// (and fmod's) truncated-toward-zero remainder has the wrong sign
+// convention vs. Python's floored one (result takes the sign of the
+// divisor, not the dividend). Both fixed together since they're the
+// same operator: overloaded so int % int stays exact integer
+// arithmetic (no float round-trip) while float operands use fmod,
+// then both apply the standard truncated-to-floored adjustment.
+#ifdef __cplusplus
+static inline int64 _CG_mod_impl(int64 a, int64 b) {
+  int64 r = a % b;
+  if (r != 0 && ((r < 0) != (b < 0))) r += b;
+  return r;
+}
+static inline double _CG_mod_impl(double a, double b) {
+  double r = fmod(a, b);
+  if (r != 0.0 && ((r < 0.0) != (b < 0.0))) r += b;
+  return r;
+}
+#define _CG_prim_mod(_a, _op, _b) (_CG_mod_impl((_a), (_b)))
+#else
 #define _CG_prim_mod(_a, _op, _b) ((_a) % (_b))
+#endif
 #define _CG_prim_pow(_a, _op, _b) (pow((_a), (_b)))
 #define _CG_prim_div(_a, _op, _b) ((_a) / (_b))
 #define _CG_prim_and(_a, _op, _b) ((_a) & (_b))

@@ -3,6 +3,22 @@ __pyc_insert_c_header__('pyc_c_runtime.h')
 class __pyc_any_type__:
   def __null__(self):
     return False
+  def __pyc_to_bool__(self):
+    # issues/089: __pyc_any_type__ is ifa's own universal top type
+    # (sym_any, python_ifa_sym.cc renames it "__pyc_any_type__") --
+    # every type in the lattice specializes it, including
+    # closures/functions, which never connect to `object`'s
+    # Python-specific class hierarchy at all (they're a core ifa
+    # concept, not a user-defined class, so the "bare class inherits
+    # object" rule in python_ifa_build_syms.cc never applies to them).
+    # Without this, `if some_function:` / `bool(some_function)` had no
+    # __pyc_to_bool__ candidate to dispatch to at all. object's own
+    # __pyc_to_bool__ (bool()+len()-based) is strictly more specific
+    # and still wins for anything that reaches it -- this is only the
+    # fallback for receivers that don't, matching CPython's actual
+    # default (any object, including any callable, is truthy unless
+    # it overrides __bool__/__len__, which a bare function never does).
+    return True
   def __not__(self):
     if self.__pyc_to_bool__():
       return False

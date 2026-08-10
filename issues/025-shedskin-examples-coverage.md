@@ -2968,16 +2968,34 @@ through (or move to a "filed" note) as each gets its own issue.
    a plain `def` function in a variable fails identically) doesn't
    type. Confirmed general, not `int`-specific, via a from-scratch
    isolate. Filed as
-   [ifa/issues/089](../ifa/issues/089-DISPATCH-closure-pyc-to-bool-no-candidate.md)
-   (a DISPATCH/FA-level gap, not investigated to a fix — the matcher
-   finds zero candidates for this one symbol on a closure receiver,
-   while `__str__` on the same receiver resolves fine, so there's an
-   asymmetry worth tracing rather than a total absence of closure
-   method support). Separately confirmed and flagged in that issue:
-   even past this gap, calling a *builtin type* stored as a callable
-   (`self.factory()` where `factory = int`) also fails, while calling
-   a *user-defined function* stored the same way works — `defaultdict`
-   would need both fixed to actually work.
+   [ifa/issues/089](../ifa/issues/closed/089-DISPATCH-closure-pyc-to-bool-no-candidate.md)
+   and **fixed 2026-08-08**: `__pyc_any_type__` turned out to be pyc's
+   Python-syntax name for ifa's own universal top type (`sym_any`,
+   `python_ifa_sym.cc`) — every type specializes it, including
+   closures, which never connect to `object`'s Python-specific class
+   hierarchy at all. `object` defines `__pyc_to_bool__`;
+   `__pyc_any_type__` didn't, hence the asymmetry with `__str__`
+   (defined on both). Added a default `__pyc_to_bool__` (`return
+   True`, matching CPython's real default) to `__pyc_any_type__`;
+   `object`'s own more specific version still wins for ordinary
+   classes. New test `tests/closure_truthiness.py`; full suite clean
+   both backends (262/11/0/4).
+   **Confirmed this specific mechanism is fixed, not just claimed**:
+   re-running mastermind2.py, `if self.factory:` no longer warns at
+   all — the blocker moved to the very next line
+   (`self.factory()`), exactly the second gap flagged when 089 was
+   filed: calling a *builtin type* stored as a callable
+   (`factory = int; factory()`) has no real `__new__` to dispatch to
+   at all (`int`/`float`/`list`/`tuple`/`bool` are `Type_ALIAS`/
+   ifa-core primitive types whose zero-arg "constructor" is a pure
+   frontend syntactic special-case with no backing `Fun` — confirmed
+   `dict`/`set`, real `Type_RECORD` classes, and any user-defined
+   class don't have this gap). Root-caused and filed separately as
+   [ifa/issues/091](../ifa/issues/091-DISPATCH-nonrecord-builtin-constructor-not-first-class.md)
+   rather than folded into 089's fix — a broader, more foundational
+   change (giving 5 builtin types a real `__new__`), not attempted
+   here. `defaultdict(int)`/`defaultdict(list)` still don't work
+   end-to-end until this is also fixed.
 4. ~~**sunfish's `"sizeof_element of non-container type"` internal
    fail**~~ — **STALE claim, re-verified 2026-08-08: this specific
    internal fail no longer appears anywhere in sunfish.py's compile
@@ -3239,6 +3257,16 @@ through (or move to a "filed" note) as each gets its own issue.
     completion and emit plausible-looking but silently corrupt output
     — same severity class as item 10's `%d`-float bug. See 041 for
     the full per-module breakdown and verified repros.
+    **`colorsys` fixed 2026-08-08**: real HSV/HLS/YIQ conversions,
+    ported from CPython — `mandelbrot2.py` now compiles clean and
+    produces a genuinely multi-colored image (was all-black). Found
+    and fixed two general compiler bugs along the way: `%` had no
+    float support at all (three independent layers — C runtime,
+    LLVM codegen, compile-time constant-folding — each assumed
+    integer-only), and plain `int % int` had the wrong sign
+    convention vs. Python (`-7 % 3` gave `-1`, not `2`). See 041's own
+    updated entry for the full trace; `struct`/`getopt`/`os` remain
+    open stubs.
 15. ~~**Package-directory import resolution**~~ — **CONFIRMED still
     real and FILED 2026-08-08 as
     [042](042-package-directory-import-resolution.md).**

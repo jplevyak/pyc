@@ -58,15 +58,22 @@ conventions are the same; the only difference is location.
   note — named then, never filed until now.
 - [041-stdlib-shim-stubs-silently-wrong.md](041-stdlib-shim-stubs-silently-wrong.md)
   — `pyc_lib/struct.py`, `colorsys.py`, `getopt.py`, and `os.py`'s
-  filesystem functions all exist as importable shims but are no-op
-  stubs (`struct.pack` returns `b""`, `colorsys.hsv_to_rgb` always
-  `(0.0, 0.0, 0.0)`, `getopt.getopt` always `([], [])`, `os.listdir`
-  always `[]`) — silent wrong output, zero diagnostic, confirmed
-  load-bearing in `minpng.py`/`sha.py`/`mandelbrot2.py`. `fnmatch` and
-  `os.path`'s string functions are, by contrast, genuinely correct;
-  `array`/`re` are real but incompletely-featured. Found while
-  auditing [issues/025](025-shedskin-examples-coverage.md)'s TODO
-  list (item 14).
+  filesystem functions all exist as importable shims but were no-op
+  stubs (`struct.pack` returns `b""`, `getopt.getopt` always
+  `([], [])`, `os.listdir` always `[]`) — silent wrong output, zero
+  diagnostic, confirmed load-bearing in `minpng.py`/`sha.py`/
+  `mandelbrot2.py`. `fnmatch` and `os.path`'s string functions are, by
+  contrast, genuinely correct; `array`/`re` are real but incompletely-
+  featured. Found while auditing
+  [issues/025](025-shedskin-examples-coverage.md)'s TODO list (item
+  14). **`colorsys` fixed 2026-08-08** (real HSV/HLS/YIQ conversions,
+  ported from CPython) — found and fixed two genuine, general compiler
+  bugs along the way: `%` had no float support at all (three separate
+  layers: C runtime header, LLVM codegen, and the compile-time
+  constant-folder each independently assumed integer-only), and even
+  plain `int % int` had the wrong sign convention vs. Python's floored
+  semantics (`-7 % 3` gave C's `-1` instead of `2`). `struct`/
+  `getopt`/`os` filesystem functions remain open.
 - [039-list-mul-shared-element-type-cross-contamination.md](039-list-mul-shared-element-type-cross-contamination.md)
   — `list.__mul__`/`__rmul__` (`n * [x]`) shares a CreationSet/element-
   type representation across unrelated call sites: `bh.py`'s genuinely

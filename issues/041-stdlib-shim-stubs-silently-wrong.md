@@ -1,6 +1,8 @@
 # 041 — `struct`, `colorsys`, `getopt`, and `os`'s filesystem functions are no-op stubs that silently produce wrong results
 
-**Status:** open, found 2026-08-08 while diagnosing
+**Status:** open — `colorsys` fixed 2026-08-08 (see that section at the
+end); `struct`/`getopt`/`os` filesystem functions still stubs. Found
+2026-08-08 while diagnosing
 [issues/025](025-shedskin-examples-coverage.md)'s TODO list item 14
 ("stdlib long tail: `struct`, `colorsys`, `array`, `re`, `getopt`,
 `os.path`, `fnmatch` — no shims"). That claim was wrong at the file
@@ -77,7 +79,7 @@ function, easy to notice. `struct`/`colorsys`/`getopt`/`os`'s
 filesystem stubs fail *silently* — the program compiles, runs to
 completion, and produces plausible-looking output that is simply
 wrong, with no diagnostic anywhere. This is the same severity class as
-[issues/040](040-percent-format-float-arg-int-specifier-garbage.md)
+[issues/040](closed/040-percent-format-float-arg-int-specifier-garbage.md)
 (also found via this same TODO-list audit): a user has no way to
 discover the bug short of comparing output against a real reference.
 
@@ -113,3 +115,71 @@ Correct behavior for any program depending on real `struct` packing,
 queries — confirmed to affect `minpng`, `sha`, `mandelbrot2`, and
 (partially) `rdb`/`msp_ss`/`voronoi2` in the shedskin corpus, silently
 today rather than with a diagnostic.
+
+## `colorsys` fixed (2026-08-08)
+
+Ported `pyc_lib/colorsys.py` from CPython's own `Lib/colorsys.py`
+(`rgb_to_yiq`/`yiq_to_rgb`/`rgb_to_hls`/`hls_to_rgb`/`rgb_to_hsv`/
+`hsv_to_rgb`) — real HSV/HLS/YIQ conversions instead of the
+`(0.0, 0.0, 0.0)` stub. `struct`/`getopt`/`os` filesystem functions
+remain untouched stubs; this issue stays open for those.
+
+**Two genuine, general compiler bugs found and fixed along the way**
+(colorsys's `_v()` helper needs `hue % 1.0`, exposing both):
+
+1. **`%` had no float support at all, three separate layers deep.**
+   `pyc_c_runtime.h`'s `_CG_prim_mod` used raw C `%` (invalid on
+   `double` — a hard C compile error); `cg_emit_llvm.cc`'s
+   `P_prim_mod` used LLVM's `srem` unconditionally (wrong for floats,
+   needs `frem`); and `ifa/if1/num.cc`'s constant-folder used
+   `DO_FOLDI` (int-only by design — `hue % 1.0` with two compile-time
+   *literals* hit `assert(!"case")` in the compiler itself, a
+   different failure from the runtime path). Fixed all three: an
+   overloaded `_CG_mod_impl` (int64/double) in the C runtime header
+   (guarded `#ifdef __cplusplus`, matching the existing
+   `_CG_prim_primitive_to_string` precedent, since this header is also
+   compiled as plain C for the LLVM backend's linked runtime); a
+   `frem`-vs-`srem` split via `is_float` in the LLVM emitter; a new
+   `DO_FOLDMOD` fold macro (mirrors the existing `DO_FOLD`/`DO_FOLDI`/
+   `DO_FOLDB` family's structure) using `fmod` for the float case.
+2. **Even plain `int % int` had the wrong sign.** `-7 % 3` gave `-1`
+   (C's/`fmod`'s truncated-toward-zero remainder) instead of Python's
+   `2` (floored remainder — result takes the *divisor's* sign, not the
+   dividend's). Fixed in the same three places with the standard
+   truncated-to-floored adjustment (`if (r != 0 && (r<0) != (b<0)) r
+   += b`).
+   Also updated `%`'s declared primitive argument type
+   (`ifa/prim_data.dat` / `ifa/if1/prim_data.cc`) from
+   `PRIM_TYPE_ANY_INT_A/B` to `PRIM_TYPE_ANY_NUM_A/B` (matching `*`/
+   `/`/`+`/`-`/`**`, which already declare `ANY_NUM`) — without this,
+   float `%` still ran correctly in the default tolerant compile mode
+   but was a **hard compile-time error under `-r`** (strict mode),
+   since FA's own declared-type check for the primitive was still
+   int-only even after the codegen/runtime fix.
+
+**Verified:** all 10 sign/type combinations (`-7%3`, `7%-3`, `-7%-3`,
+`7%3`, float versions, mixed int/float) match CPython exactly, on both
+backends, both as compile-time constants and through runtime
+variables; `ifa`'s own `make test` (all phases, `ifa-test` UnitTest
+included) clean; full `test_pyc.py` both backends clean (263/12/0/4).
+New tests `tests/modulo_float_and_sign.py`,
+`tests/colorsys_module.py` (the latter needs a
+`.python.expect_fail` sidecar — pyc's `str(float)` is more verbose
+than CPython's `repr` shortest-round-trip form, e.g.
+`0.90000000000000002` vs `0.9`; a separate, pre-existing, already-
+documented formatting gap, not a value mismatch).
+`shedskin_examples/mandelbrot2/mandelbrot2.py` now compiles clean and
+produces a genuinely multi-colored BMP (spot-checked pixel bytes —
+was all-black before, per this issue's own original finding).
+
+**A third, separate bug found and worked around, not fixed**: CPython's
+own `rgb_to_hls`/`rgb_to_hsv` use `max(r, g, b)`/`min(r, g, b)` (3-arg
+builtin calls); combined with either function's two-`return`-statement
+shape, this crashes the *caller* at runtime (`"matching function not
+found"`) — isolated to a clean, minimal, non-colorsys-specific repro
+completely unrelated to `%`. Worked around in the shipped fix with
+local 3-value-comparison helpers (`_max3`/`_min3`) instead of the
+builtin; root-caused only as far as "a 3-arg `max`/`min` call inside a
+function with 2+ differently-shaped `return`s," not further. Filed
+separately as
+[ifa/issues/092](../ifa/issues/092-DISPATCH-3arg-minmax-plus-multi-shape-return-crash.md).

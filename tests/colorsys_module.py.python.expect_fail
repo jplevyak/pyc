@@ -1,0 +1,4 @@
+# pyc float64 str() precision differs from CPython's repr (e.g.
+# 0.90000000000000002 vs 0.9) -- pre-existing float formatting gap
+# (see float_literal_precision.py.python.expect_fail), unrelated to
+# issue 041's colorsys fix; the underlying values match exactly.
