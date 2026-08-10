@@ -2991,11 +2991,14 @@ through (or move to a "filed" note) as each gets its own issue.
    frontend syntactic special-case with no backing `Fun` — confirmed
    `dict`/`set`, real `Type_RECORD` classes, and any user-defined
    class don't have this gap). Root-caused and filed separately as
-   [ifa/issues/091](../ifa/issues/091-DISPATCH-nonrecord-builtin-constructor-not-first-class.md)
+   [ifa/issues/091](../ifa/issues/closed/091-DISPATCH-nonrecord-builtin-constructor-not-first-class.md)
    rather than folded into 089's fix — a broader, more foundational
    change (giving 5 builtin types a real `__new__`), not attempted
    here. `defaultdict(int)`/`defaultdict(list)` still don't work
-   end-to-end until this is also fixed.
+   end-to-end until this is also fixed. **Fixed 2026-08-10** (see
+   091's own writeup) — `defaultdict(int)`/`defaultdict(list)` now
+   work end-to-end, including the auto-vivify `d[k] += 1`/
+   `d[k].append(...)` shape.
 4. ~~**sunfish's `"sizeof_element of non-container type"` internal
    fail**~~ — **STALE claim, re-verified 2026-08-08: this specific
    internal fail no longer appears anywhere in sunfish.py's compile

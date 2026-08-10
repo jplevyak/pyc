@@ -2370,6 +2370,81 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     } else
       break;
   }
+  // ifa/issues/091: give int/float/bool/list/tuple a real, storable
+  // ZERO-ARG __new__ candidate -- attached to the class's meta_type
+  // via must_implement_and_specialize, the exact same registration
+  // dict/set's real __new__ wrapper uses just above (the `is_record`
+  // loop). Because it's the SAME registration mechanism, the existing
+  // generic "call a stored value" dispatch (build_if1_pyda's plain-
+  // call SEND on cur_val, python_ifa_build_if1.cc -- unchanged by
+  // this fix) finds it automatically: `factory = dict; factory()`
+  // already works today by resolving dict's meta_type __new__ through
+  // this exact path, and `factory = int; factory()` was only failing
+  // because int had no __new__ there to find, not because the
+  // dispatch mechanism itself needed anything new.
+  //
+  // This is deliberately NOT the same shape as the reverted 2026-08-10
+  // attempt (see issues/091's writeup): that one substituted the Sym
+  // every bare load of int/float/bool/list/tuple resolved to, which
+  // also hit every isinstance(x, list)-style type-descriptor use of
+  // the same name (__pyc__/02_numeric.py's own `isinstance(x, list)`
+  // among them) and broke broadly. This only ADDS a __new__ candidate
+  // reachable via the meta_type -- the class Sym itself, and every
+  // existing use of it (isinstance, the direct-call-site fast paths
+  // below), is completely untouched.
+  //
+  // Zero-arg only: scoped to the issue's actual motivating case
+  // (`defaultdict(int)`/`defaultdict(list)` -- pyc_lib/collections.py's
+  // `self.factory()`) without attempting the 1-arg/2-arg conversion
+  // forms (int(x), int(x,base), list(x), tuple(x) stored-and-called
+  // indirectly) that build_if1.cc's existing direct-call-site special
+  // cases already give the DIRECT-call shape -- those match earlier
+  // in build_builtin_call_pyda and return before any generic dispatch
+  // is even considered, so they're untouched by this either way.
+  // Reuses the exact literal/primitive each fast path already
+  // produces for its own zero-arg case (build_if1.cc's `if (f &&
+  // pos_args.n == 0)` block).
+  if (!is_record) {
+    // `cls` here is `ast->sym` from PY_classdef processing
+    // (build_syms_pyda), which for `class int:`/`class float:`
+    // specifically is ALREADY unalias_type()'d (Type_ALIAS ->
+    // underlying concrete type -- ifa/if1/sym.cc) to `sym_int64`/
+    // `sym_float64` directly, name "int64"/"float64", not "int"/
+    // "float" (confirmed empirically: matching cls->name against
+    // "int" here never fired). bool/list/tuple aren't Type_ALIAS, so
+    // their classdef's `cls` stays pointer-identical to the plain
+    // sym_bool/sym_list/sym_tuple globals -- no unaliasing involved,
+    // direct pointer comparison is correct as-is.
+    bool is_int_ctor = cls->name && !strcmp(cls->name, "int64");
+    bool is_float_ctor = cls->name && !strcmp(cls->name, "float64");
+    if (is_int_ctor || is_float_ctor || cls == sym_bool || cls == sym_list || cls == sym_tuple) {
+      fn = new_fun(ast);
+      fn->nesting_depth = ctx.scope_stack.n;
+      Vec<Sym *> as;
+      as.add(new_sym(ast, "__new__"));
+      as[0]->must_implement_and_specialize(ast->sym->meta_type);
+      fn->name = as[0]->name;
+      body = 0;
+      Sym *t;
+      if (is_int_ctor) {
+        Immediate imm;
+        imm.v_int64 = 0;
+        t = if1_const(if1, sym_int64, "0", &imm);
+      } else if (is_float_ctor) {
+        Immediate imm;
+        imm.v_float64 = 0.0;
+        t = if1_const(if1, sym_float64, "0", &imm);
+      } else if (cls == sym_bool) {
+        t = sym_false;
+      } else {
+        t = new_sym(ast);
+        if1_send(if1, &body, 3, 1, sym_primitive, sym_make, cls, t)->ast = ast;
+      }
+      if1_move(if1, &body, t, fn->ret);
+      if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+      if1_closure(if1, fn, body, as.n, as.v);
+    }
+  }
   if (cls->num_kind != IF1_NUM_KIND_NONE) {
     fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;

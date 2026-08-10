@@ -1,0 +1,6 @@
+# tuple(x) for an iterable x returns a pyc LIST, not a real tuple
+# (dynamic-arity tuples can't be represented -- pyc tuples are
+# fixed-arity structs, see python_ifa_build_if1.cc's tuple(iterable)
+# comment) -- pre-existing, documented, established compromise,
+# unrelated to ifa/issues/091's factory fix. Shows up here as
+# `[1, 2, 3]` instead of CPython's `(1, 2, 3)` for tuple([1, 2, 3]).
