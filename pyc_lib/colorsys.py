@@ -6,31 +6,6 @@ ONE_THIRD = 1.0/3.0
 ONE_SIXTH = 1.0/6.0
 TWO_THIRD = 2.0/3.0
 
-# CPython's rgb_to_hls/rgb_to_hsv use the 3-arg builtin max(r, g, b)/
-# min(r, g, b) here. Confirmed separately: pyc crashes at runtime
-# ("matching function not found") calling the 3-arg builtin max/min
-# from a function that itself has more than one differently-shaped
-# `return` statement (as both of these do) -- isolated to a clean,
-# minimal, non-colorsys-specific repro; not root-caused or fixed
-# (filed as ifa/issues/092). Local 3-value comparisons instead of the
-# builtin sidestep it entirely -- same values, no compiler gap in the
-# way.
-def _max3(a, b, c):
-    m = a
-    if b > m:
-        m = b
-    if c > m:
-        m = c
-    return m
-
-def _min3(a, b, c):
-    m = a
-    if b < m:
-        m = b
-    if c < m:
-        m = c
-    return m
-
 def rgb_to_yiq(r, g, b):
     y = 0.30*r + 0.59*g + 0.11*b
     i = 0.74*(r-y) - 0.27*(b-y)
@@ -58,8 +33,8 @@ def yiq_to_rgb(y, i, q):
 
 
 def rgb_to_hls(r, g, b):
-    maxc = _max3(r, g, b)
-    minc = _min3(r, g, b)
+    maxc = max(r, g, b)
+    minc = min(r, g, b)
     sumc = (maxc+minc)
     rangec = (maxc-minc)
     l = sumc/2.0
@@ -103,8 +78,8 @@ def hls_to_rgb(h, l, s):
 
 
 def rgb_to_hsv(r, g, b):
-    maxc = _max3(r, g, b)
-    minc = _min3(r, g, b)
+    maxc = max(r, g, b)
+    minc = min(r, g, b)
     rangec = (maxc-minc)
     v = maxc
     if minc == maxc:

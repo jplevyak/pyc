@@ -172,14 +172,15 @@ documented formatting gap, not a value mismatch).
 produces a genuinely multi-colored BMP (spot-checked pixel bytes —
 was all-black before, per this issue's own original finding).
 
-**A third, separate bug found and worked around, not fixed**: CPython's
-own `rgb_to_hls`/`rgb_to_hsv` use `max(r, g, b)`/`min(r, g, b)` (3-arg
-builtin calls); combined with either function's two-`return`-statement
-shape, this crashes the *caller* at runtime (`"matching function not
-found"`) — isolated to a clean, minimal, non-colorsys-specific repro
-completely unrelated to `%`. Worked around in the shipped fix with
-local 3-value-comparison helpers (`_max3`/`_min3`) instead of the
-builtin; root-caused only as far as "a 3-arg `max`/`min` call inside a
-function with 2+ differently-shaped `return`s," not further. Filed
-separately as
-[ifa/issues/092](../ifa/issues/092-DISPATCH-3arg-minmax-plus-multi-shape-return-crash.md).
+**A third, separate bug found, filed, and since fixed** (2026-08-10,
+see [ifa/issues/092](../ifa/issues/closed/092-DISPATCH-3arg-minmax-plus-multi-shape-return-crash.md)
+for the full writeup): CPython's own `rgb_to_hls`/`rgb_to_hsv` use
+`max(r, g, b)`/`min(r, g, b)` (3-arg builtin calls), which crashed the
+caller at runtime (`"matching function not found"`) — turned out to be
+a plain arity bug, not the FA/dispatch mystery it first looked like:
+`__pyc__/05_builtins.py`'s `min`/`max` only accepted two positional
+values, so the 3rd silently misbound into the `key=` formal. Fixed by
+giving `min`/`max` an explicit `c=None` third positional slot;
+`pyc_lib/colorsys.py` now calls the real builtin `max(r, g, b)`/
+`min(r, g, b)` directly (the `_max3`/`_min3` workaround helpers were
+removed).

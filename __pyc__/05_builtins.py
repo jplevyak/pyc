@@ -211,7 +211,37 @@ def sum(seq, start=0):
 # (genetic2's `max(self.population, key=fitness)` was its post-FA
 # first blocker: `key` had no formal to bind to, the call didn't
 # match, and the untyped result cascaded into a codegen assert).
-def min(a, b=None, key=None):
+#
+# ifa/issues/092: `c=None` is a THIRD plain positional value, not a
+# fourth call form -- CPython's real min/max are variadic
+# (min(a, b, *rest, key=None)), which pyc can't express (no *args
+# support at all yet, confirmed separately). Without this, `max(r, g,
+# b)` silently misbound its 3rd positional arg into `key` (b had no
+# third formal to land in), so `key` held a plain value instead of a
+# callable -- `key(b)` then tried to call that value, aborting at
+# runtime with "matching function not found" (colorsys's
+# rgb_to_hls/rgb_to_hsv, which call max(r, g, b)/min(r, g, b) exactly
+# like CPython's own source does). None is never a legal value to
+# compare (CPython's own `<`/`>` reject it), so it's a safe "not
+# provided" sentinel here exactly like it already is for `b`/`key`. No
+# key= support combined with a 3rd value -- not needed by any real
+# caller, and CPython's own variadic form keeps key keyword-only
+# regardless of positional count, so this doesn't diverge from real
+# usage.
+#
+# `c is not None` is checked AFTER `b is None`, not before it -- an
+# earlier version checked it first and broke the UNRELATED 1-arg
+# iterable contour (`max([False, True, False])`, bool_ordering.py):
+# merely adding a 4th formal shifted where FA's splitter put the
+# earliest branch, collapsing that call's contour into a wrong shared
+# one (`m` came out typed as the whole list, not an element) -- the
+# same "adding a param disturbs the splitter" fragility this file's
+# own sorted() comment already documents. Leaving the original
+# `b is None` check as the untouched first branch, exactly as before
+# this fix, keeps every pre-existing contour's entry path byte-
+# identical; the new 3-value contour only has to coexist with the
+# existing 2-arg/key branches below, not preempt them.
+def min(a, b=None, c=None, key=None):
   if b is None:
     if key is None:
       m = a[0]
@@ -227,6 +257,13 @@ def min(a, b=None, key=None):
         m = x
         km = kx
     return m
+  if c is not None:
+    m = a
+    if b < m:
+      m = b
+    if c < m:
+      m = c
+    return m
   if key is None:
     if b < a:
       return b
@@ -235,7 +272,7 @@ def min(a, b=None, key=None):
     return b
   return a
 
-def max(a, b=None, key=None):
+def max(a, b=None, c=None, key=None):
   if b is None:
     if key is None:
       m = a[0]
@@ -250,6 +287,13 @@ def max(a, b=None, key=None):
       if kx > km:
         m = x
         km = kx
+    return m
+  if c is not None:
+    m = a
+    if b > m:
+      m = b
+    if c > m:
+      m = c
     return m
   if key is None:
     if b > a:
