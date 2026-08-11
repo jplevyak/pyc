@@ -453,6 +453,34 @@ inline char *_CG_String_n(const void *x, size_t len) {
   return str;
 }
 
+// Real process argv (ifa/issues -- pyc_lib/sys.py used to hardcode
+// `argv = ["pyc"]`, a compile-time Python list literal FA constant-
+// folds through: any `if len(sys.argv) > 1: ...` collapsed to its
+// `else` branch at compile time, regardless of what's actually passed
+// on the real command line, silently dead-coding the other branch.
+// _CG_set_argv is called once from generated main() before anything
+// else runs; _CG_argc/_CG_argv_at expose it to pyc_lib/sys.py's
+// `_get_argv()` as ordinary opaque C calls (see __pyc_c_call__), so
+// FA sees "some int" / "some str" rather than a known constant and
+// can't fold the length away. Storage is `extern`, defined once in
+// pyc_runtime.c -- same pattern as _CG_ready_queue_head above -- so
+// both backends share one copy (the C backend links pyc_runtime.o
+// too, per Makefile.cg).
+extern int64 _cg_argc;
+extern char **_cg_argv;
+
+inline void _CG_set_argv(int64 argc, char **argv) {
+  _cg_argc = argc;
+  _cg_argv = argv;
+}
+
+inline int64 _CG_argc(void) { return _cg_argc; }
+
+inline char *_CG_argv_at(int64 i) {
+  if (i < 0 || i >= _cg_argc || !_cg_argv || !_cg_argv[i]) return _CG_String("");
+  return _CG_String(_cg_argv[i]);
+}
+
 inline char *_CG_format_string(char *str, ...) {
   int l = _CG_string_len(str) + 24;
   char *s = 0;

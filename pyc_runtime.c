@@ -74,6 +74,16 @@ extern int64 _CG_fwrite_str(int64 h, char *s);
 extern char *_CG_fread_all(int64 h);
 extern char *_CG_fread_n(int64 h, int64 n);
 extern char *_CG_freadline(int64 h);
+extern void _CG_set_argv(int64 argc, char **argv);
+extern int64 _CG_argc(void);
+extern char *_CG_argv_at(int64 i);
+
+/* Real process argv storage -- definition (extern-declared in
+ * pyc_c_runtime.h), same pattern as _CG_ready_queue_head below: one
+ * copy shared by both backends, set once from generated main() via
+ * _CG_set_argv before anything else runs. */
+int64 _cg_argc = 0;
+char **_cg_argv = 0;
 
 /* Pyc list header layout macros — used by the LLVM-specific list
  * helpers below.  The header uses different macro names (_CG_list_len
