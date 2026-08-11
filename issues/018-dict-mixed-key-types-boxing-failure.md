@@ -217,6 +217,59 @@ this issue's `BOXING` violation in the first place (`to_basic_type`
 returns nullptr for classes and `None` — see 025's own file for that
 mechanism).
 
+## A more severe manifestation: shared container method specialized against a genuine non-container (2026-08-11)
+
+Found compiling `shedskin_examples/rdb/rdb.py` after fixing
+[issues/041](041-stdlib-shim-stubs-silently-wrong.md)'s `getopt`/`os`
+stubs (unrelated to this issue directly — real `getopt`/`os.listdir`
+made previously-dead-code-eliminated branches in `rdb.py` live for the
+first time, and one of them hits this). Hard compile-time failure, not
+a warning or runtime crash:
+
+```
+fail: ./__pyc__.py:986: internal: sizeof_element of non-container
+type 'str' (in __add__) -- FA specialized a container method against
+a scalar
+```
+
+(`ifa/codegen/cg.cc`'s `P_prim_sizeof_element` case — a container
+method, e.g. `list.__add__`, needs to know its element's byte size to
+emit the memcpy-style body; when the resolved type has no `element` at
+all, the receiver isn't a container in the first place. Codegen fails
+cleanly with a location instead of dereferencing null — this is *not*
+new: the guard and its "see issues" pointer already existed, previously
+citing 025 before its cases were redirected here.) A prior instance is
+already recorded in that guard's own comment: score4's `list.__add__`
+specialized with an `int64` right operand. This is the same mechanism
+one step more severe — not just a *differently-typed scalar* reaching
+a shared container method (018's core repro), but a **genuine
+non-container** (`str`, no `element` field to even guess a size from)
+reaching one. Same root cause as this issue's whole file: a shared
+`list`/`dict`/etc. method isn't cloned per element/receiver-CS, so its
+one shared contour can end up seeing a union that includes something
+the method body's container-shaped codegen can't handle at all. Not
+investigated further than confirming the mechanism match — no new
+minimal repro isolated, `rdb.py` itself is the only current trigger
+known.
+
+## Related: closed/077's known remaining gap, new trigger found the same day
+
+Also found via the same `getopt`/`os` fix, in
+`shedskin_examples/msp_ss/msp_ss.py` — a *different* mechanism, not
+this issue's, but recording the cross-reference here since it was
+found alongside: several `__pyc_c_call__` sites (`_CG_fopen`,
+`_CG_chr`, `_CG_str_to_int64_base`) fail with "no matching function...
+cannot convert argument of incomplete type `_CG_any`". This is
+[closed/077](closed/077-primitive-equality-codegen-missing-salvage-guard.md)'s
+own documented, deliberately-unfixed remainder — that issue's final
+design explicitly whitelists only the `str`-comparison family
+(`_CG_str_eq` and siblings) for a salvage guard, and its own text says
+"every other `__pyc_c_call__` site (`_CG_list_add`, `_CG_ord`,
+`_CG_str_from_int`, `_CG_format_string`, ...) is completely unchecked
+and unaffected" — `_CG_fopen`/`_CG_chr`/`_CG_str_to_int64_base` are
+exactly such unchecked sites. Not a new bug; a new confirmed real-world
+trigger of a known, intentionally-scoped-out gap. Noted in 077 itself.
+
 ## Verification plan
 
 1. The repro above compiles and both `squares[3]` (9) and

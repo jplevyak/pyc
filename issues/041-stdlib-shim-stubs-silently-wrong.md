@@ -256,17 +256,24 @@ providably unreachable under the old always-empty stubs (`getopt`
 always returning `([], [])`, `os.listdir` always returning `[]`) and
 so got dead-code-eliminated before ever being type-checked. With real
 implementations those paths are live, and each hits its own
-pre-existing, unrelated bug: `msp_ss.py` cascades into several
-"cannot convert `_CG_any`" C compile errors (a salvage-degraded value
-reaching a concrete-typed runtime call, the same general class 056/077
-already named); `rdb.py` hits a harder internal FA error
-(`sizeof_element of non-container type 'str' (in __add__) — FA
-specialized a container method against a scalar`, in
-`make_shuffle`/`make_playback_state`/`make_stats`'s `*` expressions).
-Neither investigated further — real, separate, pre-existing bugs in
-those two programs (or in how pyc handles those specific shapes),
-newly *visible* rather than newly *caused*. Confirmed via exact
-before/after fail-set diff: every other corpus example's outcome is
+pre-existing, unrelated bug — both traced to **already-known,
+already-tracked mechanisms**, confirmed 2026-08-11: `msp_ss.py`
+cascades into several "cannot convert `_CG_any`" C compile errors at
+`_CG_fopen`/`_CG_chr`/`_CG_str_to_int64_base` — exactly
+[closed/077](../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)'s
+own documented, deliberately-unfixed remainder (that issue's fix is a
+narrow whitelist of `str`-comparison call sites; its own text already
+says every other `__pyc_c_call__` site "is completely unchecked and
+unaffected"). `rdb.py` hits `sizeof_element of non-container type
+'str' (in __add__) — FA specialized a container method against a
+scalar` — [issues/018](018-dict-mixed-key-types-boxing-failure.md)'s
+own mechanism (a shared container method not cloned per element/
+receiver type), one step more severe than that issue's core repro (a
+genuine non-container reaching the method, not just a differently-typed
+scalar). Both cross-referenced in their respective issues rather than
+filed fresh — real, separate, pre-existing bugs, newly *visible*
+rather than newly *caused*. Confirmed via exact before/after fail-set
+diff: every other corpus example's outcome is
 byte-identical.
 
 **Not attempted, and why** — `struct` and `hashlib` were assessed for
