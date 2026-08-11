@@ -188,7 +188,7 @@ commit ref recorded in each file's status line.
   (044's "Residual" section) — and a related LLVM-backend segfault
   (a class constructed both with and without its default-`None`
   constructor arg) was found and filed separately as
-  [ifa/issues/088](../ifa/issues/088-llvm-class-list-field-plus-construct-segfault.md).
+  [ifa/issues/088](../ifa/issues/closed/088-llvm-class-list-field-plus-construct-segfault.md).
 - [034](closed/034-iadd-fallback-and-mixed-numeric-regression.md) —
   `+=`/`-=`/etc. against a class defining only the non-in-place
   operator (`__add__` without `__iadd__`, the common case — CPython

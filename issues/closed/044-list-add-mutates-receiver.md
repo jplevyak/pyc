@@ -152,7 +152,7 @@ return x;
   = route or []`) segfaults on the LLVM backend for an unrelated,
   pre-existing reason (a class constructed both with and without its
   default arg in the same program — nothing to do with list `+`; see
-  [ifa/issues/088](../../ifa/issues/088-llvm-class-list-field-plus-construct-segfault.md)).
+  [ifa/issues/088](../../ifa/issues/closed/088-llvm-class-list-field-plus-construct-segfault.md)).
   `tests/list_add_no_mutate.py` below sidesteps this by using a
   required (non-default) constructor parameter, which is unaffected.
 - New regression test `tests/list_add_no_mutate.py` (both scenarios

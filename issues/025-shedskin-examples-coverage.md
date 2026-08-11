@@ -2955,7 +2955,7 @@ through (or move to a "filed" note) as each gets its own issue.
    and a related-but-distinct LLVM-backend segfault (a class
    constructed both with and without its default-`None` constructor
    arg in the same program) was found and filed separately as
-   [ifa/issues/088](../ifa/issues/088-llvm-class-list-field-plus-construct-segfault.md).
+   [ifa/issues/088](../ifa/issues/closed/088-llvm-class-list-field-plus-construct-segfault.md).
 3. ~~**mastermind2's int/float mixed `-=`/`*` gap**~~ — **STALE claim,
    re-verified 2026-08-08: mastermind2.py no longer reaches its own
    line 77 at all.** It now fails much earlier — `defaultdict(int)`
