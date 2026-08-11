@@ -3293,29 +3293,26 @@ through (or move to a "filed" note) as each gets its own issue.
     suite exercises package-directory imports at all today (confirmed
     by grep) — part of why this was never caught by anything but the
     corpus sweep.
-16. ~~**Out-of-order keyword arguments**~~ — **CONFIRMED still real
-    and FILED 2026-08-08 as
-    [ifa/087](../ifa/issues/087-DISPATCH-out-of-order-keyword-args.md).**
-    Re-verified directly: `f(low=2, high=9)` (matching declaration
-    order) works; `f(high=9, low=2)` (reversed) compiles with `illegal
-    call argument type` warnings and, if reached at runtime, traps via
-    a guarded `assert(!"runtime error: matching function not found")`
-    — confirmed genuinely "safe" (not a whole-program crash): checked
-    with unbuffered output that every statement before the bad call
-    still executes and prints. Traced the frontend
-    (`python_ifa_build_if1.cc`) and confirmed it's **not** the source
-    — every keyword argument is tagged with its name at the SEND
-    regardless of call-site order; the bug is in
-    `ifa/if1/pattern.cc`'s matcher (`pattern_match` →
-    `Matcher::find_all_matches`), not traced to the exact line (a
-    substantial, general, recursive-backtracking matcher shared by
-    every ifa-based frontend, not pyc-specific — warrants its own
-    dedicated trace, same depth as item 9's investigation, not
-    attempted here). `tests/keyword_args.py`'s own header comment
-    already documented this exact limitation verbatim ("keyword args
-    must be given in declaration order today; out-of-order still
-    fails (safely)") — confirming this was a known, accepted gap, just
-    never filed.
+16. ~~**Out-of-order keyword arguments**~~ — **CONFIRMED and FIXED.**
+    Filed 2026-08-08 as
+    [ifa/087](../ifa/issues/closed/087-DISPATCH-out-of-order-keyword-args.md),
+    closed 2026-08-10. Root cause turned out to be one level past where
+    it was first suspected: the matcher (`pattern.cc`'s
+    `find_all_matches`/`find_best_cs_match`/`covers_formals`) correctly
+    remaps out-of-order named actuals to formal positions regardless of
+    call-site order — the match is found fine. The actual bug was
+    `Matcher::build()`'s `order_wrapper` callback
+    (`ifa/ifa.h`'s `IFACallbacks`), an unimplemented `{ return 0; }`
+    stub pyc had never needed to override before (unlike its sibling
+    `default_wrapper`, implemented and exercised constantly for default
+    arguments) — silently dropping an already-correct match. Fixed by
+    implementing `PycCompiler::order_wrapper`, plus a second fix for a
+    combined reorder+default-argument case it exposed (see the issue's
+    "Fix" section for the full writeup). `tests/keyword_args.py`'s
+    header comment used to document this exact limitation verbatim
+    ("keyword args must be given in declaration order today;
+    out-of-order still fails (safely)") — now updated, with dedicated
+    coverage in `tests/kwarg_out_of_order.py`.
 17. ~~**Slice-target augmented assignment**~~ — **CONFIRMED worse than
     documented, FILED 2026-08-08 as
     [043](043-slice-target-augmented-assignment-silently-wrong.md).**

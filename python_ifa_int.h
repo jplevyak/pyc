@@ -120,6 +120,7 @@ class PycCompiler : public PycCallbacks {
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
+  Fun *order_wrapper(Fun *, Map<MPosition *, MPosition *> &substitutions);
   bool reanalyze(Vec<ATypeViolation *> &type_violations);
   bool c_codegen_pre_file(FILE *);
   // issue 011/050 (Tier 3a: native can_raise inside FA's own fixed

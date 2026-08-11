@@ -226,11 +226,112 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
       // the MATCHED fun's formal syms, which for a defaulted call are
       // these wrapper formals (ifa/issues/045).
       Sym *orig = f->arg_syms.get(cp);
-      if (orig) a->clone_for_constants = orig->clone_for_constants;
+      if (orig) {
+        a->clone_for_constants = orig->clone_for_constants;
+        // ifa/issues/087: carry the wrapped formal's own name through onto
+        // the wrapper's fresh formal. A further wrapper layered on top of
+        // this one (order_wrapper, when a call needs both a default fill
+        // and a reorder) forwards through an anonymous SEND whose callee
+        // value resolves back to the ORIGINAL (unwrapped) function -- the
+        // matcher re-resolves that inner send from scratch, and without a
+        // name to key on it falls back to raw position, silently
+        // mismatching once this wrapper's compacted position order no
+        // longer lines up with the original's. Keeping the name intact
+        // lets that re-resolution route by name instead, which is
+        // position-order-independent and already proven correct.
+        a->name = orig->name;
+      }
       as.add(a);
       if1_add_send_arg(if1, send, a);
     }
     pos.inc();
+  }
+  if1_move(if1, &body, ret, fn->ret, ast);
+  if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  if1_closure(if1, fn, body, as.n, as.v);
+  install_new_fun(fn);
+  fn->fun->wraps = f;
+  return fn->fun;
+}
+
+// ifa/issues/087: out-of-order keyword arguments (`f(high=9, low=2)`
+// against `def f(low, high)`) matched fine all the way through
+// pattern.cc's Matcher (find_all_matches/find_best_cs_match/
+// covers_formals/verify_args all correctly remap actual<->formal
+// position via PMatch::actual_to_formal_position, confirmed by direct
+// instrumentation) but Matcher::build() then detected the reordering
+// (to_actual(p, m) != p for some formal position p) and called this
+// callback to synthesize an adapter -- which, before this fix, was
+// IFACallbacks's base-class stub (`return 0`), silently dropping the
+// match and surfacing far downstream as a runtime "matching function
+// not found" trap. pyc never needed this before: it's the ONLY one of
+// order/coercion/promotion_wrapper actually exercised by pyc's own
+// type system (coercion/promotion go through a separate mechanism,
+// AVar::num_coerce, and stay unimplemented stubs same as order_wrapper
+// always was -- confirmed no other caller of any of the three exists).
+//
+// `substitutions` is keyed by FORMAL position -> its ACTUAL (call-
+// site) position, for every one of f's has-positions (pattern.cc's
+// build_arg_positions treats has[0], the function's own selector sym,
+// as position 1 as uniformly as every real parameter -- confirmed by
+// direct instrumentation: position 1 always self-maps, since the
+// callee slot never reorders). Mirrors default_wrapper's exact shape
+// (one fresh formal per has-position, a single forwarding send marked
+// `wraps`) with the opposite indexing: default_wrapper's wrapper
+// formals are in F's OWN declared order (defaulted positions filled
+// from the default expression instead); this wrapper's formals must
+// be in ACTUAL (call-site) order instead, since it's what the ORIGINAL
+// call site's arguments get forwarded to positionally -- codegen never
+// re-runs keyword matching, it just calls whatever Fun the matcher
+// settled on with the original send's rvals, unchanged, in order.
+Fun *PycCompiler::order_wrapper(Fun *f, Map<MPosition *, MPosition *> &substitutions) {
+  PycAST *ast = (PycAST *)f->ast;
+  Sym *fn = new_fun(ast);
+  fn->nesting_depth = f->sym->nesting_depth;
+  fn->clone_methods_per_cs = f->sym->clone_methods_per_cs;
+  int n = f->sym->has.n;
+  Vec<MPosition *> formal_positions;
+  Vec<Sym *> as;
+  as.fill(n);
+  MPosition pos;
+  pos.push(1);
+  for (int i = 0; i < n; i++) {
+    MPosition *fcp = cannonicalize_mposition(pos);
+    formal_positions.add(fcp);
+    MPosition *acp = substitutions.get(fcp);
+    if (!acp) acp = fcp;
+    int ai = (int)Position2int(acp->last()) - 1;
+    Sym *a = new_sym(ast);
+    // Inherit clone_for_constants from the wrapped formal, same as
+    // default_wrapper -- entry_set_compatibility (ifa/issues/045)
+    // reads the flag off the MATCHED fun's formal syms, which for a
+    // reordered call are these wrapper formals.
+    Sym *orig = f->arg_syms.get(fcp);
+    if (orig) a->clone_for_constants = orig->clone_for_constants;
+    as[ai] = a;
+    pos.inc();
+  }
+  Code *body = 0;
+  Sym *ret = new_sym(ast);
+  Code *send = if1_send(if1, &body, 0, 1, ret);
+  send->ast = ast;
+  for (int i = 0; i < n; i++) {
+    MPosition *fcp = formal_positions[i];
+    MPosition *acp = substitutions.get(fcp);
+    if (!acp) acp = fcp;
+    int ai = (int)Position2int(acp->last()) - 1;
+    // ifa/issues/087: name this forwarded arg after f's OWN formal at
+    // fcp. The callee value flowing into this send's position-1 slot is
+    // f's underlying (possibly further-unwrapped) symbol, so the matcher
+    // re-resolves this send from scratch against that symbol's real
+    // signature; a name lets it route by name (order-independent, already
+    // proven correct) instead of falling back to raw position, which is
+    // wrong here precisely because this send's args are in ACTUAL
+    // (call-site) order, not f's order. See the matching comment in
+    // default_wrapper for why the plain-position path silently
+    // mismatches once reordering and default-compaction combine.
+    Sym *orig = f->arg_syms.get(fcp);
+    if1_add_send_arg(if1, send, as[ai], orig ? orig->name : 0);
   }
   if1_move(if1, &body, ret, fn->ret, ast);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;

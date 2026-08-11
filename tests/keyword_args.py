@@ -3,8 +3,8 @@
 # the callee's params untyped -> spurious "unresolved call" downstream
 # (issue 025 bucket A). Covers plain functions, methods, and class
 # constructors (whose __new__ wrapper formals now carry the __init__
-# parameter names so keyword actuals can bind). NOTE: keyword args must
-# be given in declaration order today; out-of-order still fails (safely).
+# parameter names so keyword actuals can bind). Out-of-order keyword
+# args are covered separately in kwarg_out_of_order.py (ifa/issues/087).
 class Box:
     def __init__(self, low, high):
         self.low = low
