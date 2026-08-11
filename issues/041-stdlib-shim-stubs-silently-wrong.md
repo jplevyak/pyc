@@ -264,7 +264,10 @@ cascades into several "cannot convert `_CG_any`" C compile errors at
 own documented, deliberately-unfixed remainder (that issue's fix is a
 narrow whitelist of `str`-comparison call sites; its own text already
 says every other `__pyc_c_call__` site "is completely unchecked and
-unaffected"). `rdb.py` hits `sizeof_element of non-container type
+unaffected"), now tracked as its own open issue since it's a live
+compile failure rather than only a theoretical remainder:
+[ifa/issues/096](../ifa/issues/096-CGEN-extend-c-call-salvage-guard-past-str-comparisons.md).
+`rdb.py` hits `sizeof_element of non-container type
 'str' (in __add__) — FA specialized a container method against a
 scalar` — [issues/018](018-dict-mixed-key-types-boxing-failure.md)'s
 own mechanism (a shared container method not cloned per element/

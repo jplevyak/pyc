@@ -252,7 +252,7 @@ investigated further than confirming the mechanism match — no new
 minimal repro isolated, `rdb.py` itself is the only current trigger
 known.
 
-## Related: closed/077's known remaining gap, new trigger found the same day
+## Related: ifa/issues/096 (closed/077's known remaining gap), found the same day
 
 Also found via the same `getopt`/`os` fix, in
 `shedskin_examples/msp_ss/msp_ss.py` — a *different* mechanism, not
@@ -267,8 +267,11 @@ design explicitly whitelists only the `str`-comparison family
 "every other `__pyc_c_call__` site (`_CG_list_add`, `_CG_ord`,
 `_CG_str_from_int`, `_CG_format_string`, ...) is completely unchecked
 and unaffected" — `_CG_fopen`/`_CG_chr`/`_CG_str_to_int64_base` are
-exactly such unchecked sites. Not a new bug; a new confirmed real-world
-trigger of a known, intentionally-scoped-out gap. Noted in 077 itself.
+exactly such unchecked sites. Not a new bug, but a live, currently-
+failing corpus program rather than only a theoretical remainder, so
+it's tracked as its own open issue —
+[ifa/issues/096](../ifa/issues/096-CGEN-extend-c-call-salvage-guard-past-str-comparisons.md)
+— rather than folded into this issue or into reopening 077.
 
 ## Verification plan
 
