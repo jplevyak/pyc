@@ -136,6 +136,87 @@ consistent per-instance element-CS to specialize by in the first
 place. Worth reconfirming against 075's design once that work is
 picked up — flagging now so it isn't assumed covered "for free."
 
+## Scope confirmed broader still (2026-08-11): no container needed at all — a bare branch-merged scalar hits the identical mechanism
+
+Found while digging into [ifa/issues/025](../ifa/issues/025-FA-intra-function-union-narrowing.md)'s
+"Case 1" (originally framed as an intra-function narrowing gap) —
+then confirmed that **all three** of 025's originally-described cases
+reduce to this same mechanism, not just Case 1 (see that issue for the
+full account; summary here). Both prior shapes above involve a
+*container* (two dict/set instances, or one heterogeneous list
+literal). None of that is needed — a plain scalar variable merged
+from two branches, with no container anywhere, hits the same
+violation the moment it reaches an ordinary binary op:
+
+```python
+if cond:
+    x = 5
+else:
+    x = "hi"
+print(x + 10)
+```
+
+(`cond` must be genuinely runtime-varying — e.g. read from `sys.argv`
+— or FA constant-folds the whole branch away before this code path is
+ever exercised, same caveat as everywhere else in this codebase.)
+Compiles with the same `warning: 'x' has mixed basic types:( int64
+str )`, but this trigger shape lands on the **compile-error** side
+rather than 018's list-literal runtime crash: FA clones `str.__add__`
+(`__pyc__/01_str.py`: `return __pyc_operator__(self,
+__pyc_symbol__("::"), x)`, untyped Python, a generic pass-through to
+the `::`/`prim_strcat` table primitive) for the union's `str` member
+with the call site's literal `10` (int64) baked in as the argument —
+even though `prim_strcat` is declared `{STRING, STRING} → STRING`
+(`ifa/if1/prim_data.cc:278`) and FA's own checker separately flags the
+mismatch as a `PRIMITIVE_ARGUMENT` violation. In permissive mode
+that's just a warning, and codegen emits the literal (invalid) call
+anyway: `_CG_prim_strcat(t2, ..., 10)` — a hard C compile error
+(`no matching function for call to '_CG_strcat'`) on the C backend,
+an LLVM module-verifier failure (`call ptr @_CG_strcat(ptr %0, i64
+10)`) on LLVM. Whether a given trigger lands on "compiles with a
+warning, segfaults/asserts at runtime" (this issue's list-literal
+case) or "doesn't compile at all" (this case) appears to depend only
+on whether the *specific* invalid clone this mechanism generates
+happens to produce C/IR that's still well-typed enough to build — not
+on anything more principled.
+
+This also answers a question [030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+left implicit: classtag dispatch requires `cg_has_classtag`, which
+requires `type_kind == Type_RECORD` — `int64` and `str` are never
+`Type_RECORD`, so a call site whose receiver is a *raw scalar* union
+has no discriminator available at all (no classtag, and no
+address-identity fallback either, since that route is for closures/
+plain functions, not values). That's the concrete mechanism behind
+the "030's classtag dispatch... doesn't directly cover this issue's
+raw `int`/`str` scalar union" note in this issue's own "Related"
+section above — confirmed by code, not just inference, this session.
+
+Checked the other two of `ifa/issues/025`'s originally-described
+cases too, since the mechanism doesn't look specific to `+`/`str.__add__`:
+a **bare `print(v)`** (no `isinstance`, no operator at all) on a
+scalar union arriving via a *function return* (025's Case 2 shape:
+`v = maybe(b)` where `maybe` returns `int` on one path and `str` on
+the other) crashes identically (`assert(!"runtime error: matching
+function not found")` — the dispatch for `__pyc_to_str__`/`__str__`
+has nothing to resolve to, same as `dict`/`list`'s methods above).
+025's Case 3 (a function whose own *return type* is a scalar union,
+consumed by a caller) crashes the same way the moment the caller does
+anything with the result. **All three of 025's cases are this
+mechanism** — narrowing `x`'s (or `v`'s) type per-branch, even if it
+worked perfectly, wouldn't be sufficient to fix any of them: the union
+value itself has no coherent runtime representation for a generic
+consumer (`+`, `print`, `isinstance`, ...) to dispatch on, independent
+of whether the *use site* could in principle be proven type-safe by
+narrowing. 025 has been updated to point here instead of describing
+its own open narrowing mechanism for these three cases; the one thing
+025's narrowing mechanism *does* genuinely fix — `is None` narrowing
+on a `SomeClass | None` union — is unaffected by any of this, since
+class instances (unlike raw scalars) already have a coherent runtime
+representation (a pointer, optionally classtag-headed) and never trip
+this issue's `BOXING` violation in the first place (`to_basic_type`
+returns nullptr for classes and `None` — see 025's own file for that
+mechanism).
+
 ## Verification plan
 
 1. The repro above compiles and both `squares[3]` (9) and
@@ -145,6 +226,8 @@ picked up — flagging now so it isn't assumed covered "for free."
 3. Existing single-key-type dict tests (`tests/dict_basic.py`,
    `tests/dict_methods.py`, `tests/dict_comprehension_basic.py`)
    continue to pass unchanged.
+4. The bare-scalar repro above (needs a non-constant-foldable `cond`)
+   compiles and prints `15` / `hi world`, matching CPython.
 
 ## What this unblocks
 

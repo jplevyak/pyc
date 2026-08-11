@@ -128,7 +128,13 @@ conventions are the same; the only difference is location.
   — A program using `dict` (or `set`) with two different key/
   element types anywhere fails to compile with a `BOXING`/"mixed
   basic types" FA violation — each shared internal comparison
-  method (`_keys[i] == key`) isn't specialized per key type.
+  method (`_keys[i] == key`) isn't specialized per key type. No
+  container needed, either: any raw scalar (e.g. `int | str`) union,
+  however it arises (branch merge, function return, list literal),
+  has no coherent runtime representation for a generic consumer
+  (`+`, `print`, `isinstance`, ...) to dispatch on — this is also
+  the real blocker behind `ifa/issues/025`'s three originally-filed
+  narrowing cases, not a narrowing gap.
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected
