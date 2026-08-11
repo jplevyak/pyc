@@ -15,6 +15,8 @@
 #include <sys/socket.h>
 #include <poll.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <dirent.h>
 
 #ifdef __cplusplus
 #include <coroutine>
@@ -479,6 +481,76 @@ inline int64 _CG_argc(void) { return _cg_argc; }
 inline char *_CG_argv_at(int64 i) {
   if (i < 0 || i >= _cg_argc || !_cg_argv || !_cg_argv[i]) return _CG_String("");
   return _CG_String(_cg_argv[i]);
+}
+
+// os module helpers (ifa/issues/041): pyc_lib/os.py's filesystem
+// functions used to be no-op stubs (listdir/walk always [], stat
+// always all-zero, isdir/exists hardcoded true). Most of libc's
+// filesystem calls (chdir, rename, unlink, mkdir, system, access) are
+// directly callable via __pyc_c_call__ as-is -- a pyc `_CG_string` is
+// already a valid NUL-terminated `const char*` (see the string-layout
+// note above), so no wrapper is needed for those. These few need a
+// thin C helper because they either return a struct (`stat`), a
+// pointer that must be smuggled through int64 (`opendir`/`readdir`,
+// same pattern as `_CG_fopen`'s `FILE*` above), or a fixed-size buffer
+// (`getcwd`).
+
+inline char *_CG_getcwd(void) {
+  char buf[4096];
+  if (getcwd(buf, sizeof(buf))) return _CG_String(buf);
+  return _CG_String("");
+}
+
+inline _CG_bool _CG_is_dir(const char *path) {
+  struct stat st;
+  return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+inline _CG_bool _CG_is_symlink(const char *path) {
+  struct stat st;
+  return lstat(path, &st) == 0 && S_ISLNK(st.st_mode);
+}
+
+// Tuple-view field order matches CPython's own documented
+// backward-compat 10-tuple for os.stat_result: (mode, ino, dev,
+// nlink, uid, gid, size, atime, mtime, ctime). CPython's tuple view
+// truncates the times to whole-second integers (the float precision
+// only exists via the named st_atime/etc. attributes) -- matching
+// that, rather than returning float, keeps this a uniform all-int64
+// tuple on the pyc side: a mixed int/str-shaped (or here int/float)
+// tuple has no working generic __str__ in pyc (ifa/issues/018).
+inline int64 _CG_stat_int_field(const char *path, int64 field) {
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+  switch (field) {
+    case 0: return (int64)st.st_mode;
+    case 1: return (int64)st.st_ino;
+    case 2: return (int64)st.st_dev;
+    case 3: return (int64)st.st_nlink;
+    case 4: return (int64)st.st_uid;
+    case 5: return (int64)st.st_gid;
+    case 6: return (int64)st.st_size;
+    case 7: return (int64)st.st_atime;
+    case 8: return (int64)st.st_mtime;
+    case 9: return (int64)st.st_ctime;
+    default: return 0;
+  }
+}
+
+inline int64 _CG_opendir(const char *path) { return (int64)(intptr_t)opendir(path); }
+inline int64 _CG_closedir(int64 h) { return h ? (int64)closedir((DIR *)(intptr_t)h) : 0; }
+
+// Returns "" both on a real end-of-directory (readdir returns NULL)
+// and on a genuine empty-name entry, which never happens in practice
+// (every real dirent has a non-empty d_name) -- so "" is an
+// unambiguous-in-practice sentinel for pyc_lib/os.py's listdir loop,
+// matching the same convention _CG_argv_at-style helpers use
+// elsewhere in this header.
+inline char *_CG_readdir_name(int64 h) {
+  if (!h) return _CG_String("");
+  struct dirent *e = readdir((DIR *)(intptr_t)h);
+  if (!e) return _CG_String("");
+  return _CG_String(e->d_name);
 }
 
 inline char *_CG_format_string(char *str, ...) {

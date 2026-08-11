@@ -72,8 +72,17 @@ conventions are the same; the only difference is location.
   layers: C runtime header, LLVM codegen, and the compile-time
   constant-folder each independently assumed integer-only), and even
   plain `int % int` had the wrong sign convention vs. Python's floored
-  semantics (`-7 % 3` gave C's `-1` instead of `2`). `struct`/
-  `getopt`/`os` filesystem functions remain open.
+  semantics (`-7 % 3` gave C's `-1` instead of `2`). **`getopt`/`os`
+  filesystem functions fixed 2026-08-11** (real implementations,
+  verified against CPython both backends — plus two bonus fixes found
+  in the same audit, `sys.version` and `string.capwords`/`split`/
+  `join`, and a new LLVM-only bug found along the way, filed as
+  [ifa/issues/095](../ifa/issues/095-LLVM-str-or-none-union-wrong-value.md)).
+  `struct`/`hashlib` assessed and deferred — blocked on two actual
+  compiler/runtime gaps (`bytes(iterable)` construction doesn't
+  resolve; `*args` in a function definition is parsed but not
+  compiled, per `ROADMAP.md`), not stub-filling difficulty; see the
+  comments in `pyc_lib/struct.py`/`hashlib.py`.
 - [039-list-mul-shared-element-type-cross-contamination.md](039-list-mul-shared-element-type-cross-contamination.md)
   — `list.__mul__`/`__rmul__` (`n * [x]`) shares a CreationSet/element-
   type representation across unrelated call sites: `bh.py`'s genuinely

@@ -31,7 +31,26 @@ def exit(status=0):
 def setrecursionlimit(n):
     return None
 
-version = "2.7.18"
+# Was "2.7.18" -- a Python-2-migration leftover (issues/041); pyc
+# targets Python 3 syntax/semantics, and a real corpus example
+# (shedskin_examples/circle/circle.py) does `print(sys.version)`
+# directly, so this was silently printing a false, actively
+# misleading value. "(pyc)" instead of a real CPython build string
+# since this isn't CPython -- claiming a specific patch-level CPython
+# build would be its own kind of wrong.
+version = "3.11.0 (pyc)"
+# Indexed access (sys.version_info[0] == 3, the shape
+# shedskin_examples/sunfish/sunfish.py actually uses) is fine.
+# Printing the whole tuple directly hits a pre-existing, general pyc
+# limitation, unrelated to this addition: a heterogeneous (mixed
+# int/str) tuple has no working generic __str__ (see ifa/issues/018).
+version_info = (3, 11, 0, "final", 0)
+
+# Best-effort: distinguishes the corpus's `sys.platform == 'win32'`
+# checks (shedskin_examples/circle/circle_main.py) without modelling
+# every real `sys.platform` value; "linux" matches this project's
+# primary supported/tested host.
+platform = "linux"
 
 # Std streams as file objects (__pyc_file__ is the builtin file class
 # from __pyc__/07_file.py; builtin-module names are globally visible).

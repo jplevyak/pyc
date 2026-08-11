@@ -1,15 +1,21 @@
 # 041 — `struct`, `colorsys`, `getopt`, and `os`'s filesystem functions are no-op stubs that silently produce wrong results
 
-**Status:** open — `colorsys` fixed 2026-08-08 (see that section at the
-end); `struct`/`getopt`/`os` filesystem functions still stubs. Found
-2026-08-08 while diagnosing
-[issues/025](025-shedskin-examples-coverage.md)'s TODO list item 14
-("stdlib long tail: `struct`, `colorsys`, `array`, `re`, `getopt`,
-`os.path`, `fnmatch` — no shims"). That claim was wrong at the file
-level — all seven already have a `pyc_lib/*.py` shim, most added by
-commit `ed00e7c5` (2026-07-08) — but auditing each module's actual
-behavior (not just its presence) found a real, more specific problem
-underneath the stale claim.
+**Status:** open, `struct`/`hashlib` only — `colorsys` fixed
+2026-08-08, `getopt` and `os`'s filesystem functions (plus
+`os.path.isdir`/`exists`/`islink`) fixed 2026-08-11, `sys.version` and
+`string.capwords`/`split`/`join` (found via the same broader audit,
+were also silent-wrong stubs) fixed alongside them — see "getopt/os/
+sys/string fixed" below. `struct`/`hashlib` assessed for real
+implementations the same day and deferred — not hard in themselves,
+but blocked on two actual compiler/runtime feature gaps (see their own
+files' comments and the summary below). Found 2026-08-08 while
+diagnosing [issues/025](025-shedskin-examples-coverage.md)'s TODO list
+item 14 ("stdlib long tail: `struct`, `colorsys`, `array`, `re`,
+`getopt`, `os.path`, `fnmatch` — no shims"). That claim was wrong at
+the file level — all seven already have a `pyc_lib/*.py` shim, most
+added by commit `ed00e7c5` (2026-07-08) — but auditing each module's
+actual behavior (not just its presence) found a real, more specific
+problem underneath the stale claim.
 
 **Affects:** `pyc_lib/struct.py`, `pyc_lib/colorsys.py`,
 `pyc_lib/getopt.py`, and the filesystem-touching functions in
@@ -184,3 +190,96 @@ giving `min`/`max` an explicit `c=None` third positional slot;
 `pyc_lib/colorsys.py` now calls the real builtin `max(r, g, b)`/
 `min(r, g, b)` directly (the `_max3`/`_min3` workaround helpers were
 removed).
+
+## `getopt`/`os`/`sys.version`/`string` fixed (2026-08-11)
+
+**`getopt`/`gnu_getopt`**: real short/long-option parsing ported from
+CPython's own `Lib/getopt.py` algorithm (prefix-matching long options,
+`--` end-of-options, `GetoptError` with the same conditions CPython
+raises it), pure Python, no runtime changes. Verified byte-for-byte
+against CPython across short options, long options with `=` and with
+a separate argument, `gnu_getopt`'s intermixed-args behavior, and the
+`GetoptError` case, on both backends.
+
+**`os` filesystem functions + `os.path.isdir`/`exists`/`islink`**:
+most of libc's filesystem calls are directly reachable via
+`__pyc_c_call__` as-is — a pyc `_CG_string` is already a valid
+NUL-terminated `const char*`, matching the existing `pyc_lib/time.py`
+pattern (`__pyc_c_call__(int, "time", int, 0)`), so `chdir`/`rename`/
+`unlink`/`mkdir`/`system`/`access` needed no new runtime code at all.
+Added a handful of small C helpers to `pyc_c_runtime.h`/`pyc_runtime.c`
+(same `extern`-forces-out-of-line-emission pattern as the existing
+`_CG_fopen`/`_CG_argv_at` family) for the few that return a struct or
+a pointer that needs smuggling through `int64`: `_CG_getcwd`,
+`_CG_is_dir`/`_CG_is_symlink` (`stat`/`lstat` + `S_ISDIR`/`S_ISLNK`),
+`_CG_opendir`/`_CG_readdir_name`/`_CG_closedir`, and
+`_CG_stat_int_field` (one `stat()` call per requested field, matching
+CPython's own documented 10-tuple backward-compat view of
+`os.stat_result` — which is all-integer, truncated-seconds times, not
+mixed int/float — so the result stays a uniform int64 tuple rather
+than tripping the heterogeneous-tuple gap below). `os.walk` is a
+plain function (not a generator) driven by an explicit stack rather
+than recursion, to avoid depending on recursive-generator support.
+Verified against CPython on both backends with a real directory tree
+exercising every function (`listdir`, `path.isdir`/`exists`/`islink`,
+`getcwd`, `mkdir`, `rename`, `stat`, `remove`, `walk`) — all outputs
+matched exactly.
+
+**Bonus, found during the same audit** (not originally in this issue's
+scope, but the same silent-wrong-value class): `sys.version` was
+hardcoded `"2.7.18"` — a Python-2-migration leftover, actively
+misleading for a Python-3-targeting compiler, and
+`shedskin_examples/circle/circle.py` does `print(sys.version)`
+directly. Now `"3.11.0 (pyc)"` (not a specific real CPython build
+string, since this isn't CPython). Also added `sys.version_info` and
+`sys.platform` (`circle_main.py` checks `sys.platform == 'win32'`,
+previously an undefined name). `string.capwords`/`split`/`join` were
+also no-op stubs (always `""`/`[]`); implemented for real (`split`/
+`join` don't exist in real Python 3's `string` module at all —
+verified against CPython 3.12 — kept anyway in the same Python-2-compat
+spirit as the `letters`/`lowercase`/`uppercase` aliases already in that
+file).
+
+**A new LLVM-only bug found while verifying `getopt`**, filed
+separately: [ifa/issues/095](../ifa/issues/095-LLVM-str-or-none-union-wrong-value.md)
+— a `str | None` local's `is not None` check reads back wrong
+specifically on `-b`; the C backend is correct. `getopt.py` itself has
+a comment flagging this; not fixed here.
+
+**Full verification**: `test_pyc.py` clean on both backends (265
+passed / 14 expected-fail / 0 failed / 4 skipped, same baseline as
+before this session's changes). Compile-only `shedskin_sweep.sh`:
+**two newly-failing examples, `msp_ss` and `rdb` — not regressions**.
+Both previously "compiled" only because their `getopt`-gated
+(`msp_ss.py`) and `os.listdir`-gated (`rdb.py`) code paths were
+providably unreachable under the old always-empty stubs (`getopt`
+always returning `([], [])`, `os.listdir` always returning `[]`) and
+so got dead-code-eliminated before ever being type-checked. With real
+implementations those paths are live, and each hits its own
+pre-existing, unrelated bug: `msp_ss.py` cascades into several
+"cannot convert `_CG_any`" C compile errors (a salvage-degraded value
+reaching a concrete-typed runtime call, the same general class 056/077
+already named); `rdb.py` hits a harder internal FA error
+(`sizeof_element of non-container type 'str' (in __add__) — FA
+specialized a container method against a scalar`, in
+`make_shuffle`/`make_playback_state`/`make_stats`'s `*` expressions).
+Neither investigated further — real, separate, pre-existing bugs in
+those two programs (or in how pyc handles those specific shapes),
+newly *visible* rather than newly *caused*. Confirmed via exact
+before/after fail-set diff: every other corpus example's outcome is
+byte-identical.
+
+**Not attempted, and why** — `struct` and `hashlib` were assessed for
+real implementations the same session and deferred; see the dated
+comments at the top of `pyc_lib/struct.py` and `pyc_lib/hashlib.py`
+for the full reasoning. Short version: neither's core logic (struct's
+format-string bit-packing; a real MD5) is the hard part. Both are
+blocked on the same underlying gap — constructing a `bytes` value from
+a computed sequence of integers doesn't work in pyc today
+(`bytes(a_bytearray)`/`bytes([65, 66])` resolve to "expression has no
+type", confirmed with a minimal repro) — and `struct.pack`'s real
+signature additionally needs `*args` in a function definition, which
+`ROADMAP.md` already tracks as parsed-but-not-compiled (confirmed with
+a minimal repro: any call through a `*args`-taking function currently
+fails with "matching function not found" at runtime). Revisit both
+once either lands.

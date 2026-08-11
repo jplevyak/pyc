@@ -77,6 +77,13 @@ extern char *_CG_freadline(int64 h);
 extern void _CG_set_argv(int64 argc, char **argv);
 extern int64 _CG_argc(void);
 extern char *_CG_argv_at(int64 i);
+extern char *_CG_getcwd(void);
+extern _CG_bool _CG_is_dir(const char *path);
+extern _CG_bool _CG_is_symlink(const char *path);
+extern int64 _CG_stat_int_field(const char *path, int64 field);
+extern int64 _CG_opendir(const char *path);
+extern int64 _CG_closedir(int64 h);
+extern char *_CG_readdir_name(int64 h);
 
 /* Real process argv storage -- definition (extern-declared in
  * pyc_c_runtime.h), same pattern as _CG_ready_queue_head below: one
