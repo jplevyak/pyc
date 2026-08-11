@@ -266,7 +266,11 @@ narrow whitelist of `str`-comparison call sites; its own text already
 says every other `__pyc_c_call__` site "is completely unchecked and
 unaffected"), now tracked as its own open issue since it's a live
 compile failure rather than only a theoretical remainder:
-[ifa/issues/096](../ifa/issues/096-CGEN-extend-c-call-salvage-guard-past-str-comparisons.md).
+[ifa/issues/096](../ifa/issues/closed/096-extend-c-call-salvage-guard-past-str-comparisons.md)
+(now fixed; a residual, structurally different mismatch — an
+ordinary call site vs. its resolved callee clone's formal parameter
+type — is tracked separately as
+[ifa/issues/097](../ifa/issues/097-CGEN-callsite-vs-clone-formal-type-mismatch.md)).
 `rdb.py` hits `sizeof_element of non-container type
 'str' (in __add__) — FA specialized a container method against a
 scalar` — [issues/018](018-dict-mixed-key-types-boxing-failure.md)'s

@@ -69,96 +69,59 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
     fprintf(fp, "co_await _CG_Await_Sleep{(double)%s};\n", n->rvals[5]->cg_string);
     return;
   }
-  // issue 077: __pyc_c_call__(ret_type, name, type1, arg1, type2, arg2,
-  // ...) declares each argument's expected type explicitly (the Vars
-  // at rvals[4], rvals[6], ... -- the odd offsets from 5 below are
-  // the actual argument VALUES). Dispatch that picked this
-  // __pyc_c_call__-based dunder body (e.g. str.__eq__) only checked
-  // the RECEIVER's type; nothing has ever verified the OTHER
-  // arguments still match what's declared here. A salvage-degraded
-  // operand reaching a comparison dunder (issue 076's mechanism, or
-  // any similar imprecision) can let them diverge -- printing the
-  // mismatched argument verbatim produces C the call was never built
-  // to accept (e.g. _CG_str_eq(t2, <int64 value>)).
+  // issue 077 (extended by 096): __pyc_c_call__(ret_type, name, type1,
+  // arg1, type2, arg2, ...) declares each argument's expected type
+  // explicitly (the Vars at rvals[4], rvals[6], ... -- the odd
+  // offsets from 5 below are the actual argument VALUES). Dispatch
+  // that picked this __pyc_c_call__-based dunder body (e.g.
+  // str.__eq__) only checked the RECEIVER's type; nothing has ever
+  // verified the OTHER arguments still match what's declared here. A
+  // salvage-degraded operand reaching such a call (issue 076's
+  // mechanism, or any similar imprecision) can let them diverge --
+  // printing the mismatched argument verbatim produces C the call was
+  // never built to accept (e.g. _CG_str_eq(t2, <int64 value>), or
+  // msp_ss.py's issue 096 repro: _CG_fopen(t2, <_CG_any value>)).
   //
-  // Deliberately scoped to a whitelist of specific target names
-  // (str's comparison family -- issue 077's own stated target),
-  // NOT applied to every __pyc_c_call__ site. Discovered the hard
-  // way (three rounds of false positives against the full corpus,
-  // ~200 failures down to 14, before finding this): some
-  // __pyc_c_call__ sites declare a type that DOESN'T match what's
-  // actually passed, on purpose, because the underlying C macro
-  // does its own internal conversion -- e.g. __pyc__/04_sequence.py's
-  // `list.__add__` declares `int, l` for `l`, a whole LIST, because
-  // `_CG_list_add`'s macro (pyc_c_runtime.h) runs each side through
-  // `_CG_to_list(...)` regardless of the nominal declared type. A
-  // per-argument type check can't distinguish "this declared type is
-  // a real constraint" from "this declared type is a placeholder the
-  // macro will reinterpret" without per-call-site knowledge nothing
-  // in the IR currently carries -- so this only runs for names known,
-  // by inspection, to take their declared types literally.
+  // Deliberately scoped to a whitelist of specific target names, NOT
+  // applied to every __pyc_c_call__ site. Discovered the hard way
+  // (three rounds of false positives against the full corpus, ~200
+  // failures down to 14, before 077 found this): some __pyc_c_call__
+  // sites declare a type that DOESN'T match what's actually passed,
+  // on purpose, because the underlying C macro does its own internal
+  // conversion -- e.g. __pyc__/04_sequence.py's `list.__add__`
+  // declares `int, l` for `l`, a whole LIST, because `_CG_list_add`'s
+  // macro (pyc_c_runtime.h) runs each side through `_CG_to_list(...)`
+  // regardless of the nominal declared type. A per-argument type
+  // check can't distinguish "this declared type is a real constraint"
+  // from "this declared type is a placeholder the macro will
+  // reinterpret" without per-call-site knowledge nothing in the IR
+  // currently carries -- so this only runs for names individually
+  // confirmed, by inspection of pyc_c_runtime.h, to take their
+  // declared types literally. Each addition below issue 077's
+  // original str-comparison family was verified this way for 096:
+  // `_CG_fopen`/`_CG_str_to_int64_base`/`_CG_ord` take a real `char*`
+  // path/string argument (no macro-level reinterpretation); `_CG_chr`
+  // takes a real `int`; `_CG_strcat` (bytes.__add__/__radd__,
+  // 01b_bytes.py) takes two real `bytes` operands, unlike
+  // `_CG_list_add`'s deliberately-erased second argument.
   bool strict_c_call = name && (!strcmp(name, "_CG_str_eq") || !strcmp(name, "_CG_str_ne") ||
                                  !strcmp(name, "_CG_str_lt") || !strcmp(name, "_CG_str_le") ||
-                                 !strcmp(name, "_CG_str_gt") || !strcmp(name, "_CG_str_ge"));
-  // The declared-type argument is a bare class reference (e.g. `str`,
-  // `int`) -- for `int` specifically that's a Type_ALIAS (Python's
-  // arbitrary-precision int aliased to pyc's fixed-width `int64`,
-  // ifa/if1/sym.cc's unalias_type), never itself the concrete
-  // specialization any real value resolves to, so a first attempt at
-  // this fix (raw cg_string / ->specializers.set_in() comparisons
-  // against the declared Sym as-is) false-positived on ~200 corpus
-  // programs before this was diagnosed. unalias_type() resolves that
-  // (confirmed empirically: unalias_type(int) and a real int64
-  // value's ->type match exactly -- name, type_kind, num_kind,
-  // num_index, cg_string). Comparing num_kind rather than requiring
-  // exact Sym/cg_string agreement tolerates the OTHER thing that
-  // turned out not to be a real mismatch: two scalar types of
-  // different width/precision (e.g. declared int64 vs an actual
-  // int32, or int vs float) -- always safely C-castable, matching
-  // how cg_emit_llvm.cc's emit_send_binop already treats int<->float
-  // and int-width differences as coercible, not an error. Only a
-  // pointer-representable type (num_kind == 0: str, bytes, records,
-  // ...) paired with a scalar one is flagged -- that's the actual
-  // danger (a straight C assignment/comparison between a pointer and
-  // an integer, this issue's whole symptom), so for two non-numeric
-  // types this still requires their C representations to agree
-  // exactly (cg_string).
+                                 !strcmp(name, "_CG_str_gt") || !strcmp(name, "_CG_str_ge") ||
+                                 !strcmp(name, "_CG_fopen") || !strcmp(name, "_CG_chr") ||
+                                 !strcmp(name, "_CG_ord") || !strcmp(name, "_CG_str_to_int64_base") ||
+                                 !strcmp(name, "_CG_strcat"));
+  // The mismatch judgment itself (unalias_type() for Type_ALIAS
+  // declared types like `int`; tolerating any two numeric types
+  // regardless of width/precision; requiring exact cg_string
+  // agreement -- and thus correctly flagging, not exempting -- a
+  // pointer-representable actual like `_CG_any` reaching a call that
+  // declares a real pointer type -- see sudoku2.py's str.__ne__
+  // history, ifa/issues/closed/077) lives in
+  // c_call_arg_type_mismatch() (ifa/if1/sym.{h,cc}) so cg_emit_llvm.cc's
+  // LLVM-backend counterpart (issue 096 design point 4) shares it
+  // rather than re-deriving the same two false-positive fixes.
   for (int i = 5; strict_c_call && i < n->rvals.n; i += 2) {
-    Sym *declared = unalias_type(n->rvals[i - 1]->sym);
-    Sym *actual = n->rvals[i]->type;
-    bool mismatch = false;
-    if (declared && actual && declared != actual) {
-      if (declared->num_kind || actual->num_kind) {
-        mismatch = !(declared->num_kind && actual->num_kind);
-      } else {
-        cchar *dc = declared->cg_string, *ac = actual->cg_string;
-        // NOTE: no `_CG_any` exemption here, unlike a general
-        // declared-vs-actual comparison might want. `_CG_any` is
-        // `void*` (pyc_c_runtime.h), which C++ converts implicitly
-        // FROM any other pointer type but never TO one -- safe to
-        // exempt only when the DECLARED side's own C representation
-        // is itself void*-typedef'd (list/dict/set/tuple/... all
-        // are), so an incoming `_CG_any` argument is a void*-to-void*
-        // no-op. `strict_c_call` above scopes this entire loop to
-        // str's `_CG_str_*` comparison family exclusively, whose
-        // declared argument type is unconditionally `str` --
-        // `_CG_string`, i.e. `char*`, NOT void* -- so `dc` can never
-        // legitimately be `_CG_any` here, and an actual (`ac`) of
-        // `_CG_any` reaching one of these calls is exactly the unsafe
-        // void*-to-char* direction C++ refuses to convert implicitly.
-        // A first version of this check exempted either side being
-        // `_CG_any` unconditionally (reasoning from the list/dict/set
-        // case, where it genuinely is safe) and that masked a real
-        // bug: sudoku2.py's str.__ne__ contour, called with an actual
-        // argument that had salvaged to _CG_any, produced
-        // `_CG_str_ne(t2, t3)` with t3 typed `_CG_any` -- a hard
-        // "cannot convert 'void *' to 'const char *'" C++ compile
-        // error, not a warning, because this exemption skipped the
-        // guard str.__eq__'s sibling contour (same shape, no `_CG_any`
-        // involved that time) correctly caught.
-        mismatch = dc && ac && strcmp(dc, ac);
-      }
-    }
+    bool mismatch = c_call_arg_type_mismatch(n->rvals[i - 1]->sym, n->rvals[i]->type);
     if (mismatch) {
       if (!fruntime_errors) fail("argument type mismatch at C call '%s'", name ? name : "?");
       // write_c_prim's P_prim_primitive case (this function's only

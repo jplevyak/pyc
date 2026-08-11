@@ -270,7 +270,7 @@ and unaffected" — `_CG_fopen`/`_CG_chr`/`_CG_str_to_int64_base` are
 exactly such unchecked sites. Not a new bug, but a live, currently-
 failing corpus program rather than only a theoretical remainder, so
 it's tracked as its own open issue —
-[ifa/issues/096](../ifa/issues/096-CGEN-extend-c-call-salvage-guard-past-str-comparisons.md)
+[ifa/issues/096](../ifa/issues/closed/096-extend-c-call-salvage-guard-past-str-comparisons.md)
 — rather than folded into this issue or into reopening 077.
 
 ## Verification plan
