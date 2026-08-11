@@ -54,8 +54,8 @@ A single `./pyc file.py` invocation:
 ```
 main()                                pyc.cc:138
 ├─ process_args / init_system / init_config / init_logs / Service::start_all
-├─ if --dparse_only:   dparse_python_file(*) exit
-├─ if --dparse_ast:    dparse_python_to_ast(*) + pyast_print(*) exit
+├─ if --dparse-only:   dparse_python_file(*) exit
+├─ if --dparse-ast:    dparse_python_to_ast(*) + pyast_print(*) exit
 │
 ├─ for i = -1 .. nfiles-1:                                 [pyc.cc:154]
 │     i == -1: load __pyc__ (directory or .py)
@@ -701,9 +701,9 @@ to manage state count.
 
 ### 12.2 Validation modes
 
-- `pyc --dparse_only file.py` — parse only; success or syntax error.
+- `pyc --dparse-only file.py` — parse only; success or syntax error.
   Useful for grammar regressions.
-- `pyc --dparse_ast file.py` — parse + print AST. Useful for debugging
+- `pyc --dparse-ast file.py` — parse + print AST. Useful for debugging
   what shape a grammar rule produces.
 
 `make test_dparse` (in the Makefile) runs both over the test corpus.
@@ -818,8 +818,8 @@ parse speed. If you grow `__pyc__/*.py`, watch the parse time.
 | "wrong primitive transfer function" | `add_primitive_transfer_functions` and `prim_reg` calls |
 | "wrong call dispatch on method" | `gen_class_pyda` + class inheritance + IFA pattern matching (`DISPATCH.md` when written) |
 | "decorator not applied" | `PY_decorated` handling in both passes; check `PY_suite` unwrapping |
-| "syntax error" | `python.g`, `python_whitespace`, or run with `--dparse_only` |
-| "scoping test failure" | Check for stray stderr output; rerun with `-v -d --test_scoping` |
+| "syntax error" | `python.g`, `python_whitespace`, or run with `--dparse-only` |
+| "scoping test failure" | Check for stray stderr output; rerun with `-v -d --test-scoping` |
 | "`__pyc__` builtin missing" | `IFA_SYSTEM_DIRECTORY` env var; `dparse_builtin_dir` succeeded? |
 
 ---

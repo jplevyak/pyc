@@ -136,7 +136,7 @@ def run_test(g, args, envs):
         # artifact.
         # Check the actual assembled `cmd` (covers a per-test `.flags`
         # override too, not just the global PYC_FLAGS env var).
-        is_llvm = "-b" in cmd or "--llvm" in cmd
+        is_llvm = "-b" in cmd or "--emit-llvm" in cmd
         cand = f"{det_base}.ll" if is_llvm else f"{name}.c"
         p = os.path.join(build_dir, cand)
         art = p if os.path.exists(p) else None

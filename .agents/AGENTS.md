@@ -3,10 +3,18 @@
 When modifying or refactoring code generation (CG) in `pyc`, keep these points in mind to save time:
 
 1. **Testing the LLVM vs C Backends:**
-   - `./pyc -b <file.py>` triggers the LLVM backend natively and outputs a binary.
-   - `./pyc <file.py>` (without `-b`) triggers the C backend and generates a `<file.py>.c` file.
-   - To compile the generated C file, you MUST use `clang++` (not `clang`), because `pyc_c_runtime.h` relies on C++ implicit `struct` typedefs.
-   - Example compilation: `clang++ -std=c++23 -I. -I/usr/local/include -I/opt/homebrew/include tests/file.py.c ifa/libifa_gc.a -lgc -o out`
+   - `./pyc <file.py>` (default C backend) generates `<file.py>.c` **and compiles it all
+     the way to a native binary automatically** (via `Makefile.cg` → `clang++`) — no
+     separate compile step needed. Run the produced binary directly.
+   - `./pyc -b <file.py>` / `./pyc --emit-llvm <file.py>` triggers the LLVM backend,
+     which likewise compiles and links to a native binary automatically.
+   - `-o <path>` / `--output <path>` picks the output binary's path/name on either
+     backend (default: the input filename with its extension stripped).
+   - Manual `clang++` invocation is only useful for one specific case: iterating on a
+     hand-edited `<file.py>.c` / `.ll` *without* rerunning the pyc frontend (e.g. a
+     codegen experiment). For that, `clang++` (not `clang`) is required, because
+     `pyc_c_runtime.h` relies on C++ implicit `struct` typedefs. Example:
+     `clang++ -std=c++23 -I. -I/usr/local/include -I/opt/homebrew/include tests/file.py.c ifa/libifa_gc.a -lgc -o out`
 
 2. **Handling `P_prim_reply` (Returns):**
    - The unified `virtual_cg_emit_send` dispatcher intentionally **skips** `P_prim_reply`. 

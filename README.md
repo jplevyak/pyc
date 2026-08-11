@@ -98,24 +98,28 @@ pyc [options] <file.py>
 ```
 
 The compiler reads `<file.py>`, type-checks the whole program, and produces a native executable
-named `<file.py>.out` (via an intermediate `<file.py>.c`).
+(via an intermediate `<file.py>.c`) named after the input with its extension stripped — e.g.
+`hello.py` produces `hello` — unless `-o` gives it an explicit path.
 
 ### Key options
 
 | Flag | Description |
 |---|---|
-| `-D <dir>` | System directory containing `__pyc__.py` (default: same directory as `pyc`) |
-| `-O` | Enable optimizations |
-| `-g` | Emit debug information |
-| `-r` | Insert runtime type checks |
+| `-D <dir>`, `--system-directory <dir>` | System directory containing `__pyc__.py` (default: same directory as `pyc`) |
+| `-o <path>`, `--output <path>` | Output binary path (default: input filename, extension stripped) |
+| `-O`, `--optimize` | Enable optimizations |
+| `-g`, `--debug-info` | Emit debug information |
+| `-b`, `--emit-llvm` | Use the LLVM backend (build with `USE_LLVM=1`) |
+| `--strict` | Strict mode: hard compile errors on type violations, no permissive-Python fallbacks |
+| `--permissive` | Permissive mode (default): warn + insert runtime checks on type violations |
 | `--html` | Emit an HTML visualization of the type-annotated AST |
-| `-v` | Increase verbosity (repeat for more) |
-| `-d` | Increase debug output (repeat for more) |
-| `--dparse_only` | Validate the parser only; do not compile |
-| `--dparse_ast` | Print the parsed AST and exit |
+| `-v`, `--verbose` | Increase verbosity (repeat for more) |
+| `-d`, `--debug` | Increase debug output (repeat for more) |
+| `--dparse-only` | Validate the parser only; do not compile |
+| `--dparse-ast` | Print the parsed AST and exit |
 | `--version` | Show version |
 | `--license` | Show license |
-| `-h` | Show help |
+| `-h`, `--help` | Show help (lists development/internal options too) |
 
 ### Module search path
 
@@ -143,7 +147,7 @@ print("Hello, world!")
 ```
 
 ```sh
-pyc -D. hello.py && ./hello.py.out
+pyc -D. hello.py && ./hello
 ```
 
 ### Fibonacci

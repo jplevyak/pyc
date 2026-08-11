@@ -16,9 +16,9 @@ void get_version(char *);
 
 EXTERN int codegen_llvm EXTERN_INIT(0);
 EXTERN int codegen_jit EXTERN_INIT(0);
-// codegen_strict_verify lives only in pyc.cc's flag table — the
-// ifa lib's llvm.cc reads PYC_STRICT_VERIFY from getenv directly
-// (the flag system populates the env var from --strict-verify).
+// codegen_verify_each lives only in pyc.cc's flag table — the
+// ifa lib's llvm.cc reads PYC_VERIFY_EACH from getenv directly
+// (the flag system populates the env var from --verify-each).
 EXTERN bool runtime_errors EXTERN_INIT(true);
 EXTERN int fgraph EXTERN_INIT(0);
 EXTERN int fdump_html EXTERN_INIT(0);

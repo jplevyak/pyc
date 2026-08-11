@@ -245,10 +245,10 @@ test-dparse test_dparse: $(PYC)
 	@echo "--- DParser parse validation ---"; \
 	failed=0; \
 	for f in tests/*.py; do \
-	  if ./$(PYC) --dparse_only "$$f" 2>/dev/null; then \
+	  if ./$(PYC) --dparse-only "$$f" 2>/dev/null; then \
 	    echo "$$f OK"; \
 	  else \
-	    ./$(PYC) --dparse_only "$$f" 2>&1 | head -3; \
+	    ./$(PYC) --dparse-only "$$f" 2>&1 | head -3; \
 	    echo "$$f FAILED"; \
 	    failed=$$((failed + 1)); \
 	  fi; \

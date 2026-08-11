@@ -32,8 +32,8 @@ pyc <file.py>
 │
 ├── main()                                                   pyc.cc:138
 │   ├── process_args / init_system / init_config
-│   ├── (optional)  --dparse_only       → dparse_python_file        ─── parse-only validation
-│   ├── (optional)  --dparse_ast        → dparse_python_to_ast + pyast_print
+│   ├── (optional)  --dparse-only       → dparse_python_file        ─── parse-only validation
+│   ├── (optional)  --dparse-ast        → dparse_python_to_ast + pyast_print
 │   │
 │   ├── For each input file (and the builtin __pyc__ first):
 │   │     pymod = dparse_python_to_ast(filename)                    [python_parse.cc + python.g]
@@ -74,8 +74,8 @@ pyc <file.py>
 │       ├── (optional)  fdump_html    → ifa_html(fn)                [ifa/common/html.cc]
 │       │
 │       └── backend:
-│           ├── (default)   c_codegen_write_c → c_codegen_compile  [ifa/codegen/cg.cc]
-│           └── --llvm      llvm_codegen      → llvm_codegen_compile [ifa/codegen/llvm*.cc]
+│           ├── (default)      c_codegen_write_c → c_codegen_compile  [ifa/codegen/cg.cc]
+│           └── --emit-llvm    llvm_codegen      → llvm_codegen_compile [ifa/codegen/llvm*.cc]
 ```
 
 Phase ordering is encoded in two places:
@@ -160,19 +160,27 @@ which sources to read instead.
 make                       # build pyc binary (root Makefile)
 make -C ifa                # rebuild ifa library only
 
-./pyc hello_world.py       # default C backend → hello_world.c + hello_world binary
+./pyc hello_world.py       # default C backend → hello_world.py.c + hello_world binary
 ./pyc -O hello_world.py    # with optimisation
-./pyc -b hello_world.py    # LLVM backend (USE_LLVM build)
-./pyc --dparse_only x.py   # parse-validation only
-./pyc --dparse_ast x.py    # parse + print AST
+./pyc -b hello_world.py    # LLVM backend (USE_LLVM build); long form --emit-llvm
+./pyc -o out hello_world.py    # pick the output binary's path
+./pyc --strict hello_world.py  # hard type errors, no permissive-Python fallbacks
+./pyc --dparse-only x.py   # parse-validation only
+./pyc --dparse-ast x.py    # parse + print AST
 
 ./test_pyc                 # full test suite (see tests/)
 ```
 
+Both compile paths (`-o`, `-O`, `-g`, `-b`) already run the C/C++ toolchain to a
+finished native binary — there's no separate manual-compile step for ordinary use.
+
 Useful environment / flag knobs:
-- `IFA_LOG_FLAGS=splitting` (or `-l splitting`) — turn on the splitter log
-  to debug analysis convergence (see `ifa/IFA.md` §6).
-- `--write_code_exit N` — dump IF1 after pass N and stop. Useful for bisecting.
+- `-l splitting` (pyc: `PYC_LOG=splitting`; the standalone `ifa` binary:
+  `IFA_LOG_FLAGS=splitting`) — turn on the splitter log to debug analysis
+  convergence (see `ifa/IFA.md` §6).
+- `--dump-ir-after N` — dump IF1 after pass N and stop. Useful for bisecting.
+- `--strict` / `--permissive` — hard type errors vs. today's default (warn +
+  runtime check, CPython-faithful implicit `None`). See `README.md`.
 - `PYTHONPATH` — searched by `build_search_path` for imports.
 - `IFA_SYSTEM_DIRECTORY` / `PYC_SYSTEM_DIRECTORY` — where `__pyc__/` lives.
 

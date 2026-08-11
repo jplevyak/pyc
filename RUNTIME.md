@@ -408,6 +408,8 @@ hello   (binary linking against libgc, libm)
 - `-I$CG_ROOT` — adds the include path.
 - `-lgc` — Boehm GC.
 - `-lm` — standard math.
+- `CG_TARGET` — the output binary's path; `hello` by default (input filename,
+  extension stripped) but overridden by pyc's `-o`/`--output` flag when given.
 - `-O` if `OPTIMIZE=1` (from pyc's `-O` flag).
 - `-g` if `DEBUG=1` (from pyc's `-g` flag).
 

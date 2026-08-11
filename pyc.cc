@@ -14,8 +14,15 @@ int do_unit_tests = 0;
 int do_repl = 0;
 static int dparse_only = 0;
 static int dparse_ast = 0;
-static int codegen_strict_verify = 0;       // --strict-verify
+static int codegen_verify_each = 0;         // --verify-each
 static char pyc_ifa_log[256];
+// Backing storage for --strict / --permissive so both have a
+// well-formed table entry (env-var support); the real work happens in
+// the pfn callbacks below, which set runtime_errors and
+// ifa_no_implicit_none together. See PIPELINE.md / README.md for what
+// each mode means.
+static bool pyc_strict_mode = false;
+static bool pyc_permissive_mode = false;
 
 static void help(ArgumentState *arg_state, char *arg_unused) {
   char ver[1000];
@@ -44,41 +51,68 @@ static void license(ArgumentState *arg_state, char *arg_unused) {
   exit(0);
 }
 
+// --strict / --permissive: the one blessed toggle for Python's
+// permissive-typing behavior. Bundles the two knobs that actually gate
+// it: runtime_errors (defs.h) turns type violations from hard compile
+// errors into warnings + inserted runtime checks; ifa_no_implicit_none
+// (ifa/common/fail.h) controls whether a function whose fall-off path
+// would otherwise need an implicit None union instead gets a
+// shedskin-style typed default. The underlying ifa library itself
+// defaults to strict (see ifa/if1/if1.cc); pyc's default is permissive
+// for Python ergonomics -- these flags make that choice explicit and
+// overridable in one step instead of two oddly-named ones.
+static void strict_mode_arg(ArgumentState *arg_state, char *arg_unused) {
+  runtime_errors = false;
+  ifa_no_implicit_none = 1;
+}
+
+static void permissive_mode_arg(ArgumentState *arg_state, char *arg_unused) {
+  runtime_errors = true;
+  ifa_no_implicit_none = 0;
+}
+
 static ArgumentDescription arg_desc[] = {
     {"repl", ' ', "Interactive REPL (requires -b; implies -b -j)", "F", &do_repl, "PYC_REPL", NULL},
-    {"debug_info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
+    {"debug-info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
     {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
+    {"output", 'o', "Output File", "S511", codegen_output, "PYC_OUTPUT", NULL},
 #ifdef USE_LLVM
-    {"llvm", 'b', "LLVM Codegen (the only LLVM backend — internally v2 via cg_normalize_v2 + cg_v2_emit_llvm_module)",
+    {"emit-llvm", 'b', "LLVM Codegen (the only LLVM backend — internally v2 via cg_normalize_v2 + cg_v2_emit_llvm_module)",
      "F", &codegen_llvm, "PYC_LLVM", NULL},
     {"jit", 'j', "JIT", "F", &codegen_jit, "PYC_JIT", NULL},
-    {"strict_verify", ' ', "Strict LLVM verifier (per-fn + emit .ll on failure)", "F",
-     &codegen_strict_verify, "PYC_STRICT_VERIFY", NULL},
 #endif
-#ifdef DEBUG
-    {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
-    {"test_scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
-#endif
-    {"dparse_only", ' ', "Validate DParser parse only (no compilation)", "F", &dparse_only, "PYC_DPARSE_ONLY", NULL},
-    {"dparse_ast", ' ', "Parse with DParser and print AST", "F", &dparse_ast, "PYC_DPARSE_AST", NULL},
-    {"escape_in_fa", ' ', "Integrate escape analysis into IFA (Phase 1+, see ESCAPE_PLAN.md)", "F",
-     &ifa_escape_in_fa, "IFA_ESCAPE_IN_FA", NULL},
-    {"fa_inline", ' ', "Run simple_inlining between FA passes (0/1, default 0)", "I",
-     &ifa_fa_inline, "IFA_FA_INLINE", NULL},
-    {"narrow", ' ', "Enable issue-025 per-branch type narrowing recognizer (0/1, default 1)", "I",
-     &ifa_narrow, "IFA_NARROW", NULL},
-    {"no_implicit_none", ' ', "Shedskin-style: no implicit None for a fall-off return when the fn has an explicit value return (ifa/issues/071, 0/1, default 0)", "I",
-     &ifa_no_implicit_none, "IFA_NO_IMPLICIT_NONE", NULL},
-    {"runtime_errors", 'r', "Use runtime type checks", "f", &runtime_errors, "PYC_RUNTIME_ERRORS", NULL},
+    {"strict", ' ', "Strict mode: hard compile errors on type violations, no permissive-Python fallbacks",
+     "F", &pyc_strict_mode, "PYC_STRICT", strict_mode_arg},
+    {"permissive", ' ', "Permissive mode (default): type violations warn + insert runtime checks, CPython-faithful implicit None",
+     "F", &pyc_permissive_mode, "PYC_PERMISSIVE", permissive_mode_arg},
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
-    {"ifalog", 'l', "IFA Log", "S256", pyc_ifa_log, "PYC_IFA_LOG", log_flags_arg},
-    {"system_directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
-    {"write_code_exit", 'x', "Write Code and Exit Pass", "I", &write_code_exit, "PYC_WRITE_CODE_EXIT", NULL},
+    {"system-directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
     {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
     {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
     {"license", ' ', "Show License", NULL, NULL, NULL, license},
     {"version", ' ', "Version", NULL, NULL, NULL, version},
     {"help", 'h', "Help", NULL, NULL, NULL, help},
+
+    {"", ' ', "-- Internal / development options (not a stable CLI contract) --", NULL, NULL, NULL, NULL},
+#ifdef USE_LLVM
+    {"verify-each", ' ', "Strict LLVM verifier: verify after every function, emit .ll on failure", "F",
+     &codegen_verify_each, "PYC_VERIFY_EACH", NULL},
+#endif
+#ifdef DEBUG
+    {"test", 't', "Unit Test", "F", &do_unit_tests, "PYC_TEST", NULL},
+    {"test-scoping", ' ', "Test Scoping", "F", &test_scoping, "PYC_TEST_SCOPING", NULL},
+#endif
+    {"dparse-only", ' ', "Validate DParser parse only (no compilation)", "F", &dparse_only, "PYC_DPARSE_ONLY", NULL},
+    {"dparse-ast", ' ', "Parse with DParser and print AST", "F", &dparse_ast, "PYC_DPARSE_AST", NULL},
+    {"escape-in-fa", ' ', "Integrate escape analysis into IFA (Phase 1+, see ESCAPE_PLAN.md)", "F",
+     &ifa_escape_in_fa, "IFA_ESCAPE_IN_FA", NULL},
+    {"fa-inline", ' ', "Run simple_inlining between FA passes (0/1, default 0)", "I",
+     &ifa_fa_inline, "IFA_FA_INLINE", NULL},
+    {"narrow", ' ', "Enable issue-025 per-branch type narrowing recognizer (0/1, default 1)", "I",
+     &ifa_narrow, "IFA_NARROW", NULL},
+    {"dump-ir-after", ' ', "Write IF1 after pass N and exit; useful for bisecting", "I", &write_code_exit,
+     "PYC_DUMP_IR_AFTER", NULL},
+    {"log", 'l', "Debug Logging Flags", "S256", pyc_ifa_log, "PYC_LOG", log_flags_arg},
     {0}};
 
 static ArgumentState arg_state("pyc", arg_desc);
@@ -192,11 +226,11 @@ int main(int argc, char *argv[]) {
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
-  // Propagate the --strict-verify flag down to the ifa lib's
-  // llvm.cc, which reads PYC_STRICT_VERIFY (the lib doesn't see
-  // pyc's defs.h globals).  Setting it from either the CLI flag
-  // or PYC_STRICT_VERIFY=1 is now equivalent.
-  if (codegen_strict_verify) setenv("PYC_STRICT_VERIFY", "1", 1);
+  // Propagate the --verify-each flag down to the ifa lib's llvm.cc,
+  // which reads PYC_VERIFY_EACH (the lib doesn't see pyc's defs.h
+  // globals). Setting it from either the CLI flag or
+  // PYC_VERIFY_EACH=1 is now equivalent.
+  if (codegen_verify_each) setenv("PYC_VERIFY_EACH", "1", 1);
   if (do_repl) {
     init_system();
     init_config();
