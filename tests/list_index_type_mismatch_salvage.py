@@ -22,9 +22,12 @@
 # clang rejects, not a runtime behavior difference, and this
 # benchmark's real workload is expensive to actually run).
 #
-# Sidecars: .check pins the two pre-existing, unrelated "Basic_block"
-# warnings this file already produces (a separate issue, not this
-# one). .skip_det_check -- this file was independently found, while
+# Sidecars: this file used to emit two pre-existing, unrelated
+# "Basic_block" warnings, pinned in a .check sidecar. They are gone as
+# of ifa/issues/099's record_backedges fix (the contours they came from
+# now separate properly instead of flip-flopping), so the .check file
+# was removed and the harness now expects empty compile output.
+# .skip_det_check -- this file was independently found, while
 # adding this test, to trigger a genuine, pre-existing, unrelated
 # compiler nondeterminism (polymorphic dispatch tag-compare branch
 # order for a Basic_block|Union_find_node union swaps between
