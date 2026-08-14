@@ -286,6 +286,51 @@ Doesn't fix the underlying `set`-element-union precision gap
 pre-existing module-level-code limitation described above — both
 remain open for whoever picks them up next.
 
+### The READ side, 2026-08-14: `P_prim_index_object`'s record branch had no counterpart guard
+
+The 2026-08-06 fix covered both branches of `P_prim_set_index_object`
+(the **write**). The **read** had no equivalent, and it is reachable on
+the same programs: `P_prim_index_object`'s constant-index record branch
+emits
+
+```c
+dst = (dst_ty)((rec_ty)x)->eN;
+```
+
+reading the field **at its own declared C type** and casting to the
+destination. When the field is a scalar and the destination is
+pointer-representable (or the reverse) that cast is invalid C, so it
+reached clang as a hard error rather than this issue's established
+runtime-assert convention. That is exactly how `tictactoe.py` failed
+before the FA change of the same date stopped routing it here:
+
+```
+tictactoe.py.c:8980:9: error: cannot cast from type '_CG_float64' (aka 'double')
+                              to pointer type '_CG_any' (aka 'void *')
+ 8980 |   t54 = (_CG_any)((_CG_ps12800)t62)->e1;
+```
+
+Fixed by mirroring the writer's `num_kind` test on `field_type` vs
+`n->lvals[0]->type`. `tictactoe.py` under `PYC_SELFPROD=0` (the config
+that still reaches this site) goes **rc=1 → rc=0**; suite 265/14/0/4 both
+backends; 84-program sweep byte-identical (nothing else reaches it).
+
+**The sibling read branch deliberately gets no such guard**, and this is
+the load-bearing asymmetry: the two cast to *different* types.
+
+| | casts to | so a num_kind mismatch is |
+|---|---|---|
+| writer, both branches | the **element/field** type — `(ety)value` | invalid C → must reject |
+| reader, record constant index | the **destination** type, but reads the field at its declared type | invalid C → must reject |
+| reader, non-record / dynamic index | the **destination** type, over raw storage — `((dst*)_CG_list_ptr(x))[i]` | a deliberate reinterpretation → must NOT reject |
+
+FA narrows a contour's element even where the container's *declared*
+element type stays boxed, and that last form is how codegen consumes the
+narrowing. Guarding it rejects ordinary correct code — measured: **39
+suite failures**, e.g. `__list_iter__::__next__` refusing its own correct
+`t1 = (_CG_int64)((_CG_int64*)(t2))[t3];`. Recorded here so the "make the
+reader symmetric with the writer" instinct is not retried.
+
 ### Another confirmed instance, 2026-08-08: mixed-type tuple printing, and a new LLVM divergence
 
 [issues/025](025-shedskin-examples-coverage.md) separately
