@@ -1,0 +1,4 @@
+listcomp_element_separation.py:38:347: warning: illegal call argument type 'a' illegal: B 
+            return a.ay()          # legal only if aas' element stayed A
+                                                                        ^
+  called from listcomp_element_separation.py:43
