@@ -21,7 +21,39 @@ conventions are the same; the only difference is location.
 - Include a "What this unblocks" section — issues with no
   consequence should not be filed.
 
+## Marking a test as a known issue
+
+A filed bug should have a test that *fails on purpose*. The harness has a
+result class for it: put the issue reference in
+`tests/<name>.py.known_issue`, and write the check files to describe the
+**correct** behaviour (what CPython does), not what pyc currently does.
+
+```
+tests/none_int_field_pair.py             the repro
+tests/none_int_field_pair.py.exec.check  "1 2"   <- what it SHOULD print
+tests/none_int_field_pair.py.known_issue "issues/048 -- ..."
+```
+
+The run reports it as `KNOWN` rather than `FAIL`, lists it under "known
+issues (filed, awaiting a fix)" with its issue reference, and does not
+fail the suite.
+
+This is deliberately different from `.expect_fail` / `.python.expect_fail`
+(`XFAIL`), which record an *accepted* divergence by baking pyc's current
+wrong output into the check file. Prefer `.known_issue` for anything you
+intend to fix: because the check files hold the right answer, the test
+flips to `PASS` by itself the day the bug is fixed — nothing has to be
+un-baked, and until then every run names the issue each one is waiting on.
+
 ## Current open issues
+
+- [048-none-int-field-pair-runtime-abort.md](048-none-int-field-pair-runtime-abort.md)
+  — two `None`-initialised instance fields that later hold ints: **zero
+  diagnostics**, and the binary aborts with `matching function not found`
+  where CPython prints `1 2`. Both fields do get slots, so this is not
+  046's elided-slot confusion. Smallest known witness in the `None`-union
+  boxing family (018/030/035): no container, no in-place mutation, no
+  heterogeneous element type. `tests/none_int_field_pair.py`.
 
 - [046-default-arg-omitted-differently-silently-wrong.md](046-default-arg-omitted-differently-silently-wrong.md)
   — **silent wrong answer.** Two call sites of the same function that

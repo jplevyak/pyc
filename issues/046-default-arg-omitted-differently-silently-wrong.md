@@ -2,8 +2,9 @@
 
 **Status:** open, 2026-08-15. Root-caused from `shedskin_examples/sat`'s
 runtime failure. Minimal repro landed as
-`tests/default_arg_omitted_differently.py`
-(+ `.python.expect_fail`). **This is a wrong-answer miscompile, not a
+`tests/default_arg_omitted_differently.py`, tagged `.known_issue` (see
+the README's "Marking a test as a known issue" — its check files hold the
+CORRECT answer, so it turns green by itself when this is fixed). **This is a wrong-answer miscompile, not a
 diagnostic** — pyc compiles cleanly except for one warning and then
 prints a different number than CPython.
 
@@ -137,7 +138,7 @@ does not keep it alive and does not fix the answer); and parameter names
 shadowing the attribute names (renaming the parameters to `r`/`t` changes
 nothing).
 
-## Also found while narrowing (separate, unfiled)
+## Also found while narrowing — now [048](048-none-int-field-pair-runtime-abort.md)
 
 ```python
 class V:
@@ -150,14 +151,14 @@ print(v.a, v.b)
 
 Here both fields DO get slots (`e12 /* a */`, `e13 /* b */`), pyc emits
 **zero warnings**, and the binary aborts at run time with `matching
-function not found`. CPython prints `1 2`. Probably the `None|int` field
-boxing of the 018/030/035 family rather than this issue, but it is a
-clean two-line witness and should be filed once checked.
+function not found`. CPython prints `1 2`. Filed separately as
+[048](048-none-int-field-pair-runtime-abort.md) — it shares only a
+discovery path with this issue.
 
 ## Verification plan
 
 - `tests/default_arg_omitted_differently.py` must print `0`, matching
-  CPython, and its `.python.expect_fail` must then be deleted.
+  CPython, and its `.known_issue` tag must then be deleted.
 - `sat` should lose the two `'cause' illegal: str` warnings.
 - Re-run the shedskin sweep: `sat` currently compiles and dies with
   "Unhandled exception"; it should run.

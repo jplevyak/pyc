@@ -5,7 +5,10 @@
 #
 # Narrowed: not __slots__, not None-as-the-default, and not keyword
 # syntax per se. Passing both arguments explicitly, or always omitting
-# the SAME parameter, is clean. Marked .python.expect_fail until fixed.
+# the SAME parameter, is clean.
+#
+# The check files describe the CORRECT behaviour; the .known_issue tag is
+# what keeps this from failing the suite. Delete the tag when fixed.
 class Clause:
     def why(self):
         return 7

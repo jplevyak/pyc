@@ -1,0 +1,1 @@
+issues/046 -- two call sites omitting different defaulted params: the nil store is dropped and the next store lands on its slot

@@ -44,6 +44,26 @@ def format_color(text, color):
     return f"{colors[color]}{text}{colors['reset']}"
 
 def run_test(g, args, envs):
+    """Run a test, then reclassify a failure that a filed issue explains.
+
+    A KNOWN result is a test whose check files describe the CORRECT
+    behaviour and which fails because of a bug we have already root-caused
+    and written up; the `.known_issue` sidecar names that issue. This is
+    deliberately different from XFAIL (`.expect_fail` / `.python.expect_fail`),
+    which records an accepted divergence by baking the *current* wrong
+    output into the check file. A KNOWN test flips to PASS by itself the
+    day its issue is fixed, so the expectation never has to be un-baked --
+    and until then the suite prints exactly which issue each one is
+    waiting on."""
+    res = _run_test(g, args, envs)
+    if res and res.get("status") == "FAIL" and os.path.exists(f"{g}.known_issue"):
+        with open(f"{g}.known_issue") as f:
+            ref = " ".join(f.read().split())
+        res = dict(res, status="KNOWN", issue=ref)
+    return res
+
+
+def _run_test(g, args, envs):
     name = os.path.basename(g)
     base = name[:-3] if name.endswith(".py") else name
     
@@ -242,14 +262,16 @@ def main():
     passed = 0
     failed = 0
     expected_failed = 0
+    known = 0
     skipped = 0
     failures = []
+    known_issues = []
 
     print_lock = threading.Lock()
     start_time = time.time()
 
     def print_result(res):
-        nonlocal passed, failed, expected_failed, skipped
+        nonlocal passed, failed, expected_failed, known, skipped
         if not res:
             return
         
@@ -269,6 +291,13 @@ def main():
                     print(f"  {format_color('SKIP', 'yellow')} {name} {res['msg']}")
                 else:
                     print(format_color('s', 'yellow'), end='', flush=True)
+            elif status == "KNOWN":
+                known += 1
+                known_issues.append(f"{name} ({res.get('stage', '')})  {res.get('issue', '')}")
+                if args.verbose:
+                    print(f"  {format_color('KNOWN', 'yellow')} {name} ({res.get('stage', '')})  {res.get('issue', '')}")
+                else:
+                    print(format_color('k', 'yellow'), end='', flush=True)
             elif status == "XFAIL":
                 expected_failed += 1
                 if args.verbose:
@@ -303,10 +332,16 @@ def main():
     print(f"\n{format_color('---- summary ----', 'bold')}")
     print(f"  {format_color('passed', 'green')}          {passed}")
     print(f"  {format_color('expected fails', 'yellow')}  {expected_failed}")
+    print(f"  {format_color('known issues', 'yellow')}    {known}")
     print(f"  {format_color('failed', 'red')}          {failed}")
     print(f"  skipped         {skipped}")
     print(f"  time            {elapsed}s")
     
+    if known_issues:
+        print(f"\n{format_color('known issues (filed, awaiting a fix):', 'yellow')}")
+        for k in sorted(known_issues):
+            print(f"  {k}")
+
     if failures:
         print(f"\n{format_color('failures:', 'red')}")
         for f in failures:

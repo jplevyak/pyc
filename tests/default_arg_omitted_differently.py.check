@@ -1,4 +1,0 @@
-default_arg_omitted_differently.py:33:371: warning: illegal call argument type 'c' illegal: str 
-                return c.why()                 # legal only if reason stayed Clause
-                                                                                   ^
-  called from default_arg_omitted_differently.py:37
