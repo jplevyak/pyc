@@ -47,6 +47,14 @@ un-baked, and until then every run names the issue each one is waiting on.
 
 ## Current open issues
 
+- [049-llvm-list-element-union-segfault.md](049-llvm-list-element-union-segfault.md)
+  — **live regression on a supported backend.** `PYC_NOMARK=1` becoming
+  the default (2026-08-15) makes the LLVM backend segfault on
+  `tests/list_element_type_union.py`; the C backend compiles and runs the
+  same program correctly. Bisected to that flag alone. Left *failing*
+  under `PYC_FLAGS="-b"` rather than tagged, on purpose. Also records the
+  process error that hid it: `test_pyc.py` with no `PYC_FLAGS` runs the C
+  backend **only**.
 - [048-none-int-field-pair-runtime-abort.md](048-none-int-field-pair-runtime-abort.md)
   — two `None`-initialised instance fields that later hold ints: **zero
   diagnostics**, and the binary aborts with `matching function not found`
