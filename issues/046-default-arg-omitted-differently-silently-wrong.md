@@ -84,15 +84,75 @@ many `assert`s fails because the solver's bookkeeping is wrong.
 (ifa/issues/074), which is how this surfaced; the defect itself is
 independent of and older than that change.
 
-## Where to look
+## Mechanism, from the generated C (2026-08-15)
 
-The lowering of a call that omits defaulted parameters — pyc creates a
-separate `Fun` per keyword/arity shape (two distinct `min` symbols are
-visible in generated C for a 2-arg and a 3-arg call), so the suspicion is
-that the *store of the default* is attached to the wrong shape, or elided
-when another shape supplies that position. `python_ifa_build_if1.cc`'s
-call construction and the partial-application path are the places to
-start.
+**The title's framing is wrong and is kept only because it names the
+trigger.** This is not a lost default *store*; it is a mis-resolved
+instance-field *slot* inside one of the clones.
+
+pyc emits two clones of `enqueue`, one per call shape:
+
+```c
+/* clone for enqueue(reason=Clause()) -- CORRECT */
+_CG_f_10189_34(_CG_ps11035 a1, _CG_ps10142 a2) {
+  t2 = ((_CG_ps11035)t1)->e14;          /* self.v      */
+  ((_CG_ps11036)t2)->e13 = (_CG_void)t3; /* v.reason = Clause */
+}
+
+/* clone for enqueue(reason_txt="learnt") -- WRONG, both statements */
+_CG_f_10189_40(_CG_ps11035 a1, _CG_string a2) {
+  t2 = ((_CG_ps11035)t1)->e14;
+  ((_CG_ps11036)t2)->e13 = (_CG_void)_CG_String_n("learnt",6);
+}
+```
+
+`VarInfo` has exactly one data field, `e13 /* reason */` — `reason_txt`
+is elided, which is **correct and normal**: the clean control variants
+(`sameomit`, `positional`) also emit one field and produce the right
+answer, because there the store to the elided field is simply dropped.
+
+In the failing clone both statements are wrong:
+
+1. `self.v.reason = reason` (with `reason` at its nil default) is
+   **dropped** — so the field keeps the *previous* call's `Clause`. This
+   alone is the wrong answer.
+2. `self.v.reason_txt = reason_txt` is emitted **against `reason`'s
+   slot** (`e13`), so `"learnt"` lands in `reason`. That is why
+   `c.why()` then dispatches `Clause::why` on a string and returns 7.
+
+So: **in a clone where a defaulted parameter is nil-typed, the nil store
+is dropped and the next store is emitted against the dropped field's
+slot.** The field-slot assignment (`AVar::ivar_offset`, written
+post-convergence by clone) is the thing to look at — the offsets are
+computed from the CreationSet's union view while the clone's emission
+appears to shift when a field is elided.
+
+## Ruled out (each measured, do not re-try)
+
+`__slots__`; `None` as the default specifically (non-nil defaults still
+fail); keyword syntax as such (`sameomit` uses it and is clean); one
+attribute name being a *prefix* of the other (`reason`/`note` fails
+identically); dead-field elimination as the cause (reading `reason_txt`
+does not keep it alive and does not fix the answer); and parameter names
+shadowing the attribute names (renaming the parameters to `r`/`t` changes
+nothing).
+
+## Also found while narrowing (separate, unfiled)
+
+```python
+class V:
+    def __init__(self):
+        self.a = None
+        self.b = None
+v = V(); v.a = 1; v.b = 2
+print(v.a, v.b)
+```
+
+Here both fields DO get slots (`e12 /* a */`, `e13 /* b */`), pyc emits
+**zero warnings**, and the binary aborts at run time with `matching
+function not found`. CPython prints `1 2`. Probably the `None|int` field
+boxing of the 018/030/035 family rather than this issue, but it is a
+clean two-line witness and should be filed once checked.
 
 ## Verification plan
 
