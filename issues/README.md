@@ -23,6 +23,21 @@ conventions are the same; the only difference is location.
 
 ## Current open issues
 
+- [046-default-arg-omitted-differently-silently-wrong.md](046-default-arg-omitted-differently-silently-wrong.md)
+  — **silent wrong answer.** Two call sites of the same function that
+  omit *different* defaulted parameters: the second call never writes its
+  defaults, so the previous call's values persist. 29-line repro prints 7
+  where CPython prints 0 (`tests/default_arg_omitted_differently.py`,
+  `.python.expect_fail`). Narrowed: not `__slots__`, not `None`-as-the-
+  default, not keyword syntax — passing both arguments explicitly, or
+  always omitting the same parameter, is clean. Root cause of
+  `shedskin_examples/sat`'s unhandled `AssertionError`, and a very common
+  Python shape, so the blast radius is wider than one program.
+- [047-cg-nameless-lvalue-assert-on-prim.md](047-cg-nameless-lvalue-assert-on-prim.md)
+  — `write_c_prim` **aborts the compiler** (`cg.cc:389`) on a nameless
+  primitive destination, on a 27-line program. Same untyped/unreached-
+  contour condition that `P_prim_index_object` already guards explicitly;
+  this sibling has an `assert` instead. Nothing in the corpus hits it.
 - [045-tonyjpegdecoder-second-call-hangs.md](045-tonyjpegdecoder-second-call-hangs.md)
   — a second call to `main()` in tonyjpegdecoder.py hangs (sustained
   100% CPU, no progress) even though each call constructs entirely
