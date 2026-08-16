@@ -1,0 +1,5 @@
+splitter_cartesian_product.py:38:184: warning: illegal call argument type expression illegal: list 
+            self.bbs = [x for x in self.bbs]
+                                            ^
+  called from splitter_cartesian_product.py:38
+STAGES: TYPE_CONFL VIOLATION PER_CS_RECV CPA

@@ -78,6 +78,20 @@ def _run_test(g, args, envs):
         with open(f"{g}.flags") as f:
             flags = f.read().strip()
 
+    # Per-test environment, one KEY=VALUE per line in `<test>.py.env`.
+    # Needed for anything the compiler exposes as an env var rather than a
+    # command-line flag -- the splitter-stage probe (PYC_DBG_STAGES) and the
+    # off-by-default splitter flags the tests/splitter_*.py set exercises.
+    test_env = {}
+    if os.path.exists(f"{g}.env"):
+        with open(f"{g}.env") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                test_env[k.strip()] = v.strip()
+
     build_dir = os.path.abspath(envs["BUILD"])
     pyc_abs = os.path.abspath(envs["PYC"])
     tests_dir_abs = os.path.abspath(envs["TESTS_DIR"])
@@ -99,7 +113,8 @@ def _run_test(g, args, envs):
     print(f"CMD: {' '.join(cmd)}")
     try:
         with open(out_path, "w") as outf:
-            res = subprocess.run(cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT, timeout=args.timeout)
+            res = subprocess.run(cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT, timeout=args.timeout,
+                                 env={**os.environ, **test_env} if test_env else None)
             rc = res.returncode
     except subprocess.TimeoutExpired:
         return {"name": name, "status": "FAIL", "stage": "COMPILE-TIMEOUT", "msg": f"log: {envs['BUILD']}/{name}.out"}
@@ -165,7 +180,9 @@ def _run_test(g, args, envs):
             shutil.move(art, first)
             try:
                 with open(out_path, "w") as outf:
-                    res2 = subprocess.run(cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT, timeout=args.timeout)
+                    res2 = subprocess.run(cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT,
+                                          timeout=args.timeout,
+                                          env={**os.environ, **test_env} if test_env else None)
             except subprocess.TimeoutExpired:
                 return {"name": name, "status": "FAIL", "stage": "DET-RECOMPILE-TIMEOUT", "msg": f"log: {envs['BUILD']}/{name}.out"}
             if res2.returncode != rc or not os.path.exists(art):
