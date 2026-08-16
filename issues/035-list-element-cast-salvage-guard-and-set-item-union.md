@@ -58,25 +58,28 @@ if (!eligible) continue;
 A container's element CS is neither, so the element AVar is never
 annotated.
 
-**Tried, works, and is currently too expensive.** Adding
-`coerce_annotate(get_element_avar(cs))` to that loop takes the repro from
-a runtime abort to `[1.5, 0.0, 0.0]` — byte-for-byte shedskin's answer —
-with **zero exit-code changes and unchanged ess/csize** across the
-84-program sweep. But it costs **+92% analysis time** (374 s → 719 s),
-broadly: adatron 3→14, chess 7→30, chull 5→20, linalg 8→27.
+**LANDED 2026-08-16, and it is free.** `coerce_annotate(get_element_avar(cs))`
+in that loop (outside the `eligible` test — a list's CreationSet is
+neither a closure frame nor a `Type_RECORD`) takes the repro from a
+runtime abort to `[1.5, 0.0, 0.0]`, byte-for-byte shedskin's answer.
 
-The surprise is that the cost is *not* the annotations. chull slows 4× while
-firing **zero** of them. It is `get_element_avar` itself — the same
-program-wide perturbation `split_container_methods_per_element_cs`
-documents ("calling get_element_avar unconditionally here perturbs
-collect_type_confluence broadly across the WHOLE program on EVERY pass").
-Scanning `cs->vars` instead is free but does not reach the element AVar,
-so there is no cheap route from where the coercion pass currently stands.
+Clean 84-program sweep: **zero exit-code changes, ess −3, generated C
++4573 bytes, analysis time −0.3%.** Per-program A/B in a single binary
+(`chull`, `adatron`, `linalg`, `chess`, `hq2x`): −0%, −0%, −2%, +2%, −0%.
 
-So the fix is *known and one line*, and what blocks it is the cost of
-materialising element AVars during the between-pass coercion scan — a
-narrower problem than this issue started with. The code carries this note
-at the call site.
+*An earlier revision of this section reported +92% analysis time and
+reverted the change on that basis. That number was a measurement error* —
+the sweep it came from was run concurrently with a full `test_pyc.py`,
+while its baseline was not, so it measured CPU contention. A second
+error then hid it: on re-application the element line landed *after* the
+loop's `if (!eligible) continue;`, so it never ran for list CreationSets
+and the "free" re-measurement was measuring nothing. Both are recorded
+because either one alone would have buried a working one-line fix.
+
+What remains here is the repr divergence — `0.0` where CPython prints
+`0` — which is inherent to the widening and which shedskin also has.
+`tests/list_mul_heterogeneous_element.py` stays `.known_issue` for that
+reason, with check files that hold CPython's answer.
 
 ## Symptom
 

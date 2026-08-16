@@ -1,1 +1,1 @@
-issues/035 -- n*[0] then an in-place float update: clean compile, runtime 'list element type mismatch'
+issues/035 -- n*[0] then an in-place float update: pyc now widens the element to float and RUNS, printing [1.5, 0.0, 0.0] where CPython prints [1.5, 0, 0] (shedskin diverges identically)

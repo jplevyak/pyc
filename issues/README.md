@@ -100,6 +100,16 @@ to minimise.
   dispatch for object receivers. The `sizeof_element of non-container`
   guard in `cg.cc` still cites this issue and still fires (it blocked
   050's C-helper fix).
+- [035-list-element-cast-salvage-guard-and-set-item-union.md](035-list-element-cast-salvage-guard-and-set-item-union.md)
+  — **substantially fixed 2026-08-16.** `n * [0]` then `x[i] += 1.5` used
+  to compile with zero diagnostics and abort at run time; issue 025's
+  numeric coercion is now applied to container **elements**, so the
+  `int64|float64` element widens to float and the program runs. This is
+  exactly shedskin's rule (`typestr.py` special-cases `{int_, float_}` →
+  `float_`) and produces byte-for-byte its output. Free: zero exit-code
+  changes, −0.3% analysis time on the 84-program sweep. What remains is
+  the repr — `0.0` where CPython prints `0` — which shedskin also has.
+  `tests/list_mul_heterogeneous_element.py`.
 - [050-pyc-string-builders-are-quadratic.md](050-pyc-string-builders-are-quadratic.md)
   — **PARTIALLY FIXED.** Every string builder in `__pyc__` was O(n²): `join`, `lower`,
   `upper`, `replace`, `str.__mul__` and `list.__pyc_tobytes__` all
