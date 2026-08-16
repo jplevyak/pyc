@@ -1,6 +1,37 @@
 # Issue 018: Using `dict`/`set` with two different element types in one program fails to compile
 
-**Status:** open.
+**Status:** open — but **the container half is FIXED** (verified
+2026-08-16) and only the bare-scalar half remains. Retested every shape
+this doc describes:
+
+| shape | today |
+|---|---|
+| two dicts, `int` vs `str` keys (the headline repro) | **passes** |
+| two sets, `int` vs `str` elements | **passes** |
+| mixed *value* types across two dicts | **passes** |
+| object keys alongside `int` keys | **passes** |
+| three key types (`int`/`str`/`float`) in one program | **passes** |
+| **bare branch-merged scalar** (`x = 5` / `x = "hi"`, then `x + ...`) | **still fails** |
+
+The five passing shapes are pinned by `tests/dict_mixed_key_types.py`.
+The failure is pinned by `tests/branch_merged_scalar_union.py`
+(`.known_issue`): 8 warnings, compiles, then the binary aborts with
+`matching function not found` where CPython prints `hi world`.
+
+**That residue is the same failure mode as
+[048](048-none-int-field-pair-runtime-abort.md)** — a union of *basic*
+types (`int|str` here, `None|int` there) reaching an ordinary operation —
+so the two should be fixed together, and 048 is the smaller witness.
+
+Note also that the `sizeof_element of non-container` guard in `cg.cc`
+still cites this issue and still fires: it blocked the C-helper form of
+[050](050-pyc-string-builders-are-quadratic.md)'s fix when a trajectory
+change let `list.__add__` be specialised against a `bytes` receiver. So
+the *mechanism* named here is alive even though the dict/set symptoms are
+gone; [075](../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
+remains the fix vehicle for that half.
+
+**Original status:** open.
 **Affects:** `dict`'s shared internal comparison logic
 (`__pyc__/07_dict.py`'s `_keys[i] == key` checks in `__getitem__`/
 `__setitem__`/`get`/`__contains__`) and `set`'s equivalent

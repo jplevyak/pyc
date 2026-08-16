@@ -85,6 +85,17 @@ to minimise.
 
 ## Current open issues
 
+- [018-dict-mixed-key-types-boxing-failure.md](018-dict-mixed-key-types-boxing-failure.md)
+  — **container half FIXED** (verified 2026-08-16): two dicts with
+  different key types, two sets, mixed value types, object keys, and
+  three key types in one program all pass now
+  (`tests/dict_mixed_key_types.py`). What remains is the **bare
+  branch-merged scalar** — `x = 5` / `x = "hi"` then `x + ...` — which
+  compiles and aborts with `matching function not found`
+  (`tests/branch_merged_scalar_union.py`). That residue is the same
+  failure mode as [048](048-none-int-field-pair-runtime-abort.md), so fix
+  them together. The `sizeof_element of non-container` guard in `cg.cc`
+  still cites this issue and still fires (it blocked 050's C-helper fix).
 - [050-pyc-string-builders-are-quadratic.md](050-pyc-string-builders-are-quadratic.md)
   — **PARTIALLY FIXED.** Every string builder in `__pyc__` was O(n²): `join`, `lower`,
   `upper`, `replace`, `str.__mul__` and `list.__pyc_tobytes__` all
