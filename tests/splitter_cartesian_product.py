@@ -7,11 +7,20 @@
 # contour NAME, where MARK_TYPE instead separates the contributors by
 # provenance.
 #
-# The recorded STAGES line also shows CPA's perturbation waking three
-# stages that never run at the default settings on any program measured so
-# far -- VIOLATION and PER_CS_RECEIVER included. That is the cascade's
-# first-stage-wins starvation made visible, and it is the main thing this
-# test pins.
+# The recorded STAGES line is `TYPE_CONFL CPA`.
+#
+# It used to be `TYPE_CONFL VIOLATION PER_CS_RECV CPA`, and the extra two
+# were the point: CPA's perturbation waking desperation stages that never
+# run at the default settings. ifa/issues/101's hard reuse (PYC_HARDREUSE=5,
+# on by default from 2026-08-16) removed them -- VIOLATION and
+# PER_CS_RECEIVER fire when earlier stages have failed to resolve a
+# violation, and reusing type-identical contours on the detach route means
+# there is no longer a violation left for them to chase. Fewer stages here
+# is the improvement, not a loss of coverage.
+#
+# What this test pins is therefore: CPA fires, and it is reached through
+# TYPE_CONFLUENCE alone. If VIOLATION or PER_CS_RECV ever reappear, the
+# desperation cascade is back and something upstream regressed.
 #
 # COMPILE-ONLY on purpose (no .exec.check): PYC_CPA's callee-side-only fan
 # leaves contours that no edge reaches, so the binary aborts. That is the
