@@ -2,15 +2,23 @@
 
 **Status:** PARTIALLY FIXED 2026-08-15 — `list.__pyc_tobytes__` (the
 measured case, and 045's blocker) is now O(n log n) and 045 is closed.
-`str.join`, `lower`, `upper`, `replace` and `str.__mul__` are **still
+`str.join`, `lower`, `upper`, `replace` and `__pyc_substr__` are **still
 quadratic** and keep this issue open. Root-caused 2026-08-15 while
 bisecting
 [045](closed/045-tonyjpegdecoder-second-call-hangs.md), which turns out to be
 entirely an instance of this.
 
-**Affects:** `__pyc__/01_str.py` (`join`, `lower`, `upper`, `__mul__`,
-`replace`), `__pyc__/04_sequence.py` (`list.__pyc_tobytes__`) — every
-place that accumulates a string with `r = r + x` inside a loop.
+**Affects:** `__pyc__/01_str.py` — `join`, `lower`, `upper`, `replace`,
+`__pyc_substr__` — every place that accumulates a string with
+`r = r + x` inside a loop. `__pyc__/04_sequence.py`'s
+`list.__pyc_tobytes__` was the sixth and is now fixed.
+
+**Correction (2026-08-15):** an earlier revision of this issue also
+listed `str.__mul__`. That was wrong — it is
+`__pyc_c_call__(str, "_CG_string_mult", ...)` and already linear. So is
+`__pyc_getslice__` (`_CG_string_getslice`), which is the path ordinary
+`s[i:j]` slicing takes; `__pyc_substr__` is the quadratic sibling and is
+reached less often.
 
 ## Measured
 
@@ -27,6 +35,22 @@ b = bytes(xs)          # -> list.__pyc_tobytes__
 
 Each doubling of `n` roughly quadruples pyc's time — quadratic — while
 CPython stays linear. At n = 400 000 pyc is ~12 000× slower.
+
+## Still quadratic after the `list.__pyc_tobytes__` fix — measured
+
+```python
+"".join(["x"] * n)      # and   ("y" * n).upper()
+```
+
+| n | `join` | `upper` | CPython (both) |
+|---|---|---|---|
+| 50 000 | 2 s | 1 s | 0 s |
+| 100 000 | 4 s | 2 s | 0 s |
+| 200 000 | **20 s** | **10 s** | 0 s |
+
+`join` is the one that matters most, because `"".join(parts)` is exactly
+what a user reaches for to *avoid* quadratic concatenation — and here it
+is no faster than the loop it replaces.
 
 ## Cause
 
