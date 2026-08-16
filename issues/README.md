@@ -65,9 +65,12 @@ twice — *passes*, while tonyjpegdecoder still hangs. Writing that test
 would have recorded a false negative under an issue number. The path there
 is bisecting the real program, not inventing a small one.
 
-**Convergence issues want a different kind of test.** `go`, `linalg`,
-`plcfrs` and `hq2x` are non-convergent *at scale*; no small program
-reproduces "102 passes". What is assertable is the property, via the
+**Convergence issues want a different kind of test** — though "no small
+program can reproduce it" turned out to be false, so try anyway:
+`tests/deepcopy_recursive_nested_growth.py` is 13 lines, runs in 1.2 s,
+and grows contours linearly for ever (ifa/issues/074). What made it
+findable was going after the *mechanism* (which functions gain contours,
+per the keyspace probe) rather than shrinking the program. What is assertable is the property, via the
 probes: `PYC_DBG_STAGES` pins which splitter stages a program demands
 (see `tests/splitter_*.py`) and `PYC_DBG_OSC` reports the final pass
 count, violations and contour totals. Prefer a property assertion over a

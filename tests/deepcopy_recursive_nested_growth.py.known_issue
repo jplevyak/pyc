@@ -1,0 +1,1 @@
+ifa/issues/074 -- FA never reaches a fixed point: contours grow ~2.8/pass without bound (deepcopy + recursion + nested container)
