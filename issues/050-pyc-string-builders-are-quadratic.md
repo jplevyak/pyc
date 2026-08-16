@@ -1,7 +1,11 @@
 # 050 — every string builder in `__pyc__` is O(n²): `r = r + x` in a loop
 
-**Status:** open, root-caused 2026-08-15 while bisecting
-[045](045-tonyjpegdecoder-second-call-hangs.md), which turns out to be
+**Status:** PARTIALLY FIXED 2026-08-15 — `list.__pyc_tobytes__` (the
+measured case, and 045's blocker) is now O(n log n) and 045 is closed.
+`str.join`, `lower`, `upper`, `replace` and `str.__mul__` are **still
+quadratic** and keep this issue open. Root-caused 2026-08-15 while
+bisecting
+[045](closed/045-tonyjpegdecoder-second-call-hangs.md), which turns out to be
 entirely an instance of this.
 
 **Affects:** `__pyc__/01_str.py` (`join`, `lower`, `upper`, `__mul__`,
@@ -60,7 +64,28 @@ deliberate trade — it says the `chr()` loop "avoids a second low-level
 buffer-building helper alongside `_CG_string_identity`". The cost of that
 choice had simply never been measured.
 
-## Fix direction
+## What was fixed, and why not with a C helper
+
+`list.__pyc_tobytes__` now accumulates into 256-byte chunks and merges
+them pairwise — O(n log n). Measured after: n = 100 000 / 200 000 /
+400 000 all report 0.000 s, against 1 s / 7 s / 25 s before.
+`shedskin_examples/tonyjpegdecoder` completes all 20 iterations and its
+decoded BMP is **byte-identical to CPython's** (same md5).
+
+A C helper was built first and was faster still — `_CG_bytes_from_list`,
+taking `sizeof_element` exactly as `_CG_list_mult` does. **It was
+reverted**, and the reason is worth keeping: removing the
+`chr()`/`str.__add__` loop shifted FA's trajectory enough that
+`list.__add__` began being specialised against a `bytes` receiver, and
+`rdb.py` stopped compiling with `sizeof_element of non-container type
+'bytes'` (the [018](018-dict-mixed-key-types-boxing-failure.md) family).
+The chunked version keeps that loop and costs nothing on the corpus: zero
+exit-code changes, +1.4% analysis time, and `doom` and `rdb` each *lose*
+a few violations.
+
+So a C helper here is blocked on 018, not on the helper being wrong.
+
+## Fix direction for the rest of the family
 
 A buffer-building runtime helper: `_CG_string_alloc(n)` already exists in
 `pyc_c_runtime.h`, and `__pyc__` code can reach C directly via

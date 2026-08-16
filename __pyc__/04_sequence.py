@@ -76,14 +76,45 @@ class list:
     # bytes(a_list_of_ints) -- CPython requires every element in
     # range(0, 256); out-of-range values are truncated to their low 8
     # bits here rather than raising (pyc has no exception model, issue
-    # 011). Built via chr() (handles the full 0-255 byte range, see
-    # _CG_chr in pyc_c_runtime.h) then reinterpreted as bytes through
-    # str's own encode() -- avoids a second low-level buffer-building
-    # helper alongside _CG_string_identity.
-    r = ""
+    # 011).
+    #
+    # issues/050: built in CHUNKS, then merged pairwise -- O(n log n)
+    # rather than the O(n^2) this used to be. A bare `r = r + chr(v)` per
+    # element reallocated and copied the whole prefix every time: 25 s for
+    # 400 000 elements against CPython's 0.002 s, with the dead prefixes
+    # costing the collector as much again -- see issues/045, where that
+    # showed up as tonyjpegdecoder appearing to "hang".
+    #
+    # Kept in Python rather than moved to a _CG_ helper on purpose. A C
+    # helper taking `sizeof_element` was faster still, but removing the
+    # chr()/str.__add__ loop shifted FA's trajectory enough that
+    # `list.__add__` started being specialised against a `bytes` receiver
+    # and rdb.py stopped compiling ("sizeof_element of non-container type
+    # 'bytes'", the issues/018 family). This shape keeps that loop.
+    parts = []
+    chunk = ""
+    k = 0
     for v in self:
-      r = r + chr(v)
-    return r.encode()
+      chunk = chunk + chr(v)
+      k += 1
+      if k == 256:
+        parts.append(chunk)
+        chunk = ""
+        k = 0
+    if k > 0:
+      parts.append(chunk)
+    while len(parts) > 1:
+      merged = []
+      i = 0
+      while i + 1 < len(parts):
+        merged.append(parts[i] + parts[i + 1])
+        i += 2
+      if i < len(parts):
+        merged.append(parts[i])
+      parts = merged
+    if len(parts) == 0:
+      return "".encode()
+    return parts[0].encode()
   def __add__(self, l):
     # list + tuple: build the result with append loops (isinstance
     # branch stays dead in list+list contours, same narrowing

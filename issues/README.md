@@ -86,13 +86,16 @@ to minimise.
 ## Current open issues
 
 - [050-pyc-string-builders-are-quadratic.md](050-pyc-string-builders-are-quadratic.md)
-  — **every string builder in `__pyc__` is O(n²)**: `join`, `lower`,
+  — **PARTIALLY FIXED.** Every string builder in `__pyc__` was O(n²): `join`, `lower`,
   `upper`, `replace`, `str.__mul__` and `list.__pyc_tobytes__` all
   accumulate with `r = r + x` in a loop. Measured on `bytes([65]*n)`:
   1 s / 7 s / 25 s for n = 100k / 200k / 400k where CPython is
   0.000 / 0.001 / 0.002. `"".join(...)`, the usual escape hatch, is the
-  same shape and no faster. Root cause of 045.
-  `tests/bytes_from_list.py` pins the semantics a fix must preserve.
+  same shape and no faster. `list.__pyc_tobytes__` is now chunked and
+  O(n log n) — all three sizes drop to 0.000 s, which **closed 045**
+  (tonyjpegdecoder completes 20 iterations, BMP byte-identical to
+  CPython). `join`, `lower`, `upper`, `replace` and `str.__mul__` are
+  still quadratic. `tests/bytes_from_list.py` pins the semantics.
 - [051-bytes-repr-does-not-escape.md](051-bytes-repr-does-not-escape.md)
   — `repr(bytes)` emits raw bytes instead of `\xNN`, so output containing
   binary data diverges from CPython (and diffs report "Binary files
@@ -128,22 +131,6 @@ to minimise.
   primitive destination, on a 27-line program. Same untyped/unreached-
   contour condition that `P_prim_index_object` already guards explicitly;
   this sibling has an `assert` instead. Nothing in the corpus hits it.
-- [045-tonyjpegdecoder-second-call-hangs.md](045-tonyjpegdecoder-second-call-hangs.md)
-  — **root-caused 2026-08-15 and the title is now wrong**: it is not a
-  hang, not stateful, and not the second call. Six iterations complete;
-  the seventh loses only against the clock, because `bytes(a_list)` is
-  quadratic ([050](050-pyc-string-builders-are-quadratic.md)) and each
-  `main()` spends ~15 s in it. Should be closed with 050. The original
-  text follows for the trail:
-  Found while confirming the doc's "crashes the compiler with an FPE"
-  claim (TODO item 5) was stale — the compiler doesn't crash at all
-  today; two real bugs were found and fixed getting to this actual
-  current blocker (`bytes(x)` never checked for a user-defined
-  `__bytes__`; the LLVM backend's `_CG_string_identity` was never
-  linkable). Not root-caused past "stalls in `InitDecoder()`/the
-  Huffman decode loop" — possibly another instance of the
-  shared-prototype-state bug family (closed-017, closed-044), not
-  confirmed.
 - [043-slice-target-augmented-assignment-silently-wrong.md](043-slice-target-augmented-assignment-silently-wrong.md)
   — `a[i:j] += x` silently corrupts the list: the existing code
   comment claimed it just "acts like `=`" (drops the operator), but

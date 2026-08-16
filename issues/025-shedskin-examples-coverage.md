@@ -3054,7 +3054,7 @@ through (or move to a "filed" note) as each gets its own issue.
    each call constructs entirely fresh objects. Minimized to a clean
    2-call repro; not root-caused past "stalls somewhere in
    `InitDecoder()`/the Huffman decode loop." Filed as
-   [issues/045](045-tonyjpegdecoder-second-call-hangs.md), which also
+   [issues/045](closed/045-tonyjpegdecoder-second-call-hangs.md), which also
    noted a separate oddity, now explained (2026-08-08, while
    implementing [ifa/085](../ifa/issues/closed/085-CGEN-dead-if-unresolved-condition-no-guard.md)'s
    fix): `-r`/`--runtime_errors` is a **negative** flag — confirmed via
