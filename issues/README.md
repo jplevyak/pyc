@@ -124,12 +124,22 @@ to minimise.
   process error that hid it: `test_pyc.py` with no `PYC_FLAGS` runs the C
   backend **only**.
 - [048-none-int-field-pair-runtime-abort.md](048-none-int-field-pair-runtime-abort.md)
-  — two `None`-initialised instance fields that later hold ints: **zero
-  diagnostics**, and the C-backend binary aborts with `matching function
-  not found` where CPython prints `1 2`. **The LLVM backend gets it
-  right**, so this is `cg.cc`, not FA — the exact mirror image of
-  [049](049-llvm-list-element-union-segfault.md).
-  `tests/none_int_field_pair.py`.
+  — two `None`-initialised instance fields that later hold ints: the
+  C-backend binary aborts with `matching function not found`.
+  **Corrected 2026-08-16: this is not a codegen bug.** `cg.cc` refuses on
+  purpose — a nil test on a scalar cannot tell `None` from `0` — and it is
+  right to: set the field to **0** and LLVM, which "passes" at 1, silently
+  prints `None` ([052](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)).
+  The real defect is upstream, a `{nil,int64}` union surviving to codegen
+  on a field that is provably an int at the point of use — same family as
+  018's surviving half. `tests/none_int_field_pair.py`,
+  `tests/none_int_field_zero.py`.
+- [052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)
+  — **silent wrong answer on the LLVM backend.** It keeps `{nil,int64}` in
+  pointer representation and discriminates with `icmp eq ptr %x, null`;
+  `inttoptr (i64 0)` is null, so the integer 0 takes the `None` branch and
+  prints `None`. No diagnostic. The C backend already vetoes exactly this
+  emission; `cg_emit_llvm.cc` has no counterpart.
 
 - [046-default-arg-omitted-differently-silently-wrong.md](046-default-arg-omitted-differently-silently-wrong.md)
   — **silent wrong answer.** Two call sites of the same function that
