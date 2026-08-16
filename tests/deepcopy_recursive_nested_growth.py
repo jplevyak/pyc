@@ -14,6 +14,15 @@
 #   deepcopy, no recursion                    yes -- p23
 #   deepcopy + recursion, flat list           yes -- p10
 #
+# The TARGET (ifa/issues/074): this program is monomorphic --
+# total: list[list[float]] -> float and shrink: list[list[float]] ->
+# list[list[float]] at every depth -- so the optimal contour count is
+# ~20 and INDEPENDENT of recursion depth. FA currently produces 236 and
+# climbing, with 189 distinct type keys, because list.__deepcopy__'s
+# `r = []` mints a fresh CreationSet per contour and each new CS gives
+# the caller a new type key. The defect is CreationSet identity, not
+# contour splitting.
+#
 # `.env` turns the guards off so the property under test is FA's own
 # fixed point rather than the stall guard's cutoff. The check file asserts
 # CONVERGED=1; today pyc prints CONVERGED=0, which is what .known_issue
