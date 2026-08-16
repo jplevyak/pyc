@@ -1,1 +1,1 @@
-issues/048 -- {None,float} field: raw clang error 'cannot cast from double to pointer type _CG_void', no pyc diagnostic
+issues/048 -- {None,float} field: now diagnosed and guarded (was a raw clang error); still cannot run, needs a representation for {scalar, non-numeric}

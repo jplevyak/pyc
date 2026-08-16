@@ -83,9 +83,37 @@ attempts to classify them apart (first "048 is codegen, 018 is FA", then
 "same failure mode") were both wrong: they are the same defect, and it is
 not codegen.
 
-`{None, float}` failing as an unguarded clang error is worth fixing on its
-own even before the representation work — every sibling in this table
-either works or fails through the established runtime-assert convention.
+### Guards and diagnostics added 2026-08-16
+
+`{None, float}` no longer reaches clang. Both the field store
+(`P_prim_setter`) and the field load (`P_prim_getter`) now carry the same
+representation guard the list-element sites already had, and every one of
+these sites now prints a message naming the field and both C types:
+
+```
+none_float_field.py:19: warning: field 'a' has no single representation:
+  cannot store a '_CG_float64' into a '_CG_void'
+  -- a None-with-scalar or mixed-basic union (issues/048)
+```
+
+That closes the "zero diagnostics" complaint this issue opened with, and
+is modelled on shedskin's `Variable (Class V, 'a') has dynamic (sub)type:
+{None, int}` — name the thing, name the union.
+
+**The guard is deliberately narrow: float/pointer only, not
+scalar/pointer.** An integer and a pointer round-trip bit-for-bit
+(`(void*)(int64)x` → `(int64)(void*)y` is legal C and value-preserving),
+which is exactly how a `{None, int}` field works today — `tests/polymorphic_list.py`
+stores small int tags into a `_CG_void` slot and reads them back
+correctly. A first cut used `scalar_ct` and broke that test. A double has
+no such round-trip, so only the float crossing is a failure *at the store
+or load*; the int crossing fails later and elsewhere, at a dispatch that
+must tell `0` from `None`.
+
+Corpus: zero exit-code changes, generated C byte-identical, and **no
+program emits the new warning** — the two that did under the too-wide
+version (`go.py:176` `lastmove`, `msp_ss.py:1028` `bslVer`) are both
+int/pointer, i.e. legitimate.
 
 ## What this issue actually is
 
