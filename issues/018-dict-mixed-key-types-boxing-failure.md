@@ -354,3 +354,26 @@ limitation for anything beyond a single-key-type toy program. The
 existing dict test suite (`tests/dict_basic.py`, `tests/dict_methods.py`)
 happens to only ever use string keys, which is exactly why this had
 gone unnoticed.
+
+
+## shedskin comparison, measured 2026-08-16
+
+shedskin **detects these unions more precisely and then fails the same way**.
+On pyc's own reproducers it reports e.g.
+
+```
+*WARNING* none_int_field_pair.py: Variable (Class V, 'a') has dynamic (sub)type: {None, int}
+*WARNING* branch_merged_scalar_union.py: Variable 'x' has dynamic (sub)type: {int, str}
+```
+
+and then the generated C++ fails to build with
+`invalid conversion from '__ss_int' to 'pyobj*'` — a scalar where a
+pointer is required, which is this issue exactly. Its union
+representation is `pyobj*` with no boxing of scalars.
+
+So there is nothing to copy for the *representation* (030 stays genuinely
+open), but the **diagnostic** is worth copying: naming the variable, its
+class and the exact union beats pyc's current
+`sizeof_element of non-container type 'float64'` from inside `__pyc__.py`.
+
+Full measurements in [ifa/issues/101](../ifa/issues/101-FA-first-time-forever-splitting.md).
