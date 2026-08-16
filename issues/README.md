@@ -85,6 +85,18 @@ to minimise.
 
 ## Current open issues
 
+- [050-pyc-string-builders-are-quadratic.md](050-pyc-string-builders-are-quadratic.md)
+  — **every string builder in `__pyc__` is O(n²)**: `join`, `lower`,
+  `upper`, `replace`, `str.__mul__` and `list.__pyc_tobytes__` all
+  accumulate with `r = r + x` in a loop. Measured on `bytes([65]*n)`:
+  1 s / 7 s / 25 s for n = 100k / 200k / 400k where CPython is
+  0.000 / 0.001 / 0.002. `"".join(...)`, the usual escape hatch, is the
+  same shape and no faster. Root cause of 045.
+  `tests/bytes_from_list.py` pins the semantics a fix must preserve.
+- [051-bytes-repr-does-not-escape.md](051-bytes-repr-does-not-escape.md)
+  — `repr(bytes)` emits raw bytes instead of `\xNN`, so output containing
+  binary data diverges from CPython (and diffs report "Binary files
+  differ"). `tests/bytes_repr_escapes.py`.
 - [049-llvm-list-element-union-segfault.md](049-llvm-list-element-union-segfault.md)
   — **live regression on a supported backend.** `PYC_NOMARK=1` becoming
   the default (2026-08-15) makes the LLVM backend segfault on
@@ -117,9 +129,12 @@ to minimise.
   contour condition that `P_prim_index_object` already guards explicitly;
   this sibling has an `assert` instead. Nothing in the corpus hits it.
 - [045-tonyjpegdecoder-second-call-hangs.md](045-tonyjpegdecoder-second-call-hangs.md)
-  — a second call to `main()` in tonyjpegdecoder.py hangs (sustained
-  100% CPU, no progress) even though each call constructs entirely
-  fresh objects; the first call runs correctly, matching CPython.
+  — **root-caused 2026-08-15 and the title is now wrong**: it is not a
+  hang, not stateful, and not the second call. Six iterations complete;
+  the seventh loses only against the clock, because `bytes(a_list)` is
+  quadratic ([050](050-pyc-string-builders-are-quadratic.md)) and each
+  `main()` spends ~15 s in it. Should be closed with 050. The original
+  text follows for the trail:
   Found while confirming the doc's "crashes the compiler with an FPE"
   claim (TODO item 5) was stale — the compiler doesn't crash at all
   today; two real bugs were found and fixed getting to this actual

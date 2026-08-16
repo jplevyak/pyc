@@ -1,4 +1,51 @@
-# 045 — tonyjpegdecoder: a second call to `main()` hangs (100% CPU, no progress) even though each call builds fresh objects
+# 045 — tonyjpegdecoder: ~~a second call to `main()` hangs~~ — root-caused 2026-08-15: it is neither a hang nor the second call
+
+> **The title is wrong and is kept only so existing links resolve.**
+> Bisected: nothing hangs and nothing is stateful. `bytes(a_list)` is
+> **O(n²)** in pyc's own builtin library, so each `main()` takes ~15 s on
+> this ~250 KB image and a 20-iteration run simply exceeds any timeout.
+> The general defect is filed as
+> [050](050-pyc-string-builders-are-quadratic.md); this issue is its first
+> victim and should be closed with it.
+
+## Bisection, 2026-08-15
+
+Every earlier claim here about "the second call" was mistaken:
+
+- 1, 2, 3, 5 and **6** iterations all complete correctly. Only the
+  **7th** fails to finish, and only against the clock — no state is
+  carried between calls.
+- The "first call works, second hangs" reading came from buffered
+  stdout: on `timeout`'s kill the buffer is lost, so a run that had
+  converted six images looked like it had printed nothing. With
+  `stdbuf -oL` the progress is visible.
+- **Source instrumentation does not work on this bug.** Adding `print`
+  markers inside `InitDecoder` made the symptom disappear — not a
+  Heisenbug in the runtime, but pyc compiling a *different program*. The
+  bisection had to leave the binary byte-identical.
+- `ptrace_scope=1` forbids attaching to a running process, so the sample
+  was taken by running the binary as gdb's own child and interrupting it
+  from outside. That technique is the reusable part.
+
+The stack, sampled mid-"hang":
+
+```
+#0  GC_mark_from ...
+#5  GC_alloc_large ...
+#8  _CG_string_alloc (s=46304)
+#9  _CG_strcat (a=<46 KB buffer>, b="B")
+#10 _CG_f_2396_170  /* list::__pyc_tobytes__ */
+#11 _CG_f_13457_126 /* main */
+```
+
+Appending one byte to a 46 KB string, inside pyc's `list.__pyc_tobytes__`
+(`r = r + chr(v)` per element), with the time going to the collector
+walking the discarded buffers. `main()` calls `bytes(bmpout)` on the
+decoded image every iteration.
+
+So: not the decoder, not `InitDecoder`, not the Huffman loop, not shared
+prototype state, and not the second call.
+
 
 **Status:** open, found 2026-08-08 while diagnosing
 [issues/025](025-shedskin-examples-coverage.md)'s TODO list item 5.

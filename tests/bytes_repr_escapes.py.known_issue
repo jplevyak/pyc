@@ -1,0 +1,1 @@
+issues/051 -- repr(bytes) does not escape non-printable bytes
