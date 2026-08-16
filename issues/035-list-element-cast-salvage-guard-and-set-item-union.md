@@ -21,6 +21,12 @@ call site (the *value* being stored, not the index argument, which
 — the same "num_kind-based scalar/pointer tolerance" pattern, applied
 here for the third time at a fourth call site.
 
+**Regression test (2026-08-15):**
+`tests/list_mul_heterogeneous_element.py`, tagged `.known_issue`. It is
+this doc's own 6-line repro: `n * [0]` then `x[i] += 1.5`. pyc still
+compiles it with **zero diagnostics** and the binary aborts with `list
+element type mismatch`; CPython prints `[1.5, 0, 0]`.
+
 ## Symptom
 
 `tictactoe.py` failed to compile:

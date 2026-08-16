@@ -57,11 +57,11 @@ un-baked, and until then every run names the issue each one is waiting on.
   backend **only**.
 - [048-none-int-field-pair-runtime-abort.md](048-none-int-field-pair-runtime-abort.md)
   — two `None`-initialised instance fields that later hold ints: **zero
-  diagnostics**, and the binary aborts with `matching function not found`
-  where CPython prints `1 2`. Both fields do get slots, so this is not
-  046's elided-slot confusion. Smallest known witness in the `None`-union
-  boxing family (018/030/035): no container, no in-place mutation, no
-  heterogeneous element type. `tests/none_int_field_pair.py`.
+  diagnostics**, and the C-backend binary aborts with `matching function
+  not found` where CPython prints `1 2`. **The LLVM backend gets it
+  right**, so this is `cg.cc`, not FA — the exact mirror image of
+  [049](049-llvm-list-element-union-segfault.md).
+  `tests/none_int_field_pair.py`.
 
 - [046-default-arg-omitted-differently-silently-wrong.md](046-default-arg-omitted-differently-silently-wrong.md)
   — **silent wrong answer.** Two call sites of the same function that

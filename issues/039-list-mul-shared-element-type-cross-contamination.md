@@ -20,6 +20,21 @@ than list construction/mutation in general. [018](018-dict-mixed-key-types-boxin
 — the general heterogeneous-container-representation gap this is a
 member of.
 
+**Minimal repro + regression test (2026-08-15):**
+`tests/list_mul_element_cross_contamination.py`, tagged `.known_issue` —
+27 lines, no `bh.py` needed. `Cell.subp = [None] * 2` genuinely holds
+`Body | Cell | None`; `Tree.bodies = [None] * 2` only ever holds
+`Body | None`, yet pyc types it with `Cell` too and warns
+
+```
+warning: illegal call argument type expression illegal: Cell
+    print(t.bodies[0].tag(), c.subp[0].tag())
+```
+
+The compiled program still prints the right answer, so this pins the
+precision loss specifically — which is what this issue is about (the
+`bh.py` segfault is ifa/079, filed separately).
+
 ## Symptom
 
 `bh.py` compiles with two spurious warnings and then segfaults at

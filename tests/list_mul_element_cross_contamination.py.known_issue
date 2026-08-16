@@ -1,0 +1,1 @@
+issues/039 -- [None]*n element type leaks between unrelated lists (spurious Cell in bodies)

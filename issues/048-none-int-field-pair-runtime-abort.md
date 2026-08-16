@@ -31,6 +31,27 @@ The lack of any diagnostic is the notable part: this is not a
 salvage-degraded contour that pyc knows it failed on. It believes it
 compiled the program.
 
+## It is a C-BACKEND bug (2026-08-15)
+
+**The LLVM backend compiles and runs this correctly**, printing `1 2`:
+
+```
+$ PYC_FLAGS="-b" python3 test_pyc.py none_int_field_pair
+  PASS none_int_field_pair.py
+```
+
+So FA's output is fine — the same analysis feeds both emitters — and this
+is `cg.cc` mishandling a `None|int64` field, not the type inference. That
+narrows it sharply and **contradicts the first guess below** that this
+belongs to the FA-level `None`-union boxing family; keep the family note
+only as a description of the shape, not of the cause. `cg_emit_llvm.cc`
+is the reference implementation to diff against.
+
+(Note the mirror image of this is [049](049-llvm-list-element-union-segfault.md),
+where the C backend is correct and LLVM segfaults on a list element
+union. The two backends have complementary gaps in the same area, which
+is worth remembering when fixing either.)
+
 ## What is known
 
 - Both fields **do** get their own slots (`e12 /* a */`, `e13 /* b */`),
@@ -42,7 +63,8 @@ compiled the program.
   a polymorphic send matches the receiver, so the likely story is `print`
   (or `int64::__str__`) being dispatched on a boxed `None|int` field whose
   runtime tag matches neither arm.
-- That places it in the `None`-in-a-union boxing family with
+- **Superseded by the section above** — kept for the shape description
+  only. It places the *shape* in the `None`-in-a-union family with
   [018](018-dict-mixed-key-types-boxing-failure.md),
   [030](030-int-float-in-place-list-mutation.md) and
   [035](035-list-element-cast-salvage-guard-and-set-item-union.md),

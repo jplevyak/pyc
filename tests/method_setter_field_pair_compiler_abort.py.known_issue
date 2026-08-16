@@ -1,0 +1,1 @@
+issues/047 -- write_c_prim aborts the compiler on a nameless primitive destination

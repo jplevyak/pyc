@@ -2,7 +2,13 @@
 
 **Status:** open, 2026-08-15. Found while narrowing
 [046](046-default-arg-omitted-differently-silently-wrong.md); unrelated to
-it. **pyc aborts** (SIGABRT) rather than diagnosing.
+it. **pyc aborts** (SIGABRT) rather than diagnosing. Repro landed as
+`tests/method_setter_field_pair_compiler_abort.py` with a `.known_issue`
+tag.
+
+**Narrowed 2026-08-15:** the two setters must be **methods** — the same
+program written with free functions (`def seta(v, x): v.a = x`) compiles
+fine. `__slots__` is not required either; the test is the 20-line form.
 
 ## Symptom
 
@@ -53,6 +59,12 @@ reaching a primitive rather than a getter. The fix is presumably the same
 shape — skip (or emit the established runtime-assert) rather than abort —
 but the assert firing means it has never been exercised, so the right
 behaviour for each primitive kind needs deciding rather than assuming.
+
+## C backend only
+
+`write_c_prim` is `cg.cc`, so this cannot fire under `PYC_FLAGS="-b"` —
+the LLVM run reports the test as PASS. That is not evidence the condition
+is absent from the LLVM path, only that the assert is not on it.
 
 ## Verification plan
 
