@@ -92,10 +92,14 @@ to minimise.
   (`tests/dict_mixed_key_types.py`). What remains is the **bare
   branch-merged scalar** — `x = 5` / `x = "hi"` then `x + ...` — which
   compiles and aborts with `matching function not found`
-  (`tests/branch_merged_scalar_union.py`). That residue is the same
-  failure mode as [048](048-none-int-field-pair-runtime-abort.md), so fix
-  them together. The `sizeof_element of non-container` guard in `cg.cc`
-  still cites this issue and still fires (it blocked 050's C-helper fix).
+  (`tests/branch_merged_scalar_union.py`) — and **fails on both
+  backends** (LLVM: `call ptr @_CG_strcat(ptr %0, i64 10)` fails module
+  verification), so unlike [048](048-none-int-field-pair-runtime-abort.md)
+  it is an FA defect, not codegen. Not redundant with anything: 048 is
+  `cg.cc`, ifa/075 is the container-method plan, ifa/030 is classtag
+  dispatch for object receivers. The `sizeof_element of non-container`
+  guard in `cg.cc` still cites this issue and still fires (it blocked
+  050's C-helper fix).
 - [050-pyc-string-builders-are-quadratic.md](050-pyc-string-builders-are-quadratic.md)
   — **PARTIALLY FIXED.** Every string builder in `__pyc__` was O(n²): `join`, `lower`,
   `upper`, `replace`, `str.__mul__` and `list.__pyc_tobytes__` all

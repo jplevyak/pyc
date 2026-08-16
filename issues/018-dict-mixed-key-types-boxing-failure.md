@@ -18,10 +18,29 @@ The failure is pinned by `tests/branch_merged_scalar_union.py`
 (`.known_issue`): 8 warnings, compiles, then the binary aborts with
 `matching function not found` where CPython prints `hi world`.
 
-**That residue is the same failure mode as
-[048](048-none-int-field-pair-runtime-abort.md)** — a union of *basic*
-types (`int|str` here, `None|int` there) reaching an ordinary operation —
-so the two should be fixed together, and 048 is the smaller witness.
+**Correction (2026-08-16): this residue is NOT
+[048](048-none-int-field-pair-runtime-abort.md)**, despite both aborting
+with `matching function not found` on the C backend. They share a symptom
+string, not a cause, and the backends separate them cleanly:
+
+| | C backend | LLVM backend |
+|---|---|---|
+| 048 (`None\|int` field pair) | aborts | **correct** — a `cg.cc` bug |
+| this (`int\|str` branch merge) | 8 warnings, aborts | **also fails** — `LLVM module verification failed: call ptr @_CG_strcat(ptr %0, i64 10)` |
+
+Failing on *both* emitters means the defect is upstream of codegen: FA
+genuinely does not resolve the union, exactly as the section below
+describes (it clones `str.__add__` for the union's `str` member with the
+call site's literal `10` baked in). That is this issue's own mechanism,
+and no other open issue covers it — 048 is codegen,
+[075](../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md) is
+the container-method-per-element-CS plan, and
+[030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md) is
+classtag dispatch for object receivers, which this doc already notes does
+not cover a raw `int`/`str` scalar union.
+
+**So 018 stays open on its own merits**, re-scoped to the bare-scalar
+union. The dict/set half is done.
 
 Note also that the `sizeof_element of non-container` guard in `cg.cc`
 still cites this issue and still fires: it blocked the C-helper form of
