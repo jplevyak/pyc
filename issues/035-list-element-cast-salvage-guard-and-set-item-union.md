@@ -27,6 +27,57 @@ this doc's own 6-line repro: `n * [0]` then `x[i] += 1.5`. pyc still
 compiles it with **zero diagnostics** and the binary aborts with `list
 element type mismatch`; CPython prints `[1.5, 0, 0]`.
 
+## How shedskin handles this, and how close pyc already is (2026-08-16)
+
+Read `../shedskin/shedskin/typestr.py` and ran shedskin on this issue's
+own repro. **Shedskin compiles it**, because `typestrnew` special-cases
+the numeric pair before any rejection:
+
+```python
+if len(lcp) > 1:
+    if set(lcp) == {def_class(gx, "int_"), def_class(gx, "float_")}:
+        return conv["float_"]        # {int, float} -> float, silently
+```
+
+Its output is `[1.5, 0.0, 0.0]` against CPython's `[1.5, 0, 0]` — the
+widening is visible in the repr, and shedskin accepts that as a
+documented restriction rather than a bug.
+
+**pyc already has the same mechanism**: `fa_coerce_numeric_confluences`
+/ `coerce_annotate` (issue 025's numeric unification) annotates an AVar
+whose converged type is a pure numeric mix with the widest member. It is
+simply not applied here — the CreationSet scan is gated to closure frames
+and `Type_RECORD` (user class) fields:
+
+```cpp
+bool eligible = cs->sym == sym_closure ||
+                (cs->sym->type && cs->sym->type->type_kind == Type_RECORD);
+if (!eligible) continue;
+```
+
+A container's element CS is neither, so the element AVar is never
+annotated.
+
+**Tried, works, and is currently too expensive.** Adding
+`coerce_annotate(get_element_avar(cs))` to that loop takes the repro from
+a runtime abort to `[1.5, 0.0, 0.0]` — byte-for-byte shedskin's answer —
+with **zero exit-code changes and unchanged ess/csize** across the
+84-program sweep. But it costs **+92% analysis time** (374 s → 719 s),
+broadly: adatron 3→14, chess 7→30, chull 5→20, linalg 8→27.
+
+The surprise is that the cost is *not* the annotations. chull slows 4× while
+firing **zero** of them. It is `get_element_avar` itself — the same
+program-wide perturbation `split_container_methods_per_element_cs`
+documents ("calling get_element_avar unconditionally here perturbs
+collect_type_confluence broadly across the WHOLE program on EVERY pass").
+Scanning `cs->vars` instead is free but does not reach the element AVar,
+so there is no cheap route from where the coercion pass currently stands.
+
+So the fix is *known and one line*, and what blocks it is the cost of
+materialising element AVars during the between-pass coercion scan — a
+narrower problem than this issue started with. The code carries this note
+at the call site.
+
 ## Symptom
 
 `tictactoe.py` failed to compile:
