@@ -92,6 +92,21 @@ name suggests. Not backwards at all once the polarity is known: `-r`
 turning a salvageable violation into a hard fail is exactly what a
 "stop tolerating type violations" flag should do.
 
+## Minimisation attempted and rejected (2026-08-15)
+
+Re-verified still real on current HEAD: compiles (rc=0), then hangs —
+120 s timeout, zero output.
+
+The obvious reduction **does not reproduce**: a class holding a
+`[0] * n` buffer and a position index, mutated in a `while` loop, with
+`main()` constructing a fresh instance and being called twice, compiles
+and prints the right answer both times. So "call a function twice with
+fresh objects" is not by itself the trigger, and landing that program as
+this issue's test would have recorded a false negative.
+
+Narrowing has to come from bisecting the real file (deleting decode
+stages until the hang goes away), not from guessing a small one.
+
 ## Why not root-caused further here
 
 Full root-causing would mean either (a) tracing the generated C for a

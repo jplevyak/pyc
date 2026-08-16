@@ -45,6 +45,44 @@ intend to fix: because the check files hold the right answer, the test
 flips to `PASS` by itself the day the bug is fixed — nothing has to be
 un-baked, and until then every run names the issue each one is waiting on.
 
+## When a corpus-only bug should get a minimal test — and when it should not
+
+Several issues reproduce only on a `shedskin_examples/` program. Minimising
+those is usually right but not always, and getting it wrong is worse than
+not trying: a reduction that *passes* tells you nothing, and one that fails
+for a different reason quietly redirects the investigation.
+
+**Minimise when the bug has a local trigger.** 035, 039, 046, 047 and 048
+all reduced to 8-27 lines, and each reduction sharpened the diagnosis —
+039 dropped `bh.py` entirely, 047 gained "the setters must be methods",
+048 turned out to be a C-backend bug once the small case could be run on
+both backends. The tell is that you can name the construct.
+
+**Do not minimise an emergent or stateful one by guessing.** 045
+(tonyjpegdecoder's second `main()` hangs) is the counter-example: the
+obvious reduction — a class with a `[0] * n` buffer and an index, called
+twice — *passes*, while tonyjpegdecoder still hangs. Writing that test
+would have recorded a false negative under an issue number. The path there
+is bisecting the real program, not inventing a small one.
+
+**Convergence issues want a different kind of test.** `go`, `linalg`,
+`plcfrs` and `hq2x` are non-convergent *at scale*; no small program
+reproduces "102 passes". What is assertable is the property, via the
+probes: `PYC_DBG_STAGES` pins which splitter stages a program demands
+(see `tests/splitter_*.py`) and `PYC_DBG_OSC` reports the final pass
+count, violations and contour totals. Prefer a property assertion over a
+reduction that cannot exist.
+
+**Some cannot be tested without structural work.** 042 (package-directory
+imports) needs a `tests/pkg/__init__.py`, which the harness cannot see —
+it only symlinks `tests/*.py` into the build dir — and which `.gitignore`
+excludes, since its `!tests/*.*` rule un-ignores files *with an
+extension* and a directory has none. Both are small changes, but they are
+harness changes, not a test.
+
+**And some are umbrellas.** 025 tracks corpus coverage; there is nothing
+to minimise.
+
 ## Current open issues
 
 - [049-llvm-list-element-union-segfault.md](049-llvm-list-element-union-segfault.md)
