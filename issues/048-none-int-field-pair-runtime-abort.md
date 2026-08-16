@@ -65,6 +65,28 @@ So **there is nothing to fix in `cg.cc`** — the abort is a correct,
 deliberate refusal to miscompile, and it is the better of the two
 behaviours. This issue is not a codegen bug at all.
 
+## The boundary, measured (2026-08-16)
+
+| union | pyc | |
+|---|---|---|
+| `{None, SomeClass}` | **works** | `nullptr` *is* `None`; shedskin drops `None` here for the same reason |
+| `{int, float}` | **works** | issue 025's numeric widening, extended to container elements 2026-08-16 (issues/035) |
+| `{None, int}` | compiles, **aborts** at dispatch | this issue; `(_CG_void)7` is a legal int→pointer cast, so it gets as far as run time |
+| `{None, float}` | **raw clang error**, no pyc diagnostic | `error: cannot cast from type 'double' to pointer type '_CG_void'` — a double cannot make that cast, so it fails earlier and more crudely. `tests/none_float_field.py` |
+| `{int, str}` | compiles, **aborts** at dispatch | [018](018-dict-mixed-key-types-boxing-failure.md)'s residue; `tests/branch_merged_scalar_union.py` |
+
+So the two working rows are exactly the two representations pyc *has* —
+a pointer that can be null, and a widened numeric — and every failing row
+is a union of a **scalar** with something that fits neither. 018's residue
+and this issue are therefore **one defect**, not two, and the earlier
+attempts to classify them apart (first "048 is codegen, 018 is FA", then
+"same failure mode") were both wrong: they are the same defect, and it is
+not codegen.
+
+`{None, float}` failing as an unguarded clang error is worth fixing on its
+own even before the representation work — every sibling in this table
+either works or fails through the established runtime-assert convention.
+
 ## What this issue actually is
 
 The defect is upstream: a `{nil, int64}` union survives to codegen on a

@@ -39,8 +39,18 @@ the container-method-per-element-CS plan, and
 classtag dispatch for object receivers, which this doc already notes does
 not cover a raw `int`/`str` scalar union.
 
-**So 018 stays open on its own merits**, re-scoped to the bare-scalar
-union. The dict/set half is done.
+**So 018 stays open**, re-scoped to the bare-scalar union — the dict/set
+half is done.
+
+**Further (2026-08-16):** with the boundary now measured (see
+[048](048-none-int-field-pair-runtime-abort.md)'s table), this residue and
+048 are **the same defect** after all: pyc represents a union only as a
+nullable pointer or a widened numeric, and every failing case is a scalar
+unioned with something that fits neither — `{None,int}`, `{None,float}`,
+`{int,str}`. `{None,class}` and `{int,float}` work. That supersedes both
+earlier classifications of the pair (2026-08-15 "same failure mode",
+2026-08-16 "not the same, one is codegen") — the second was right that 048
+is not codegen and wrong that they differ.
 
 Note also that the `sizeof_element of non-container` guard in `cg.cc`
 still cites this issue and still fires: it blocked the C-helper form of
