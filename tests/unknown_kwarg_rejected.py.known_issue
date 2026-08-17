@@ -1,0 +1,1 @@
+issues/103 -- unknown keyword argument is silently bound to the next positional parameter instead of being rejected; the root cause of life's runtime abort (ifa/issues/102 class A)

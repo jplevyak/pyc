@@ -699,3 +699,5 @@ commit ref recorded in each file's status line.
   captures) resolved by issue 007's split-identity rework. Tests:
   `captured_local.py`, `nested_capture.py`, `nested_recursion.py`,
   `decorator_basic.py`.
+
+- [103](103-unknown-kwarg-silently-bound-positionally.md) — an unrecognized keyword argument is silently bound to the next positional parameter (no TypeError); root cause of `life`'s runtime abort.

@@ -1,0 +1,1 @@
+unknown_kwarg_rejected.py:24:1: error: f() got an unexpected keyword argument 'nosuchkw'
