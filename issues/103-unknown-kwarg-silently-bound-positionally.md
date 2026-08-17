@@ -154,9 +154,53 @@ Then **report it properly**: CPython's wording (`f() got an unexpected
 keyword argument 'nosuchkw'`) at the call site, which is what
 `tests/unknown_kwarg_rejected.py.check` pins.
 
-Separately, `pyc_lib/itertools.py`'s `product` should support `repeat=`.
-That is a real gap but it is the *second* bug here — with fix 1 in place
-`life` would fail loudly at compile time instead of miscompiling.
+### `product(repeat=)` — implemented 2026-08-16
+
+`pyc_lib/itertools.py`'s `product` now accepts `repeat`. Verified against
+CPython: `product((0,1), repeat=3)` gives all 8 rows in CPython's exact
+order (`000, 001, 010, 011, 100, …`).
+
+**Its elements are LISTS, not tuples, and that is deliberate.** `repeat`
+is a runtime value while pyc's tuples are fixed-arity records, so no
+tuple type can be given. shedskin sidesteps this by having a
+variable-length homogeneous `tuple<T>` — its `itertools.py` is only a
+type stub (`yield iter(iterables).__next__(),`, yielding a 1-tuple
+whatever `repeat` is) with the real work in C++. pyc has no such type.
+Lists support iteration, indexing, `len` and `zip`, which is what
+`repeat` is used for in practice.
+
+`sudoku5`, the corpus's only other `product` user, uses the two-argument
+form and is byte-for-byte unaffected.
+
+### `life` is now blocked on something else
+
+Abort stubs drop 15 → 12, but it still aborts, at a *different* site. The
+remaining dispatch failures are:
+
+```
+DISPATCH FAIL in __init__: fns=-1 rvals=2 | r0=__iter__:symbol r1=initial:?
+DISPATCH FAIL in process:  fns=-1 rvals=2 | r0=_:void_type r1=board:void_type
+DISPATCH FAIL in snext:    fns=-1 rvals=2 | r0=__iter__:symbol r1=_:void_type
+```
+
+`pyc_lib/collections.py`'s `defaultdict.__init__(self, factory=None,
+initial=None)` does
+
+```python
+if initial:
+    for k in initial:
+```
+
+and `life` calls both `defaultdict(int)` and `defaultdict(int, board)`,
+so `initial` is the union `{None, defaultdict}` at the iteration site.
+`None` has no `__iter__`, so there is no single candidate — and the `if
+initial:` guard does not narrow the type. That is the
+[018](018-dict-mixed-key-types-boxing-failure.md) family, **not** this
+issue, and the `void_type` operands in `process`/`snext` are downstream
+consequences of it.
+
+So `life`'s class-A failures had *two* independent causes, and this issue
+accounts for one of them.
 
 ## Verification plan
 
