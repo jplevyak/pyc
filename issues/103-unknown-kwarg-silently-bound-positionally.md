@@ -23,25 +23,38 @@ f([1, 2], nosuchkw=99)
 
 No diagnostic at any stage. The program compiles and runs.
 
-## Cause
+## Cause: NOT YET LOCATED
 
-`ifa/if1/pattern.cc`, `Matcher::build_positional_map`:
+The behaviour is certain and reproducible; **the internal mechanism is
+not**. Two hypotheses were formed and both are falsified by measurement,
+recorded here so they are not re-tried:
 
-```cpp
-MPosition *fcpp = f->named_to_positional.get(fcnp);   // null when f has no such formal
-acpps_for_acnps.set_add(acpp);
-fcpps_for_fcnps.set_add(fcpp);
-m->actual_to_formal_position.put(acpp, fcpp);
-```
+1. **"`build_positional_map` binds it positionally."** The idea was that
+   `f->named_to_positional.get(fcnp)` returns null for an unknown name
+   and the actual then falls into the *"collect actual positions not used
+   by named arguments"* sweep. A probe on that exact null case **never
+   fires** — not on the reproducer, and not on any of ten class-A corpus
+   crashers.
+2. **"`find_all_matches` fails to disqualify the candidate."** A
+   rejection was implemented there behind a flag. It never fires either:
+   instrumenting shows that at the point the named actual is processed,
+   `some_named=1` but the candidate list is already **`n=0`** — so
+   `find_arg_matches` *had* correctly eliminated the candidate on the
+   named position. The named path is working.
 
-When the callee has no formal with that name the lookup yields **null**,
-and nothing treats that as a failed match. The actual is then not in
-`acpps_for_acnps`, so the next loop — *"collect actual positions not used
-by named arguments"* — sweeps it into `unused_acpps` and it is matched
-**positionally**.
+So the misbinding happens somewhere else: on a path that runs after all
+candidates are eliminated, or on a call route that does not go through
+`find_all_matches` with names at all. The frontend does attach the name
+(`if1_add_send_arg(..., cannonicalize_string(kw_keys[ki]->str_val))` in
+`python_ifa_build_if1.cc`), and the matcher does see it — `PYC_DBG_BADKW`
+prints `[kwseen] named actual 'nosuchkw' at pos 3` — so the name is not
+lost in lowering.
 
-So a misspelled or unsupported keyword does not fail; it shifts an
-argument into an unrelated parameter.
+**Next probe should start from the other end**: find what *does* bind the
+value to `B`, rather than what fails to reject it. A default-argument
+wrapper (`default_wrapper` / `order_wrapper` in `python_ifa_sym.cc`) is
+the obvious suspect, since those synthesize a forwarding call with
+positional formals.
 
 ## How this reaches a runtime crash
 
@@ -55,6 +68,14 @@ cheapest class-A reproducer:
 3. `repeat`'s value (an `int`) is silently bound to `B`.
 4. `B is not None` now, so the body takes the `elif C is None:` branch and
    runs `for b in B:` — **iterating an integer**.
+   Confirmed directly — compiling `product((0,1), repeat=3)` makes pyc
+   point at the exact line:
+
+   ```
+                   for b in B:
+                              ^
+     called from itertools.py:14
+   ```
 5. `int` has no `__iter__`, so the send has *no* candidate functions.
    `PYC_DBG_DISPATCH` shows it exactly:
    `DISPATCH FAIL in product: fns=-1 rvals=2 | r0=__iter__:symbol r1=_:int64`
@@ -69,20 +90,17 @@ upstream cause of them.
 
 ## Fix direction
 
-Two parts, and the first is worth doing on its own:
+**Locate the binding site first** — see above; two plausible-looking
+sites have already been ruled out by measurement, so the next attempt
+should be evidence-led rather than another guess. This area is delicate:
+the comment on `PycCompiler::order_wrapper` (`python_ifa_sym.cc`) records
+how [087](../ifa/issues/closed/087-DISPATCH-out-of-order-keyword-args.md)'s
+out-of-order keyword matching failed *far* downstream when a callback
+silently returned 0 — the same class of silent-fallthrough failure.
 
-1. **Reject the match.** In `build_positional_map`, a null `fcpp` means
-   this candidate has no formal by that name — it is not a match. Making
-   it fail turns a silent misbinding into a "no matching function"
-   diagnostic, which is a large improvement even before anyone gets a
-   proper error message. Note this area is delicate: the comment on
-   `PycCompiler::order_wrapper` (`python_ifa_sym.cc`) records how
-   [087](../ifa/issues/closed/087-DISPATCH-out-of-order-keyword-args.md)'s
-   out-of-order keyword matching failed *far* downstream when a callback
-   silently returned 0, which is the same failure mode as this one.
-2. **Report it properly** — CPython's wording (`f() got an unexpected
-   keyword argument 'nosuchkw'`) at the call site, which is what
-   `tests/unknown_kwarg_rejected.py.check` currently pins.
+Then **report it properly**: CPython's wording (`f() got an unexpected
+keyword argument 'nosuchkw'`) at the call site, which is what
+`tests/unknown_kwarg_rejected.py.check` pins.
 
 Separately, `pyc_lib/itertools.py`'s `product` should support `repeat=`.
 That is a real gap but it is the *second* bug here — with fix 1 in place
