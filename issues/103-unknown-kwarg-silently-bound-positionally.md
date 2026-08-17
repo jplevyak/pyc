@@ -23,7 +23,59 @@ f([1, 2], nosuchkw=99)
 
 No diagnostic at any stage. The program compiles and runs.
 
-## Cause: NOT YET LOCATED
+> **Binding site FOUND and the misbinding fixed 2026-08-16**
+> (`PYC_KWSTRICT`, on by default). See "Cause: located" below. The fix is
+> partial: the silent misbinding is gone and there is now a call-site
+> diagnostic, but it is a *warning* with generic wording, and the
+> unmatched call is elided rather than rejected — so the program runs and
+> prints nothing instead of raising `TypeError`. The issue stays open for
+> the message and for
+> [102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)'s
+> "codegen should not silently emit an abort stub".
+
+## Cause: located
+
+Working backwards from the emitted C rather than forwards from the
+matcher found it. `print(B is None)` had been **constant-folded to the
+literal `"False"`**, so `B` was bound at the type level and the parameter
+then optimised away. Instrumenting `Matcher::build` at the
+`default_wrapper` call gives the decisive line:
+
+```
+[kwmap] fun=f defaults=1 | nactuals=3
+```
+
+**Three actuals, one defaulted formal, and an empty actual→formal map.**
+The named actual never leaves the positional sequence: it keeps slot 3,
+the identity position map sends slot 3 to formal 3 (`B`), `C` is
+defaulted, and `default_wrapper` assigns 99 to `B`.
+
+So nothing "fails to reject" it in the *named* path — that path empties
+the candidate list correctly. **The surviving match comes from the
+positional route, where the name is never consulted.**
+
+The check therefore belongs at the top-level entry point
+(`ifa/if1/pattern.cc:1633`, after `find_all_matches`), which is where both
+the candidate list and `names` are in scope. A candidate with no formal
+of a given actual's name is dropped.
+
+Corpus, 77 programs: **zero exit-code changes**, and only `life` changes
+at all (violations 30 → 35, `ess` 135 → 117, `css` 708 → 688) — so the
+generated code for the other 76 is identical. Suite unchanged.
+
+### Scope correction
+
+Of six class-A crashers checked, **only `life` has any rejections** (15);
+`othello`, `mwmatching`, `rubik`, `amaze` and `kmeanspp` have zero. This
+explains `life` specifically, **not**
+[102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
+class A generally, which the first version of this issue implied.
+
+`life` also still aborts under the fix (abort stubs 15 → 16): rejecting
+the match means "no matching function", which `cg.cc:2055` still turns
+into a runtime stub. Making `life` work needs `product(repeat=)`.
+
+## Superseded: earlier hypotheses (both falsified)
 
 The behaviour is certain and reproducible; **the internal mechanism is
 not**. Two hypotheses were formed and both are falsified by measurement,
