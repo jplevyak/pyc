@@ -107,6 +107,17 @@ void build_builtin_symbols() {
 
   sym_list->element = new_sym();
   sym_vector->element = new_sym();
+  // ifa/issues/104: give `tuple` the same element/per-index duality
+  // `list` has. Without an element sym a tuple CreationSet has NO generic
+  // element AVar at all -- get_element_avar() returns 0, tuple_able() is
+  // therefore always false for tuples, and nothing can ask "is this tuple
+  // monomorphic?". That is the prerequisite for letting homogeneous
+  // tuples of DIFFERENT ARITY share one list representation instead of
+  // being distinct record types (shedskin's variable-length `tuple<T>`
+  // versus its fixed `tuple2<A,B>`). Measured target: 109/172/117 split
+  // partitions on plcfrs/rdb/sudoku5 hold same-element different-arity
+  // tuples.
+  if (getenv("PYC_TUPELEM") && atoi(getenv("PYC_TUPELEM"))) sym_tuple->element = new_sym();
 }
 
 static void finalize_function(Fun *f) {
