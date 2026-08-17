@@ -3,6 +3,23 @@
 #include "python_parse.h"
 #include <functional>
 
+// ifa/issues/104: unify `list` and `tuple` in the analysis, leaving the
+// representation choice to clone.cc's per-CreationSet tuple_able. pyc
+// already enforces neither of the semantic distinctions between them --
+// `t[0] = 99` on a tuple and a list used as a dict key both work, where
+// CPython raises TypeError -- so the split buys nothing at the type
+// level while forcing every `{list, tuple}` union into polymorphic
+// dispatch. Measured: 19%/14%/10% of split partitions on
+// plcfrs/rdb/sudoku5 hold both.
+static int unify_seq_enabled() {
+  static int e = -1;
+  if (e < 0) {
+    const char *v = getenv("PYC_UNIFY_SEQ");
+    e = v ? atoi(v) : 0;
+  }
+  return e;
+}
+
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx);
 static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx);
 
@@ -3748,7 +3765,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Code *send = if1_send1(if1, &ast->code, ast);
       if1_add_send_arg(if1, send, sym_primitive);
       if1_add_send_arg(if1, send, sym_make);
-      if1_add_send_arg(if1, send, sym_tuple);
+      // ifa/issues/104: build a tuple literal as a LIST, letting
+      // clone.cc's tuple_able pick the representation per CreationSet --
+      // record layout when the generic element AVar stayed bottom (every
+      // access was a constant index, which is what a tuple normally is),
+      // list layout otherwise. This case and PY_list above are otherwise
+      // character-for-character identical. Off by default while measured.
+      if1_add_send_arg(if1, send, unify_seq_enabled() ? sym_list : sym_tuple);
       for (auto c : n->children.values()) if1_add_send_arg(if1, send, getAST(c, ctx)->rval);
       ast->rval = new_sym(ast);
       if1_add_send_result(if1, send, ast->rval);
