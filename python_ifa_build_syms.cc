@@ -1371,8 +1371,18 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_try_stmt:
     case PY_except_handler:
     case PY_finally_clause:
-    case PY_with_stmt:
     case PY_with_item:
+      // issues/108: `with EXPR as TARGET` BINDS TARGET. The grammar is
+      // `with_item: test ('as' expr)?`, so children[1] is the target when
+      // present. It was never marked PY_STORE, so the body's reads of it
+      // resolved as unresolved USEs and minted module globals -- silently
+      // before issues/107, and reported as undefined afterwards. Marking
+      // it is exactly what assignment targets and `for` variables get
+      // (mark_store, above).
+      if (n->children.n >= 2) mark_store(n->children[1]);
+      goto generic_recurse;
+
+    case PY_with_stmt:
     case PY_match_stmt:
       goto generic_recurse;
 
@@ -1479,7 +1489,18 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_fpdef:
     case PY_fplist:
     case PY_arglist:
-    case PY_keyword_arg:
+    case PY_keyword_arg: {
+      // issues/107: children[0] is the PARAMETER NAME (`print(x, end=" ")`
+      // -- `end` names a formal, not a reference to a variable called
+      // `end`). It must still be WALKED (the earlier attempt to skip it
+      // broke 283 tests), but an unresolved lookup on it must not be
+      // reported as an undefined name.
+      ctx.in_kwarg_key++;
+      if (n->children.n) build_syms_pyda(n->children[0], ctx);
+      ctx.in_kwarg_key--;
+      for (int i = 1; i < n->children.n; i++) build_syms_pyda(n->children[i], ctx);
+      return 0;
+    }
     case PY_star_arg:
     case PY_dstar_arg:
     case PY_arg_default:

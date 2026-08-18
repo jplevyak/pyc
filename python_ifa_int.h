@@ -76,6 +76,20 @@ class PycCompiler : public PycCallbacks {
   Vec<PycModule *> *modules;
   Vec<cchar *> *search_path;
   Vec<PycScope *> scope_stack;
+  // issues/107: names used but bound nowhere. A PYC_USE that resolves to
+  // nothing falls through to Lglobal and MINTS a module global, so an
+  // undefined name silently becomes a never-assigned symbol with no type
+  // -- which warns, compiles with exit 0, and segfaults at runtime. The
+  // check must be DEFERRED to the end of the module, because forward
+  // references (`def f(): return g()` before `def g()`) legitimately take
+  // the same path: `g` is unbound when f's body is walked and bound
+  // later. `pending_uses` records name -> first-use line; `bound_names`
+  // records every name a real binding created. Anything left over at the
+  // end of the module was never defined.
+  HashMap<cchar *, StringHashFns, int> pending_uses;
+  HashMap<cchar *, StringHashFns, int> bound_names;
+  Vec<cchar *> pending_order;  // deterministic report order
+  int in_kwarg_key = 0;        // issues/107: suppress reporting for kwarg names
   Vec<WithCleanup> with_stack;
   Vec<cchar *> c_code;
   Map<void *, PycScope *> saved_scopes;
@@ -210,6 +224,8 @@ void enter_scope(PyDAST *n, PycCompiler &ctx, Sym *in = 0);
 void exit_scope(PycCompiler &ctx);
 PycSymbol *find_PycSymbol(PycCompiler &ctx, cchar *name, int *level = 0, int *type = 0);
 PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping);
+// issues/107: end-of-module check for names used but never bound.
+int report_undefined_names(PycCompiler &ctx);
 
 // From python_ifa_build_syms.cc:
 PycModule *get_module(cchar *name, PycCompiler &ctx);

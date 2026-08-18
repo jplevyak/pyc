@@ -413,6 +413,10 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
     PycModule *x = all_mods[i];
     x->filename = cannonicalize_string(x->filename);
     if (build_syms(x, *ctx) < 0) return -1;
+    // issues/107: after the whole module is walked, any name still
+    // unresolved was never bound anywhere -- forward references have had
+    // their chance by now.
+    if (report_undefined_names(*ctx) > 0) return -1;
   }
   // issue 011: user-level call graph (the builtin module's own was
   // already computed once in ast_to_if1_baseline). all_mods.n here

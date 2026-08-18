@@ -579,6 +579,50 @@ PycSymbol *find_PycSymbol(PycCompiler &ctx, cchar *name, int *level, int *type) 
 //  return find_PycSymbol(ctx, cannonicalize_string(PyString_AS_STRING(o)), level, type);
 //}
 
+// issues/107: report names that were used but bound nowhere. Deferred to
+// the end of the module so forward references resolve first. CPython
+// raises `NameError: name 'X' is not defined` at RUNTIME; pyc knows it
+// statically and reports it as a compile error, which is strictly
+// better -- and, critically, replaces the previous behaviour of warning
+// ("'X' has no type"), exiting 0, and emitting a binary that segfaults.
+// CPython builtins pyc does not implement. Reporting these as "not
+// defined" would be misleading -- the user did not misspell anything,
+// pyc simply lacks them -- so they get their own wording. Reaching one
+// is still an error: the program cannot work.
+static bool is_unimplemented_builtin(cchar *name) {
+  static cchar *kNames[] = {
+      "divmod", "property", "EOFError", "staticmethod", "classmethod", "eval", "exec", "compile",
+      "globals", "locals", "vars", "dir", "hasattr", "getattr", "setattr", "delattr", "callable",
+      "memoryview", "frozenset", "bytearray", "complex", "format", "hash", "id", "iter", "next",
+      "object", "repr", "reversed", "slice", "super", "type", "OverflowError", "RecursionError",
+      "NotImplementedError", "UnicodeDecodeError", "FileNotFoundError", "PermissionError", nullptr};
+  for (int i = 0; kNames[i]; i++)
+    if (!strcmp(name, kNames[i])) return true;
+  return false;
+}
+
+int report_undefined_names(PycCompiler &ctx) {
+  int n = 0;
+  for (cchar *name : ctx.pending_order) {
+    if (!name || ctx.bound_names.get(name)) continue;
+    int line = ctx.pending_uses.get(name);
+    if (is_unimplemented_builtin(name))
+      fprintf(stderr, "error line %d, builtin '%s' is not supported by pyc\n", line, name);
+    else
+      fprintf(stderr, "error line %d, name '%s' is not defined\n", line, name);
+    ++n;
+  }
+  ctx.pending_uses.clear();
+  ctx.bound_names.clear();
+  ctx.pending_order.clear();
+  // Exit the way every other frontend error does. Returning a code here
+  // instead left the caller to unwind into a half-built IF1 and the
+  // COMPILER ITSELF segfaulted (rc=139) after printing the diagnostic --
+  // precisely the failure mode issues/107 exists to remove.
+  if (n) fail("%d undefined name%s", n, n == 1 ? "" : "s");
+  return n;
+}
+
 PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping) {
   cchar *name = cannonicalize_string(n);
   TEST_SCOPE printf("make_PycSymbol %s '%s'\n", pyc_scoping_names[(int)scoping], name);
@@ -590,9 +634,24 @@ PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping) {
   bool explicitly = type == EXPLICITLY_MARKED;
   bool implicitly = type == IMPLICITLY_MARKED;
   bool isfun = l && (l->sym->is_fun || (l->sym->alias && l->sym->alias->is_fun));
+  bool unresolved_use = false;
   switch (scoping) {
     case PYC_USE: {
-      if (!l) goto Lglobal;  // not found
+      if (!l) {
+        // issues/107: record the unresolved use, then fall through to
+        // Lglobal exactly as before. The name may still be bound later
+        // in the module (a forward reference), so the verdict is
+        // deferred to report_undefined_names() at end of module.
+        // `_` is the match-statement WILDCARD (`case _:`), not a name
+        // reference, and is conventionally a throwaway elsewhere. Never
+        // report it.
+        if (strcmp(name, "_") && !ctx.in_kwarg_key && !ctx.pending_uses.get(name)) {
+          ctx.pending_uses.put(name, ctx.lineno);
+          ctx.pending_order.add(name);
+        }
+        unresolved_use = true;
+        goto Lglobal;  // not found
+      }
       if (!local && !explicitly) {
         if (global)
           ctx.scope_stack.last()->map.put(name, GLOBAL_USE);
@@ -602,10 +661,20 @@ PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping) {
       break;
     }
     case PYC_LOCAL:
-      if ((local || explicitly) && !isfun) break;
+      if ((local || explicitly) && !isfun) {
+        if (ctx.scope_stack.n == 1) ctx.bound_names.put(name, 1);  // issues/107, module scope only
+        break;
+      }
       if (implicitly && !isfun) fail("error line %d, '%s' redefined as local", ctx.lineno, name);
       ctx.scope_stack.last()->map.put(name, (l = new_PycSymbol(name, ctx)));
       if (local && previous) l->previous = previous;
+      // issues/107: ONLY a module-scope binding can resolve an earlier
+      // unresolved USE that fell through to the module. A local inside
+      // some other function must not -- that is scope-insensitivity, and
+      // it is exactly the bug that let a 212-line plcfrs reduction pass
+      // the reducer's own name check while `parse()` read `tolabel`,
+      // bound only as a local of `splitgrammar`.
+      if (ctx.scope_stack.n == 1) ctx.bound_names.put(name, 1);
       break;
     case PYC_GLOBAL:
     Lglobal:;
@@ -615,6 +684,9 @@ PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping) {
         PycSymbol *g = ctx.scope_stack[0]->map.get(name);
         if (!g) ctx.scope_stack[0]->map.put(name, (l = new_PycSymbol(name, ctx)));
       }
+      // issues/107: a REAL `global x` / definition binds the name; the
+      // PYC_USE fallthrough above does not.
+      if (!unresolved_use) ctx.bound_names.put(name, 1);  // module scope by construction
       if (!explicitly && !(ctx.scope_stack.n == 1)) ctx.scope_stack.last()->map.put(name, GLOBAL_DEF);
       break;
     case PYC_NONLOCAL:

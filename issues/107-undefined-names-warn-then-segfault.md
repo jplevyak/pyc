@@ -1,6 +1,9 @@
 # 107 — an undefined name compiles (exit 0) and the binary segfaults
 
-**Status:** open, found 2026-08-18 while delta-reducing `plcfrs` for
+**Status: FIXED 2026-08-18.** An undefined name is now a compile error
+naming the symbol, with a non-zero exit. See "The fix" at the end.
+
+**Originally filed** 2026-08-18 while delta-reducing `plcfrs` for
 [ifa/issues/105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md).
 Repro: `tests/undefined_name_executed.py` (`.known_issue`).
 
@@ -96,3 +99,64 @@ problem is the cheap, high-value half of these issues.
   `ifa/issues/repro/nameck.py` can confirm that in one pass, and if any
   does, that is itself a finding.
 - `ifa/issues/repro/check5.sh` can then drop its `nameck.py` step.
+
+
+## The fix
+
+`make_PycSymbol`'s `PYC_USE` case did `if (!l) goto Lglobal;` — an
+unresolved name **minted a fresh module global**, which then had no type,
+warned, compiled with exit 0, and segfaulted.
+
+It now records the unresolved use and defers the verdict to
+`report_undefined_names()` at end of module, because **forward references
+legitimately take the same path** (`def f(): return g()` before
+`def g()`). Anything still unbound once the module is walked is reported:
+
+```
+error line 11, name 'NoSuchName' is not defined
+fail: 1 undefined name
+```
+
+with exit code **1**.
+
+### Four things this surfaced, each fixed
+
+1. **The compiler segfaulted while reporting the error** (rc=139) —
+   returning a code let the caller unwind into a half-built IF1. It now
+   exits through `fail()` like every other frontend error. That is the
+   very failure mode this issue exists to remove, reproduced inside the
+   fix itself.
+2. **Scope-insensitive binding tracking.** The first version marked a
+   name "bound" from *any* scope, so a local of one function resolved an
+   unresolved global read in another. Only module-scope bindings can now
+   resolve a module-scope fallthrough — the identical bug I had just
+   fixed in the reducer's own `nameck.py`.
+3. **Keyword-argument names are not variable reads.** `print(x, end=" ")`
+   was reporting `end`. Suppressed via `ctx.in_kwarg_key`; note that
+   *skipping* the key child instead broke 283 tests, so it must still be
+   walked.
+4. **`with … as X` never bound `X`** —
+   [108](closed/108-async-with-as-target-not-bound.md), which looked
+   async-specific only because of defect 2. `PY_with_item` now marks its
+   target `PY_STORE`. **Fixed and closed.**
+
+`_` (the `match` wildcard) is never reported.
+
+### Corpus effect: three runtime crashes became compile errors
+
+| program | before | after |
+|---|---|---|
+| `rdb` | compiled, **exited 1 at runtime** | `error: name 'EOFError' is not defined` |
+| `sunfish` | compiled, **SIGABRT** | `error: builtin 'divmod' is not supported by pyc` |
+| `voronoi2` | compiled, **SIGABRT** | `error: builtin 'property' is not supported by pyc` |
+
+All three referenced CPython builtins pyc does not implement, and all
+three were already in
+[102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)'s
+crash list. Turning those into compile-time diagnostics is exactly 102's
+stated goal, so the three exit-code changes are an improvement, not a
+regression. Unimplemented builtins get their own wording — the user did
+not misspell anything.
+
+Suite: 274 passed / 14 known / 0 failed. The other 74 corpus programs are
+unchanged.
