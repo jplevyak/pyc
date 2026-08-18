@@ -1,1 +1,1 @@
-issues/018 -- branch-merged {list, float} in one variable makes '+' specialize a container method against a scalar; plcfrs's exact compile failure (see ifa/issues/105)
+issues/018 -- branch-merged {list, float} in one variable makes '+' specialize a container method against a scalar (shedskin rejects it too; NOT plcfrs's shape -- see ifa/issues/105)
