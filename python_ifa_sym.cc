@@ -117,7 +117,15 @@ void build_builtin_symbols() {
   // versus its fixed `tuple2<A,B>`). Measured target: 109/172/117 split
   // partitions on plcfrs/rdb/sudoku5 hold same-element different-arity
   // tuples.
-  if (getenv("PYC_TUPELEM") && atoi(getenv("PYC_TUPELEM"))) sym_tuple->element = new_sym();
+  // ifa/issues/109: ON by default. This is no longer just the 104
+  // experiment's prerequisite -- `tuple.__pyc_getslice__` reads
+  // `sizeof_element`, so without an element sym a tuple slice SEGFAULTS
+  // the compiler. With it, `(1,2,3,4)[0:2]` gives `(1, 2)` and a runtime
+  // range works too, because populating the element makes tuple_able()
+  // false and clone.cc gives the CreationSet list layout -- the same
+  // "unknown arity, known element type" representation a list has.
+  // PYC_TUPELEM=0 restores the old no-element tuple.
+  if (getenv("PYC_TUPELEM") ? atoi(getenv("PYC_TUPELEM")) : 1) sym_tuple->element = new_sym();
 }
 
 static void finalize_function(Fun *f) {

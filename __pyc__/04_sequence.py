@@ -353,6 +353,22 @@ class __tuple_iter__:
     return self.thetuple.__getitem__(self.position-1)
 
 class tuple:
+  def __pyc_getslice__(self, i, j, s):
+    # ifa/issues/109: a tuple slice has a RUNTIME arity, which a
+    # fixed-arity record cannot express -- but a tuple does not have to
+    # stay a record. `sizeof_element` here reads the generic element,
+    # which populating (exactly what a non-constant access does) makes
+    # tuple_able() false, so clone.cc gives this CreationSet LIST layout
+    # -- the same "unknown arity, known element type" representation a
+    # list already has. Requires PYC_TUPELEM for sym_tuple to HAVE an
+    # element sym at all (ifa/issues/104).
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
+                          "_CG_list_getslice",
+                          list, self,
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                          int, i,
+                          int, j,
+                          int, s)
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
   def __setitem__(self, key, value):
