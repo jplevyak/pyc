@@ -1,0 +1,1 @@
+issues/106 -- pyc accepts an 'if:' with no body inside a function (CPython: IndentationError) and silently drops the branch
