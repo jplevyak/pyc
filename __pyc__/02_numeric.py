@@ -48,7 +48,13 @@ class int:
   def __and__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("&"), __pyc_clone_constants__(x))
   def __floordiv__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
+    # Python floors; C `/` truncates toward zero, so a bare prim gave
+    # -7 // 3 == -2 instead of -3. `%` is already Python-correct (floored),
+    # and `self - (self % x)` is therefore an exact multiple of x -- so the
+    # division below is exact and truncation and flooring agree.
+    return __pyc_operator__(
+        __pyc_clone_constants__(self) - (__pyc_clone_constants__(self) % __pyc_clone_constants__(x)),
+        __pyc_symbol__("/"), __pyc_clone_constants__(x))
   def __iadd__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("+"), __pyc_clone_constants__(x))
   def __isub__(self, x):
@@ -133,7 +139,10 @@ class float:
   def __pow__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __floordiv__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+    # float // float is floor(a / b) AS A FLOAT (7.0 // 2.0 == 3.0), not
+    # the quotient -- a bare prim `/` returned 3.5. Same identity as the
+    # int case: `%` is floored, so self - (self % x) is an exact multiple.
+    return __pyc_operator__(self - (self % x), __pyc_symbol__("/"), x)
   def __iadd__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __isub__(self, x):

@@ -84,6 +84,9 @@ class IndexError(LookupError):
 class KeyError(LookupError):
   pass
 
+class EOFError(Exception):
+  pass
+
 class NameError(Exception):
   pass
 

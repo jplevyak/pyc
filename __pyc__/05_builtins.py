@@ -314,6 +314,12 @@ def reversed(seq):
 def pow(a, b):
   return a ** b
 
+def divmod(a, b):
+  # CPython returns (a // b, a % b) as a tuple, and Python's floor
+  # division / modulo already carry the sign conventions divmod must
+  # match (divmod(-7, 3) == (-3, 2)), so no sign fixup is needed here.
+  return (a // b, a % b)
+
 def round(x):
   # Simple form only (round(x) -> int). Uses libc round: half-away-
   # from-zero, a documented divergence from Py3 banker's rounding.
