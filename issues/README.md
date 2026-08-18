@@ -702,3 +702,4 @@ commit ref recorded in each file's status line.
 
 - [103](103-unknown-kwarg-silently-bound-positionally.md) — an unrecognized keyword argument is silently bound to the next positional parameter (no TypeError); root cause of `life`'s runtime abort.
 - [106](106-empty-if-body-silently-accepted.md) — pyc accepts an `if:` with no body inside a function and silently drops the branch (CPython: IndentationError).
+- [107](107-undefined-names-warn-then-segfault.md) — an undefined name compiles with exit 0 and segfaults; target is a CPython-consistent `name 'X' is not defined` error.

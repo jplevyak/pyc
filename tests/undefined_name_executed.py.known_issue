@@ -1,0 +1,1 @@
+issues/107 -- an executed undefined name warns, compiles with exit 0, and segfaults; CPython raises NameError
