@@ -22,6 +22,13 @@ print(f(1))
 At **module** level the same shape *is* rejected (`dparse: parse error in
 … near line 3`), so this is specific to a suite inside an indented block.
 
+## Still open after the 107 fix (2026-08-18)
+
+[107](107-undefined-names-warn-then-segfault.md) removed the *other*
+reason a reduction oracle needed `ast.parse` (undefined names), but this
+one stands: pyc still accepts an empty `if:` body inside a function, so
+`ast.parse` validation remains necessary for any Python reduction here.
+
 ## Why it matters beyond the parse
 
 It silently discards a conditional. A program with this typo compiles and

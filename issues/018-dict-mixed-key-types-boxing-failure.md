@@ -377,3 +377,28 @@ class and the exact union beats pyc's current
 `sizeof_element of non-container type 'float64'` from inside `__pyc__.py`.
 
 Full measurements in [ifa/issues/101](../ifa/issues/101-FA-first-time-forever-splitting.md).
+
+
+## Precedent: naming the user-level problem (2026-08-18)
+
+[107](107-undefined-names-warn-then-segfault.md) is the first instance of
+the "copy shedskin's diagnostics" half of this issue actually landing. An
+undefined name used to produce `'X' has no type` / `expression has no
+type` — analyser state — then compile with exit 0 and segfault. It now
+produces:
+
+```
+error line 11, name 'NoSuchName' is not defined
+```
+
+and, where the name is a CPython builtin pyc lacks:
+
+```
+error line 423, builtin 'divmod' is not supported by pyc
+```
+
+The same treatment is what this issue wants for `{scalar, container}`
+unions: say *which variable* holds *which union*, as shedskin's
+`*WARNING* Variable 'x' has dynamic (sub)type: {float, list}` does,
+rather than surfacing an internal `sizeof_element` assertion from inside
+`__pyc__.py`.
