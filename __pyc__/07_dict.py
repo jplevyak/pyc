@@ -166,6 +166,24 @@ class dict:
     return self
   def __iter__(self):
     return __dict_iter__(self._keys, self._len)
+  def __pyc_tolist__(self):
+    # issues/110: `list(d)` and `tuple(d)` iterate a dict's KEYS. Only
+    # the two ITERATOR classes above defined __pyc_tolist__, never
+    # `dict` itself, so `list(d)` aborted at runtime with "getter not
+    # resolved" while `list(d.keys())` worked -- and `tuple(d)` was the
+    # last hole in make_seq's iterable surface.
+    #
+    # Reads `_keys` directly rather than delegating to
+    # `self.keys().__pyc_tolist__()`. A freshly built iterator is never
+    # partially consumed, so the protocol loop buys nothing here, and
+    # the extra call boundary is exactly what costs make_seq its source
+    # CreationSets on a churning final pass (see CreationSet::seq_src).
+    r = []
+    i = 0
+    while i < self._len:
+      r = r.append(self._keys[i])
+      i += 1
+    return r
   def keys(self):
     # issues/025 "has no type" bucket: dict had no .keys()/.values()/
     # .items() at all (loop, mastermind2, plcfrs, sunfish all hit this
