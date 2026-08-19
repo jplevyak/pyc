@@ -746,16 +746,74 @@ Landing a change that makes the flags-on path *worse* to fix probes is
 not a trade worth taking, so it was reverted. The tree is back to
 276 / 0 and 275 / 2.
 
-### What this tells us
+### Root cause: the call's return is EMPTY on the final pass
 
-The blocker is **not** make_seq plumbing, and not the lowering. Element
-types do not survive an extra method-call boundary on the way into a
-make_seq container, and tuple/tuple comparison and nesting are the
-shapes that expose it. That is the same element-durability problem
-`50ebc8aa` fixed for one path (snapshot vs durable edge) showing up
-again at a call boundary — plus the `{list, tuple}` union limitation of
-ifa/issues/030 underneath.
+Traced, and it is sharper than "element types do not survive a call
+boundary" — plain call boundaries are fine. On the committed tree all
+of these are correct:
 
-So the ordering is: **fix element propagation across call boundaries
-first**, then the iterator-protocol lowering is a three-line change
-that should just work. Trying it the other way round produces a wash.
+```python
+def mk(xs): return tuple(xs)        # make_seq inside a function
+def src(): return [1, 2, 3]         # source is a returned value
+a = mk([1, 2, 3]); tuple(src())     # both exact, incl. iteration and ==
+```
+
+The failing shape needs only three lines, and only under the rework:
+
+```python
+a = tuple([1, 2])
+b = tuple([1, 3])
+print(a < b)        # runtime abort: matching function not found
+```
+
+Probing the make_seq constraint per pass (`src->out->sorted.n`, the
+CreationSets of the value handed to make_seq):
+
+```
+[ms] cs=945 srcCSn=0 srcvars=-1 elem=bottom     pass 1
+[ms] cs=948 srcCSn=0 srcvars=-1 elem=bottom
+[ms] cs=945 srcCSn=0 srcvars=-1 elem=bottom     pass 2
+[ms] cs=948 srcCSn=0 srcvars=-1 elem=bottom
+[ms] cs=945 srcCSn=1 srcvars=2  elem=SET        pass 3  <- correct
+[ms] cs=948 srcCSn=1 srcvars=2  elem=SET
+[ms] cs=945 srcCSn=0 srcvars=-1 elem=bottom     pass 4  <- LAST
+[ms] cs=948 srcCSn=0 srcvars=-1 elem=bottom
+```
+
+The source AVar — the return value of `list::__pyc_seq_source__`, an
+identity method — has **zero CreationSets** on the final pass, having
+been correct on pass 3. Not a union, not a wrong type: empty. So the
+constraint creates no edges at all that pass, the tuple element ends
+bottom, and the generated `__lt__`'s runtime tail (`self[i] < t[i]`,
+a non-constant index that reads the generic element) has nothing to
+dispatch on.
+
+Confirmed it really is the identity method and not a fallback: only
+`list::__pyc_seq_source__` is emitted, `__pyc_tolist__` is never called.
+
+This is the same **per-pass rebuild** hazard as `50ebc8aa`, one level
+up. There the *element* was a snapshot; here the *CreationSet set* of
+the source is, and the constraint's durable edges are themselves
+rebuilt each pass — so a single pass where the source reads empty
+discards them. Adding one call in the hot path is enough to land the
+last pass mid-churn (see the sticky stall guard in `extend_analysis`,
+which can stop the outer loop on such a pass).
+
+### Consequence for the design
+
+Do **not** reach for the iterator protocol via a method call. Two
+routes that avoid adding an FA-visible call:
+
+1. **Special-case the source kind in the constraint**, and emit the
+   conversion in **codegen** rather than as a Python-level call: for a
+   string source the element is `str` and cg emits a character loop;
+   for bytes, `int`. Sets and dicts already have element AVars for FA
+   to read, and each needs its own emitted loop. Contained, no new
+   call boundary, but real work per source kind.
+2. **Make the constraint's edges survive a pass where the source reads
+   empty** — e.g. remember the resolved source CSs on the CreationSet
+   across passes, the way `split_origin` and `elem_key` are durable.
+   This is the general fix and would likely help well beyond make_seq,
+   but it is FA-core surgery.
+
+Route 2 is the principled one and subsumes route 1.
