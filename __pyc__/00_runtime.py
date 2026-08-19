@@ -27,6 +27,12 @@ class __pyc_any_type__:
     return __pyc_primitive__(__pyc_symbol__("__pyc_to_str__"), self)
   def __pyc_tuplify__(self):
     return __pyc_primitive__(__pyc_symbol__("make_tuple"), self)
+  def __pyc_seq_source__(self):
+    # issues/110: the list make_seq copies from. Every iterable already
+    # implements __pyc_tolist__ (str, bytes, tuple, range, set, dict),
+    # so tuple(iterable) inherits list()'s whole iterable surface.
+    # `class list` overrides this with identity.
+    return self.__pyc_tolist__()
   def __pyc_getslice__(self, i, j, s):
     return self.__getitem__(slice(i,j,s))
   def __repr__(self):

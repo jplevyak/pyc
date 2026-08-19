@@ -72,6 +72,11 @@ class list:
     for x in self:
       r.append(x)
     return r
+  def __pyc_seq_source__(self):
+    # issues/110: identity, overriding __pyc_any_type__'s
+    # `self.__pyc_tolist__()` -- make_seq copies its source itself, so a
+    # list needs no intermediate.
+    return self
   def __pyc_tobytes__(self):
     # bytes(a_list_of_ints) -- CPython requires every element in
     # range(0, 256); out-of-range values are truncated to their low 8

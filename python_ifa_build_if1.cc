@@ -797,9 +797,17 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       const char *v = getenv("PYC_MAKESEQ");
       makeseq = v ? atoi(v) : 0;
     }
-    if (makeseq)
-      if1_send(if1, &ast->code, 4, 1, sym_primitive, make_symbol("make_seq"), sym_tuple, a0->rval, ast->rval)->ast =
+    if (makeseq) {
+      // Feed make_seq the list __pyc_seq_source__ yields rather than the
+      // raw iterable: its constraint reads the source CreationSets'
+      // per-index vars and generic element, which describes a list and
+      // nothing else, so a string/set/dict/range source contributed
+      // nothing and tuple("abc") silently yielded ().
+      Sym *as_list = new_sym(ast);
+      call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_seq_source__"), as_list, 0);
+      if1_send(if1, &ast->code, 4, 1, sym_primitive, make_symbol("make_seq"), sym_tuple, as_list, ast->rval)->ast =
           ast;
+    }
     else
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
     return 1;
