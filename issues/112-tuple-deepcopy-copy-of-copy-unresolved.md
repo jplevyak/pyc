@@ -90,20 +90,64 @@ check is strict enough that the differing-return-type site above
 correctly does NOT collapse — the strictness is load-bearing, not
 incidental.
 
-### What is left
+### What is left: a CreationSet minted on the TERMINAL pass
 
-Give a list-layout tuple group a **cloned** concrete type per element
-type instead of the shared base sym, so the receiver discriminates the
-way a list's does. `sym_tuple` is `Type_PRIMITIVE`, so excluding
-tuples from the pass-1 no-clone path should land them in pass 2's
-Type_PRIMITIVE branch, which clones exactly when the element is
-populated.
+Four things were tried from the current base. All are ruled out, and
+together they locate the problem precisely.
 
-Tried once, naively, and it made things worse: the receiver came out
-as `_CG_any`. That was before `CreationSet::no_static_arity` and
-`seq_src` existed and before `a224c063`, so it is worth redoing from
-the current base — but the `_CG_any` outcome needs explaining before
-trusting it.
+**1. The receiver is not the shared base sym.** Instrumenting pass 2
+shows the tuple group DOES clone (`cloned=1`). The printed name
+`tuple` is just `Sym::clone()` keeping its name — a name is not an
+identity, and reading one as one is what produced the earlier "shared
+base sym" claim. Retract it.
+
+**2. Excluding tuples from the pass-1 no-clone path changes nothing.**
+The receiver type is unchanged and h5 fails identically. (The earlier
+`_CG_any` outcome was from before `a224c063`; it does not reproduce.)
+
+**3. The group is heterogeneous — one member has a bottom element:**
+
+```
+[prim] tuple group n=4 cloned=1  cs=962[SET]  cs=1074[bottom]
+                                 cs=1116[SET]  cs=1117[SET]
+```
+
+One concrete type for the group, but FA specialised contours per CS,
+so the bottom one yields a `__getitem__` clone returning a different
+type. Hence two candidates, same arguments, different returns.
+
+**4. Disambiguating at the call site does not work, because the
+information genuinely conflicts.** The caller's destination type is a
+THIRD type, matching neither candidate:
+
+```
+[dis] want=?/0x…5d1400 | ret0=?/0x…3dbc00  ret1=?/0x…3db000
+```
+
+A `disambiguate_by_result` that picks the unique candidate whose
+return type matches the call site's destination therefore finds no
+match. (Worth keeping in mind for other ambiguities; it is not this
+one.)
+
+### The actual cause
+
+`cs=1074` is minted for a new contour on the **terminal** analysis
+pass. Giving it a source does not help: with a per-SITE source memory
+added (any contour of the make_seq site seeds it), it reports
+`seq=1` — the source is known and `vector_elems` has built the edges —
+**and its element is still bottom**, because no pass remains for those
+edges to propagate along.
+
+So this is not a make_seq problem, not a tuple problem, and not a
+codegen problem. It is the long-standing convergence issue: FA can
+mint a CreationSet on the pass it terminates on, and that CS can never
+receive types. `CreationSet::seq_src` (issues/110) fixed the case where
+a source read empty on the last pass; it cannot fix a CS that has no
+last pass.
+
+The fix belongs with the stall guard / `analyze_again` machinery in
+`extend_analysis` — see ifa/issues/033, 055, 057, 066. Minimally: a
+pass that mints a new CreationSet must not be the terminal pass.
 
 ## Verification
 
