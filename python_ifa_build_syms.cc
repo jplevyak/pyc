@@ -35,6 +35,17 @@ static void import_file(cchar *name, cchar *f, PycCompiler &ctx);
 // module name pasted in verbatim -- so `com.github.tarsa.tarsalzp.Main`
 // looked for a file literally named `com.github.tarsa.tarsalzp.Main.py`
 // and a package directory was never considered at all.
+// issues/113: `a.b.c` as the path it actually names, for diagnostics --
+// reporting "no 'a.b.c.py'" describes the pre-package resolver, not
+// what is now searched for.
+static cchar *module_rel_path(cchar *mod) {
+  int n = strlen(mod);
+  char *rel = (char *)GC_malloc(n + 1);
+  for (int i = 0; i < n; i++) rel[i] = mod[i] == '.' ? '/' : mod[i];
+  rel[n] = 0;
+  return rel;
+}
+
 static cchar *module_file(cchar *p, cchar *mod) {
   int n = strlen(mod);
   char *rel = (char *)GC_malloc(n + 1);
@@ -92,6 +103,21 @@ PycModule *get_module(cchar *name, PycCompiler &ctx) {
   return 0;
 }
 
+// issues/113: accumulate an import diagnostic. Reported by
+// report_import_errors before the undefined-name pass, so a bad import
+// is blamed on the import rather than on the names it failed to bind.
+static void add_import_error(PycCompiler &ctx, cchar *fmt, ...) {
+  char buf[512];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  cchar *line = dupstr(buf);
+  for (cchar *e : ctx.import_errors)
+    if (!strcmp(e, line)) return;  // same import reached twice
+  ctx.import_errors.add(line);
+}
+
 // issues/113: PEP 328. `mod` may start with dots -- `.camera`,
 // `..base`, or bare `.` / `..`. Resolve against the importing module's
 // package: one dot means that package, each extra dot strips a level.
@@ -133,6 +159,11 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
   rtrim_str(sym); rtrim_str(from);
   char *mod = (char *)(from ? resolve_relative_module(from, ctx) : (cchar *)sym);
   if (!strcmp(mod, "pyc_compat")) return;
+  // Capture the import statement's line NOW: find_and_import below walks
+  // into the imported module and leaves ctx.lineno pointing inside it,
+  // so a diagnostic built afterwards blamed a line in os.py for a bad
+  // import on line 1 of the user's file.
+  int import_line = ctx.lineno;
   PycModule *m = find_and_import(mod, ctx);
   // Plain dotted import with no matching file for the full dotted
   // name (e.g. `import os.path`): pyc has no real package hierarchy,
@@ -151,7 +182,17 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
       if (m) bind_mod = top;
     }
   }
-  if (!m) return;  // module not found; build_import_if1 emits the diagnostic
+  if (!m) {
+    // issues/113: record it HERE. Deferring to build_import_if1 meant
+    // the undefined-name pass (issues/107) ran first and reported the
+    // consequence -- minilight's `from ml import entry` failed with
+    // "name 'entry' is not defined" and never mentioned `ml`.
+    cchar *path = module_rel_path(mod);
+    add_import_error(ctx, "error line %d, cannot find module '%s' (looked for '%s.py' and "
+                          "'%s/__init__.py' on the search path)",
+                     import_line, mod, path, path);
+    return;
+  }
   // `from X import Y [as Z]`: bind the module's symbol Y into the
   // importing scope under Z (or Y). The module's symbols were fully
   // built by import_file (or a prior import), so its top scope is
@@ -190,6 +231,13 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
           marker->sym->nesting_depth = 0;
           ctx.module_syms.put(marker->sym, sm);
           ctx.scope_stack.last()->map.put(bind, marker);
+        } else {
+          // issues/113: the module resolved but has no such name and no
+          // such submodule. CPython raises ImportError here; pyc used to
+          // bind nothing at all and let the name surface later as
+          // "'X' has no type" or "name 'X' is not defined", pointing at
+          // the USE rather than at the import.
+          add_import_error(ctx, "error line %d, cannot import name '%s' from '%s'", import_line, sym, mod);
         }
       }
     }

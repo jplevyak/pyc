@@ -609,6 +609,17 @@ static bool is_unimplemented_builtin(cchar *name) {
   return false;
 }
 
+int report_import_errors(PycCompiler &ctx) {
+  int n = ctx.import_errors.n;
+  for (cchar *e : ctx.import_errors) fprintf(stderr, "%s\n", e);
+  ctx.import_errors.clear();
+  // A failed import leaves names unbound, so the undefined-name pass
+  // would fire too and bury the real cause. Exit here instead, the way
+  // report_undefined_names does.
+  if (n) fail("%d import error%s", n, n == 1 ? "" : "s");
+  return n;
+}
+
 int report_undefined_names(PycCompiler &ctx) {
   int n = 0;
   for (cchar *name : ctx.pending_order) {

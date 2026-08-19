@@ -416,6 +416,7 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
     // issues/107: after the whole module is walked, any name still
     // unresolved was never bound anywhere -- forward references have had
     // their chance by now.
+    if (report_import_errors(*ctx) > 0) return -1;
     if (report_undefined_names(*ctx) > 0) return -1;
   }
   // issue 011: user-level call graph (the builtin module's own was

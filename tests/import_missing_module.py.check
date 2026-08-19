@@ -1,0 +1,2 @@
+error line 8, cannot find module 'nosuchpkg.sub' (looked for 'nosuchpkg/sub.py' and 'nosuchpkg/sub/__init__.py' on the search path)
+fail: 1 import error

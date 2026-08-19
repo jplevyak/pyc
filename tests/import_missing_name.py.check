@@ -1,0 +1,2 @@
+error line 4, cannot import name 'nosuchname' from 'os'
+fail: 1 import error

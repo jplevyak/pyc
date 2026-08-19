@@ -89,6 +89,12 @@ class PycCompiler : public PycCallbacks {
   HashMap<cchar *, StringHashFns, int> pending_uses;
   HashMap<cchar *, StringHashFns, int> bound_names;
   Vec<cchar *> pending_order;  // deterministic report order
+  // issues/113: import failures, reported BEFORE the undefined-name
+  // pass. An import that cannot be satisfied was silently dropped, and
+  // the user saw the consequence -- "name 'entry' is not defined" --
+  // rather than the cause. Accumulated as formatted lines so several
+  // bad imports are all reported in one run, like undefined names.
+  Vec<cchar *> import_errors;
   int in_kwarg_key = 0;        // issues/107: suppress reporting for kwarg names
   Vec<WithCleanup> with_stack;
   Vec<cchar *> c_code;
@@ -226,6 +232,9 @@ PycSymbol *find_PycSymbol(PycCompiler &ctx, cchar *name, int *level = 0, int *ty
 PycSymbol *make_PycSymbol(PycCompiler &ctx, cchar *n, PYC_SCOPINGS scoping);
 // issues/107: end-of-module check for names used but never bound.
 int report_undefined_names(PycCompiler &ctx);
+// issues/113: report accumulated import failures; call before
+// report_undefined_names so a bad import is blamed on the import.
+int report_import_errors(PycCompiler &ctx);
 
 // From python_ifa_build_syms.cc:
 PycModule *get_module(cchar *name, PycCompiler &ctx);

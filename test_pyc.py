@@ -123,6 +123,18 @@ def _run_test(g, args, envs):
         if os.path.exists(f"{g}.expect_fail"):
             return {"name": name, "status": "XFAIL", "stage": "compile"}
         if os.path.exists(f"{g}.check_fail"):
+            # issues/113: a `.check_fail` test whose point is the
+            # DIAGNOSTIC must still have its diagnostic checked. Without
+            # this, any message at all (or a crash) counted as a pass,
+            # so a test asserting an error message asserted nothing.
+            # `.check_fail` with no `.check` keeps the old meaning:
+            # the failure itself is what matters.
+            cf_check = f"{g}.check"
+            if os.path.exists(cf_check):
+                cf_is_diff, cf_diff = diff_files(out_path, os.path.abspath(cf_check))
+                if cf_is_diff:
+                    return {"name": name, "status": "FAIL", "stage": "COMPILE-OUT",
+                            "msg": f"diff {envs['BUILD']}/{name}.out {cf_check}", "diff": cf_diff}
             return {"name": name, "status": "PASS", "msg": "(compile-fail-ok)"}
         return {"name": name, "status": "FAIL", "stage": "COMPILE", "msg": f"log: {envs['BUILD']}/{name}.out"}
 
