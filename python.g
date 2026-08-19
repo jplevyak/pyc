@@ -179,9 +179,22 @@ import_stmt: import_name | import_from;
 import_name: 'import' dotted_as_names {
   $$.ast = new_pyast_collect(PY_import_name, &$n);
 };
-import_from: ('from' ('.'* dotted_name | '.'+)
+import_from: ('from' import_from_mod
               'import' ('*' | '(' import_as_names ')' | import_as_names)) {
   $$.ast = new_pyast_collect(PY_import_from, &$n);
+};
+// issues/113: the module part of `from X import Y` gets its own rule so
+// the LEADING DOTS of a relative import survive into the AST. They used
+// to be bare tokens outside `dotted_name`, whose str_val is captured
+// from its own span, so `from .camera import Camera` arrived as plain
+// `camera` and was resolved as an absolute import -- which fails,
+// because camera.py is inside the package, not on the search path.
+// Capturing the whole span yields `.camera`, and the dot count is what
+// PEP 328 resolution needs.
+import_from_mod: ('.'* NAME ('.' NAME)* | '.'+) {
+  $$.ast = new_pyast(PY_dotted_name, &$n);
+  int len = (int)($n.end - $n.start_loc.s);
+  $$.ast->str_val = pyast_dupstr($n.start_loc.s, len);
 };
 import_as_name: NAME ('as' NAME)? {
   $$.ast = new_pyast_collect(PY_import_as_name, &$n);

@@ -269,6 +269,19 @@ def main():
         dst = os.path.join(envs["BUILD"], os.path.basename(f))
         if not os.path.exists(dst):
             os.symlink(os.path.join("..", os.path.basename(f)), dst)
+
+    # issues/113: stage test subdirectories too. Tests run with cwd =
+    # tests/build/, which is also the module search-path root, so a
+    # package fixture (tests/pyc_pkg/) is invisible unless it is linked
+    # in alongside the .py files -- import_package.py compiled by hand
+    # and failed in the harness for exactly that reason.
+    for d in sorted(glob.glob(os.path.join(envs["TESTS_DIR"], "*/"))):
+        base = os.path.basename(os.path.normpath(d))
+        if base in ("build", "__pycache__"):
+            continue
+        dst = os.path.join(envs["BUILD"], base)
+        if not os.path.exists(dst):
+            os.symlink(os.path.join("..", base), dst)
             
     # create empty check file if needed
     empty_file = os.path.join(envs["TESTS_DIR"], "empty")

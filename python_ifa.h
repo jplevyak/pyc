@@ -106,6 +106,10 @@ class PycModule : public gc {
   PycCompiler *ctx;
   bool is_builtin;
   bool built_if1;
+  // issues/113: loaded as <dir>/__init__.py. PEP 328 resolves a relative
+  // import against the module's PACKAGE, which for a package is itself
+  // and for a plain module is its parent.
+  bool is_package = false;
   PycModule(cchar *afilename, bool ais_builtin = false)
       : pymod(nullptr), filename(afilename), name_sym(0), file_sym(0), ctx(0), is_builtin(ais_builtin), built_if1(false) {
     name = mod_name_from_filename(filename);

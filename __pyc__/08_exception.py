@@ -87,6 +87,9 @@ class KeyError(LookupError):
 class EOFError(Exception):
   pass
 
+class MemoryError(Exception):
+  pass
+
 class NameError(Exception):
   pass
 

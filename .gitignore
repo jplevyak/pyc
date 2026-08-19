@@ -61,6 +61,12 @@ tests/*
 !tests/*.*
 !tests/empty
 !tests/ir/
+# issues/113: fixture PACKAGES for the package-import tests. `tests/*`
+# hides subdirectories and git will not descend into an ignored
+# directory, so the directory itself has to be un-ignored before any
+# negation inside it can apply -- same reason tests/ir/ is listed above.
+# These hold only .py sources; nothing is built inside them.
+!tests/pyc_pkg/
 tests/build/
 tests/__pycache__/
 tests/pyc_compat.py

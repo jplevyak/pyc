@@ -24,9 +24,53 @@ static int compar_pycsymbol_by_name(const void *ai, const void *aj) {
 
 // ---- Shared utility functions ----
 
-static void import_file(cchar *name, cchar *p, PycCompiler &ctx) {
-  cchar *f = dupstrs(p, "/", name, ".py");
+static void import_file(cchar *name, cchar *f, PycCompiler &ctx);
+
+// issues/113: resolve a possibly-DOTTED module name to a file under the
+// search-path root `p`. `a.b.c` is `<p>/a/b/c.py` if that is a module,
+// or `<p>/a/b/c/__init__.py` if it is a package. Returns null if neither
+// exists, so the caller can try the next root.
+//
+// Before this, resolution was `dupstrs(p, "/", mod, ".py")` -- the
+// module name pasted in verbatim -- so `com.github.tarsa.tarsalzp.Main`
+// looked for a file literally named `com.github.tarsa.tarsalzp.Main.py`
+// and a package directory was never considered at all.
+static cchar *module_file(cchar *p, cchar *mod) {
+  int n = strlen(mod);
+  char *rel = (char *)GC_malloc(n + 1);
+  for (int i = 0; i < n; i++) rel[i] = mod[i] == '.' ? '/' : mod[i];
+  rel[n] = 0;
+  cchar *f = dupstrs(p, "/", rel, ".py");
+  if (is_regular_file(f)) return f;
+  f = dupstrs(p, "/", rel, "/__init__.py");
+  if (is_regular_file(f)) return f;
+  return nullptr;
+}
+
+// Search every root for `mod`, importing it on the first hit. Roots that
+// are themselves packages are skipped -- a package's interior is reached
+// through its own dotted name, never as a root.
+static PycModule *find_and_import(cchar *mod, PycCompiler &ctx) {
+  if (PycModule *m = get_module(mod, ctx)) return m;
+  for (auto p : ctx.search_path->values()) {
+    if (file_exists(p, "/__init__.py")) continue;
+    cchar *f = module_file(p, mod);
+    if (!f) continue;
+    import_file(mod, f, ctx);
+    break;
+  }
+  return get_module(mod, ctx);
+}
+
+static void import_file(cchar *name, cchar *f, PycCompiler &ctx) {
   PycModule *m = new PycModule(f);
+  // The registry keys on `name`, and PycModule derives it from the
+  // BASENAME -- which for `ml/entry.py` is `entry`, and for any
+  // package's `__init__.py` is `__init__`. Both collide across
+  // packages, so record the dotted name instead.
+  m->name = cannonicalize_string(name);
+  int flen = strlen(f);
+  m->is_package = flen >= 12 && !strcmp(f + flen - 12, "/__init__.py");
   m->pymod = dparse_python_to_ast(f);
   ctx.modules->add(m);
   PycModule *saved_mod = ctx.mod;
@@ -48,6 +92,32 @@ PycModule *get_module(cchar *name, PycCompiler &ctx) {
   return 0;
 }
 
+// issues/113: PEP 328. `mod` may start with dots -- `.camera`,
+// `..base`, or bare `.` / `..`. Resolve against the importing module's
+// package: one dot means that package, each extra dot strips a level.
+// A module with no dots is already absolute and passes through.
+cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx) {
+  if (!mod || mod[0] != '.') return mod;
+  int dots = 0;
+  while (mod[dots] == '.') dots++;
+  cchar *rest = mod + dots;
+  // The importing module's package: itself if it IS a package, else its
+  // parent. `ctx.mod` is null only for the top-level script, which has
+  // no package and so cannot host a relative import.
+  cchar *base = (ctx.mod && ctx.mod->name) ? ctx.mod->name : "";
+  char *b = dupstr(base);
+  if (ctx.mod && !ctx.mod->is_package) {
+    char *d = strrchr(b, '.');
+    if (d) *d = 0; else b[0] = 0;
+  }
+  for (int i = 1; i < dots; i++) {
+    char *d = strrchr(b, '.');
+    if (d) *d = 0; else { b[0] = 0; break; }
+  }
+  if (!*rest) return b[0] ? (cchar *)b : mod;
+  return b[0] ? dupstrs(b, ".", rest) : rest;
+}
+
 static void rtrim_str(char *s) {
   if (!s) return;
   int len = strlen(s);
@@ -61,18 +131,9 @@ static inline bool is_real_pycsymbol(PycSymbol *s) { return (intptr_t)s > (intpt
 
 static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx) {
   rtrim_str(sym); rtrim_str(from);
-  char *mod = from ? from : sym;
+  char *mod = (char *)(from ? resolve_relative_module(from, ctx) : (cchar *)sym);
   if (!strcmp(mod, "pyc_compat")) return;
-  PycModule *m = get_module(mod, ctx);
-  if (!m) {
-    for (auto p : ctx.search_path->values()) {
-      if (file_exists(p, "/__init__.py")) continue;
-      if (!is_regular_file(p, "/", mod, ".py")) continue;
-      import_file(mod, p, ctx);
-      break;
-    }
-    m = get_module(mod, ctx);
-  }
+  PycModule *m = find_and_import(mod, ctx);
   // Plain dotted import with no matching file for the full dotted
   // name (e.g. `import os.path`): pyc has no real package hierarchy,
   // so fall back to the top-level component. This matches CPython's
@@ -86,16 +147,7 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
       char *top = (char *)GC_malloc(dot - mod + 1);
       memcpy(top, mod, dot - mod);
       top[dot - mod] = 0;
-      m = get_module(top, ctx);
-      if (!m) {
-        for (auto p : ctx.search_path->values()) {
-          if (file_exists(p, "/__init__.py")) continue;
-          if (!is_regular_file(p, "/", top, ".py")) continue;
-          import_file(top, p, ctx);
-          break;
-        }
-        m = get_module(top, ctx);
-      }
+      m = find_and_import(top, ctx);
       if (m) bind_mod = top;
     }
   }
@@ -124,6 +176,21 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
         PycSymbol *y = modscope->map.get(cannonicalize_string(sym));
         if (is_real_pycsymbol(y))
           ctx.scope_stack.last()->map.put(cannonicalize_string(as ? as : sym), y);
+        else if (PycModule *sm = find_and_import(dupstrs(mod, ".", sym), ctx)) {
+          // issues/113: `from PKG import NAME` where NAME is a SUBMODULE
+          // rather than one of the package's own names -- minilight's
+          // `from ml import entry`, quameon's `from stats import
+          // average`. CPython imports PKG.NAME and binds the module
+          // object; do the same, with the module-marker symbol `import X`
+          // already uses (modules are compile-time namespaces here, so
+          // `entry.main(...)` resolves at build_if1 time via PY_power).
+          cchar *bind = cannonicalize_string(as ? as : sym);
+          PycSymbol *marker = new_PycSymbol(bind, ctx);
+          marker->sym->is_module = 1;
+          marker->sym->nesting_depth = 0;
+          ctx.module_syms.put(marker->sym, sm);
+          ctx.scope_stack.last()->map.put(bind, marker);
+        }
       }
     }
   } else {

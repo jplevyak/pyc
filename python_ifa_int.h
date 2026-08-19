@@ -229,6 +229,9 @@ int report_undefined_names(PycCompiler &ctx);
 
 // From python_ifa_build_syms.cc:
 PycModule *get_module(cchar *name, PycCompiler &ctx);
+// issues/113: PEP 328 -- turn a dot-prefixed relative module name into
+// an absolute dotted one, against the importing module's package.
+cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
 int build_syms(PycModule *x, PycCompiler &ctx);
 void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name = 0);
 Sym *make_string(cchar *s, int len = -1);

@@ -33,11 +33,36 @@ static char *pyda_trim(const char *s) {
   return r;
 }
 
+static void build_one_module_if1(PycModule *m, PycCompiler &ctx) {
+  if (m->built_if1) return;
+  // ctx.node is the import statement node whose ast->code the enclosing
+  // statement loop consumes; the module builders below re-point ctx.node
+  // at the imported module's scope node (enter_scope(PyDAST*)) without
+  // restoring, so a second import in the same statement (`import a, b`)
+  // would splice b's code into a's dead module PycAST. Restore it.
+  void *saved_node = ctx.node;
+  Code **c = &getAST((PyDAST *)ctx.node, ctx)->code;
+  // issues/113: point ctx.mod at the module being built, the way
+  // build_syms does. Imports INSIDE m are lowered during the call
+  // below, and a relative one (`from .camera import Camera`) resolves
+  // against the importing module's package -- so a stale ctx.mod
+  // resolved `.camera` against the wrong package and reported
+  // "cannot find module 'camera'". build_syms got this right, which
+  // is why symbol building succeeded and only IF1 failed.
+  PycModule *saved_mod = m->ctx->mod;
+  m->ctx->mod = m;
+  build_module_attributes_if1(m, *m->ctx, c);
+  build_if1_module_pyda(m->pymod, *m->ctx, c);
+  m->ctx->mod = saved_mod;
+  m->built_if1 = true;
+  ctx.node = saved_node;
+}
+
 static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) {
   // str_val from DParser non-terminal (dotted_name) may have trailing whitespace
   if (sym) sym = pyda_trim(sym);
   if (from) from = pyda_trim(from);
-  char *mod = from ? from : sym;
+  char *mod = (char *)(from ? resolve_relative_module(from, ctx) : (cchar *)sym);
   if (!strcmp(mod, "pyc_compat")) return;
   PycModule *m = get_module(mod, ctx);
   // Mirror build_import_syms' dotted-import fallback: `import os.path`
@@ -60,19 +85,12 @@ static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) 
   // internal invariant: emit a clean diagnostic instead of SIGABRT.
   if (!m) fail("error line %d, cannot find module '%s' (no '%s.py' on the search path; "
                "pyc does not yet provide this module)", ctx.lineno, mod, mod);
-  if (!m->built_if1) {
-    // ctx.node is the import statement node whose ast->code the enclosing
-    // statement loop consumes; the module builders below re-point ctx.node
-    // at the imported module's scope node (enter_scope(PyDAST*)) without
-    // restoring, so a second import in the same statement (`import a, b`)
-    // would splice b's code into a's dead module PycAST. Restore it.
-    void *saved_node = ctx.node;
-    Code **c;
-    c = &getAST((PyDAST *)ctx.node, ctx)->code;
-    build_module_attributes_if1(m, *m->ctx, c);
-    build_if1_module_pyda(m->pymod, *m->ctx, c);
-    m->built_if1 = true;
-    ctx.node = saved_node;
+  build_one_module_if1(m, ctx);
+  // issues/113: `from PKG import SUB` where SUB is a submodule binds a
+  // marker for PKG.SUB (build_import_syms), and that module needs its
+  // own IF1 built too -- `m` above is only the package.
+  if (from && sym) {
+    if (PycModule *sm = get_module(dupstrs(mod, ".", sym), ctx)) build_one_module_if1(sm, ctx);
   }
 }
 

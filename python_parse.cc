@@ -27,7 +27,13 @@ static D_Parser *make_python_parser(const char *filename, const char *buf, int l
 int dparse_python_file(const char *filename) {
   char *buf = 0;
   int len = 0;
-  if (buf_read(filename, &buf, &len) <= 0) {
+  // issues/113: `< 0`, not `<= 0`. buf_read returns -1 only when open()
+  // fails; a length of 0 is a successful read of an EMPTY file, and it
+  // still hands back a NUL-terminated buffer. An empty `__init__.py` is
+  // both legal and the common case for a package (minilight's ml/,
+  // quameon's jastrow/ and orbital/), and this rejected every one of
+  // them with "unable to read".
+  if (buf_read(filename, &buf, &len) < 0) {
     fprintf(stderr, "dparse: unable to read '%s'\n", filename);
     return -1;
   }
@@ -58,7 +64,8 @@ static PyDAST *dparse_buf_to_ast_impl(const char *label, char *buf, int len) {
 PyDAST *dparse_python_to_ast(const char *filename) {
   char *buf = 0;
   int len = 0;
-  if (buf_read(filename, &buf, &len) <= 0) {
+  // See dparse_python_file above: 0 is an empty file, not a failure.
+  if (buf_read(filename, &buf, &len) < 0) {
     fprintf(stderr, "dparse: unable to read '%s'\n", filename);
     return nullptr;
   }
