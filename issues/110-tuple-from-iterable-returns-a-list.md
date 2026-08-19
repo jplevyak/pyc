@@ -531,9 +531,100 @@ The three, and what each needs:
 - **`deepcopy_objects`** — the copy aliases the original (prints `77`
   where CPython prints `5`). `class tuple` has no `__deepcopy__` and
   falls through to `__pyc_any_type__`'s one-level struct clone.
-  Adding an identity `tuple.__deepcopy__` fixes the aliasing but
-  regresses `minmax_3arg`: `return self` flows every tuple contour into
-  one return AVar and degrades tuple precision program-wide. `list`
-  avoids this only because its `__deepcopy__` builds a fresh list.
 - **`list_element_type_union`** — `tuple(self.state[20:32])` yields
   wrong values (`0 0 1` for `0 15 16`).
+
+**Retracted:** an earlier draft of this list claimed an identity
+`tuple.__deepcopy__` "regresses `minmax_3arg`: `return self` flows every
+tuple contour into one return AVar". That is wrong, twice over. Identity
+cannot fix aliasing in the first place, and `minmax_3arg` was never
+regressing — its check embeds `__pyc__.py` line numbers, which shift
+when any builtin file grows (issues/111).
+
+
+## Both remaining failures resolved, and what they cost
+
+`a7e5b45d` fixed `list_element_type_union`; the `deepcopy_objects` fix
+is written and verified but is **coupled to the flag flip** (below).
+
+### `list_element_type_union` — two defects, one symptom
+
+Neither was in the copy path either.
+
+**1. `cs->vars.n` is not an arity.** Two places read it as one, and a
+make_seq CreationSet has no per-index vars at all, so both silently read
+zero: `P_prim_len` folded `len()` to the **constant 0**, so
+`tuple.__hash__`'s `for k in range(len(self))` never ran and every tuple
+hashed to 0; and `tuple_able()` elected RECORD layout with zero members
+— the same empty record as before. `CreationSet::no_static_arity` marks
+it at the make_seq constraint. Unlike the element type this is a
+property of *how the container was made*, so it is known at constraint
+time and immune to the pass-ordering race that `50ebc8aa` had to fix.
+
+**2. `tuple.__eq__`/`__lt__` are generated at the wrong length.**
+`inject_tuple_compare` unrolls them to `max_arity`, computed by scanning
+tuple **literals** (`PY_tuple` nodes). A `tuple(iterable)` has no literal
+anywhere, so it contributes nothing — the unrolled body compared only
+the first `max_arity` elements and returned `True` for everything past
+it. rubik2's `id_() -> tuple(state[20:32])` deduped 15 distinct 12-tuples
+to **3** in a set, silently, with no diagnostic. With no tuple literal in
+the program at all `max_arity` is 0 and every same-length tuple compares
+equal. Both methods now get a runtime tail past the unrolled prefix;
+for a RECORD tuple `n` is constant `<= max_arity` so the guard folds to
+`False` and the tail is dead — the same folding the existing `n >= k`
+guards already rely on.
+
+A library `tuple.__eq__` was tried first and is **wrong**: it is
+ambiguous against the generated one and breaks record-tuple equality at
+default settings (`(1, 2) == (1, 2)` aborts).
+
+### `deepcopy_objects` — fixed, but coupled to the flag flip
+
+Element-recursive, mirroring `list.__deepcopy__`, rebuilding with
+`make_seq` because the arity is a runtime value:
+
+```python
+def __deepcopy__(self):
+    r = []
+    for k in range(len(self)):
+      r.append(self[k].__deepcopy__())
+    return __pyc_primitive__(__pyc_symbol__("make_seq"), tuple, r)
+```
+
+Verified: `deepcopy_objects` MATCHES under the flags. But it cannot land
+while they are off. The library method puts a make_seq site in **every**
+program, and at default settings a make_seq CS still takes the record
+branch (`tuple_is_record = sym == sym_tuple && !tuple_as_list_enabled()`)
+— an empty record again. Measured: 273 passed / 3 failed at default
+(`deepcopy_list`, `deepcopy_objects`, `deepcopy_none_or_tuple_field`).
+
+So this fix and the flag default are **one commit, not two**.
+
+## Standing state
+
+    default settings   276 passed / 0 failed
+    both flags on      275 passed / 2 failed
+
+The two are `builtin_type_factory` (whose `.check` records the old buggy
+`[1, 2, 3]`; pyc now correctly prints `(1, 2, 3)`) and `deepcopy_objects`
+(fix above). Both are resolved by the flip itself.
+
+Corpus, freshly measured on a clean tree at this commit:
+
+    default    66 compiled (34 with warnings), 11 failed of 77
+    flags on   66 compiled (34 with warnings), 11 failed of 77
+    per-program status: IDENTICAL, and identical to the pre-change
+                        baseline
+
+Caveat: the sweep measures **compile only**. Roughly 39% of corpus
+programs that compile then crash at runtime, so this is evidence the
+flags are not a compile-time regression — not that they are behaviour-
+neutral.
+
+## What remains before the flags can default on
+
+1. Land `tuple.__deepcopy__` + `PYC_MAKESEQ=1` + `PYC_TUPLE_AS_LIST=1`
+   together.
+2. Regenerate `builtin_type_factory.py.check` (records `[1, 2, 3]`).
+3. Re-take both baselines afterwards, and ideally an execution-level
+   corpus comparison rather than compile-only.
