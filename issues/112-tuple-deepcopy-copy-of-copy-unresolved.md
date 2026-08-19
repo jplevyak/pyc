@@ -57,14 +57,53 @@ It also blocks the follow-up of making `tuple.__add__` return a tuple
 instead of a list: that needs `make_seq` in the library, which is only
 sound once the layout flag defaults on.
 
-## Where to look next
+## Diagnosed: two clones, same receiver type, different RETURN types
 
-The receiver is a union of four tuple CreationSets that are all in one
-equivalence group (so they share one concrete type) and all have
-resolved elements — yet `__getitem__` does not resolve against it.
-Start by dumping the receiver's `AType` at that send and comparing it
-to the single-copy case, which differs only in having two CSs instead
-of four.
+`PYC_DBG_DISPATCH` (already in `cg.cc`) shows the real shape — it is
+not "no candidate" but **two**:
+
+```
+DISPATCH FAIL in count: fns=2 rvals=3
+  cand=__getitem__(sym=0x…c1400 args=3 a2=tuple/0x…703c00 rets=1: ?/0x…7ec00)
+  cand=__getitem__(sym=0x…c1400 args=3 a2=tuple/0x…703c00 rets=1: ?/0x…7e000)
+```
+
+Same `Sym`, same arity, same receiver type **pointer** (`tuple`), same
+index type — and **different return types**, both anonymous.
+
+That is the inconsistency. A list-layout tuple group takes
+`define_concrete_types`' pass-1 no-clone path and every member gets the
+shared base `sym_tuple`, so the receiver carries no per-CreationSet
+element typing. FA meanwhile specialised two contours of
+`tuple::__getitem__` that genuinely return different element types.
+Codegen is then asked to pick between two C functions whose parameter
+lists are identical and whose return types differ, with nothing in the
+receiver to discriminate on — so it cannot, and it aborts.
+
+### Half of it is fixed
+
+`a224c063` collapses candidates that are identical in *every* respect,
+which is a real case: it fixes
+`tests/deepcopy_tuple_copy_of_copy.py`, where both clones of
+`tuple::__getitem__` matched down to the element type pointer. The
+check is strict enough that the differing-return-type site above
+correctly does NOT collapse — the strictness is load-bearing, not
+incidental.
+
+### What is left
+
+Give a list-layout tuple group a **cloned** concrete type per element
+type instead of the shared base sym, so the receiver discriminates the
+way a list's does. `sym_tuple` is `Type_PRIMITIVE`, so excluding
+tuples from the pass-1 no-clone path should land them in pass 2's
+Type_PRIMITIVE branch, which clones exactly when the element is
+populated.
+
+Tried once, naively, and it made things worse: the receiver came out
+as `_CG_any`. That was before `CreationSet::no_static_arity` and
+`seq_src` existed and before `a224c063`, so it is worth redoing from
+the current base — but the `_CG_any` outcome needs explaining before
+trusting it.
 
 ## Verification
 
