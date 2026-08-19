@@ -857,11 +857,15 @@ actually improved.
 
 ### What is left before the flags can default on
 
-1. **`tuple(a_dict)`** — aborts at default settings too, so not a
-   regression and not caused by this work, but it is the last hole in
-   the iterable surface. `07_dict.py` has two `__pyc_tolist__`
-   definitions; start by working out which one a dict receiver
-   resolves to.
+1. ~~**`tuple(a_dict)`**~~ — DONE (`2bb302b0`). Neither of
+   `07_dict.py`'s two `__pyc_tolist__` definitions was on `dict`: both
+   are on the ITERATOR classes, so `list(d.keys())` worked and
+   `list(d)` aborted with "getter not resolved" — a default-settings
+   bug, not a flag-specific one. `dict.__pyc_tolist__` added, reading
+   `_keys` directly rather than through `self.keys()`, since the extra
+   call boundary is what costs make_seq its source CreationSets on a
+   churning final pass. **The probe set is now 11 of 11 exact.**
+   Covered by `tests/dict_iterable_conversion.py`.
 2. **Land the flip** together with `tuple.__deepcopy__` and a
    regenerated `builtin_type_factory.py.check`, per the earlier
    section — those cannot land separately.
@@ -869,3 +873,40 @@ actually improved.
    still mutates where CPython raises `TypeError`. Both are
    pre-existing and independent of the flip; `__add__` is now easy
    with make_seq available.
+
+
+## Iterable surface: complete
+
+    tuple(src)                    default        flags on
+    list / slice / nested / empty wrong type     exact
+    string                        wrong type     exact
+    range                         wrong type     exact
+    set                           wrong type     exact
+    dict                          wrong type     exact
+    == vs literal, hash, dedup    RUNTIME ABORT  exact
+    < / > between dynamic tuples  RUNTIME ABORT  exact
+
+11 of 11 probes exact against CPython under the flags. Every remaining
+difference at default settings is the wrong *type* (a list), which is
+the whole point of the flip.
+
+Suites, at `2bb302b0`:
+
+    C backend           277 passed / 0 failed
+    LLVM backend        279 passed / 1 failed
+    C, both flags on    276 passed / 2 failed
+    corpus              66 compiled / 11 failed of 77, per-program
+                        identical to baseline at both settings
+
+**Note on the LLVM row**, which earlier entries in this issue did not
+account for: `make test-e2e` runs `test_pyc.py` TWICE -- once for the C
+backend and once with `PYC_FLAGS=-b` -- and prints two summaries. The
+LLVM failure is `list_element_type_union`, pre-existing (verified by
+stashing) and documented in that test's own header as the open
+ifa/issues/051 bug. It is not tagged, so it reports as a plain failure
+in the LLVM phase.
+
+Remaining before the flip: only items 2 and 3 above -- land
+`tuple.__deepcopy__` + the regenerated `builtin_type_factory.py.check`
+together with the defaults, and (independently) `tuple.__add__`
+returning a list and `t[0] = 99` not raising.
