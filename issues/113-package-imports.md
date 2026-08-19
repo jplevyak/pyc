@@ -62,8 +62,36 @@ blocker.
 
 ## Follow-ups
 
-1. **The diagnostic gap above** — silent drop instead of a module
-   error.
+1. ~~**The diagnostic gap above**~~ — DONE (`3c7dda60`). The
+   missing-module error was recorded but deferred to IF1 building,
+   while the undefined-name pass (issues/107) runs earlier and exits
+   first — so the cause was never printed. Both failures are now
+   reported at symbol-building time and accumulated:
+
+   ```
+   error line 8, cannot find module 'nosuchpkg.sub' (looked for
+     'nosuchpkg/sub.py' and 'nosuchpkg/sub/__init__.py' on the search path)
+   error line 4, cannot import name 'nosuchname' from 'os'
+   ```
+
+   The second is NEW behaviour: a module that resolves but has no such
+   name and no such submodule used to bind nothing, so
+   `from os import nosuchname` compiled quietly and surfaced as
+   "'nosuchname' has no type" at the use site. Covered by
+   `tests/import_missing_module.py` and `tests/import_missing_name.py`.
+
+   Two things this shook out:
+
+   - **`.check_fail` tests were not verifying their `.check`.** Any
+     failure counted as a pass, so a test whose point is a diagnostic
+     asserted nothing. The harness now compares when both sidecars
+     exist (verified with a deliberately-wrong check).
+   - **`scope_global_after_local.py.check` was stale**, hidden by
+     exactly that. Current output registers `local 'x'` TWICE for a
+     single `x = 2`. Pre-existing (confirmed by stashing), and the
+     test's real subject — the "redefined as global" error — still
+     fires. Regenerated. **The duplicate registration is worth its own
+     look**: it is a frontend redundancy nobody has been watching.
 2. **`import a.b` binds only the top name.** `build_import_syms` keeps
    its old fallback of resolving `a.b` to `a`, matching CPython's
    binding for that form, but now that packages resolve properly this
