@@ -692,3 +692,70 @@ default today, so the machinery exists). That is the gating work before
 `tuple.__add__` returning a list is a separate, now-easy follow-up: it
 was a documented compromise only because fixed-arity structs cannot
 concatenate at runtime, which make_seq removes.
+
+## Attempt 1 at the iterator-protocol route — measured, reverted
+
+The plan above ("make_seq has to go through the iterator protocol")
+was tried and does **not** work as a lowering change alone. Recording
+it so it is not tried again blind.
+
+### What was built
+
+Rather than reimplement iteration inside the FA constraint, feed
+make_seq the list that `__pyc_tolist__` already produces — that method
+is defined on str, bytes, list, tuple, range, set and dict, so
+`tuple(x)` inherits `list(x)`'s whole iterable surface for free:
+
+```
+tmp = x.__pyc_tolist__()        # existing, works for every iterable
+result = make_seq(tuple, tmp)   # list -> runtime-arity tuple
+```
+
+That immediately fixed the three broken sources — `tuple("abc")`,
+`tuple(range(3))`, `tuple(a_set)` all became exact — and immediately
+broke the list sources, because `list.__pyc_tolist__` copies through a
+method boundary that FA loses the element type across:
+`for x in tuple(xs)` summed **0** instead of 6.
+
+Second iteration: add `__pyc_seq_source__`, defaulting to
+`self.__pyc_tolist__()` on `__pyc_any_type__` and overridden to
+identity on `class list` (make_seq copies its source anyway, so a list
+needs no intermediate). That restored the list sources — iteration,
+slicing and indexing all correct again — while keeping string, range
+and set fixed.
+
+### Why it was still reverted
+
+The *added dispatch alone* destabilizes tuple element typing in shapes
+that previously worked. Even with the identity override, three probes
+that passed before now abort at runtime with "expression has no type"
+on the tuple's element:
+
+- `tuple(xs) == (1, 2)` — dynamic tuple vs literal tuple
+- `tuple(xs) < tuple([1, 3])` — ordering between two dynamic tuples
+- `tuple([t, tuple([3])])` — nested dynamic tuples
+
+Net on the probe set: 7 ✓ / 4 ✗ either way — a wash, just a different
+four. Net on the suite, which is what decided it:
+
+    default    276 passed / 0 failed  (the 1 reported is minmax_3arg
+                                       line drift, issues/111)
+    flags on   274 passed / 4 failed  (committed state: 275 / 2)
+
+Landing a change that makes the flags-on path *worse* to fix probes is
+not a trade worth taking, so it was reverted. The tree is back to
+276 / 0 and 275 / 2.
+
+### What this tells us
+
+The blocker is **not** make_seq plumbing, and not the lowering. Element
+types do not survive an extra method-call boundary on the way into a
+make_seq container, and tuple/tuple comparison and nesting are the
+shapes that expose it. That is the same element-durability problem
+`50ebc8aa` fixed for one path (snapshot vs durable edge) showing up
+again at a call boundary — plus the `{list, tuple}` union limitation of
+ifa/issues/030 underneath.
+
+So the ordering is: **fix element propagation across call boundaries
+first**, then the iterator-protocol lowering is a three-line change
+that should just work. Trying it the other way round produces a wash.
