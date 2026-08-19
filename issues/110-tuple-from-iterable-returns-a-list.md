@@ -399,3 +399,46 @@ confirm as acceptable — before `PYC_MAKESEQ` and `PYC_TUPLE_AS_LIST` can
 default on.
 
 Suite **276 passed / 17 known / 0 failed**.
+
+## How shedskin handles it — and a correction to the blocker's diagnosis
+
+shedskin translates and **builds** the 7-line reproducer with no warnings,
+and prints `None`. Its typing:
+
+```cpp
+class T : public pyobj {
+    tuple<T *> *args;
+};
+```
+
+**`args` is a plain pointer, and `None` is a null pointer of that type.**
+So `{None, tuple}` needs no union at all — the null pointer *is* the
+`None` case. That works because both members are pointer-represented,
+which is exactly the distinction
+[052](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md) turns on:
+`{None, int}` is unrepresentable this way (0 is a valid `int`), while
+`{None, container}` is free.
+
+### pyc already does this — for lists
+
+| | default | flags on |
+|---|---|---|
+| `{None, list}` field, deepcopied | **compiles, prints `None`** | — |
+| `{None, tuple}` field, deepcopied | **compiles** | **FAILS** |
+
+So pyc handles `{None, container}` correctly when the container is a
+`list`. The failure appears only for a **list-layout tuple**.
+
+### That corrects the previous section
+
+The blocker is **not** a pre-existing 018 gap that the new tuple merely
+exposes — 018 would have to break the `list` case too, and it does not.
+It is an **incompleteness in the tuple-as-list work**: a tuple that took
+list layout is not inheriting the copy-path handling a real list gets, so
+`_CG_prim_copy_dst` resolves its destination to `_CG_void`.
+
+That is a much better-scoped problem than "fix 018 first", and it is
+squarely inside this issue rather than blocked on another. The place to
+look is what `define_concrete_types` produces for a list-layout tuple
+versus a list — `sym_list` and `sym_tuple` are both `Type_PRIMITIVE`, so
+the two should be taking the same path, and evidently are not.
