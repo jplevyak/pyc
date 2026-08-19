@@ -237,3 +237,58 @@ Kept behind `PYC_MAKESEQ` rather than reverted, because the hard part —
 the primitive, its FA constraint and codegen — is done and working, and
 the remaining work is diagnosing three specific tests. Default is
 unchanged: **275 passed / 17 known / 0 failed**.
+
+## Diagnostics (2026-08-19): 4 failures → 2, and the core case is exact
+
+### 1. The two flags are interdependent — `PYC_MAKESEQ` needs `PYC_TUPLE_AS_LIST`
+
+The first symptom was `runtime error: bad getter` on `t[0]`. The emitted
+guard is `t->type_kind == Type_RECORD && !t->has.n` — the result was a
+**record with zero fields**. Cause: `define_concrete_types` computes
+`tuple_is_record = sym == sym_tuple && !tuple_as_list_enabled()`, and
+`PYC_TUPLE_AS_LIST` defaults **off**, so every tuple takes the record
+branch *regardless of its element*. The new CreationSet has a populated
+element and still got record layout.
+
+With both flags the core case is byte-exact against CPython:
+
+```
+len 3 | t[0] t[1] t[2] = 1 2 3 | print(t) -> (1, 2, 3)
+hash(t) == hash(tuple([1,2,3]))  True
+hash(t) == hash(tuple([1,2,4]))  False
+```
+
+That also fixed `list_hash`, which had been failing because
+`hash(tuple([1,2,3])) == hash(tuple([1,2,4]))` — the hash was reading a
+zero-field record.
+
+### 2. Literal sources have a bottom element — `update_gen`, not `flow_vars`
+
+`tuple([1,2,3])` initially produced `sizeof(_CG_void_type)`. The source is
+a **list literal**, and by the `tuple_able` design `make` fills per-index
+vars and leaves the generic element bottom — so there was nothing to
+flow. The element must come from the per-index vars.
+
+It must be contributed with `update_gen`, **not** `flow_vars`: those AVars
+are CS-contoured, and a flow *edge* into an element var trips
+`compute_setters`' `x->contour_is_entry_set` assertion (measured:
+`genetic2_idioms` aborted the compiler). `update_gen` contributes the
+type without creating a setter. After that, `sizeof(_CG_int64)`.
+
+### 3. What is left: two genuine failures, both element-type gaps
+
+| test | status |
+|---|---|
+| `builtin_type_factory` | **not a regression** — now prints `(1, 2, 3)`, which is what CPython prints. Its `.check` records the old buggy `[1, 2, 3]` and can only be regenerated once this is the default. |
+| `deepcopy_objects` | `tuple([leaf1, leaf2])` — a list of **user objects**. Element resolves to `_CG_void`, so codegen emits `sizeof(void)`. |
+| `list_element_type_union` | `tuple(self.state[20:32])` — a tuple of a **slice**. Compiles, wrong values. |
+
+Both are the same shape: the element type is not reaching the result for
+sources that are not plain literals of scalars — a slice result, and a
+list of records. The `update_gen` from `scs->vars` covers a literal; it
+evidently does not cover these.
+
+That is the next thing to fix, and it is one constraint, not a redesign.
+
+Default remains **275 passed / 17 known / 0 failed**; with both flags,
+273 passed / 3 failed (one of which is the corrected output).
