@@ -780,9 +780,28 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
   // `tuple(range(...))` board lines. (`tuple` resolves to the
   // ifa-core sym_tuple directly, unlike list's scoped class sym.)
   if (f == sym_tuple && pos_args.n == 1) {
+    // issues/110: `tuple(iterable)` yields a real TUPLE via make_seq --
+    // a tuple CreationSet with no fixed arity whose element comes from
+    // the source. It used to call __pyc_tolist__ and return a LIST,
+    // because a dynamic-length tuple was not representable before
+    // ifa/issues/109 gave tuples an element sym.
     PycAST *a0 = getAST(pos_args[0], ctx);
     ast->rval = new_sym(ast);
-    call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
+    // PYC_MAKESEQ=1 uses the new primitive (issues/110); default keeps
+    // the historical __pyc_tolist__ lowering. Referenced by NAME, like
+    // isinstance/merge_in and the other non-builtin-symbol primitives --
+    // builtin_symbols.h entries must be bound from the builtin AST,
+    // which a pyc-only primitive is not.
+    static int makeseq = -1;
+    if (makeseq < 0) {
+      const char *v = getenv("PYC_MAKESEQ");
+      makeseq = v ? atoi(v) : 0;
+    }
+    if (makeseq)
+      if1_send(if1, &ast->code, 4, 1, sym_primitive, make_symbol("make_seq"), sym_tuple, a0->rval, ast->rval)->ast =
+          ast;
+    else
+      call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
     return 1;
   }
   // issues/025 "has no type" bucket: set(iterable) -- same shape as

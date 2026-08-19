@@ -179,3 +179,61 @@ in the library:
 The library attempts are recorded here so the next attempt starts from
 the primitive rather than rediscovering that the library cannot express
 this.
+
+## The primitive: built, working, and 3 tests short of shippable
+
+`make_seq` now exists — `PYC_MAKESEQ=1`, off by default.
+
+### What was added
+
+| piece | where |
+|---|---|
+| `Prim` registration (index 61, freed by issue 069) | `ifa/if1/prim_data.{h,cc}` |
+| FA constraint — mint the CreationSet, flow the source's element into its element | `fa.cc`, `P_prim_make_seq` |
+| codegen — copy the storage with the list slicer | `cg.cc` |
+| frontend — `tuple(x)` emits it instead of `__pyc_tolist__` | `python_ifa_build_if1.cc` |
+
+One wrinkle worth recording: a `builtin_symbols.h` entry (`sym_make_seq`)
+does **not** work — those are bound from the builtin AST and a pyc-only
+primitive is not in it, so `finalize_types` asserts. Reference it by name
+via `make_symbol("make_seq")`, exactly as `isinstance` and `merge_in` are.
+
+### It works
+
+```
+tuple(x + 1 for x in row)  ->  (2, 3, 4)      # was [2, 3, 4]
+tuple([7, 8])              ->  (7, 8)         # was [7, 8]
+```
+
+both matching CPython. `tests/builtin_type_factory.py` also changes from
+`[1, 2, 3]` to `(1, 2, 3)` — **CPython prints `(1, 2, 3)`**, so that
+test's `.check` had been recording the bug.
+
+### But it regresses three tests
+
+| test | |
+|---|---|
+| `builtin_type_factory` | now **correct**; its `.check` encodes the old buggy list output and needs regenerating |
+| `list_element_type_union` | **real regression** — prints `0 0 1 / 1 0 1 / 2 0 1` against `1 125 141 / 2 576 717` |
+| `list_hash` | **real regression** |
+| `deepcopy_objects` | **real regression** — C compilation failure |
+
+An earlier version also aborted the compiler on `genetic2_idioms`
+(`compute_setters`' `x->contour_is_entry_set` assertion) because the FA
+constraint flowed a record-shaped source's **per-index vars** into the
+element; those AVars are CS-contoured. Removing that fixed `genetic2` and
+is why `tuple(a_fixed_tuple)` currently contributes no element type — a
+known gap in this implementation.
+
+### Where it stands
+
+The design is validated: a dynamic-length tuple **is** representable and
+the primitive produces one. What is not done is the fallout — three
+regressions that are presumably element-type flow being too narrow (the
+element now comes only from the source's generic element, so a source
+whose element is unpopulated yields an untyped result).
+
+Kept behind `PYC_MAKESEQ` rather than reverted, because the hard part —
+the primitive, its FA constraint and codegen — is done and working, and
+the remaining work is diagnosing three specific tests. Default is
+unchanged: **275 passed / 17 known / 0 failed**.
