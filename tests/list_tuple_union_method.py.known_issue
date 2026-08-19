@@ -1,0 +1,1 @@
+ifa/issues/030 -- a {list, tuple} union reaching any shared method (slice, len, index, iterate) aborts: two candidates with the same C receiver type and no runtime tag; sunfish's runtime failure
