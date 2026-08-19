@@ -155,6 +155,43 @@ static void rtrim_str(char *s) {
 // integers cast to PycSymbol*).
 static inline bool is_real_pycsymbol(PycSymbol *s) { return (intptr_t)s > (intptr_t)NONLOCAL_DEF; }
 
+// issues/113: `import a.b.c` binds only `a` -- CPython's rule -- and
+// `a.b` / `a.b.c` are reached as ATTRIBUTES of the package. Load every
+// prefix and register each component in its PARENT's scope as a module
+// marker, so PY_power's module-attribute path can walk the chain.
+// Returns the TOP module (`a`), or null if any prefix is missing, in
+// which case the caller falls back to its old top-component behaviour.
+static PycModule *import_package_chain(cchar *mod, PycCompiler &ctx) {
+  char *buf = dupstr(mod);
+  int n = strlen(buf);
+  PycModule *top = nullptr, *parent = nullptr;
+  int comp_start = 0;
+  for (int i = 0; i <= n; i++) {
+    if (i != n && buf[i] != '.') continue;
+    char saved = buf[i];
+    buf[i] = 0;
+    PycModule *cur = find_and_import(buf, ctx);
+    buf[i] = saved;
+    if (!cur) return nullptr;
+    if (!top) top = cur;
+    if (parent) {
+      cchar *comp = cannonicalize_string(dupstr(buf + comp_start, buf + i));
+      PycScope *ps = parent->ctx ? parent->ctx->saved_scopes.get(parent->pymod) : nullptr;
+      if (ps && !is_real_pycsymbol(ps->map.get(comp))) {
+        PycSymbol *marker = new_PycSymbol(comp, ctx);
+        marker->sym->is_module = 1;
+        marker->sym->nesting_depth = 0;
+        ctx.module_syms.put(marker->sym, cur);
+        ps->map.put(comp, marker);
+      }
+    }
+    parent = cur;
+    comp_start = i + 1;
+    if (i == n) break;
+  }
+  return top;
+}
+
 static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx) {
   rtrim_str(sym); rtrim_str(from);
   char *mod = (char *)(from ? resolve_relative_module(from, ctx) : (cchar *)sym);
@@ -241,6 +278,21 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
         }
       }
     }
+  } else if (!as && strchr(mod, '.') && import_package_chain(mod, ctx)) {
+    // issues/113: `import a.b` -- bind the TOP name only, with the rest
+    // of the chain reachable as attributes (set up above). Before
+    // packages resolved, `mod` never matched a file and the fallback
+    // below bound the top component; now `a.b` DOES resolve, and
+    // binding it produced a symbol literally named "a.b", so `a` was
+    // unbound and `a.b.c()` failed with "'a' has no type".
+    char *dot = strchr(mod, '.');
+    cchar *bind = cannonicalize_string(dupstr(mod, dot));
+    PycModule *topm = get_module(bind, ctx);
+    PycSymbol *marker = new_PycSymbol(bind, ctx);
+    marker->sym->is_module = 1;
+    marker->sym->nesting_depth = 0;
+    ctx.module_syms.put(marker->sym, topm);
+    ctx.scope_stack.last()->map.put(bind, marker);
   } else {
     // `import X [as Z]`: bind Z (or X) to a module-marker symbol.
     // Modules are compile-time namespaces here, not runtime values,

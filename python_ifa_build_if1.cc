@@ -86,6 +86,18 @@ static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) 
   if (!m) fail("error line %d, cannot find module '%s' (no '%s.py' on the search path; "
                "pyc does not yet provide this module)", ctx.lineno, mod, mod);
   build_one_module_if1(m, ctx);
+  // issues/113: `import a.b` needs IF1 for every module in the chain --
+  // `m` is only the deepest one, and `a` (the package) holds the
+  // attribute bindings that reach it.
+  if (!from) {
+    char *buf = dupstr(mod);
+    for (char *d = strchr(buf, '.'); d; d = strchr(d + 1, '.')) {
+      char saved = *d;
+      *d = 0;
+      if (PycModule *pm = get_module(buf, ctx)) build_one_module_if1(pm, ctx);
+      *d = saved;
+    }
+  }
   // issues/113: `from PKG import SUB` where SUB is a submodule binds a
   // marker for PKG.SUB (build_import_syms), and that module needs its
   // own IF1 built too -- `m` above is only the package.
