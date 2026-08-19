@@ -1,6 +1,6 @@
 # 047 — `write_c_prim` aborts the compiler on a nameless primitive destination
 
-**Status:** open, 2026-08-15. Found while narrowing
+**Status:** FIXED 2026-08-19 (`c7468a91`). Originally filed 2026-08-15. Found while narrowing
 [046](046-default-arg-omitted-differently-silently-wrong.md); unrelated to
 it. **pyc aborts** (SIGABRT) rather than diagnosing. Repro landed as
 `tests/method_setter_field_pair_compiler_abort.py` with a `.known_issue`
@@ -71,10 +71,26 @@ is absent from the LLVM path, only that the assert is not on it.
 - The repro compiles (whatever it emits) instead of aborting.
 - Full suite and shedskin sweep unchanged otherwise.
 
-## What this unblocks
+## Fix
 
-Nothing blocked today — no corpus program hits it. It is filed because an
-`assert` in the compiler on ordinary Python is a poor failure mode, and
-because it is a second witness to the untyped-contour condition that
-[035](035-list-element-cast-salvage-guard-and-set-item-union.md) and
-issue 025 both had to guard against elsewhere.
+The predicted shape was right: skip the emission. A dead destination has
+no name, the read is a pure struct field access, and with nothing to
+assign it to there is nothing to emit — which is what
+`P_prim_index_object`'s record branch already does on the identical
+`cg_get_string(n->lvals[0])` condition.
+
+## What this unblocked — the original estimate was wrong
+
+This section used to read "Nothing blocked today — no corpus program
+hits it." It was blocking **two**:
+
+    corpus   67 compiled / 10 failed  ->  69 compiled / 8 failed
+             softrender and tarsalzp now compile
+
+Both still crash at runtime, so it is a compile-level gain only. The
+estimate was wrong because the assert fires during codegen, after the
+sweep's earlier failure modes; a program that failed FA for an
+unrelated reason never reached it, and both of these only started
+reaching codegen once other work (issues/113's package imports, for
+tarsalzp) got them that far. **A "nothing depends on this" note is
+worth re-testing whenever the phases ahead of it change.**
