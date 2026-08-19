@@ -122,5 +122,60 @@ element — rather than a `__pyc__` library edit. That is the same shape as
 missing is its dynamic-length counterpart.
 
 Estimated properly this time: a new primitive plus its FA constraint and
-codegen, not a library change. The correct next step is to price that,
-not to keep trying library formulations.
+codegen, not a library change.
+
+## Why not another `__pyc_primitive__`? — that IS the answer, but it must be a real one
+
+Three library formulations were tried and all produce the same wrong
+output (`[0, 0]` against CPython's `(0, 2, 3, 4, 0)`):
+
+1. slice `self` directly with `_CG_list_getslice`, return typed
+   `merge(t, t)` for `t = ()`;
+2. **iterate** to collect first (fixing the fact that `self` may be a
+   generator, which is not indexable), then slice the collected list;
+3. iterate *and* `merge_in(t, x)` each element, to populate the result
+   tuple's generic element so its CreationSet would take list layout.
+
+All three fail for one reason: **`t = ()` names the empty-tuple type,
+which is a record with arity 0**, so the result is empty. `merge`,
+`merge_in` and iteration do not generalise a fixed-arity tuple type into
+a variable-length one.
+
+### The primitives that already exist do not cover it
+
+| primitive | what it is |
+|---|---|
+| `make` (`prim_make`, 36) | builds a container from a **fixed** argument list — the tuple literal path |
+| `clone` (`prim_clone`, 39), `copy` (`prim_copy`, 58) | real IFA primitives; produce a **fresh CreationSet of the same sym**, so they preserve arity rather than generalising it |
+| `merge` / `merge_in` | type-level union / element flow; neither changes a record's arity |
+| `make_tuple` | **not an IFA primitive at all** — `c_runtime.h` maps it to `_CG_symbol`; `__pyc_tuplify__`'s use is unrelated |
+
+So there is no expression, in `__pyc__` Python source, that names *"tuple,
+variable length, element type E"*. Every tuple-typed expression available
+is a literal with a fixed arity.
+
+### What the new primitive has to be
+
+The dynamic-length counterpart of `P_prim_make`: given an iterable, make
+a **tuple CreationSet whose generic element is seeded from that
+iterable's element**. Populating the element is exactly what makes
+`tuple_able()` false, so `clone.cc` gives the CreationSet list layout —
+variable length, known element type — which is the representation
+`tuple.__pyc_getslice__` already returns today
+([ifa/issues/109](../ifa/issues/109-mixed-arity-tuple-slice-dispatch.md))
+and which shedskin spells `tuple<T>`.
+
+That needs three pieces, none of them large but none of them expressible
+in the library:
+
+1. a `Prim` entry alongside `prim_make`;
+2. an FA constraint that creates the CreationSet and flows the source's
+   element into its element AVar (the shape of `make_kind`, but with the
+   element rather than per-index vars);
+3. codegen, which is nearly free — `cg.cc` already builds every tuple
+   with `_CG_prim_tuple_list`, so the storage and header are identical to
+   a list's.
+
+The library attempts are recorded here so the next attempt starts from
+the primitive rather than rediscovering that the library cannot express
+this.
