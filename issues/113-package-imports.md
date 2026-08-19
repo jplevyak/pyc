@@ -92,11 +92,15 @@ blocker.
      test's real subject — the "redefined as global" error — still
      fires. Regenerated. **The duplicate registration is worth its own
      look**: it is a frontend redundancy nobody has been watching.
-2. **`import a.b` binds only the top name.** `build_import_syms` keeps
-   its old fallback of resolving `a.b` to `a`, matching CPython's
-   binding for that form, but now that packages resolve properly this
-   should bind the real submodule and let `a.b.c` attribute chains
-   work.
+2. ~~**`import a.b` binds only the top name.**~~ DONE. Binding the top
+   name is in fact CPython's rule; the bug was that once `a.b` started
+   resolving, the marker was bound under the literal name `"a.b"`, so
+   `a` was unbound and `a.b.c()` failed with "'a' has no type".
+   `import_package_chain()` now loads every prefix and registers each
+   component in its parent's scope as a module marker, to arbitrary
+   depth. The old top-component fallback is kept for `import os.path`,
+   where no `os/path.py` exists and `path` is an attribute of the shim.
+   Covered by `tests/import_package_dotted.py`.
 3. **No `__init__.py` re-export semantics beyond plain names.** A
    package's `__init__` that does `from .x import y` re-exports `y`
    because symbol building runs it; anything computed (`__all__`,
