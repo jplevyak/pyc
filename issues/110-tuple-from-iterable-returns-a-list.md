@@ -77,3 +77,50 @@ which `PYC_TUPELEM` (now default) supplies.
   baseline. The named beneficiaries `genetic2` (`tuple([TreeNode() ...])`)
   and `chess` (`tuple(range(...))`) must not regress — they are the two
   the compromise was originally made for.
+
+
+## Attempted 2026-08-19 — the library-level construction does not work
+
+The plan was to keep the frontend intercept's shape and only change what
+it dispatches to: `tuple(x)` → `x.__pyc_totuple__()`, with
+
+```python
+def __pyc_totuple__(self):
+    t = ()
+    for x in self:
+        __pyc_primitive__(__pyc_symbol__("merge_in"), t, x)   # flow element types in
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), t, t),
+                          "_CG_list_getslice", list, self, ...)
+```
+
+The reasoning was that `merge_in` (the primitive `append` uses) would
+populate the empty tuple's generic element, making `tuple_able()` false
+and so giving the CreationSet list layout — variable length, known
+element type — with `merge(t, t)` naming that tuple type as the return.
+
+**It compiles and is wrong**: the reproducer prints `[0, 0]` against
+CPython's `(0, 2, 3, 4, 0)` — still a list, and now with wrong values
+too. `merge(t, t)` on an empty tuple literal names the *empty-tuple*
+type; populating an element through `merge_in` did not turn it into the
+variable-length tuple the return needs, and the copy went wrong as well.
+Reverted; baseline restored and re-verified.
+
+### What that tells us
+
+The blocker is not the *representation* — ifa/issues/109 established that
+a tuple CreationSet with a populated element does take list layout, and
+`tuple.__pyc_getslice__` returns exactly such a value today. The blocker
+is **constructing a value of that type from `__pyc__` Python source**:
+there is no expression that names "tuple, variable length, element type
+E". A tuple literal names a fixed arity; `merge`/`merge_in` on one does
+not generalise it.
+
+So this needs a frontend or FA-level construction — a primitive that
+makes a tuple CreationSet whose element is seeded from an iterable's
+element — rather than a `__pyc__` library edit. That is the same shape as
+`P_prim_make`, which builds a tuple from a *fixed* argument list; what is
+missing is its dynamic-length counterpart.
+
+Estimated properly this time: a new primitive plus its FA constraint and
+codegen, not a library change. The correct next step is to price that,
+not to keep trying library formulations.
