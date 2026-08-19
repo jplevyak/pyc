@@ -442,3 +442,98 @@ squarely inside this issue rather than blocked on another. The place to
 look is what `define_concrete_types` produces for a list-layout tuple
 versus a list — `sym_list` and `sym_tuple` are both `Type_PRIMITIVE`, so
 the two should be taking the same path, and evidently are not.
+## Root cause found: a snapshot read, one pass too late
+
+Fixed in `50ebc8aa`. The previous section was wrong too, and in an
+instructive way: there was never a copy-path problem at all.
+
+`sym_list` and `sym_tuple` really are both `Type_PRIMITIVE`, and the two
+really do take the same path. What differed was the *input* to that path.
+
+### The measurement
+
+The `deepcopy` framing was a red herring. Delta-reducing the reproducer
+removes `copy` entirely — five lines suffice:
+
+```python
+class T:
+    def __init__(self, args):
+        self.args = args
+tree = T(tuple([T(None)]))
+print(tree.args[0].args)
+```
+
+Storing a list-layout tuple in a record field and reading it back is the
+whole mechanism. Controls that all **pass**, which is what localises it:
+
+| variant | field type | recursive | result |
+|---|---|---|---|
+| `T(tuple([inner]))`, `inner = T(0)` | `{int, tuple}` | yes | pass |
+| `B(tuple([A()]))`, two classes | `{None, tuple}` | no | pass |
+| `T([T(None)])` — list, not tuple | `{None, list}` | yes | pass |
+| `T(tuple([T(None)]))` | `{None, tuple}` | yes | **fail** |
+
+Probing `set_tuple_able` at clone time separates the passing and failing
+cases exactly:
+
+```
+ms5 (passes)  [ta] cs=947 vars=0 elem=SET     able=0   -> LIST layout
+ms8 (fails)   [ta] cs=947 vars=0 elem=bottom  able=1   -> RECORD layout, 0 members
+```
+
+An empty record. `cg.cc` then reports it in whichever disguise the
+program reaches first — `_CG_prim_copy_dst(_CG_void, …)` through
+`__deepcopy__`, or `assert(!"runtime error: bad getter")` through a
+plain subscript. Same defect; the copy path was never involved.
+
+### Why the element was bottom
+
+Tracing the constraint per pass:
+
+```
+[makeseq/fv] fvout=bottom      pass 1
+[makeseq/fv] fvout=bottom      pass 2
+[makeseq/fv] fvout=SET         pass 3
+[makeseq/fv] fvout=bottom      pass 4   <- LAST pass
+```
+
+`update_gen(elem, fv->out)` is a **snapshot**. Nothing orders the
+`make_seq` constraint after the source literal's own `make` within a
+pass, and nothing re-runs it when the source is repopulated after the
+per-pass `clear_avar`. The type was computed and then lost.
+
+`arg_of_send` does not rescue it: the source var does not *change*
+during the final pass, so nothing re-enqueues the send.
+
+### The fix
+
+A durable **edge**, not a snapshot — via `vector_elems`, which already
+exists for precisely this shape. Both the source's generic element and
+its per-index vars are CS-contoured, and a raw CS → CS `flow_vars` puts
+a CS-contoured var in `elem->backward`, which is what `compute_setters`
+asserts against (`x->contour_is_entry_set` — genetic2_idioms aborts the
+compiler; that assertion is why the original code reached for
+`update_gen` in the first place). `vector_elems` lands each value in a
+fresh entry-set-contoured tval of the pnode first, so every edge into
+the element starts at an ES var.
+
+### Standing state
+
+    default settings   276 passed / 0 failed   (PYC_MAKESEQ gates the
+                       only emission site, so the path is dead here)
+    both flags on      274 passed / 3 failed
+
+The three, and what each needs:
+
+- **`builtin_type_factory`** — not a failure. pyc now prints `(1, 2, 3)`
+  where the `.check` records the old buggy `[1, 2, 3]`. Regenerate the
+  check when the flags default on.
+- **`deepcopy_objects`** — the copy aliases the original (prints `77`
+  where CPython prints `5`). `class tuple` has no `__deepcopy__` and
+  falls through to `__pyc_any_type__`'s one-level struct clone.
+  Adding an identity `tuple.__deepcopy__` fixes the aliasing but
+  regresses `minmax_3arg`: `return self` flows every tuple contour into
+  one return AVar and degrades tuple precision program-wide. `list`
+  avoids this only because its `__deepcopy__` builds a fresh list.
+- **`list_element_type_union`** — `tuple(self.state[20:32])` yields
+  wrong values (`0 0 1` for `0 15 16`).
