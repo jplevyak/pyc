@@ -817,3 +817,55 @@ routes that avoid adding an FA-visible call:
    but it is FA-core surgery.
 
 Route 2 is the principled one and subsumes route 1.
+
+
+## Route 2 landed, and it rescued route 1 (`f6d6d46a`)
+
+The two designs above were not alternatives — the second is a
+prerequisite for the first.
+
+`CreationSet::seq_src` remembers the last **non-empty** set of source
+CreationSets make_seq saw, and the constraint drives its element loop
+from that rather than from `src->out` directly. Alone it is inert (both
+suites unchanged). With it in place, the `__pyc_seq_source__` lowering
+that had been reverted twice now works:
+
+| `tuple(src)` | CPython | default | flags on |
+|---|---|---|---|
+| list var / literal / slice | exact | wrong type | ✓ |
+| nested tuples | `((1, 2), (3,))` | `[[1, 2], [3]]` | ✓ |
+| empty | `()` | `[]` | ✓ |
+| **string** | `('a','b','c')` | `['a','b','c']` | ✓ **fixed** |
+| **range** | `(0, 1, 2)` | `[0, 1, 2]` | ✓ **fixed** |
+| **set** | 2 elements | 2 | ✓ **fixed** |
+| **dict** | 2 keys | runtime abort | runtime abort |
+| `==` vs literal, `hash`, `set` dedup | | **abort** | ✓ |
+| `<` / `>` between dynamic tuples | | **abort** | ✓ |
+
+**10 of 11 probes exact**, up from 7. Measured:
+
+    default settings   276 passed / 0 failed   (unchanged)
+    both flags on      275 passed / 2 failed   (unchanged count)
+    corpus             66 compiled / 11 failed of 77, per-program
+                       IDENTICAL to the pre-change baseline at BOTH
+                       settings
+
+The flags-on count is unchanged because its two remaining failures are
+`builtin_type_factory` (stale `.check`) and `deepcopy_objects` (needs
+the flip) — the suite does not yet cover the iterable surface that
+actually improved.
+
+### What is left before the flags can default on
+
+1. **`tuple(a_dict)`** — aborts at default settings too, so not a
+   regression and not caused by this work, but it is the last hole in
+   the iterable surface. `07_dict.py` has two `__pyc_tolist__`
+   definitions; start by working out which one a dict receiver
+   resolves to.
+2. **Land the flip** together with `tuple.__deepcopy__` and a
+   regenerated `builtin_type_factory.py.check`, per the earlier
+   section — those cannot land separately.
+3. **`tuple(a) + tuple(b)`** still returns a list, and `t[0] = 99`
+   still mutates where CPython raises `TypeError`. Both are
+   pre-existing and independent of the flip; `__add__` is now easy
+   with make_seq available.
