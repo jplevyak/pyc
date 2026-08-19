@@ -910,3 +910,37 @@ Remaining before the flip: only items 2 and 3 above -- land
 `tuple.__deepcopy__` + the regenerated `builtin_type_factory.py.check`
 together with the defaults, and (independently) `tuple.__add__`
 returning a list and `t[0] = 99` not raising.
+
+
+## The flip was attempted and is HELD on issues/112
+
+Flipping both defaults, adding the element-recursive
+`tuple.__deepcopy__`, and regenerating the two stale checks produced
+three C-backend failures, of which two were the expected regenerations
+(`builtin_type_factory`, whose check records the old buggy
+`[1, 2, 3]`, and `minmax_3arg`, pure `__pyc__.py` line drift). The
+third is real and new:
+
+**`deepcopy_objects` aborts.** Delta-reduced to 18 lines
+(`tests/deepcopy_tuple_copy_of_copy.py`): deep-copying a tuple TWICE
+leaves `self[k]` unresolved inside `tuple.__deepcopy__`. One copy is
+fine. The identical program with a list instead of a tuple passes.
+
+`tuple.__deepcopy__` can be neither omitted (the any-type fallback is
+a one-level struct clone, so the copy shares elements and the test
+silently prints 77 for 5) nor included (it aborts) — and the test
+**passes today**, because `tuple(iterable)` still returns a list and
+lists deep-copy correctly. So the flip currently trades correct
+deepcopy behaviour for silent aliasing or a crash, which is the same
+bar that rejected the earlier attempt above.
+
+Filed as **issues/112**, with the three things measurement has already
+ruled out (element loss, the make_seq rebuild, the pass-1 no-clone
+path).
+
+**`tuple.__add__` returning a list is blocked by the same thing** — it
+needs `make_seq` in the library, which is only sound once the layout
+flag defaults on. It is not an independent follow-up after all.
+
+State restored: C backend 277 / 0, LLVM 279 / 1 (pre-existing
+ifa/051), both flag defaults still off.
