@@ -343,3 +343,59 @@ The next step is to reduce `deepcopy_objects` the way `plcfrs` was
 reduced — against the invariant "still emits `_CG_prim_copy_dst(_CG_void,
 …)`" — rather than to keep extending the constraint on a hypothesis that
 the minimal cases have already falsified.
+
+## Reduction (2026-08-19): `deepcopy_objects` reduced 56 → 7 lines
+
+Mechanical reduction against the invariant *"still emits
+`incomplete type 'void'`"*, with the same oracle discipline that the
+`plcfrs` work settled on (parses, no unbound names, runs clean under
+CPython with output, then the target failure). 56 → 23 lines; hand-trimming
+the class the line-granularity reducer could not remove took it to **7**:
+
+```python
+import copy
+class T:
+    def __init__(self, args=None):
+        self.args = args
+tree = T(tuple([T(None)]))
+c = copy.deepcopy(tree)
+print(c.args[0].args)
+```
+
+Landed as `tests/deepcopy_none_or_tuple_field.py`. It **passes at the
+default settings**, so it is not `.known_issue`-tagged — it is there to
+pin the shape that blocks defaulting the flags.
+
+### What it shows
+
+`args` is `None` on the leaf and a tuple on the root, so deepcopy's
+generic copy sees a **`{None, tuple}` union** and resolves the
+destination to nothing:
+
+```c
+_CG_void t3;
+t1 = (_CG_void)_CG_prim_copy_dst(_CG_void, t2);
+```
+
+That is the [018](018-dict-mixed-key-types-boxing-failure.md) union shape
+reached through `copy`, **not** a defect in `make_seq` — `tuple(...)` on
+its own matches CPython on `len`, indexing, `repr` and `hash`. What the
+new list-layout tuple changes is which side of that union resolves.
+
+### Things the reduction settled that guessing had not
+
+- **`count()` is not needed** — the recursion over `args` was incidental.
+- **The `Node` class is not needed.** The reducer kept it only because
+  removing it line-by-line broke syntax; deleting the whole class by hand
+  still reproduces. Worth remembering: a line-granularity reducer cannot
+  remove a *class*, so its output overstates what is essential.
+- **The copy-of-copy is not needed** — one `deepcopy` suffices (it halves
+  the error count, 4 → 2, but the failure remains).
+
+So 110's remaining blocker is precisely: *deepcopy of a record field
+typed `{None, container}`*. That is a pre-existing 018 case that the
+list-layout tuple makes reachable, and it is the thing to fix — or to
+confirm as acceptable — before `PYC_MAKESEQ` and `PYC_TUPLE_AS_LIST` can
+default on.
+
+Suite **276 passed / 17 known / 0 failed**.
