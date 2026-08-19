@@ -518,12 +518,30 @@ void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
   char *buf = nullptr;
   size_t sz = 0;
   FILE *f = open_memstream(&buf, &sz);
+  // issues/110: the unroll count comes from scanning tuple LITERALS, so a
+  // tuple built by `tuple(iterable)` (make_seq -- runtime arity, no
+  // PY_tuple node anywhere) contributes nothing to max_arity. The unrolled
+  // body then compared only the first max_arity elements and returned
+  // True for everything past it: rubik2's id_() -> tuple(state[20:32])
+  // deduped 15 distinct 12-tuples down to 3 in a set (silently -- wrong
+  // answers, no diagnostic), and with NO tuple literal in the program at
+  // all max_arity is 0, making every same-length tuple compare equal.
+  //
+  // So each method gets a runtime tail past the unrolled prefix. For a
+  // RECORD tuple `n` is a compile-time constant <= max_arity, so `n >
+  // max_arity` folds to False and the tail is dead -- the same folding the
+  // `n >= k` guards already rely on, which is what keeps the non-constant
+  // `self[i]` out of a record contour where it would be invalid. For a
+  // LIST-layout tuple `n` is a runtime value and the tail does the work.
   fputs("class __pyc_tuple_cmp__:\n", f);
   fputs("  def __eq__(self, t):\n", f);
   fputs("    n = len(self)\n", f);
   fputs("    if n != len(t): return False\n", f);
   for (int i = 0; i < max_arity; i++)
     fprintf(f, "    if n >= %d and not (self[%d] == t[%d]): return False\n", i + 1, i, i);
+  fprintf(f, "    if n > %d:\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        if not (self[i] == t[i]): return False\n", f);
   fputs("    return True\n", f);
   fputs("  def __lt__(self, t):\n", f);
   fputs("    n = len(self)\n", f);
@@ -533,6 +551,11 @@ void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
     fprintf(f, "      if self[%d] < t[%d]: return True\n", i, i);
     fprintf(f, "      if t[%d] < self[%d]: return False\n", i, i);
   }
+  fprintf(f, "    if n > %d and m > %d:\n", max_arity, max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        if i >= m: return False\n", f);
+  fputs("        if self[i] < t[i]: return True\n", f);
+  fputs("        if t[i] < self[i]: return False\n", f);
   fputs("    return n < m\n", f);
   fclose(f);
   PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", buf, (int)sz);
