@@ -1,6 +1,6 @@
 # 052 — LLVM backend: a `{None, int}` value that is 0 prints as `None`
 
-**Status:** open, found 2026-08-16 while trying to "fix"
+**Status:** RESOLVED 2026-08-19 (`e1381dc7`) by REFUSING, not by fixing the representation — see below.
 [048](048-none-int-field-pair-runtime-abort.md) in `cg.cc`. **Silent
 wrong answer** — no diagnostic, correct-looking output, wrong value.
 Repro: `tests/none_int_field_zero.py`.
@@ -84,3 +84,32 @@ field so the union never reaches codegen.
 Trust in the LLVM backend for any program with a `None`-initialised
 numeric field — currently it can produce a plausible wrong number (or
 `None`) with no warning at all.
+
+
+## Resolved by refusing (2026-08-19, `e1381dc7`)
+
+The LLVM backend no longer emits this dispatch. When the receiver is a
+`Type_SUM` containing `sym_nil_type` and a member with `num_kind`, it
+fails at COMPILE time:
+
+```
+z1.py:9: codegen: '__str__' on a {None, int64} union has no
+  representation: a null test cannot distinguish None from
+  0/0.0/False (issues/048)
+```
+
+This is the same judgement the C backend already made, and it removes
+the silent wrong answer that made this issue. It does NOT give the
+union a representation — that is still issues/048's upstream problem
+(FA narrowing, or issues/030's tagged pointers). What changed is that
+both backends now refuse rather than one of them guessing.
+
+The truthiness exception is carried over from the C guard:
+`__pyc_to_bool__` / `__bool__` / `__not__` still emit, because None and
+zero are both falsy there and the conflation is invisible.
+
+Measured: all 77 corpus programs compile under `-b` and **zero** hit
+the new refusal. In the suite, `none_int_field_pair` and
+`none_float_field` moved from "pass" to the `.known_issue` tag they
+already carried — they had only been passing because their test values
+are 1, and 1 is non-null.
