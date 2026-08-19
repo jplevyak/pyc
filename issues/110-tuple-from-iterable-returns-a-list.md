@@ -292,3 +292,54 @@ That is the next thing to fix, and it is one constraint, not a redesign.
 
 Default remains **275 passed / 17 known / 0 failed**; with both flags,
 273 passed / 3 failed (one of which is the corrected output).
+
+## Constraint extension attempt (2026-08-19): the two failures are not the element
+
+Both minimal forms of the suspected shapes **work**:
+
+```python
+t = tuple([a, b])          # list of user objects  -> 2 1 2, matches CPython
+t = tuple(s[1:3])          # tuple of a slice      -> 2 2 3, matches CPython
+```
+
+So the diagnosis in the previous section — "the element type does not
+reach the result for non-scalar-literal sources" — is **wrong**. The
+element flow is fine for both shapes in isolation.
+
+### What `deepcopy_objects` actually hits
+
+Its shape is `T(0, 5, None)` alongside `T(1, 0, tuple([leaf1, leaf2]))`,
+so `node.args` is a `{None, tuple}` union, and `copy.deepcopy` is then
+applied twice. The generated C is:
+
+```c
+_CG_void t3;
+t1 = (_CG_void)_CG_prim_copy_dst(_CG_void, t2);
+```
+
+The failure is not a void **element** — it is a void **type**: the copy's
+whole destination type is unresolved. `structural_assignment` does carry
+the element across a copy (`flow_vars(elem, tval)` →
+`flow_vars(tval, get_element_avar(new_cs))`, guarded on
+`new_cs->sym->element`, which `PYC_TUPELEM` supplies), so the element
+machinery is not the gap either.
+
+That points at the `{None, tuple}` union rather than at `make_seq`: a
+deepcopy whose source is `None`-or-container is the
+[018](018-dict-mixed-key-types-boxing-failure.md) shape, and the new
+list-layout tuple changes which side of it resolves.
+
+### Where this leaves 110
+
+Not a one-constraint fix, and the earlier estimate that it was should be
+discounted. `make_seq` itself is sound — it produces a real
+variable-length tuple that matches CPython on `len`, indexing, `repr` and
+`hash`, and the two failing tests fail on *interactions* (a
+`{None, tuple}` union through deepcopy; a slice inside a larger program)
+rather than on the primitive.
+
+Both flags stay off. Default: **275 passed / 17 known / 0 failed**.
+The next step is to reduce `deepcopy_objects` the way `plcfrs` was
+reduced — against the invariant "still emits `_CG_prim_copy_dst(_CG_void,
+…)`" — rather than to keep extending the constraint on a hypothesis that
+the minimal cases have already falsified.
