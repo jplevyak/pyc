@@ -628,3 +628,67 @@ neutral.
 2. Regenerate `builtin_type_factory.py.check` (records `[1, 2, 3]`).
 3. Re-take both baselines afterwards, and ideally an execution-level
    corpus comparison rather than compile-only.
+
+## BLOCKER: make_seq only understands list sources
+
+Measured `tuple(x)` against CPython across source kinds, at both
+settings. The flip is **not ready** — it is a clear win for list
+sources and a silent regression for every other iterable.
+
+| `tuple(src)` | CPython | default | flags on |
+|---|---|---|---|
+| list var / literal | `(1, 2, 3)` | `[1, 2, 3]` | `(1, 2, 3)` ✓ |
+| list slice | `(1, 2)` | `[1, 2]` | `(1, 2)` ✓ |
+| nested tuples | `((1, 2), (3,))` | `[[1, 2], [3]]` | `((1, 2), (3,))` ✓ |
+| empty list | `()` | `[]` | `()` ✓ |
+| **string** | `('a','b','c')` | `['a','b','c']` | **`()`** ✗ |
+| **range** | `(0, 1, 2)` | `[0, 1, 2]` | **compile fail** ✗ |
+| **set** | 2 elements | 2 | **0** ✗ |
+| **dict** | 2 keys | runtime abort | **0** ✗ |
+
+Operations, same comparison:
+
+| | CPython | default | flags on |
+|---|---|---|---|
+| `tuple(xs) == (1, 2)`, `hash`, `set` dedup | True/True/1 | **runtime abort** | True/True/1 ✓ |
+| `<` / `>` between two dynamic tuples | True/True | **runtime abort** | True/True ✓ |
+| dict key | 2 / first second | ✓ | ✓ |
+| `tuple(a) + tuple(b)` | `(1,2,3,4)` | `[1,2,3,4]` | `[1,2,3,4]` ✗ |
+| `t[0] = 99` | TypeError | mutates | mutates ✗ |
+
+So the flip fixes two runtime aborts and makes every list-sourced tuple
+exactly match CPython — and trades "right elements, wrong type" for
+**silently empty** on strings, sets and dicts, plus a compile failure on
+range. Trading a visibly-wrong type for a silently-wrong length is a
+net loss; a `tuple(some_string)` that yields `()` is far more dangerous
+than one that yields a list.
+
+### Cause
+
+The `P_prim_make_seq` constraint pulls element types out of the source
+CreationSets' per-index `vars` and generic element. That describes a
+**list**. A string is not a container CS with element vars; a set and a
+dict keep their contents elsewhere; a range is a lazy iterator object.
+None of them contribute anything, so the element stays bottom and the
+runtime copy has nothing to copy.
+
+The range case does not even get that far:
+
+```
+fail: mismatched field sizes: class 'closure' field '<anon>'
+      mixes 8- and 0-byte members ('__pyc_tolist__')
+```
+
+— the iterator's method-pointer union, the ifa/issues/105 family.
+
+### What it needs
+
+make_seq has to go through the **iterator protocol** rather than
+peeking at container internals: `__iter__`/`__next__`, the same path
+`list(x)` already takes for these sources (`list("abc")` is correct at
+default today, so the machinery exists). That is the gating work before
+`PYC_MAKESEQ` and `PYC_TUPLE_AS_LIST` can default on.
+
+`tuple.__add__` returning a list is a separate, now-easy follow-up: it
+was a documented compromise only because fixed-arity structs cannot
+concatenate at runtime, which make_seq removes.
