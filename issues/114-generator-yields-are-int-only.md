@@ -325,3 +325,67 @@ give FA the yielded type by a route that is not a data-flow read of a
 local. The `is_fake` marker on `__pyc_c_call__`'s type argument is the
 existing precedent for "this operand is consulted for its type, not
 its value" and is the first thing to look at.
+
+
+## The fn->ret route, done properly — a complete recipe, one item short
+
+The earlier "fails on ORDER" verdict was wrong, and so was the
+reachability reasoning behind it. Re-derived from the code:
+
+`fa.cc`'s `P_prim_reply` flows a Fun's return type **at the reply
+node**, from `make_AVar(reply operand)` into `es->rets`, and
+`add_pnode_constraints` only visits LIVE pnodes. So there are two
+independent requirements, which `build_syms` meets with two separate
+devices:
+
+- **the reply must be live** — an opaque never-taken branch to
+  `label[0]`, conditioned on the placeholder call's value (a C call
+  precisely so FA cannot fold the branch);
+- **fn->ret must have a reaching def there** — the early
+  `if1_move(default_ret → fn->ret)`.
+
+The early move is needed for the VALUE, not for the type union.
+`fn->ret`'s type is whatever flows in at **any** live point, so yields
+can contribute — no ordering problem, no global cell, nothing that
+widens unrelated types.
+
+Built on that basis, five of six pieces work:
+
+1. **`build_syms`**: move `sym_nil` into `fn->ret`, not `default_ret`.
+   `default_ret` must stay opaque because it is the never-taken
+   branch's condition; using it for the type is what pinned the
+   channel to int. `{None, T}` is representable where `{int, T}` is
+   not.
+2. **`build_if1`**: at each `yield` (and each `yield from`, which
+   re-yields), `if1_move(yval → ctx.fun()->ret)`. Free at runtime —
+   a generator's real result is the coroutine handle, produced by the
+   coroutine machinery, not by fn->ret.
+3. **library**: drop `nextval = 0` entirely; take the c_calls' RESULT
+   type from `self.handle` (which now carries `{None, yielded}`)
+   rather than a hardcoded `int`; and replace `return 0` on the
+   exception paths of `__next__`/`send`, which pins the channel to int
+   by itself.
+4. **`c_call_codegen`**: cast the result to the DECLARED type — the
+   runtime returns a machine word, the declared type is now the
+   yielded type, and the word IS the pointer.
+5. **`c_call_codegen`**: cast arguments declared `int` to
+   `long long` **for `_CG_generator_*` only**. Their handle argument
+   is a plain machine word but now arrives union-typed. Deliberately
+   not blanket: `list.__add__` declares `int` for a whole LIST because
+   `_CG_list_add` converts internally, and casting there would destroy
+   the pointer.
+
+**The sixth**, which is where it stops: the generator function's **C
+return type is hardcoded to the handle's `int64`**, while FA now types
+the call's result as the yielded type —
+
+    t2 = _CG_f_10602_21/*gen*/();     // t2 is _CG_ps11305*, callee returns int64
+    error: incompatible integer to pointer conversion
+
+so codegen's `is_generator` path has to emit the function with fn->ret's
+type and `return (T)handle;`. That is the one remaining piece, in
+`cg.cc`/`cg_emit_llvm.cc` rather than in the frontend.
+
+All reverted; suites 287 / 0 on both backends. Nothing here is
+blocked on representation — the recipe above is concrete and the
+remaining item is a codegen signature change.
