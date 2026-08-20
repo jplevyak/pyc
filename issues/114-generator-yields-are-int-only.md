@@ -269,3 +269,59 @@ Even with the conduit on, `sunfish.py:448` still reports
 comparison inside `__contains__` needs the None arm narrowed away,
 which pyc does not do (ifa/issues/025, intra-function union
 narrowing). So sunfish needs BOTH this and that.
+
+
+## The fn->ret route also fails, for a different reason (2026-08-20)
+
+Tried, since it is what shedskin does. **It cannot work as the
+placeholder is currently arranged**, and the reason is worth recording
+because it is not obvious.
+
+The idea: stop typing the generator's placeholder return as `int` and
+type it from a per-function Sym that every `yield` writes. `fn->ret`
+then carries the yielded types, the wrapper's `handle_result` carries
+them out to the constructor, and — the attractive part — **the Sym
+never leaves the generator's own scope**, so none of the global-cell
+widening from the previous attempt applies. No extra constructor
+argument is needed either: `handle_result`'s runtime value is still
+the coroutine handle, only its type changes.
+
+It fails on ORDER. `build_syms` deliberately emits the placeholder
+**before** the user's body — its comment explains why, and the reason
+is real:
+
+> A generator body whose own control flow never falls through
+> (`while True: yield i`, no `break`) has no reachable path to whatever
+> comes after the body; appending this there (as it used to) made the
+> placeholder move dead code, and FA infers fn->ret as bottom/NOTYPE
+> with no live move reaching it.
+
+But the sample is only written by the yields, which are *in* the body.
+So the placeholder reads it before any def exists: the Sym has no type
+at that point, `fn->ret` ends up untyped, and every generator fails
+with a cascade starting at
+
+    warning: illegal call argument type '__pyc_generator__' illegal: __pyc_generator__
+
+— including generators that only yield ints, which worked before.
+
+Reverted. Suites back to 287 / 0 on both backends.
+
+### What this leaves
+
+Both routes are now understood and both are blocked by something
+specific rather than by the union representation:
+
+| route | blocker |
+|---|---|
+| module-level sample Sym | writing yielded values into a global cell widens unrelated types (sudoku5) |
+| generator's own `fn->ret` | placeholder must precede the body; sample is defined inside it (use-before-def) |
+
+The second looks the more tractable of the two. It needs the
+placeholder's *reachability* and its *type* separated — e.g. keep an
+unconditional early move into `fn->ret` for the dead-reply case, but
+take the declared type from a construct emitted after the body, or
+give FA the yielded type by a route that is not a data-flow read of a
+local. The `is_fake` marker on `__pyc_c_call__`'s type argument is the
+existing precedent for "this operand is consulted for its type, not
+its value" and is the first thing to look at.
