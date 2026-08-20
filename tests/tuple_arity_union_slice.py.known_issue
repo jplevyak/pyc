@@ -1,1 +1,0 @@
-ifa/issues/109 -- slicing a value whose type is {tuple(N), tuple(M)} (same element type, different arity) aborts: two __pyc_getslice__ clones codegen cannot discriminate; sunfish's crash

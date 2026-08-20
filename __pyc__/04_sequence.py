@@ -445,7 +445,13 @@ class tuple:
       r.append(self[k])
     for k in range(len(t)):
       r.append(t[k])
-    return r
+    # ifa/issues/090: hand the result back as a TUPLE, not a list. The
+    # list was the old compromise -- a fixed-arity struct cannot
+    # concatenate at runtime -- but make_seq gives a tuple whose arity
+    # IS a runtime value (issues/110). Returning a list made
+    # `t = t + (i, i+1)` a {tuple, list} union, which is what actually
+    # blocked that loop, not the differing arities.
+    return __pyc_primitive__(__pyc_symbol__("make_seq"), tuple, r)
   # __eq__/__lt__ are primitives (issue 025, tictactoe): a Python
   # element loop indexes self[i]/t[i] with a VARIABLE i, which collapses
   # a heterogeneous fixed-arity tuple to the union of ALL its element

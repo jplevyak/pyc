@@ -1,1 +1,0 @@
-issues/110 -- tuple(iterable) returns a list (documented compromise): prints [..] not (..), and manufactures the {list, tuple} union behind sunfish's runtime abort
