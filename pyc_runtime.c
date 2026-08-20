@@ -92,6 +92,24 @@ extern char *_CG_readdir_name(int64 h);
 int64 _cg_argc = 0;
 char **_cg_argv = 0;
 
+/* ifa/issues/051: GC initialisation for the LLVM backend.
+ *
+ * The C backend's generated main() opens with MEM_INIT() -> GC_INIT();
+ * the LLVM backend's generated main() did not initialise the collector
+ * at all, leaving Boehm to come up lazily on the first allocation. The
+ * part that matters is GC_INIT_CONF_ROOTS, which registers the static
+ * data segment (GC_DATASTART..GC_DATAEND) as roots -- and that is
+ * exactly where the LLVM backend puts its module globals (@states,
+ * @cur_state, ...). Without it those globals are not scanned, so an
+ * object reachable ONLY from a global is collected while still live;
+ * the program then writes through the stale pointer and corrupts
+ * Boehm's free list, which surfaces as a segfault inside
+ * GC_finish_collection far from the actual fault.
+ *
+ * Confirmed: the affected program runs correctly under GC_DONT_GC=1 or
+ * a heap large enough that no collection happens. */
+void _CG_gc_init(void) { GC_INIT(); }
+
 /* Pyc list header layout macros — used by the LLVM-specific list
  * helpers below.  The header uses different macro names (_CG_list_len
  * etc.) so there is no conflict. */
