@@ -126,6 +126,16 @@ class object:
 class __pyc_None_type__:
   def __bool__(self):
     return False
+  def __eq__(self, x):
+    # ifa/issues/090: `None == x` with None as the RECEIVER had no
+    # method at all -- unresolved call '__eq__'. None equals nothing but
+    # itself, which is identity, the same answer
+    # __pyc_any_type__.__eq__ gives. Safe here unlike a __len__ or
+    # __getitem__ stub (see the note further down): the result is a
+    # bool, so nothing injects None into a container's element type.
+    return __pyc_primitive__(__pyc_symbol__("is"), self, x)
+  def __ne__(self, x):
+    return not self.__eq__(x)
   def __null__(self):
     return True
   def __str__(self):

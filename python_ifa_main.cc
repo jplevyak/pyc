@@ -536,6 +536,16 @@ void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
   // LIST-layout tuple `n` is a runtime value and the tail does the work.
   fputs("class __pyc_tuple_cmp__:\n", f);
   fputs("  def __eq__(self, t):\n", f);
+  // ifa/issues/090 repro 2: the operand may be None -- `move = None`
+  // then `move in [(1,2), ...]`, where list.__contains__ compares each
+  // element against it. `len(t)` below is then len(None), which
+  // resolves to nothing, and the whole comparison degrades: sunfish
+  // line 448 reports `unresolved call '__not__'` and the loop body
+  // never runs. CPython says a tuple is never equal to a non-tuple, so
+  // answer False directly. A None-typed operand cannot be handled by
+  // giving __pyc_None_type__ a __len__ -- 00_runtime.py documents why
+  // container stubs there inject None into element types program-wide.
+  fputs("    if t is None: return False\n", f);
   fputs("    n = len(self)\n", f);
   fputs("    if n != len(t): return False\n", f);
   for (int i = 0; i < max_arity; i++)
@@ -545,6 +555,7 @@ void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
   fputs("        if not (self[i] == t[i]): return False\n", f);
   fputs("    return True\n", f);
   fputs("  def __lt__(self, t):\n", f);
+  fputs("    if t is None: return False\n", f);
   fputs("    n = len(self)\n", f);
   fputs("    m = len(t)\n", f);
   for (int i = 0; i < max_arity; i++) {
