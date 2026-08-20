@@ -184,3 +184,88 @@ silently wrong today, which is most non-numeric generator code.
 - A generator yielding strings round-trips.
 - sunfish's line 448 no longer reports `unresolved call '__not__'`.
 - Existing int-yielding generator tests unchanged.
+
+
+## Implementation attempted 2026-08-20 — works, blocked on ONE conflict
+
+The revised plan was built end to end and **it does fix the bug**:
+
+    for x in gen():   # yields (1, 2), (3, 4)
+        print(x)      # (1, 2) / (3, 4)   -- was two raw pointers
+
+as did `x in gen()` over tuples and the sunfish-shaped
+`while move not in gen():` loop. Suites went 286 -> 287 on both
+backends with it on. All of it is REVERTED; this records what worked
+and the one thing that does not.
+
+### What the change was
+
+1. **Frontend conduit.** `PycCompiler::gen_yield_sample` maps each
+   generator function Sym to a synthetic Sym; every `yield` — and
+   every `yield from`, which re-yields the sub-generator's values —
+   also `if1_move`s the yielded value into it. Dead at runtime; only
+   the type matters.
+2. **Wrapper.** The `__pyc_generator__` construction (same
+   `case PY_funcdef`, right after `gen_fun_pyda` builds the body)
+   passes that Sym as a third constructor argument.
+3. **Library.** `__init__(self, handle, ysample)` seeds
+   `self.nextval = ysample`; `__pyc_advance__`/`send` take their
+   c_call result type from `self.nextval` instead of a hardcoded
+   `int`; the `nextval = 0` class attribute is deleted entirely.
+4. **`c_call_codegen`** casts the result to the DECLARED type — the
+   runtime returns a machine word while the declared type is now the
+   yielded type, and the word IS the pointer.
+
+Two things had to be found along the way, both real:
+
+- **`yield from` needs the same hook.** A generator whose only yields
+  are delegated (`def outer(): yield from inner()`) collects no sample
+  and its channel ends up untyped. `generator_yield_from` caught it.
+- **`return 0` on the exception paths of `__next__`/`send` pins the
+  channel to int** all by itself — the union at the `for x in gen()`
+  binding was `{int64, tuple}`, not `{None, tuple}`. Returning
+  `self.nextval` instead keeps the type clean. This one is worth
+  keeping in mind independently: an int literal on a
+  never-observed path still widens the type.
+
+### The blocker: visibility vs widening
+
+The sample Sym must be at **module level** for the wrapper to reach
+it. But writing yielded values into a global cell widens unrelated
+types: `shedskin_examples/sudoku5`, whose generators yield LISTS,
+stops compiling — its `[5, 3, 0, ...]` literal comes out with a
+`_CG_void` element (`_CG_prim_list(_CG_void, 9)`). Isolated by
+toggling the sample alone: sample off, sudoku5 compiles; sample on, it
+does not.
+
+Making the Sym an ordinary non-global instead widens nothing and is
+not visible to the wrapper either — every generator then reports
+"expression has no type".
+
+**That conflict is the whole remaining problem.** It also cannot be
+hidden behind a flag: the library half (dropping `nextval = 0`, typing
+the c_calls from `self.nextval`) is unconditional, so with the conduit
+disabled every generator reads `None`.
+
+### Where to resume
+
+Find a conduit that is visible to the wrapper without being a written
+global. Options not yet tried:
+
+- mark the sample so codegen/FA treat it as type-only (the `is_fake`
+  flag already used for `__pyc_c_call__`'s type argument is the
+  nearest existing precedent);
+- attach the sample to the generator function's Sym rather than to a
+  variable, and have the wrapper read it from there;
+- or route the type through `fn->ret` after all, which is what
+  shedskin uses — but that first needs the `int` placeholder
+  (`_CG_generator_placeholder_return`) removed for generators that
+  actually yield, since otherwise the union is `{int, T}` again.
+
+### sunfish
+
+Even with the conduit on, `sunfish.py:448` still reports
+`unresolved call '__not__'`. Its `move` is `{None, tuple}` and the
+comparison inside `__contains__` needs the None arm narrowed away,
+which pyc does not do (ifa/issues/025, intra-function union
+narrowing). So sunfish needs BOTH this and that.
