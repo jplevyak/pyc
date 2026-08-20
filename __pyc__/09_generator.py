@@ -88,6 +88,22 @@ class __pyc_generator__:
         return 0
       raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
     return self.nextval
+  def __contains__(self, item):
+    # ifa/issues/090 / issues/025 item 4: `x in gen()`.
+    # python_ifa_build_if1.cc lowers `in` unconditionally to a direct
+    # __contains__ dispatch on the right operand, with no fallback to
+    # the general iterable protocol when the method is absent -- so a
+    # generator, which has __iter__/__pyc_more__/__next__ but never a
+    # __contains__, could not be tested for membership at all. Even
+    # `3 in gen()` over plain ints failed ("illegal call argument
+    # type"). Exactly the gap __dict_iter__.__contains__ was added for
+    # (07_dict.py).
+    #
+    # Consumes the generator, which is what CPython's `in` does too.
+    while self.__pyc_more__():
+      if self.__next__() == item:
+        return True
+    return False
   def send(self, value):
     self.has_next = __pyc_c_call__(bool, "_CG_generator_send", int, self.handle, int, value)
     self.primed = False
