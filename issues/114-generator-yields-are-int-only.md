@@ -110,19 +110,62 @@ coroutine handle, because the generator function's real runtime return
 value IS the handle. The conduit has to be type-only, and an IF1 move
 is not.
 
-### So this is blocked, not merely unimplemented
+### CORRECTION — this is NOT blocked on boxing
 
-Addressing 114 needs ONE of:
+The paragraph that stood here concluded 114 needed `{int, pointer}`
+unions solved (issues/018 / ifa/030). **That is wrong**, and shedskin
+is the counter-example: it types sunfish — generators yielding move
+tuples and all — with no boxing and no union representation at all.
 
-- **eliminate the int placeholder for generators that actually yield**,
-  so `fn->ret` carries only the yielded types — but the placeholder is
-  load-bearing for the dead-reply case, so this needs that case handled
-  another way; or
-- **solve `{int, pointer}` unions** (issues/018 / ifa/030), after which
-  the conduit above is a small change at both ends.
+How, from its source (`shedskin/cpp.py`, `generator_class`):
 
-Neither is a local fix, which is why the int-only channel is described
-in `fa.cc`'s P_prim_yield comment as "v1 scope" rather than a bug.
+```cpp
+class __gen_<funcname> : public __iter<YieldedType> {
+```
+
+It emits **one class per generator function**, parameterised on the
+inferred yielded type (`nodetypestr(func.retnode.thing)`), with the
+function's locals as concrete-typed members and an `int __last_yield`
+for resumption. There is no shared generator object and no value
+channel to widen, so no union ever forms.
+
+Note especially what supplies the element type: **the generator
+function's RETURN node**. In shedskin a generator's return type IS its
+yielded type. That is exactly the conduit traced above — and shedskin
+has no placeholder polluting it.
+
+So the `{int, tuple}` union is not a fact about generators that pyc
+must represent. It is manufactured by two pyc-specific choices:
+
+1. every generator shares ONE `__pyc_generator__` whose value channel
+   is declared `int`, and
+2. `fn->ret` carries an `int` placeholder.
+
+Specialise per generator and neither applies.
+
+### Revised plan
+
+Follow shedskin's shape within pyc's coroutine design (pyc uses real
+coroutine handles, where shedskin uses a state machine — the handle
+stays either way):
+
+- Give each generator funcdef a synthetic variable **in the ENCLOSING
+  scope**, written by every `yield` in its body. A dead store at
+  runtime; its purpose is to collect the union of yielded types where
+  something outside the generator can see it.
+- The wrapper that constructs the generator object is built in the same
+  `case PY_funcdef`, AFTER `gen_fun_pyda` — so that variable is in
+  scope there. Pass it to the constructor as a type sample.
+- `__init__` seeds `self.nextval` from the sample; `__pyc_advance__`
+  takes its c_call result type from `self.nextval` rather than the
+  hardcoded `int`. FA already clones `__pyc_generator__` per creation
+  site, so each generator specialises — pyc's equivalent of shedskin's
+  per-generator class.
+- `nextval = 0` becomes `nextval = None`: `{None, T}` is representable
+  for pointer-shaped T (verified), `{int, T}` is not.
+
+Still not a small change, but it is frontend + library work of a kind
+pyc already does, not a representational blocker.
 
 ## What this blocks
 
