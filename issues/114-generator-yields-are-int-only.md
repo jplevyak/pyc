@@ -457,3 +457,53 @@ is wrong about a union arriving through the synthesised CS of an
 opaque c_call, which is the shape this fix creates. That is the thing
 to fix before re-applying the six pieces, which are otherwise
 believed correct and are recorded above in full.
+
+## Branch `issues/114-generator-typed-channel`
+
+All of the above lives on that branch (two WIP commits, do not merge),
+with repros in `issues/repro/114-*.py`.
+
+### The constant-folding lead, run down
+
+It was not constant folding. **`fn->ret` is single-assignment-renamed,
+so sequential yields KILL each other** and the reply sees only the last
+def. Measured: a generator yielding `(1,2)`, `(3,4)`, `(5,6)` reported
+`5 6` on all three iterations, and its emitted C returned ONE record
+type rather than a union. The "folding" was simply reading the only
+type that survived.
+
+Multiple `return` statements union correctly because each reaches the
+reply on its **own path**, so the join inserts a phi — which is exactly
+why the control (two returns) passes while two yields do not.
+
+### Giving each yield its own path
+
+`gen_yield_type_contribution()` (second branch commit) emits, per
+yield, an opaque never-taken branch that moves the value into `fn->ret`
+and jumps to the reply — conditioned on the generator's existing
+`_CG_generator_placeholder_return()` value, reused so the cost stays
+one placeholder call per generator. FA cannot fold it, so both arms
+stay live and the types union; at runtime it is always 0, so the
+coroutine handle is never disturbed.
+
+The union then **does** form — and collapses to `_CG_void`, because the
+several tuple CreationSets on the channel get no shared concrete type.
+
+    multi-yield generators   silently wrong values -> loud abort
+    suite on the branch      282 passed / 5 failed
+
+Better failure mode, but five generator tests now fail, including
+int-only ones (`generator_basic` yields 1 and 2), so it regresses main
+for those.
+
+### The actual wall
+
+Not generator-specific and not about yielded types: **several
+CreationSets reaching one variable need a shared concrete type.** The
+control still holds — two tuple CreationSets through an ordinary
+function return work — so the open question is why the same union
+formed at a *reply* does not get one. Same family as
+ifa/issues/090's original framing and issues/018.
+
+That is what to answer next. The eight pieces on the branch are
+otherwise believed correct.
