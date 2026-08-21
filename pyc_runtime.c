@@ -626,6 +626,11 @@ _Bool _CG_generator_send(long long raw_handle, long long value) {
   return !st->done;
 }
 
+/* issues/114: identity on the handle, existing only to be opaque to
+ * flow analysis -- see pyc_c_runtime.h's inline C-backend twin for why
+ * a generator's call result must never be constant folded. */
+long long _CG_generator_handle(long long raw_handle) { return raw_handle; }
+
 long long _CG_generator_value(long long raw_handle) {
   _CG_generator_state *st = (_CG_generator_state *)(intptr_t)raw_handle;
   if (!st) return 0;

@@ -69,22 +69,29 @@ class __pyc_generator__:
   # value channel to int, so a generator yielding tuples handed back a
   # reinterpreted POINTER and `for x in gen(): print(x)` printed an
   # address. Its type comes from the c_calls below instead.
-  def __init__(self, handle):
-    # `handle`'s runtime value is the coroutine handle, but its TYPE is
-    # now `{None, <what this generator yields>}` -- each `yield` moves
-    # its value into the generator function's fn->ret, so the wrapper's
-    # `handle_result` carries the yielded types out. FA already clones
+  def __init__(self, handle, sample):
+    # Two arguments doing two jobs that used to be crammed into one
+    # (issues/114). `handle` is the coroutine handle and nothing else:
+    # a plain int, opaque to FA (the wrapper routes it through
+    # _CG_generator_handle precisely so it can never be constant
+    # folded). `sample` carries no useful runtime value at all -- it is
+    # the generator call's own result, whose TYPE is the union of
+    # everything the body yields, because each `yield` moves its value
+    # into the generator function's fn->ret. Seeding nextval from it is
+    # what types this instance's value channel; FA already clones
     # __pyc_generator__ per creation site, which is pyc's equivalent of
     # shedskin's one-class-per-generator.
     self.handle = handle
+    self.nextval = sample
   def __iter__(self):
     return self
   def __pyc_advance__(self):
     self.has_next = __pyc_c_call__(bool, "_CG_generator_advance", int, self.handle)
     if self.has_next:
-      # Result type from self.handle, not a hardcoded int -- the
+      # Result type from self.nextval (seeded in __init__ from the
+      # generator call's own result type), not a hardcoded int -- the
       # runtime channel is a machine word either way.
-      self.nextval = __pyc_c_call__(self.handle, "_CG_generator_value", int, self.handle)
+      self.nextval = __pyc_c_call__(self.nextval, "_CG_generator_value", int, self.handle)
   def __pyc_more__(self):
     if not self.primed:
       self.__pyc_advance__()
@@ -128,5 +135,5 @@ class __pyc_generator__:
         # channel's type by itself.
         return self.nextval
       raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
-    self.nextval = __pyc_c_call__(self.handle, "_CG_generator_value", int, self.handle)
+    self.nextval = __pyc_c_call__(self.nextval, "_CG_generator_value", int, self.handle)
     return self.nextval

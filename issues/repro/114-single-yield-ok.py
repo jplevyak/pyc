@@ -1,14 +1,16 @@
-# issues/114 repro A -- WORKS on this branch, fails on main.
+# issues/114 repro A -- FIXED 2026-08-21.
 #
-# A generator yielding a non-int. On main the value channel is
-# int-typed, so this hands back a reinterpreted pointer. With the
-# branch's changes the tuple survives: len, indexing and equality are
-# all correct.
+# A generator yielding a non-int. Before the fix the value channel was
+# int-typed, so this handed back a reinterpreted pointer and printing x
+# printed an address, with no diagnostic. len, indexing and equality
+# are all correct now.
 #
-#   expected (and produced on this branch):
-#     2 2
-#     True True
-#     True
+#   2 2
+#   True True
+#   True
+#
+# Covered by tests/generator_yields_nonint.py; kept here as the
+# smallest single-yield case.
 
 
 def gen():

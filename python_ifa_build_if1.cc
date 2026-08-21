@@ -1491,10 +1491,28 @@ static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *know
 // never taken and the coroutine handle is never disturbed.
 static void gen_yield_type_contribution(Sym *yval, PycAST *ast, PycCompiler &ctx) {
   if (!ctx.fun() || !ctx.fun()->is_generator) return;
-  Sym *placeholder = ctx.gen_placeholder.get(ctx.fun());
-  if (!placeholder) return;
   Label *lret = ctx.lreturn();
   if (!lret) return;
+  // Build this yield's OWN opaque value rather than reusing the single
+  // one gen_fun_pyda already makes per generator. That sharing looks
+  // free but cannot work: build_if1 is a POST-ORDER walk, so every
+  // yield in the body is visited before gen_fun_pyda runs on the
+  // enclosing PY_funcdef (python_ifa_build_if1.cc's PY_funcdef case
+  // recurses into the body, THEN calls it). Reading a value it stashes
+  // finds an empty map at every yield -- and since this whole function
+  // is the only thing that defines fn->ret for a generator now, that
+  // silently left the return type with ZERO reaching defs (bottom,
+  // reported as "expression has no type" and emitted as _CG_void_type).
+  PycSymbol *int_cls = make_PycSymbol(ctx, "int", PYC_USE);
+  Sym *type_arg = (int_cls && int_cls->sym) ? int_cls->sym : sym_int64;
+  Code *send = if1_send1(if1, &ast->code, ast);
+  if1_add_send_arg(if1, send, sym_primitive);
+  if1_add_send_arg(if1, send, sym___pyc_c_call__);
+  if1_add_send_arg(if1, send, type_arg);
+  if1_add_send_arg(if1, send, make_string("_CG_generator_placeholder_return"));
+  Sym *placeholder = new_sym(ast);
+  if1_add_send_result(if1, send, placeholder);
+  send->rvals.v[2]->is_fake = 1;
   Sym *cond = new_sym(ast);
   call_method(&ast->code, ast, placeholder, sym___pyc_to_bool__, cond, 0);
   Code *ifc = if1_if_goto(if1, &ast->code, cond, ast);
@@ -2537,8 +2555,35 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         PycSymbol *gen_cls_ps = find_PycSymbol(ctx, cannonicalize_string("__pyc_generator__"), &lvl);
         if (!gen_cls_ps || !gen_cls_ps->sym)
           fail("error line %d, internal: __pyc_generator__ not found (issues/014)", ctx.lineno);
+        // issues/114: `handle_result` now does two unrelated jobs. Its
+        // runtime VALUE is the coroutine handle; its FA TYPE is the
+        // union of everything the body yields (gen_yield_type_
+        // contribution moves each yielded value into fn->ret), which is
+        // what tells __pyc_generator__ what its value channel carries.
+        // Keeping both on one Sym breaks as soon as the type is a
+        // singleton constant -- `yield 1` and nothing else makes FA
+        // certain the call returns 1, so the caller inlines the literal
+        // and the handle is destroyed (see _CG_generator_handle,
+        // pyc_c_runtime.h). Split them: the handle travels through the
+        // opaque identity call below, typed `int`, and handle_result is
+        // passed on purely as a type sample.
+        int int_lvl = 0;
+        PycSymbol *int_cls_ps = find_PycSymbol(ctx, cannonicalize_string("int"), &int_lvl);
+        Sym *int_type = (int_cls_ps && int_cls_ps->sym) ? int_cls_ps->sym : sym_int64;
+        Code *hsend = if1_send1(if1, &wbody, ast);
+        if1_add_send_arg(if1, hsend, sym_primitive);
+        if1_add_send_arg(if1, hsend, sym___pyc_c_call__);
+        if1_add_send_arg(if1, hsend, int_type);
+        if1_add_send_arg(if1, hsend, make_string("_CG_generator_handle"));
+        if1_add_send_arg(if1, hsend, int_type);
+        if1_add_send_arg(if1, hsend, handle_result);
+        Sym *opaque_handle = new_sym(ast);
+        if1_add_send_result(if1, hsend, opaque_handle);
+        hsend->rvals.v[2]->is_fake = 1;
+        hsend->rvals.v[4]->is_fake = 1;
         Code *ctor_send = if1_send1(if1, &wbody, ast);
         if1_add_send_arg(if1, ctor_send, gen_cls_ps->sym);
+        if1_add_send_arg(if1, ctor_send, opaque_handle);
         if1_add_send_arg(if1, ctor_send, handle_result);
         Sym *gen_inst = new_sym(ast);
         if1_add_send_result(if1, ctor_send, gen_inst);
@@ -2782,12 +2827,28 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         ctx.fun()->fun_returns_value = 1;
         if1_gen(if1, &ast->code, val->code);
         if1_move(if1, &ast->code, val->rval, ctx.fun()->ret, ast);
-      } else
-        // issues/014: keep a bare `return` inside a generator body
-        // consistent with gen_fun_pyda's int64-typed default reply
-        // (see its comment) -- both exit paths must agree on the
-        // Fun's inferred return type.
-        if1_move(if1, &ast->code, ctx.fun()->is_generator ? int64_constant(0) : sym_nil, ctx.fun()->ret, ast);
+      } else if (!ctx.fun()->is_generator)
+        if1_move(if1, &ast->code, sym_nil, ctx.fun()->ret, ast);
+      // issues/114: a bare `return` inside a GENERATOR contributes
+      // nothing to fn->ret. It used to move int64_constant(0), to stay
+      // "consistent with gen_fun_pyda's int64-typed default reply" --
+      // but that default reply is gone (it was what pinned the whole
+      // value channel to int, the bug this issue is about), so all the
+      // move does now is manufacture an int arm in a channel that
+      // otherwise carries whatever the body yields. A tuple-yielding
+      // generator with a bare `return` in it aborted outright with
+      // "matching function not found" on the resulting {int, tuple}.
+      // Same reasoning as the raise edge, which already skips its own
+      // nil move for generators (goto_exc_target above), and as the two
+      // `return self.nextval` sites in __pyc__/09_generator.py.
+      //
+      // Cost: a bare return leaves the co_return value (and so
+      // StopIteration.value, read back through
+      // _CG_generator_return_value) undefined rather than 0 on that
+      // path. pyc already diverged there -- CPython reports None, pyc
+      // reported 0 -- and an explicit `return X` still carries its
+      // value normally. Trading a documented wrong-ish value in a
+      // corner for a hard abort on ordinary code.
       
       // Emit cleanups for all active with statements in this function
       for (int i = ctx.with_stack.n - 1; i >= 0; i--) {

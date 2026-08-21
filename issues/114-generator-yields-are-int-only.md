@@ -457,3 +457,105 @@ is wrong about a union arriving through the synthesised CS of an
 opaque c_call, which is the shape this fix creates. That is the thing
 to fix before re-applying the six pieces, which are otherwise
 believed correct and are recorded above in full.
+
+## FIXED 2026-08-21
+
+Both suites 287 passed / 0 failed, C and LLVM. Regression test:
+`tests/generator_yields_nonint.py`.
+
+```python
+def gen():
+    yield (1, 2)
+    yield (3, 4)
+for x in gen():
+    print(x)              # (1, 2) / (3, 4)   -- was two raw addresses
+```
+
+Tuples, strings and lists all round-trip, `in` works over them,
+multi-yield generators report each value in order, and a bare `return`
+no longer aborts the program.
+
+### Answering the question this issue stalled on
+
+The last two sections above are both wrong about the cause, and the
+control they lean on — two tuple CreationSets through an ordinary
+`return` working fine — turned out to be a red herring twice over.
+
+**There was never an asymmetry between a return and a reply.** Two
+tuple CreationSets union at a reply exactly as well as at a return;
+the emitted C for both is a single concrete record type. Three
+separate things were being read as one:
+
+1. **`fn->ret` is single-assignment-renamed.** Sequential `if1_move`s
+   into it kill each other, so the reply saw only the LAST yield. That
+   is what made both iterations report the second tuple — not folding
+   "across a multi-CreationSet channel", because there was only ever
+   one CreationSet to fold. Multiple `return` statements union because
+   each reaches the reply on its own path and the join inserts a phi;
+   two yields are straight-line and do not. Giving each yield its own
+   never-taken path to the reply (`gen_yield_type_contribution`,
+   python_ifa_build_if1.cc) makes the union form.
+
+2. **The "collapses to `_CG_void`" reading was a no-op.** The helper
+   looked up the generator's opaque placeholder in a map filled by
+   `gen_fun_pyda` — but build_if1 is a POST-ORDER walk, so every yield
+   is visited before `gen_fun_pyda` ever runs on the enclosing
+   `PY_funcdef`. It read an empty map and returned at every single
+   yield. With no other def of `fn->ret` left, the return type had
+   ZERO reaching defs: bottom, printed as "expression has no type" and
+   emitted as `_CG_void_type`. That is not a union collapsing, it is
+   nothing arriving. Each yield now builds its own placeholder.
+
+3. **Constant folding was real, but somewhere else entirely.** Not
+   indexing across a channel — a generator whose body yields ONE
+   constant (`yield 1`, then a raise or a fall-through) makes FA
+   certain the FUNCTION returns 1. A generator's C return value is the
+   coroutine handle, though: cg.cc discards the emitted return and
+   hands back `handle.address()`. So the caller inlined the literal in
+   place of the handle, built `__pyc_generator__` around the address 1,
+   and segfaulted on the first resume — `_CG_generator_send(raw_handle=1)`.
+   Fixed in `P_prim_reply` (ifa/analysis/fa.cc) by unioning a
+   constant's own abstract type alongside it for a generator, so
+   `get_constant` sees two CreationSets and refuses to fold. Done at
+   the type rather than at the fold because SSU gives the call's result
+   and each later use separate Vars AND separate Syms — there is no
+   single downstream thing to exempt. Same root as issues/022's
+   `P_prim_await` liveness exception: **a coroutine handle is not a
+   value the optimizer may reason about through its contents.**
+
+### What landed
+
+Beyond the six pieces recorded above (`gen_placeholder` is gone, per
+point 2):
+
+- `gen_yield_type_contribution` (python_ifa_build_if1.cc) — one
+  never-taken branch per yield, each moving its value into `fn->ret`
+  and jumping to the reply, conditioned on its own opaque
+  `_CG_generator_placeholder_return()` so FA cannot fold either arm.
+- **`fn->ret` no longer does two jobs.** Its runtime value is the
+  handle; its type is the yielded union. The wrapper now routes the
+  handle through `_CG_generator_handle` (an identity added to
+  pyc_c_runtime.h and pyc_runtime.c) typed as a plain `int` meta type,
+  and passes the call's own result on separately as a type sample:
+  `__pyc_generator__(handle, sample)`, with `__init__` seeding
+  `self.nextval = sample`. The opaque call alone was NOT enough —
+  the constant was inlined at its ARGUMENT — which is why the fold
+  also had to be stopped in FA.
+- **A bare `return` in a generator contributes nothing to `fn->ret`.**
+  It used to move `int64_constant(0)` "for consistency with
+  gen_fun_pyda's int64-typed default reply", but that default reply is
+  the very thing this issue removed; all it did was manufacture an int
+  arm, and `{int, tuple}` aborts. Cost: StopIteration.value after a
+  bare return is undefined rather than 0 (CPython reports None; pyc
+  already diverged). Explicit `return X` is unaffected.
+- The `P_prim_len` no-defs guard recorded above is still in and still
+  correct.
+
+### Still blocked: sunfish
+
+Not by this. `Position.gen_moves` is a **method**, and a generator
+method never gets the `__pyc_generator__` wrapper at all — see
+[issues/115](115-generator-methods-unsupported.md), a pre-existing gap
+that fails on plain ints and has nothing to do with the value channel.
+Reduced both ways to be sure: the same program with a module-level
+generator matches CPython exactly.
