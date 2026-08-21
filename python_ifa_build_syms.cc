@@ -1779,6 +1779,11 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     default_ret = new_sym(ast);
     if1_add_send_result(if1, placeholder_send, default_ret);
     placeholder_send->rvals.v[2]->is_fake = 1;
+    // issues/114: hand this opaque value to the yield sites, which
+    // each need their own never-taken branch to the reply (see
+    // python_ifa_build_if1.cc). Reusing this one keeps the cost at a
+    // single placeholder call per generator rather than one per yield.
+    ctx.gen_placeholder.put(fn, default_ret);
     // issues/114: NO move into fn->ret here at all.
     //
     // `default_ret` must stay OPAQUE -- it is the condition of the

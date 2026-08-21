@@ -1471,6 +1471,43 @@ static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *know
   if1_label(if1, code, ast, Lfollow);
 }
 
+// issues/114: contribute one yielded value's TYPE to the enclosing
+// generator's return type.
+//
+// A plain `if1_move(yval, fn->ret)` does NOT work, and the reason is
+// worth stating: fn->ret is single-assignment-renamed, so sequential
+// yields KILL each other and the reply sees only the last def.
+// Measured -- a generator yielding (1,2), (3,4), (5,6) reported
+// `5 6` on all three iterations, and its emitted C returned one
+// record type rather than a union.
+//
+// Multiple `return` statements union correctly precisely because each
+// reaches the reply on its OWN path, so the join inserts a phi. Give
+// each yield the same shape: an opaque never-taken branch that moves
+// the value into fn->ret and jumps to the reply. The condition is the
+// generator's existing `_CG_generator_placeholder_return()` value
+// (build_syms), which FA cannot fold -- so both arms stay live and the
+// types union -- while at runtime it is always 0, so the branch is
+// never taken and the coroutine handle is never disturbed.
+static void gen_yield_type_contribution(Sym *yval, PycAST *ast, PycCompiler &ctx) {
+  if (!ctx.fun() || !ctx.fun()->is_generator) return;
+  Sym *placeholder = ctx.gen_placeholder.get(ctx.fun());
+  if (!placeholder) return;
+  Label *lret = ctx.lreturn();
+  if (!lret) return;
+  Sym *cond = new_sym(ast);
+  call_method(&ast->code, ast, placeholder, sym___pyc_to_bool__, cond, 0);
+  Code *ifc = if1_if_goto(if1, &ast->code, cond, ast);
+  Label *Lcontrib = if1_alloc_label(if1);
+  Label *Lfollow = if1_alloc_label(if1);
+  if1_if_label_true(if1, ifc, Lcontrib, ast);
+  if1_if_label_false(if1, ifc, Lfollow, ast);
+  if1_label(if1, &ast->code, ast, Lcontrib);
+  if1_move(if1, &ast->code, yval, ctx.fun()->ret, ast);
+  if1_goto(if1, &ast->code, lret)->ast = ast;
+  if1_label(if1, &ast->code, ast, Lfollow);
+}
+
 // Read `obj.attr`'s value -- the exact "period" operator send
 // PY_power's own PY_attribute trailer handling emits when flushing a
 // pending member access (see build_if1_pyda's PY_power case), just
@@ -3921,24 +3958,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_gen(if1, &ast->code, val_ast->code);
         yval = val_ast->rval;
       }
-      // issues/114: contribute the yielded value's TYPE to this
-      // generator's return type. FA flows a Fun's return type at its
-      // REPLY node from fn->ret's AVar, so any live def of fn->ret
-      // joins that union -- it need not be the early placeholder move.
-      // Free at runtime: a generator's real result is the coroutine
-      // handle, produced by the coroutine machinery.
-      if (ctx.fun() && ctx.fun()->is_generator)
-        if1_move(if1, &ast->code, yval, ctx.fun()->ret, ast);
-      // issues/114: contribute the yielded value's TYPE to the enclosing
-      // generator's return type. FA flows a Fun's return type AT ITS
-      // REPLY from fn->ret's AVar, so any live def of fn->ret joins
-      // that union -- it need not be the early placeholder move. The
-      // generator's real runtime result is the coroutine handle,
-      // produced by the coroutine machinery rather than by fn->ret, so
-      // this store costs nothing. This is what lets
-      // __pyc_generator__ type its value channel per generator.
-      if (ctx.fun() && ctx.fun()->is_generator)
-        if1_move(if1, &ast->code, yval, ctx.fun()->ret, ast);
+      gen_yield_type_contribution(yval, ast, ctx);
       Sym *unused = new_sym(ast);
       Code *send = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), yval, unused);
       send->ast = ast;
@@ -4411,24 +4431,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_gen(if1, &ast->code, val_ast->code);
         yval = val_ast->rval;
       }
-      // issues/114: contribute the yielded value's TYPE to this
-      // generator's return type. FA flows a Fun's return type at its
-      // REPLY node from fn->ret's AVar, so any live def of fn->ret
-      // joins that union -- it need not be the early placeholder move.
-      // Free at runtime: a generator's real result is the coroutine
-      // handle, produced by the coroutine machinery.
-      if (ctx.fun() && ctx.fun()->is_generator)
-        if1_move(if1, &ast->code, yval, ctx.fun()->ret, ast);
-      // issues/114: contribute the yielded value's TYPE to the enclosing
-      // generator's return type. FA flows a Fun's return type AT ITS
-      // REPLY from fn->ret's AVar, so any live def of fn->ret joins
-      // that union -- it need not be the early placeholder move. The
-      // generator's real runtime result is the coroutine handle,
-      // produced by the coroutine machinery rather than by fn->ret, so
-      // this store costs nothing. This is what lets
-      // __pyc_generator__ type its value channel per generator.
-      if (ctx.fun() && ctx.fun()->is_generator)
-        if1_move(if1, &ast->code, yval, ctx.fun()->ret, ast);
+      gen_yield_type_contribution(yval, ast, ctx);
       Sym *yval_result = new_sym(ast);
       Code *send = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), yval, yval_result);
       send->ast = ast;
@@ -4502,18 +4505,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // issues/114: `yield from` re-yields the sub-generator's values,
       // so it contributes exactly like a direct yield. Without it a
       // generator whose only yields are delegated types as nothing.
-      if (ctx.fun() && ctx.fun()->is_generator)
-        if1_move(if1, &ast->code, val, ctx.fun()->ret, ast);
-      // issues/114: contribute the yielded value's TYPE to the enclosing
-      // generator's return type. FA flows a Fun's return type AT ITS
-      // REPLY from fn->ret's AVar, so any live def of fn->ret joins
-      // that union -- it need not be the early placeholder move. The
-      // generator's real runtime result is the coroutine handle,
-      // produced by the coroutine machinery rather than by fn->ret, so
-      // this store costs nothing. This is what lets
-      // __pyc_generator__ type its value channel per generator.
-      if (ctx.fun() && ctx.fun()->is_generator)
-        if1_move(if1, &ast->code, val, ctx.fun()->ret, ast);
+      gen_yield_type_contribution(val, ast, ctx);
       Code *yfsend = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), val, new_sent);
       yfsend->ast = ast;
       if1_move(if1, &ast->code, new_sent, sent, ast);

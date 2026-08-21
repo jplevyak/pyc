@@ -118,6 +118,15 @@ class PycCompiler : public PycCallbacks {
   // are compile-time-known namespaces, not runtime objects).
   Map<Sym *, PycModule *> module_syms;
 
+  // issues/114: per generator function, the opaque
+  // `_CG_generator_placeholder_return()` value build_syms already
+  // creates for its never-taken branch. Each `yield` reuses it as the
+  // condition of its OWN never-taken branch to the reply, which is how
+  // the yielded types reach fn->ret as a union -- see the comment at
+  // the yield sites in python_ifa_build_if1.cc for why a plain move
+  // does not work.
+  Map<Sym *, Sym *> gen_placeholder;
+
   // issue 011 (exception handling, option C):
   Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)
   Vec<Sym *> handler_exc;      // innermost handler's saved exception temp (bare re-raise)
