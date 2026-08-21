@@ -65,15 +65,26 @@ class __pyc_generator__:
   handle = 0
   primed = False
   has_next = False
-  nextval = 0
+  # issues/114: NO initializer for nextval. `nextval = 0` pinned the
+  # value channel to int, so a generator yielding tuples handed back a
+  # reinterpreted POINTER and `for x in gen(): print(x)` printed an
+  # address. Its type comes from the c_calls below instead.
   def __init__(self, handle):
+    # `handle`'s runtime value is the coroutine handle, but its TYPE is
+    # now `{None, <what this generator yields>}` -- each `yield` moves
+    # its value into the generator function's fn->ret, so the wrapper's
+    # `handle_result` carries the yielded types out. FA already clones
+    # __pyc_generator__ per creation site, which is pyc's equivalent of
+    # shedskin's one-class-per-generator.
     self.handle = handle
   def __iter__(self):
     return self
   def __pyc_advance__(self):
     self.has_next = __pyc_c_call__(bool, "_CG_generator_advance", int, self.handle)
     if self.has_next:
-      self.nextval = __pyc_c_call__(int, "_CG_generator_value", int, self.handle)
+      # Result type from self.handle, not a hardcoded int -- the
+      # runtime channel is a machine word either way.
+      self.nextval = __pyc_c_call__(self.handle, "_CG_generator_value", int, self.handle)
   def __pyc_more__(self):
     if not self.primed:
       self.__pyc_advance__()
@@ -85,7 +96,10 @@ class __pyc_generator__:
     self.primed = False
     if not self.has_next:
       if __pyc_exc__ is not None:
-        return 0
+        # issues/114: NOT `return 0`. Never observed -- an exception is
+        # pending -- but an int literal here unions int64 into the
+        # channel's type by itself.
+        return self.nextval
       raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
     return self.nextval
   def __contains__(self, item):
@@ -109,7 +123,10 @@ class __pyc_generator__:
     self.primed = False
     if not self.has_next:
       if __pyc_exc__ is not None:
-        return 0
+        # issues/114: NOT `return 0`. Never observed -- an exception is
+        # pending -- but an int literal here unions int64 into the
+        # channel's type by itself.
+        return self.nextval
       raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
-    self.nextval = __pyc_c_call__(int, "_CG_generator_value", int, self.handle)
+    self.nextval = __pyc_c_call__(self.handle, "_CG_generator_value", int, self.handle)
     return self.nextval

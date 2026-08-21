@@ -1779,7 +1779,27 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     default_ret = new_sym(ast);
     if1_add_send_result(if1, placeholder_send, default_ret);
     placeholder_send->rvals.v[2]->is_fake = 1;
-    if1_move(if1, &body, default_ret, fn->ret, ast);
+    // issues/114: NO move into fn->ret here at all.
+    //
+    // `default_ret` must stay OPAQUE -- it is the condition of the
+    // never-taken branch below, and FA must not be able to fold that
+    // branch away, which is why it comes from a C call rather than a
+    // literal. That job is unchanged. But it used to be moved into
+    // fn->ret as well, and THAT pinned the generator's return type to
+    // int, which pinned __pyc_generator__'s whole value channel: a
+    // yielded tuple came back as a reinterpreted pointer.
+    //
+    // Nothing needs to be moved here now. fn->ret's type is the union
+    // of every LIVE def of it, and each `yield` moves its value in
+    // (build_if1) -- AVars accumulate per (Var, contour), not per
+    // path, so the branch reaching the reply "before the body runs"
+    // does not need its own def. Moving nil for that case merely put
+    // None back into the union, and a `{None, T}` receiver cannot
+    // dispatch a method even though it prints fine (measured:
+    // `None in gen()` aborted in __pyc_generator__::__contains__).
+    //
+    // The reply's LIVENESS, which is the thing that genuinely
+    // mattered, is still handled by the opaque branch below.
     // issues/014 (infinite generator loops): FA only ever flows a
     // Fun's return type from a LIVE P_prim_reply node (fa.cc's
     // P_prim_reply case flows straight into es->rets -- never visited
@@ -1853,7 +1873,17 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // same type) second write, dead code whenever the body's own
   // control flow doesn't fall through. Skipped for them entirely.
   if (!fn->is_generator && !(ifa_no_implicit_none && fn->fun_returns_value))
-    if1_move(if1, &body, default_ret, fn->ret, ast);
+    // issues/114: move sym_nil, NOT default_ret. These are two jobs
+    // that happened to share one value. `default_ret` must stay OPAQUE
+    // -- it is the never-taken branch's condition below, and FA must
+    // not be able to fold that branch, which is why it comes from a C
+    // call. But moving it into fn->ret also made the RETURN TYPE int,
+    // and that pinned the generator's whole value channel: a yielded
+    // tuple came back as a reinterpreted pointer. This path only needs
+    // fn->ret to have SOME reaching def for the case where the branch
+    // reaches the reply before the body has run; nil does that, and
+    // `{None, T}` is representable where `{int, T}` is not.
+    if1_move(if1, &body, sym_nil, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
