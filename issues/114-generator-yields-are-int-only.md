@@ -389,3 +389,71 @@ type and `return (T)handle;`. That is the one remaining piece, in
 All reverted; suites 287 / 0 on both backends. Nothing here is
 blocked on representation — the recipe above is concrete and the
 remaining item is a codegen signature change.
+
+## All six pieces applied — and it is STILL not shippable
+
+The sixth piece was written (`c_type(f->rets[0])` in
+`write_c_fun_proto`, and `return (T)(uintptr_t)…handle.address()` in
+the tail). With all six in, plus two more found along the way:
+
+- **drop the `sym_nil` move into `fn->ret` entirely.** It was added to
+  give the never-taken branch a reaching def, but AVars accumulate per
+  (Var, contour) rather than per path, so the yields' own defs suffice
+  — and moving nil put None back into the union, where a `{None, T}`
+  RECEIVER cannot dispatch a method even though it prints fine
+  (`None in gen()` aborted inside `__pyc_generator__::__contains__`).
+  The reply's *liveness*, the thing that actually mattered, is handled
+  by the opaque branch alone.
+- **`P_prim_len` must not fold a CreationSet with no defs.** Such a CS
+  was never built by a creation site — it is abstract, or synthesised
+  for an opaque `__pyc_c_call__` result, which is exactly a
+  generator's value channel. `vars.n` is 0 because nothing filled it,
+  not because the container is empty.
+
+That gets single-yield generators fully correct:
+
+    for x in gen():  print(x)          (1, 2)        ✓
+    len(x), x[0], x[1]                 2 1 2         ✓
+    x == t                             True          ✓
+    None in gen()                      False         ✓
+
+### Where it breaks: a generator with TWO yields
+
+    def gen():
+        yield (1, 2)
+        yield (3, 4)
+    for x in gen():
+        print(len(x), x[0], x[1])
+
+    CPython:  2 1 2 / 2 3 4
+    pyc:      2 3 4 / 2 3 4
+
+Both iterations report the SECOND tuple. `x[0]`/`x[1]` fold to
+compile-time constants drawn from one of the two CreationSets now
+reaching the channel, so the values are plausible and wrong. Equality
+goes the same way — `x == (1, 2)` is silently False for a tuple that
+really is `(1, 2)`.
+
+**This is a worse failure mode than the bug being fixed.** At baseline
+that program aborts loudly ("primitive operand type mismatch"); with
+the fix it prints confident nonsense. Measured by stashing, so it is
+the change's doing, not a pre-existing condition.
+
+Reverted for that reason alone — every other measurement was positive.
+
+### What the next attempt has to solve first
+
+Constant folding of indexing/arity across a MULTI-CreationSet channel.
+Note the control: two tuple CreationSets reaching one variable through
+an ordinary function return —
+
+    def f(b):
+        if b: return (1, 2)
+        return (3, 4)
+    print(f(1) == t, f(0) == t)        # True False, correct
+
+— works fine. So the folding is not wrong about unions in general; it
+is wrong about a union arriving through the synthesised CS of an
+opaque c_call, which is the shape this fix creates. That is the thing
+to fix before re-applying the six pieces, which are otherwise
+believed correct and are recorded above in full.
