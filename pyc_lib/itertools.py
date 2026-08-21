@@ -5,7 +5,19 @@ class count:
         
     def __iter__(self):
         return self
-        
+
+    def __pyc_more__(self):
+        # issues/116: pyc's for-loop protocol is peek-then-fetch
+        # (__iter__ / __pyc_more__ / __next__), not CPython's
+        # fetch-until-StopIteration. `object.__pyc_more__` returns
+        # False, so a class defining only __iter__/__next__ -- the
+        # standard Python protocol, which this one did -- iterates ZERO
+        # times in a `for`, silently and with no diagnostic.
+        # `for j in count(...)` printed nothing at all; sunfish's
+        # gen_moves scans every ray with one, so every ray was empty.
+        # A count is infinite, so there is always a next value.
+        return True
+
     def __next__(self):
         v = self.n
         self.n += self.step

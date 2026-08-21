@@ -1,8 +1,8 @@
 # 115 — a generator METHOD is not a generator at all
 
-**Status:** open, found 2026-08-21 while verifying issues/114.
+**Status:** FIXED 2026-08-21, found while verifying issues/114.
 Pre-existing since generators landed (`3e18bcfa`); never diagnosed
-because no test in the suite defines one.
+because no test in the suite defined one.
 
 ## Symptom
 
@@ -80,3 +80,63 @@ is most iterator-shaped OO code.
 - A method generator taking arguments besides `self` forwards them.
 - sunfish's line 448 no longer reports `unresolved call '__not__'`.
 - Existing module-level generator tests unchanged.
+
+## FIXED 2026-08-21
+
+`tests/generator_methods.py`. Both backends 288 -> 292 passed / 0
+failed (with issues/116-118's tests).
+
+### What landed
+
+The split a plain generator def already had, extended to methods —
+three small pieces, and one shared builder instead of the copy that
+would otherwise have been:
+
+- **build_syms_pyda's `PY_funcdef`** creates the wrapper Sym for a
+  generator method and puts THAT in the class setter, not the coroutine
+  body. It has to decide before `def_fun_pyda` has run (the setter is
+  emitted right after it), so it scans the AST for a `yield` directly —
+  the same scan `def_fun_pyda` itself uses. `ast->rval->alias` becomes
+  the wrapper too: the alias is what `gen_class_pyda`'s `includes` loop
+  copies into a subclass and what `find_class_method_fn` resolves, so
+  leaving it on the body would have handed subclasses the raw coroutine.
+- **`gen_fun_pyda`** gives a generator method's BODY the value-carried
+  `as[0] = fn` convention instead of the name-symbol placeholder, so the
+  wrapper can call it directly by Sym. Both under one name would be an
+  ambiguity or an infinite recursion depending on which won. `fn->self`
+  is unaffected — the `!cls && is_method` block still takes `as[1]`,
+  which is the Python `self` parameter either way.
+- **build_if1_pyda's `PY_funcdef`** fills in the wrapper body once
+  `gen_fun_pyda` has built the coroutine to call, and specializes the
+  wrapper's forwarded `self` to the enclosing class so a same-named
+  generator method on an unrelated class cannot capture the dispatch.
+- **`build_generator_wrapper`** is the shared builder. The plain-def and
+  method cases differ in exactly one value — what becomes the wrapper's
+  `has[0]`: the wrapper Fun itself (value-carried, for a call site that
+  reads a variable and calls the value) or a placeholder specialized to
+  the method's name symbol (for the period send).
+
+Covered: arguments besides `self`, inheritance, same-named methods on
+unrelated classes, `yield from self.inner()`, `.send()`, non-int yields,
+and the `None`-seeded membership loop sunfish uses. `*args`/`**kwargs`/
+defaults/keyword-only are still not forwarded — the same gap the
+plain-def wrapper already had, now noted in one place.
+
+### sunfish: this was not the last blocker
+
+Three more pre-existing bugs stood behind it, each found by reducing
+the previous one and none generator-related:
+
+- **[issues/117](117-string-literal-decoder-truncation.md)** — implicit
+  string concatenation dropped every fragment after the first, so
+  sunfish's 120-character board was 10 characters. Fixed.
+- **[issues/118](118-str-case-predicates-missing.md)** — `str.isspace`,
+  `islower` and `swapcase` did not exist. Fixed.
+- **[issues/116](116-iterator-protocol-needs-pyc-more.md)** — a class
+  with only `__iter__`/`__next__` iterates zero times because
+  `object.__pyc_more__` returns False; `itertools.count` was the live
+  instance. Fixed for `count`; the protocol gap is open.
+
+`Position.gen_moves` now compiles clean. sunfish's remaining
+diagnostics are elsewhere: `str.split()` called with no `sep`, and
+something reached through `re.py`.

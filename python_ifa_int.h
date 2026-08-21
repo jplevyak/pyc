@@ -118,14 +118,14 @@ class PycCompiler : public PycCallbacks {
   // are compile-time-known namespaces, not runtime objects).
   Map<Sym *, PycModule *> module_syms;
 
-  // issues/114: per generator function, the opaque
-  // `_CG_generator_placeholder_return()` value build_syms already
-  // creates for its never-taken branch. Each `yield` reuses it as the
-  // condition of its OWN never-taken branch to the reply, which is how
-  // the yielded types reach fn->ret as a union -- see the comment at
-  // the yield sites in python_ifa_build_if1.cc for why a plain move
-  // does not work.
-  Map<Sym *, Sym *> gen_placeholder;
+  // issues/115: per generator METHOD's coroutine-body Fun, the
+  // __pyc_generator__ wrapper Fun installed into the class under the
+  // method's name in its place. Created in build_syms (the setter that
+  // installs it is emitted there, before the body exists); its body is
+  // filled in by build_if1 once gen_fun_pyda has built the coroutine.
+  // Empty for a plain def, whose wrapper is built entirely in build_if1
+  // and needs no cross-pass handoff.
+  Map<Sym *, Sym *> gen_method_wrapper;
 
   // issue 011 (exception handling, option C):
   Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)

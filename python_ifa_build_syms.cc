@@ -1146,10 +1146,42 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
         ast->rval = ps->sym;
         ast->sym = new_sym(ast, 1);
         ast->rval->alias = ast->sym;
+        // issues/115: a generator METHOD needs the same coroutine-body/
+        // wrapper split a generator def gets, and the class member has
+        // to name the WRAPPER -- calling the body directly hands back a
+        // bare `long long` handle, which has no __iter__/__pyc_more__/
+        // __next__, so `for m in p.moves():` reported "unresolved call
+        // '__iter__'" for every generator method ever written (even
+        // int-yielding ones). Decided here, from the AST, rather than
+        // from ast->sym->is_generator: the setter below is emitted
+        // before def_fun_pyda has run, and this is the same scan
+        // def_fun_pyda itself uses.
+        //
+        // Only the Sym is made here (the setter needs a value now); the
+        // body is filled in by build_if1_pyda's PY_funcdef case, once
+        // gen_fun_pyda has actually built the coroutine to call.
+        bool gen_method = false;
+        for (auto c : n->children.values())
+          if (pyda_contains_yield(c)) { gen_method = true; break; }
+        Sym *wrapper = nullptr;
+        if (gen_method) {
+          wrapper = new_fun(ast);
+          wrapper->in = ctx.scope_stack.last()->in;
+        }
         ast->sym = def_fun_pyda(n, ast, ast->sym, ctx);
+        if (wrapper) {
+          wrapper->nesting_depth = ast->sym->nesting_depth;
+          ctx.gen_method_wrapper.put(ast->sym, wrapper);
+          // The member's alias is what inheritance copies into a
+          // subclass (gen_class_pyda's includes loop) and what
+          // qualified dispatch resolves (find_class_method_fn), so it
+          // has to be the wrapper too -- otherwise a subclass inherits
+          // the raw coroutine body and fails exactly as before.
+          ast->rval->alias = wrapper;
+        }
         // Generate setter into ast->code (collected by gen_class_pyda into class init body)
         if1_send(if1, &ast->code, 5, 1, sym_operator, ctx.cls()->self, sym_setter,
-                 if1_make_symbol(if1, ast->rval->name), ast->sym, new_sym(ast))->ast = ast;
+                 if1_make_symbol(if1, ast->rval->name), wrapper ? wrapper : ast->sym, new_sym(ast))->ast = ast;
       } else if (ctx.in_class()) {
         // Class-body def in a NON-Type_RECORD class (the builtin
         // int/float/list/tuple/str/... classes get other type_kinds
@@ -1779,11 +1811,6 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     default_ret = new_sym(ast);
     if1_add_send_result(if1, placeholder_send, default_ret);
     placeholder_send->rvals.v[2]->is_fake = 1;
-    // issues/114: hand this opaque value to the yield sites, which
-    // each need their own never-taken branch to the reply (see
-    // python_ifa_build_if1.cc). Reusing this one keeps the cost at a
-    // single placeholder call per generator rather than one per yield.
-    ctx.gen_placeholder.put(fn, default_ret);
     // issues/114: NO move into fn->ret here at all.
     //
     // `default_ret` must stay OPAQUE -- it is the condition of the
@@ -1908,10 +1935,21 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     // the body above was walked); reuse it as as[0] here, mirroring
     // gen_lambda_pyda's identical pattern.
     as.add(fn->self);
-  } else if (is_method) {
+  } else if (is_method && !fn->is_generator) {
     as.add(new_sym(ast));
     as[0]->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
   } else {
+    // issues/115: a generator method's coroutine BODY falls through to
+    // the value-carried convention below on purpose. The method name
+    // now dispatches to the wrapper (build_syms_pyda's PY_funcdef
+    // installs it), so the body must be reachable some other way -- and
+    // the wrapper calls it directly by Sym, exactly the way a plain
+    // def's wrapper does. Leaving it name-dispatched would put two Funs
+    // under one name, which is either an ambiguity or an infinite
+    // recursion depending on which one wins.
+    //
+    // fn->self is unaffected: the `!cls && is_method` block below still
+    // takes as[1], which is the Python `self` parameter either way.
     // issues/007 split identity: a plain (non-method) def is now a
     // first-class function value bound to its public-name variable
     // via if1_move; call sites read the variable and call the value.

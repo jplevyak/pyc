@@ -459,27 +459,98 @@ static char *decode_string_content(const char *s, const char *end, bool is_raw, 
   return out;
 }
 
+// issues/117: scan exactly ONE string literal beginning at `s` (its own
+// prefix included). Fills the content range [*cstart, *cend) and that
+// fragment's prefix flags, and returns a pointer just past its closing
+// quote -- or null if `s` does not begin a literal.
+//
+// The end scan honours backslash escapes. Stopping at the first quote
+// character, as this used to, silently truncated any literal containing
+// an escaped one (`len('a\'b')` was 1, not 3) -- and left the remainder
+// of the token looking like the start of another literal, which the
+// adjacent-fragment loops below would then misread. Escapes suppress
+// the closing quote even in a RAW string: `r'a\'b'` is one literal, four
+// characters long. What raw-ness changes is how the CONTENT is decoded,
+// which is decode_string_content's job, not this scan's.
+static const char *scan_string_literal(const char *s, const char **cstart, const char **cend, bool *is_raw,
+                                       bool *is_fstring, bool *is_bytes) {
+  const char *p = skip_string_prefix(s, is_raw, is_fstring, is_bytes);
+  char q = *p;
+  if (q != '\'' && q != '"') return nullptr;
+  p++;
+  bool triple = (p[0] == q && p[1] == q);
+  if (triple) p += 2;
+  const char *end = p;
+  while (*end) {
+    if (*end == '\\' && end[1]) {
+      end += 2;
+      continue;
+    }
+    if (triple) {
+      if (end[0] == q && end[1] == q && end[2] == q) break;
+    } else if (*end == q || *end == '\n')
+      break;
+    end++;
+  }
+  *cstart = p;
+  *cend = end;
+  if (!*end) return end;  // unterminated (the grammar shouldn't produce one)
+  if (triple) return end + 3;
+  return (*end == q) ? end + 1 : end;
+}
+
+// issues/117: skip whatever sits BETWEEN two adjacent string literals --
+// spaces, newlines, backslash line-continuations and comments. The
+// grammar's `STRING+` (python.g's atom) hands this code the raw source
+// span covering every fragment, so all of that is part of the text.
+static const char *skip_between_string_literals(const char *p) {
+  for (;;) {
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' || *p == '\f' || *p == '\v') p++;
+    if (*p == '\\' && (p[1] == '\n' || (p[1] == '\r' && p[2] == '\n'))) {
+      p += (p[1] == '\r') ? 3 : 2;
+      continue;
+    }
+    if (*p == '#') {
+      while (*p && *p != '\n') p++;
+      continue;
+    }
+    return p;
+  }
+}
+
+// issues/117: implicit concatenation of adjacent string literals
+// (`'ab' 'cd'`, and the parenthesized multi-line form Python code uses
+// for long text) is ordinary Python, and the grammar already accepts it
+// -- `STRING+`. But only the FIRST fragment was ever decoded and the
+// rest were dropped in silence. sunfish's board is written that way, so
+// its 120-character `initial` came out 10 characters long and every
+// board scan found nothing; nothing warned.
+//
+// Folded here at compile time rather than lowered to `__add__` sends:
+// every fragment is a literal, so the result is one constant.
 static Sym *eval_string_pyda(PyDAST *n, PycCompiler &ctx) {
   const char *s = n->str_val;
   if (!s || !*s) return make_string("");
-  bool is_raw, is_fstring, is_bytes;
-  s = skip_string_prefix(s, &is_raw, &is_fstring, &is_bytes);
-  // Determine quote character and whether triple-quoted
-  char q = *s;
-  if (q != '\'' && q != '"') return make_string(s);  // shouldn't happen
-  s++;
-  bool triple = (s[0] == q && s[1] == q);
-  if (triple) s += 2;
-  // Find end of string content
-  const char *end = s;
-  if (triple) {
-    while (*end && !(end[0] == q && end[1] == q && end[2] == q)) end++;
-  } else {
-    while (*end && *end != q && *end != '\n') end++;
+  Vec<char> buf;
+  bool any = false, any_bytes = false;
+  for (const char *p = s; *p;) {
+    const char *cstart, *cend;
+    bool is_raw, is_fstring, is_bytes;
+    const char *next = scan_string_literal(p, &cstart, &cend, &is_raw, &is_fstring, &is_bytes);
+    if (!next) break;
+    any = true;
+    any_bytes = any_bytes || is_bytes;
+    int len;
+    char *decoded = decode_string_content(cstart, cend, is_raw, &len);
+    for (int i = 0; i < len; i++) buf.add(decoded[i]);
+    p = skip_between_string_literals(next);
   }
-  int len;
-  char *decoded = decode_string_content(s, end, is_raw, &len);
-  return is_bytes ? make_bytes(decoded, len) : make_string(decoded, len);
+  if (!any) return make_string(s);  // shouldn't happen
+  // CPython rejects mixing bytes and str fragments; being permissive
+  // here (any `b` prefix wins) keeps this from inventing a new error
+  // class for input the grammar already accepted.
+  cchar *data = buf.n ? buf.v : "";
+  return any_bytes ? make_bytes(data, buf.n) : make_string(data, buf.n);
 }
 
 // Append `piece` (a string-typed Sym) to the running f-string concatenation
@@ -592,63 +663,69 @@ static void scan_fstring_field(const char **pp, const char *end, int lineno,
 // if a conversion (`!r`/`!s`/`!a`) was also given, the spec formats the
 // already-converted *string*, not the original value, matching CPython's
 // order of operations.
+// issues/117: iterates the SAME adjacent-fragment sequence
+// eval_string_pyda folds, because `f'a={a}' ' plain'` is one expression
+// and either half may be the f-string. A non-f fragment contributes a
+// plain literal piece; an f fragment is scanned for `{expr}` fields as
+// before. Fragment flags (raw-ness especially) are per fragment.
 static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
-  const char *s = n->str_val;
-  bool is_raw, is_fstring, is_bytes;
-  s = skip_string_prefix(s, &is_raw, &is_fstring, &is_bytes);
-  char q = *s;
-  if (q != '\'' && q != '"') { ast->rval = make_string(s); return; }
-  s++;
-  bool triple = (s[0] == q && s[1] == q);
-  if (triple) s += 2;
-  const char *end = s;
-  if (triple) {
-    while (*end && !(end[0] == q && end[1] == q && end[2] == q)) end++;
-  } else {
-    while (*end && *end != q && *end != '\n') end++;
-  }
-
   Sym *result = nullptr;
-  Vec<char> lit;
-  const char *p = s;
-  auto flush_literal = [&]() {
-    if (!lit.n) return;
-    int len;
-    char *decoded = decode_string_content(lit.v, lit.v + lit.n, is_raw, &len);
-    fstring_append_piece(ast, ctx, &result, make_string(decoded, len));
-    lit.clear();
-  };
-  while (p < end) {
-    if (*p == '{' && p + 1 < end && p[1] == '{') { lit.add('{'); p += 2; continue; }
-    if (*p == '}' && p + 1 < end && p[1] == '}') { lit.add('}'); p += 2; continue; }
-    if (*p == '{') {
-      flush_literal();
-      p++;
-      char *expr_src; char conv; char *spec;
-      scan_fstring_field(&p, end, ctx.lineno, &expr_src, &conv, &spec);
-      PycAST *e_ast = build_fstring_subexpr_pyda(expr_src, ctx.lineno, ctx);
-      if1_gen(if1, &ast->code, e_ast->code);
-      Sym *str_piece = new_sym(ast);
-      cchar *method_name = (conv == 'r' || conv == 'a') ? "__repr__" : "__str__";
-      if (spec && *spec) {
-        Sym *spec_sym = make_string(spec);
-        if (conv) {
-          Sym *converted = new_sym(ast);
-          call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), converted, 0);
-          call_method(&ast->code, ast, converted, make_symbol("__format__"), str_piece, 1, spec_sym);
-        } else {
-          call_method(&ast->code, ast, e_ast->rval, make_symbol("__format__"), str_piece, 1, spec_sym);
-        }
-      } else {
-        call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), str_piece, 0);
-      }
-      fstring_append_piece(ast, ctx, &result, str_piece);
+  const char *frag = n->str_val;
+  if (!frag) { ast->rval = make_string(""); return; }
+  while (*frag) {
+    const char *s, *end;
+    bool is_raw, is_fstring, is_bytes;
+    const char *after = scan_string_literal(frag, &s, &end, &is_raw, &is_fstring, &is_bytes);
+    if (!after) break;
+    if (!is_fstring) {
+      int len;
+      char *decoded = decode_string_content(s, end, is_raw, &len);
+      fstring_append_piece(ast, ctx, &result, make_string(decoded, len));
+      frag = skip_between_string_literals(after);
       continue;
     }
-    lit.add(*p);
-    p++;
+    Vec<char> lit;
+    const char *p = s;
+    auto flush_literal = [&]() {
+      if (!lit.n) return;
+      int len;
+      char *decoded = decode_string_content(lit.v, lit.v + lit.n, is_raw, &len);
+      fstring_append_piece(ast, ctx, &result, make_string(decoded, len));
+      lit.clear();
+    };
+    while (p < end) {
+      if (*p == '{' && p + 1 < end && p[1] == '{') { lit.add('{'); p += 2; continue; }
+      if (*p == '}' && p + 1 < end && p[1] == '}') { lit.add('}'); p += 2; continue; }
+      if (*p == '{') {
+        flush_literal();
+        p++;
+        char *expr_src; char conv; char *spec;
+        scan_fstring_field(&p, end, ctx.lineno, &expr_src, &conv, &spec);
+        PycAST *e_ast = build_fstring_subexpr_pyda(expr_src, ctx.lineno, ctx);
+        if1_gen(if1, &ast->code, e_ast->code);
+        Sym *str_piece = new_sym(ast);
+        cchar *method_name = (conv == 'r' || conv == 'a') ? "__repr__" : "__str__";
+        if (spec && *spec) {
+          Sym *spec_sym = make_string(spec);
+          if (conv) {
+            Sym *converted = new_sym(ast);
+            call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), converted, 0);
+            call_method(&ast->code, ast, converted, make_symbol("__format__"), str_piece, 1, spec_sym);
+          } else {
+            call_method(&ast->code, ast, e_ast->rval, make_symbol("__format__"), str_piece, 1, spec_sym);
+          }
+        } else {
+          call_method(&ast->code, ast, e_ast->rval, make_symbol(method_name), str_piece, 0);
+        }
+        fstring_append_piece(ast, ctx, &result, str_piece);
+        continue;
+      }
+      lit.add(*p);
+      p++;
+    }
+    flush_literal();
+    frag = skip_between_string_literals(after);
   }
-  flush_literal();
   ast->rval = result ? result : make_string("");
 }
 
@@ -2447,6 +2524,94 @@ static Sym *find_class_method_fn(Sym *cls, cchar *name) {
   return nullptr;
 }
 
+// issues/014 + issues/115: fill in a generator's __pyc_generator__
+// wrapper Fun -- call the coroutine body, wrap the handle it returns in
+// a generator object, return that.
+//
+// `body_fn` is the coroutine body (yields become co_yield in cg.cc; its
+// C return type is the handle there regardless of what FA infers).
+// Calling it directly hands the caller a raw handle, which has no
+// __iter__/__pyc_more__/__next__ -- so whatever names the generator
+// (the public variable for a def, the class member for a method) names
+// this wrapper instead. That keeps PY_for_stmt's generic
+// __iter__/__pyc_more__/__next__ dispatch completely unmodified:
+// `for v in gen():` just sees an ordinary object of an ordinary class.
+//
+// `dispatch0` becomes the wrapper's has[0], the thing a call site
+// matches against: the wrapper Fun ITSELF for a plain def (the
+// value-carried convention, since the call site reads the variable and
+// calls the value), or a placeholder specialized to the method's name
+// symbol for a method (name dispatch through the period send). This is
+// the only structural difference between the two cases.
+//
+// Positional-only argument forwarding: body_fn->has (set by if1_closure
+// -- see gen_fun_pyda) has its own has[0] convention at index 0 and the
+// real parameters, in order, at has[1..], already built by the ordinary
+// build_syms/build_if1 pipeline (get_syms_args_pyda) including whatever
+// type constraints the user's annotations gave them. The wrapper
+// doesn't need its own copies -- it's a pure passthrough, so type
+// checking still happens where it already did, at the forwarding call
+// site against body_fn's real formal pattern. Fresh Syms (not
+// body_fn's own) because a formal Sym is tied to the Fun it was built
+// for; sharing identity across two Funs wasn't risked here.
+// *args/**kwargs/defaults/keyword-only are not handled -- has[i] with
+// i>0 is assumed to be a plain positional formal for every i (true for
+// the shape get_syms_args_pyda builds today; see its PY_star_arg /
+// PY_dstar_arg / PY_arg_default handling for what a fuller version of
+// this would need to mirror). For a METHOD that includes `self`, which
+// is an ordinary positional formal and forwards like any other.
+static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, PycAST *ast, PycCompiler &ctx) {
+  Vec<Sym *> wrapper_formals;
+  for (int i = 1; i < body_fn->has.n; i++) wrapper_formals.add(new_sym(ast));
+  Code *wbody = 0;
+  Code *call_send = if1_send1(if1, &wbody, ast);
+  if1_add_send_arg(if1, call_send, body_fn);
+  for (Sym *wf : wrapper_formals.values()) if1_add_send_arg(if1, call_send, wf);
+  Sym *handle_result = new_sym(ast);
+  if1_add_send_result(if1, call_send, handle_result);
+  int lvl = 0;
+  PycSymbol *gen_cls_ps = find_PycSymbol(ctx, cannonicalize_string("__pyc_generator__"), &lvl);
+  if (!gen_cls_ps || !gen_cls_ps->sym)
+    fail("error line %d, internal: __pyc_generator__ not found (issues/014)", ctx.lineno);
+  // issues/114: `handle_result` does two unrelated jobs. Its runtime
+  // VALUE is the coroutine handle; its FA TYPE is the union of
+  // everything the body yields (gen_yield_type_contribution moves each
+  // yielded value into fn->ret), which is what tells __pyc_generator__
+  // what its value channel carries. Keeping both on one Sym breaks as
+  // soon as the type is a singleton constant -- `yield 1` and nothing
+  // else makes FA certain the call returns 1, so the caller inlines the
+  // literal and the handle is destroyed (see _CG_generator_handle,
+  // pyc_c_runtime.h). Split them: the handle travels through the opaque
+  // identity call below, typed `int`, and handle_result is passed on
+  // purely as a type sample.
+  int int_lvl = 0;
+  PycSymbol *int_cls_ps = find_PycSymbol(ctx, cannonicalize_string("int"), &int_lvl);
+  Sym *int_type = (int_cls_ps && int_cls_ps->sym) ? int_cls_ps->sym : sym_int64;
+  Code *hsend = if1_send1(if1, &wbody, ast);
+  if1_add_send_arg(if1, hsend, sym_primitive);
+  if1_add_send_arg(if1, hsend, sym___pyc_c_call__);
+  if1_add_send_arg(if1, hsend, int_type);
+  if1_add_send_arg(if1, hsend, make_string("_CG_generator_handle"));
+  if1_add_send_arg(if1, hsend, int_type);
+  if1_add_send_arg(if1, hsend, handle_result);
+  Sym *opaque_handle = new_sym(ast);
+  if1_add_send_result(if1, hsend, opaque_handle);
+  hsend->rvals.v[2]->is_fake = 1;
+  hsend->rvals.v[4]->is_fake = 1;
+  Code *ctor_send = if1_send1(if1, &wbody, ast);
+  if1_add_send_arg(if1, ctor_send, gen_cls_ps->sym);
+  if1_add_send_arg(if1, ctor_send, opaque_handle);
+  if1_add_send_arg(if1, ctor_send, handle_result);
+  Sym *gen_inst = new_sym(ast);
+  if1_add_send_result(if1, ctor_send, gen_inst);
+  if1_move(if1, &wbody, gen_inst, wrapper->ret, ast);
+  if1_send(if1, &wbody, 4, 0, sym_primitive, sym_reply, wrapper->cont, wrapper->ret)->ast = ast;
+  Vec<Sym *> was;
+  was.add(dispatch0);
+  for (Sym *wf : wrapper_formals.values()) was.add(wf);
+  if1_closure(if1, wrapper, wbody, was.n, was.v);
+}
+
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
   if (!n) return 0;
   PycAST *ast = getAST(n, ctx);
@@ -2493,6 +2658,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         }
       }
       gen_fun_pyda(n, ast, ctx);
+      // issues/115: the enclosing scope's `in` -- for a method, the
+      // class its wrapper's `self` formal must be specialized against.
+      // Read before exit_scope, the same place and way gen_fun_pyda
+      // reads it.
+      Sym *fd_enclosing_in = ctx.scope_stack.n >= 2 ? ctx.scope_stack[ctx.scope_stack.n - 2]->in : nullptr;
       exit_scope(ctx);
       // issues/007 split identity: bind the public-name variable
       // (ast->rval) to the function value. For a capturing nested def
@@ -2501,98 +2671,42 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // (recognized by the alias link set in build_syms_pyda) are
       // installed into the class via the setter emitted there and get
       // no variable binding.
-      bool fd_is_method = ast->rval && ast->rval->alias == ast->sym;
-      if (closure_cls) {
+      //
+      // issues/115: a generator method's member alias is its WRAPPER,
+      // not ast->sym, so recognizing the method case has to accept
+      // either. Without this it fell through to the plain-def branch
+      // below and bound a second wrapper to a variable no one reads.
+      Sym *gen_method_wrapper = ctx.gen_method_wrapper.get(ast->sym);
+      bool fd_is_method =
+          ast->rval && (ast->rval->alias == ast->sym || (gen_method_wrapper && ast->rval->alias == gen_method_wrapper));
+      if (fd_is_method && gen_method_wrapper) {
+        // The class member already names this wrapper (the setter
+        // build_syms_pyda emitted); all that is left is its body. Its
+        // has[0] is a placeholder specialized to the method's name
+        // symbol, exactly as gen_fun_pyda builds for an ordinary
+        // method, so the period send at `p.moves()` resolves to it --
+        // and has[1], the forwarded `self`, is specialized to the class
+        // so it cannot capture a same-named method on some other type.
+        Sym *dispatch0 = new_sym(ast);
+        dispatch0->must_implement_and_specialize(if1_make_symbol(if1, ast->rval->name));
+        build_generator_wrapper(gen_method_wrapper, ast->sym, dispatch0, ast, ctx);
+        if (fd_enclosing_in && gen_method_wrapper->has.n > 1) {
+          gen_method_wrapper->self = gen_method_wrapper->has[1];
+          gen_method_wrapper->self->must_implement_and_specialize(fd_enclosing_in);
+        }
+      } else if (closure_cls) {
         Sym *inst = build_closure_instance_pyda(closure_cls, ast, &ast->code, ctx);
         if1_move(if1, &ast->code, inst, ast->rval, ast);
       } else if (!fd_is_method && ast->rval != ast->sym && ast->sym->is_generator) {
-        // issues/014: `ast->sym` is the coroutine body (yields become
-        // co_yield in cg.cc; its C return type is forced to a raw
-        // int64 handle there too, regardless of what FA infers here).
-        // Calling it directly would hand the caller a raw handle, not
-        // something with __iter__/__pyc_more__/__next__ -- so the
-        // PUBLIC name is bound to a small synthesized wrapper Fun
-        // instead (same "public name != internal Fun" split already
-        // used for ordinary defs, one level further): call the
-        // coroutine body, wrap its handle result in a
-        // __pyc_generator__ instance, return that. This keeps
-        // PY_for_stmt's generic __iter__/__pyc_more__/__next__
-        // dispatch (python_ifa_build_if1.cc PY_for_stmt) completely
-        // unmodified -- `for v in gen():` just sees an ordinary
-        // object of an ordinary class.
-        //
-        // Positional-only argument forwarding: ast->sym->has (set by
-        // if1_closure -- see gen_fun_pyda) is exactly the array
-        // gen_fun_pyda built it from -- has[0] is the coroutine
-        // body's own "value convention" placeholder (as.add(fn), see
-        // gen_fun_pyda's plain-def branch), has[1..] the real
-        // parameters, in order, already correctly built by the
-        // ordinary build_syms/build_if1 pipeline (get_syms_args_pyda)
-        // including whatever type constraints the user's annotations
-        // gave them. The wrapper doesn't need its own copies of those
-        // constraints -- it's a pure passthrough, so type checking
-        // still happens where it already did, at this call site
-        // against ast->sym's real formal pattern. Fresh Syms (not
-        // ast->sym's own) because a formal Sym is tied to the Fun
-        // it was built for; sharing identity across two Funs wasn't
-        // risked here. *args/**kwargs/defaults/keyword-only are not
-        // handled yet -- has[i] with i>0 is assumed to be a plain
-        // positional formal for every i (true for the shape
-        // get_syms_args_pyda builds today; see its PY_star_arg /
-        // PY_dstar_arg / PY_arg_default handling for what a fuller
-        // version of this would need to mirror).
+        // issues/014: the PUBLIC name is bound to a synthesized wrapper
+        // rather than to the coroutine body -- same "public name !=
+        // internal Fun" split already used for ordinary defs, one level
+        // further. See build_generator_wrapper for what it builds and
+        // why. has[0] is the wrapper itself (the value-carried
+        // convention): call sites read the variable and call the value.
         Sym *wrapper = new_fun(ast);
         wrapper->nesting_depth = ast->sym->nesting_depth;
-        Vec<Sym *> wrapper_formals;
-        for (int i = 1; i < ast->sym->has.n; i++) wrapper_formals.add(new_sym(ast));
-        Code *wbody = 0;
-        Code *call_send = if1_send1(if1, &wbody, ast);
-        if1_add_send_arg(if1, call_send, ast->sym);
-        for (Sym *wf : wrapper_formals.values()) if1_add_send_arg(if1, call_send, wf);
-        Sym *handle_result = new_sym(ast);
-        if1_add_send_result(if1, call_send, handle_result);
-        int lvl = 0;
-        PycSymbol *gen_cls_ps = find_PycSymbol(ctx, cannonicalize_string("__pyc_generator__"), &lvl);
-        if (!gen_cls_ps || !gen_cls_ps->sym)
-          fail("error line %d, internal: __pyc_generator__ not found (issues/014)", ctx.lineno);
-        // issues/114: `handle_result` now does two unrelated jobs. Its
-        // runtime VALUE is the coroutine handle; its FA TYPE is the
-        // union of everything the body yields (gen_yield_type_
-        // contribution moves each yielded value into fn->ret), which is
-        // what tells __pyc_generator__ what its value channel carries.
-        // Keeping both on one Sym breaks as soon as the type is a
-        // singleton constant -- `yield 1` and nothing else makes FA
-        // certain the call returns 1, so the caller inlines the literal
-        // and the handle is destroyed (see _CG_generator_handle,
-        // pyc_c_runtime.h). Split them: the handle travels through the
-        // opaque identity call below, typed `int`, and handle_result is
-        // passed on purely as a type sample.
-        int int_lvl = 0;
-        PycSymbol *int_cls_ps = find_PycSymbol(ctx, cannonicalize_string("int"), &int_lvl);
-        Sym *int_type = (int_cls_ps && int_cls_ps->sym) ? int_cls_ps->sym : sym_int64;
-        Code *hsend = if1_send1(if1, &wbody, ast);
-        if1_add_send_arg(if1, hsend, sym_primitive);
-        if1_add_send_arg(if1, hsend, sym___pyc_c_call__);
-        if1_add_send_arg(if1, hsend, int_type);
-        if1_add_send_arg(if1, hsend, make_string("_CG_generator_handle"));
-        if1_add_send_arg(if1, hsend, int_type);
-        if1_add_send_arg(if1, hsend, handle_result);
-        Sym *opaque_handle = new_sym(ast);
-        if1_add_send_result(if1, hsend, opaque_handle);
-        hsend->rvals.v[2]->is_fake = 1;
-        hsend->rvals.v[4]->is_fake = 1;
-        Code *ctor_send = if1_send1(if1, &wbody, ast);
-        if1_add_send_arg(if1, ctor_send, gen_cls_ps->sym);
-        if1_add_send_arg(if1, ctor_send, opaque_handle);
-        if1_add_send_arg(if1, ctor_send, handle_result);
-        Sym *gen_inst = new_sym(ast);
-        if1_add_send_result(if1, ctor_send, gen_inst);
-        if1_move(if1, &wbody, gen_inst, wrapper->ret, ast);
-        if1_send(if1, &wbody, 4, 0, sym_primitive, sym_reply, wrapper->cont, wrapper->ret)->ast = ast;
-        Vec<Sym *> was;
-        was.add(wrapper);
-        for (Sym *wf : wrapper_formals.values()) was.add(wf);
-        if1_closure(if1, wrapper, wbody, was.n, was.v);
+        build_generator_wrapper(wrapper, ast->sym, wrapper, ast, ctx);
         if1_move(if1, &ast->code, wrapper, ast->rval, ast);
       } else if (!fd_is_method && ast->rval != ast->sym) {
         // rval == sym is the legacy direct binding (non-RECORD
@@ -3868,9 +3982,19 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
 
     case PY_string: {
-      bool is_raw, is_fstring, is_bytes;
-      if (n->str_val) skip_string_prefix(n->str_val, &is_raw, &is_fstring, &is_bytes);
-      else is_fstring = false;
+      // issues/117: adjacent literals concatenate, and the f-string may
+      // be any one of them (`'plain' f'{x}'` is as legal as the reverse)
+      // -- so the interpolating path is taken if ANY fragment carries an
+      // `f` prefix, not just the first.
+      bool is_fstring = false;
+      for (const char *p = n->str_val; p && *p;) {
+        const char *cstart, *cend;
+        bool frag_raw, frag_f, frag_bytes;
+        const char *next = scan_string_literal(p, &cstart, &cend, &frag_raw, &frag_f, &frag_bytes);
+        if (!next) break;
+        if (frag_f) { is_fstring = true; break; }
+        p = skip_between_string_literals(next);
+      }
       if (is_fstring)
         build_fstring_pyda(n, ast, ctx);
       else

@@ -112,6 +112,48 @@ class str:
         has_cased = True
       i += 1
     return has_cased
+  def islower(self):
+    # issues/118: the mirror of isupper above, and missing until now --
+    # calling it produced "getter not resolved" at runtime, with only an
+    # opaque "illegal call argument type expression" at compile time to
+    # go on. ASCII-only, like every other case method here.
+    n = len(self)
+    has_cased = False
+    i = 0
+    while i < n:
+      o = ord(self[i])
+      if o >= 65 and o <= 90:
+        return False
+      if o >= 97 and o <= 122:
+        has_cased = True
+      i += 1
+    return has_cased
+  def isspace(self):
+    # issues/118. CPython: True iff the string is non-empty and every
+    # character is whitespace. The set here is ASCII whitespace: space,
+    # \t, \n, \v, \f, \r.
+    n = len(self)
+    if n == 0:
+      return False
+    i = 0
+    while i < n:
+      o = ord(self[i])
+      if o != 32 and (o < 9 or o > 13):
+        return False
+      i += 1
+    return True
+  def swapcase(self):
+    # issues/118. ASCII-only, consistent with upper()/lower().
+    r = ""
+    for c in self:
+      o = ord(c)
+      if o >= 97 and o <= 122:
+        r = r + chr(o - 32)
+      elif o >= 65 and o <= 90:
+        r = r + chr(o + 32)
+      else:
+        r = r + c
+    return r
   def __contains__(self, x):
     # Substring search by char compare; str has no working slice path
     # yet (the __pyc_any_type__ fallback mis-routes slices of str into
