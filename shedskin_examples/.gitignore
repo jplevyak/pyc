@@ -90,3 +90,34 @@ yopyra/yopyra
 # collatz/doom/othello2 committed in ce380ff4.
 !c64/c64/
 !pylot/pylot/
+
+# The root .gitignore's "Debugging and Output Cruft" rules are aimed at
+# scratch files at the repo root, and reach into this vendored corpus
+# where the same names mean something else entirely. Patterns in a
+# deeper .gitignore win, so scope them back out here:
+#
+#   *.txt  hid 101 TRACKED files -- all 83 CMakeLists.txt plus every
+#          testdata fixture (maze.txt, top95.txt, cornellbox.txt, ...).
+#          In this tree .txt is input data, not a scratch log.
+#   core   hid tarsalzp/com/github/tarsa/tarsalzp/core/, a Python
+#          PACKAGE, all 7 modules. The rule means core dumps; the
+#          trailing slash re-includes the directory, which a file-level
+#          negation cannot do once a parent directory is excluded.
+#
+# Both were silent, and the reason is worth stating precisely: .gitignore
+# does not affect files that are already TRACKED, so every one of those
+# 108 kept showing its edits normally and nothing looked wrong. The cost
+# was on NEW files. Measured: a fresh adatron/testdata/newfixture.txt is
+# invisible to `git status` without these negations and shows as `??`
+# with them. So a new fixture or a new module in tarsalzp's core/ could
+# be written, tested, and lost -- git never mentions it.
+!*.txt
+!core/
+
+# Runtime outputs the corpus programs write into their own directories.
+# Named individually because the un-ignoring above deliberately treats
+# .txt in this tree as data: neural1 saves its trained net with
+# open('jets.txt','wb') (neural1.py:154) and rdb sets
+# self.logfile = "rebuild_db.log.txt" (rdb.py:78).
+neural1/jets.txt
+rdb/rebuild_db.log.txt
