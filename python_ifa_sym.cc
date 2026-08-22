@@ -421,6 +421,7 @@ static bool promote_field(CreationSet *cs, cchar *name) {
 
 bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   bool again = false;
+  int n_notype_promote = 0, n_eager_promote = 0;  // ifa/issues/111 M1 probe
   // (1) NOTYPE-violation-driven promotion (legacy path).
   // Some reads through union receivers don't bubble up
   // a NOTYPE (the union has SOME types even if specific
@@ -433,7 +434,7 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
       for (auto cs : av->out->sorted.values()) {
         for (auto i : cs->unknown_vars.values()) {
-          if (promote_field(cs, i)) again = true;
+          if (promote_field(cs, i)) { again = true; ++n_notype_promote; }
         }
       }
     }
@@ -452,7 +453,7 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   for (CreationSet *cs : fa->css) {
     if (!cs) continue;
     for (auto i : cs->unknown_vars.values()) {
-      if (promote_field(cs, i)) again = true;
+      if (promote_field(cs, i)) { again = true; ++n_eager_promote; }
     }
   }
   // (3) Numeric-confluence coercion (issue 025 numeric
@@ -467,7 +468,15 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // path where the variable would still hold the original int at
   // runtime (e.g. the loop never ran), it now holds the float
   // (prints 0.0, not 0) -- the shedskin-style compromise.
-  if (fa_coerce_numeric_confluences(type_violations)) again = true;
+  bool coerced = fa_coerce_numeric_confluences(type_violations);
+  if (coerced) again = true;
+  // ifa/issues/111 M1: which path keeps the outer loop alive? The
+  // closure probe showed passes with ZERO split marks still costing a
+  // full re-analysis, which means they are reanalyze()-driven, not
+  // splitter-driven. Attribute them. Probe only (IFA_DBG_CLOSURE).
+  if (getenv("IFA_DBG_CLOSURE"))
+    fprintf(stderr, "REANALYZE again=%d notype_promote=%d eager_promote=%d coerce=%d\n",
+            again ? 1 : 0, n_notype_promote, n_eager_promote, coerced ? 1 : 0);
   return again;
 }
 
