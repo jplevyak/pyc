@@ -1,8 +1,11 @@
 # 114 — a generator can only carry integers; other yields come back as raw pointers
 
-**Status:** open, found 2026-08-20 while clearing ifa/issues/090's
-sunfish residue. **Silent wrong answer** — no diagnostic, plausible
-output, wrong values.
+**Status:** FIXED 2026-08-21 (see the FIXED section below). Found
+2026-08-20 while clearing ifa/issues/090's sunfish residue. Was a
+**silent wrong answer** — no diagnostic, plausible output, wrong
+values. The long middle of this file is the investigation as it ran,
+including two readings the FIXED section retracts; read that section
+first.
 
 ## Symptom
 
@@ -555,11 +558,15 @@ point 2):
 - The `P_prim_len` no-defs guard recorded above is still in and still
   correct.
 
-### Still blocked: sunfish
+### Not blocked by this: sunfish
 
-Not by this. `Position.gen_moves` is a **method**, and a generator
-method never gets the `__pyc_generator__` wrapper at all — see
+`Position.gen_moves` is a **method**, and at the time this landed a
+generator method never got the `__pyc_generator__` wrapper at all — see
 [issues/115](115-generator-methods-unsupported.md), a pre-existing gap
-that fails on plain ints and has nothing to do with the value channel.
+that failed on plain ints and had nothing to do with the value channel.
 Reduced both ways to be sure: the same program with a module-level
-generator matches CPython exactly.
+generator matched CPython exactly.
+
+115 was fixed the same day, and `gen_moves` now compiles clean. sunfish
+itself is not signed off here — see that issue's `### sunfish: this was
+not the last blocker`.
