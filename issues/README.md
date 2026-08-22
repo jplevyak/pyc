@@ -296,6 +296,37 @@ to minimise.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [115](closed/115-generator-methods-unsupported.md) — a generator
+  METHOD was not a generator at all: any `yield` inside a `def` in a
+  class body compiled to an ordinary function that ran its body to
+  completion and returned a raw coroutine handle. Pre-existing since
+  generators landed (`3e18bcfa`), never diagnosed because no test in
+  the suite defined one — the gap is in `gen_fun_pyda`'s method path,
+  which never built the `__pyc_generator__` wrapper. Fixed by
+  `888cb499` with a shared `build_generator_wrapper` used by both the
+  plain-def and method paths; three further bugs stood behind it. New
+  regression test `tests/generator_methods.py`. `sunfish`'s
+  `Position.gen_moves` compiles clean as a result, though sunfish as a
+  whole is **not** signed off — see that file's "this was not the last
+  blocker" section.
+- [114](closed/114-generator-yields-are-int-only.md) — a generator
+  could only carry integers; yielding a tuple, string or list came back
+  as a raw pointer printed as a plausible-looking number. Silent wrong
+  answer, no diagnostic. Took four failed approaches across a week, and
+  the file is mostly the investigation as it ran — **read its FIXED
+  section first**, because two readings above it are retracted there.
+  The wall was three separate bugs being read as one: `fn->ret` is
+  single-assignment-renamed so sequential yields killed each other (the
+  fix gives each yield its own never-taken path to the reply, so the
+  join inserts a phi); `gen_yield_type_contribution` was a complete
+  no-op because build_if1 is a POST-ORDER walk and every yield runs
+  before the `gen_fun_pyda` that filled the map it read; and constant
+  folding was real but elsewhere — a generator yielding one constant
+  made FA certain of the return value, so the wrapper inlined the
+  literal in place of the coroutine handle. There was never an
+  asymmetry between a `return` and a `reply`, which is what the earlier
+  sections assume throughout. Fixed by `d49a51b3`; new regression test
+  `tests/generator_yields_nonint.py`.
 - [040](closed/040-percent-format-float-arg-int-specifier-garbage.md)
   — `"%d" % <float>` (Python truncates; valid and common) produced
   deterministic garbage instead of the truncated integer, on both

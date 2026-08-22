@@ -1,6 +1,7 @@
 # 114 — a generator can only carry integers; other yields come back as raw pointers
 
-**Status:** FIXED 2026-08-21 (see the FIXED section below). Found
+**Status:** CLOSED — fixed by `d49a51b3` (2026-08-21); status line
+corrected in `3ac397d6`. See the FIXED section below. Found
 2026-08-20 while clearing ifa/issues/090's sunfish residue. Was a
 **silent wrong answer** — no diagnostic, plausible output, wrong
 values. The long middle of this file is the investigation as it ran,

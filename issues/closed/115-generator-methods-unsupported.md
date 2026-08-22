@@ -1,6 +1,7 @@
 # 115 — a generator METHOD is not a generator at all
 
-**Status:** FIXED 2026-08-21, found while verifying issues/114.
+**Status:** CLOSED — fixed by `888cb499` (2026-08-21). Found while
+verifying issues/114.
 Pre-existing since generators landed (`3e18bcfa`); never diagnosed
 because no test in the suite defined one.
 
