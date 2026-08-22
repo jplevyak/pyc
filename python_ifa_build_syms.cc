@@ -526,6 +526,67 @@ static bool pyda_contains_yield(PyDAST *n) {
   return false;
 }
 
+// issues/116: does this class body define a method of this name? Only
+// its OWN body -- an inherited one is already handled by whatever
+// happened to the base. Used to decide whether a class implements
+// CPython's iterator protocol (`__next__`) without pyc's
+// (`__pyc_more__`), which is the case that needs the bridge.
+static bool pyda_class_body_has_method(PyDAST *cdef, cchar *name) {
+  if (!cdef || !cdef->children.n) return false;
+  PyDAST *body = cdef->children.last();
+  Vec<PyDAST *> stmts;
+  if (body->kind == PY_suite)
+    for (auto c : body->children.values()) stmts.add(c);
+  else
+    stmts.add(body);
+  for (PyDAST *s : stmts) {
+    PyDAST *d = (s && s->kind == PY_decorated) ? s->children.last() : s;
+    if (d && d->kind == PY_funcdef && d->children.n && d->children[0]->str_val &&
+        !strcmp(d->children[0]->str_val, name))
+      return true;
+  }
+  return false;
+}
+
+// issues/116: the direct base-class Syms named in a classdef header.
+// Readable as soon as the base expressions have been walked, which
+// PY_classdef does BEFORE the body -- unlike `sym->implements`, which
+// inherits_add only fills afterwards. A null entry means an unresolved
+// base; check_base reports that later, so tolerate it here.
+static void pyda_class_base_syms(PyDAST *cdef, PycCompiler &ctx, Vec<Sym *> &out) {
+  for (int i = 1; i < cdef->children.n - 1; i++) {
+    PyDAST *b = cdef->children[i];
+    if (b->kind == PY_tuple)
+      for (int j = 0; j < b->children.n; j++) out.add(getAST(b->children[j], ctx)->sym);
+    else
+      out.add(getAST(b, ctx)->sym);
+  }
+}
+
+// issues/116: does `cls` or any transitive base define a member of this
+// name? `has` is committed at the end of each PY_classdef and classdefs
+// are processed in program order, so a legal base's members are already
+// in place by the time a subclass asks about them.
+static bool pyc_class_or_base_defines(Sym *cls, cchar *name, Vec<Sym *> &seen) {
+  if (!cls || seen.set_in(cls)) return false;
+  seen.set_add(cls);
+  for (Sym *m : cls->has)
+    if (m && m->name && !strcmp(m->name, name)) return true;
+  for (Sym *b : cls->implements)
+    if (pyc_class_or_base_defines(b, name, seen)) return true;
+  return false;
+}
+
+// issues/116: is `target` `cls` itself or any transitive base of it?
+static bool pyc_class_or_base_is(Sym *cls, Sym *target, Vec<Sym *> &seen) {
+  if (!cls || seen.set_in(cls)) return false;
+  if (cls == target) return true;
+  seen.set_add(cls);
+  for (Sym *b : cls->implements)
+    if (pyc_class_or_base_is(b, target, seen)) return true;
+  return false;
+}
+
 // issue 011: same shape as pyda_contains_yield, scanning for ANY
 // `return` (bare or with a value -- both provide a def for fn->ret,
 // see return_stmt's build_if1_pyda case) anywhere in this function's
@@ -1139,7 +1200,21 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       if (varargsl)
         for (auto c : varargsl->children.values())
           if (c->kind == PY_arg_default) build_syms_pyda(c->children[1], ctx);
-      PycSymbol *ps = make_PycSymbol(ctx, n->children[0]->str_val, PYC_LOCAL);
+      // issues/116: inside a class that gets the __pyc_iterator__ bridge
+      // (its body defines CPython's `__next__` but not pyc's
+      // `__pyc_more__`), the user's `__next__` is installed under
+      // `__pyc_user_next__` -- the bridge's own `__pyc_more__`/`__next__`
+      // pair takes the real names and calls through to it. Renamed HERE,
+      // before make_PycSymbol, so the member Sym, the class scope map,
+      // cls->has and the class setter all agree on one name: the
+      // inheritance copy in gen_class_pyda installs `inc->has[j]->alias`
+      // under `inc->has[j]->name`, so a member whose name and setter
+      // disagreed would hand subclasses the raw user next under the
+      // bridged name.
+      cchar *def_name = n->children[0]->str_val;
+      if (ctx.scope_stack.n && ctx.scope_stack.last()->iter_bridge && def_name && !strcmp(def_name, "__next__"))
+        def_name = "__pyc_user_next__";
+      PycSymbol *ps = make_PycSymbol(ctx, def_name, PYC_LOCAL);
       bool is_method = ctx.in_class() && ctx.cls()->type_kind == Type_RECORD;
       if (is_method) {
         // Mirror CPython FunctionDef_kind path: create named sym + func sym with alias
@@ -1264,6 +1339,58 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       cdef_ast->rval->self->in = fn;
       // For decorated: set the outer node's rval/sym; for non-decorated, cdef_ast==ast, rval=fn, sym=class_sym already
       if (n != cdef) ast->rval = ast->sym = cdef_ast->sym;
+      // issues/116: a class implementing CPython's iterator protocol
+      // (`__next__`) and not pyc's (`__pyc_more__`) is served by the
+      // __pyc_iterator__ bridge. Two separate decisions, because a
+      // subclass can be served by a bridge it must NOT add again:
+      //
+      //   iter_bridge -- rename this body's `__next__` to
+      //     `__pyc_user_next__`, leaving the real names to the bridge.
+      //   add_iter_bridge -- also add the bridge as a base.
+      //
+      // Decided before the body is walked because PY_funcdef reads
+      // iter_bridge off this scope while naming each method's member.
+      // The bases are already resolved by then (walked at the top of
+      // this case), which is what makes the ancestor queries possible
+      // here at all -- `sym->implements` is not filled until below.
+      //
+      // Builtin classes are exempt: they define the protocol itself,
+      // and all of them already provide `__pyc_more__`.
+      bool iter_bridge = false, add_iter_bridge = false;
+      Sym *iter_bridge_sym = nullptr;
+      if (!ctx.is_builtin() && pyda_class_body_has_method(cdef, "__next__") &&
+          !pyda_class_body_has_method(cdef, "__pyc_more__")) {
+        int bridge_lvl = 0;
+        PycSymbol *bridge = find_PycSymbol(ctx, cannonicalize_string("__pyc_iterator__"), &bridge_lvl);
+        if (!bridge || !bridge->sym)
+          fail("error line %d, internal: __pyc_iterator__ not found (issues/116)", ctx.lineno);
+        iter_bridge_sym = unalias_type(bridge->sym);
+        Vec<Sym *> bases;
+        pyda_class_base_syms(cdef, ctx, bases);
+        Vec<Sym *> seen_bridge, seen_more;
+        bool anc_bridge = false, anc_more = false;
+        for (Sym *b : bases) {
+          if (pyc_class_or_base_is(b, iter_bridge_sym, seen_bridge)) anc_bridge = true;
+          if (pyc_class_or_base_defines(b, "__pyc_more__", seen_more)) anc_more = true;
+        }
+        if (anc_bridge) {
+          // A base is already bridged and this class OVERRIDES
+          // `__next__`. Rename, so the override lands on the name the
+          // inherited `__pyc_more__` actually calls -- but adding the
+          // bridge again would list it alongside a base that already
+          // derives from it, which C3 linearization rejects.
+          iter_bridge = true;
+        } else if (!anc_more) {
+          iter_bridge = add_iter_bridge = true;
+        }
+        // else: a base speaks pyc's protocol on its own (its
+        // `__pyc_more__` is not the bridge's). Its answer pairs with
+        // this class's `__next__` under the real name, so leave both
+        // alone -- bridging here would make two unrelated
+        // `__pyc_more__` candidates, which dispatch reports as
+        // ambiguous rather than picking one.
+      }
+      ctx.scope_stack.last()->iter_bridge = iter_bridge;
       // Process body (last child = PY_suite)
       build_syms_pyda(cdef->children.last(), ctx);
       // Post-classdef: collect base classes and members.
@@ -1305,7 +1432,18 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // dispatch and `if a:` / `not a` on a plain instance has no
       // type (issue 025). Builtin-module classes are exempt: they
       // define the root hierarchy itself (object, __pyc_any_type__).
-      if (!any_base && !ctx.is_builtin()) cdef_ast->sym->inherits_add(sym_object);
+      // issues/116: `!iter_bridge` because the bridge added below IS an
+      // object subclass. Listing both would put a base ahead of its own
+      // subclass in the base list, which C3 linearization rejects --
+      // exactly as CPython rejects `class C(object, Iterator)`.
+      if (!any_base && !ctx.is_builtin() && !add_iter_bridge) cdef_ast->sym->inherits_add(sym_object);
+      // issues/116: added LAST on purpose. gen_class_pyda copies each
+      // include's members into this class's prototype in include order,
+      // so the bridge's `__pyc_more__` setter runs after `object`'s
+      // do-nothing one and is the one left standing -- the same way the
+      // class's own body statements, emitted after both, override
+      // everything an ordinary override would.
+      if (add_iter_bridge) cdef_ast->sym->inherits_add(iter_bridge_sym);
       // Collect class fields into a temporary Vec, sort by
       // name, then commit to `has` in sorted order.  Direct
       // iteration over the scope map would walk the

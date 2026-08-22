@@ -22,6 +22,7 @@ static int unify_seq_enabled() {
 
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx);
 static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx);
+static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *known_callee = nullptr);
 
 static char *pyda_trim(const char *s) {
   if (!s) return nullptr;
@@ -1249,8 +1250,20 @@ static void build_list_comp_pyda(PyDAST *list_for, Vec<PyDAST *> &elts, PycAST *
   Sym *iter = new_sym(ast), *cond_var = new_sym(ast), *tmp = new_sym(ast);
   if1_gen(if1, &before, i_ast->code);
   if1_send(if1, &before, 2, 1, sym___iter__, i_ast->rval, iter)->ast = ast;
+  // issues/116: an iterator advance is a CALL, so it needs the same
+  // post-call pending-exception check every other call site gets.
+  // Without these two, ANY exception raised while advancing an
+  // iterator is silently swallowed by the loop: a generator body that
+  // raises reported "Unhandled exception" instead of reaching the
+  // enclosing `try` (pre-existing, independent of this issue), and a
+  // __pyc_iterator__-bridged class whose __next__ raises something
+  // other than StopIteration looped forever re-serving its last
+  // peeked value. Both calls need one -- the bridge propagates out of
+  // __pyc_more__, a generator out of __next__.
   call_method(&cond, ast, iter, sym___pyc_more__, cond_var, 0);
+  emit_exc_check(&cond, ast, ctx);
   call_method(&body, ast, iter, sym___next__, tmp, 0);
+  emit_exc_check(&body, ast, ctx);
   // General target path: handles `[... for (i, c) in zip(...)]`
   // tuple unpacking, same as PY_for_stmt (issue 025 "has no type"
   // bucket -- collatz line 39). The old raw move into t->sym was
@@ -1529,8 +1542,31 @@ static Sym *resolve_plain_callee(Sym *cur_val, PycCompiler &ctx) {
 // granularity). Left null (or unresolved/can-raise) for every other
 // call site, this behaves exactly as before -- the whole-program
 // gate remains the fallback for anything this pass can't prove safe.
-static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *known_callee = nullptr) {
-  if (!pyc_program_has_raise || ctx.is_builtin()) return;
+static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *known_callee) {
+  // issues/116: builtin-module code does not PROPAGATE exceptions --
+  // the library was written before issue 011 and its calls are not
+  // check-guarded, which is what this exemption has always meant. But
+  // it may now CATCH one: a check is emitted inside a `try` whose
+  // handler is in the same builtin function, so the transfer target is
+  // that try's own dispatch block and nothing escapes into the
+  // library's unguarded call chain. Needed by __pyc_iterator__
+  // (__pyc__/00_runtime.py), which has to catch StopIteration out of a
+  // user class's `__next__` -- without this its `except` was dead code
+  // and the exception ran straight past it to "Unhandled exception".
+  //
+  // Deliberately NOT gated on pyc_program_has_raise, which every other
+  // caller is: the builtin module's IF1 is built in the baseline pass,
+  // before any user module has been scanned, so that flag is still
+  // false here and always would be. Cost when the program turns out
+  // never to raise is one never-taken branch per bridged iteration.
+  //
+  // Narrow by construction: no other builtin function contains a `try`
+  // at all, so this changes nothing else today.
+  bool in_own_try = ctx.try_stack.n && ctx.try_stack.last().fun == ctx.fun();
+  if (ctx.is_builtin()) {
+    if (!in_own_try) return;
+  } else if (!pyc_program_has_raise)
+    return;
   if (known_callee && !known_callee->can_raise) return;
   Label *target = exc_transfer_target(ctx);
   if (!target) return;
@@ -3096,8 +3132,20 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_gen(if1, &ast->code, i_ast->code);
       if1_send(if1, &ast->code, 2, 1, sym___iter__, i_ast->rval, iter)->ast = ast;
       Code *cond = 0, *body = 0, *orelse = 0, *next = 0;
+      // issues/116: an iterator advance is a CALL, so it needs the same
+      // post-call pending-exception check every other call site gets.
+      // Without these two, ANY exception raised while advancing an
+      // iterator is silently swallowed by the loop: a generator body that
+      // raises reported "Unhandled exception" instead of reaching the
+      // enclosing `try` (pre-existing, independent of this issue), and a
+      // __pyc_iterator__-bridged class whose __next__ raises something
+      // other than StopIteration looped forever re-serving its last
+      // peeked value. Both calls need one -- the bridge propagates out of
+      // __pyc_more__, a generator out of __next__.
       call_method(&cond, ast, iter, sym___pyc_more__, tmp, 0);
+      emit_exc_check(&cond, ast, ctx);
       call_method(&body, ast, iter, sym___next__, tmp2, 0);
+      emit_exc_check(&body, ast, ctx);
       // Assign the __next__ result through the general target path:
       // handles `for i, c in zip(...)` tuple unpacking (and attribute
       // / subscript targets) instead of a raw move into t->sym, which

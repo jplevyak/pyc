@@ -74,10 +74,9 @@ class __pyc_any_type__:
   def __nis__(self, x):
     return True
 
+
 class object:
   def __null__(self):
-    return False
-  def __pyc_more__(self):
     return False
   def __str__(self):
     return "<object>"
@@ -123,6 +122,73 @@ class object:
   def __ne__(self, x):
     return not self.__eq__(x)
 
+# issues/116: the bridge from CPython's iterator protocol to pyc's.
+#
+# pyc's for-loop is PEEK-THEN-FETCH -- `while it.__pyc_more__(): x =
+# it.__next__()` -- while CPython's is fetch-until-StopIteration. Every
+# iterator in __pyc__/ defines __pyc_more__, but it is not a Python
+# method, so no user class and no ported library will ever define one:
+# they write __iter__/__next__ and nothing else. `object` used to carry
+# a `__pyc_more__` answering False, so such a class iterated ZERO
+# times, silently and with no diagnostic. That default is gone with
+# this bridge: the only shape it can still catch is a class whose
+# `__iter__` returns something implementing NEITHER protocol, and for
+# that an unresolved call is the right answer, not an empty loop.
+#
+# build_syms_pyda adds this class as a base of any class whose body
+# defines `__next__` and not `__pyc_more__`, and installs that class's
+# own `__next__` as `__pyc_user_next__`. The pair below then sits in
+# front of it: __pyc_more__ fetches one value ahead and remembers
+# whether there was one, __next__ hands back what was peeked. Exactly
+# the shape __pyc_generator__ already uses for coroutine handles.
+#
+# Bridged classes pay one try/except per element; every builtin
+# iterator keeps the cheap path, because they all define __pyc_more__
+# and so are never given this base.
+class __pyc_iterator__(object):
+  __pyc_peek_primed__ = False
+  __pyc_peek_has__ = False
+  # No initializer for __pyc_peek__ on purpose: an `= 0` here would pin
+  # the value channel to int for every bridged class, the exact bug
+  # issues/114 fixed in __pyc_generator__. Its type comes from
+  # __pyc_user_next__'s return type instead.
+  def __pyc_more__(self):
+    if not self.__pyc_peek_primed__:
+      try:
+        self.__pyc_peek__ = self.__pyc_user_next__()
+        self.__pyc_peek_has__ = True
+      except StopIteration:
+        self.__pyc_peek_has__ = False
+      self.__pyc_peek_primed__ = True
+    return self.__pyc_peek_has__
+  def __next__(self):
+    # Also the entry point for a bare next(obj)/obj.__next__() outside
+    # any loop: nothing has peeked, so this peeks and consumes in one
+    # go, and re-raises StopIteration past exhaustion like CPython.
+    if not self.__pyc_peek_primed__:
+      self.__pyc_more__()
+    self.__pyc_peek_primed__ = False
+    if not self.__pyc_peek_has__:
+      raise StopIteration(0)
+    return self.__pyc_peek__
+  def __contains__(self, item):
+    # `x in it`. python_ifa_build_if1.cc lowers `in` to a direct
+    # __contains__ dispatch with no fallback to the iterable protocol,
+    # so without this a bridged class can't be membership-tested at all
+    # -- the same gap __pyc_generator__.__contains__ fills (09_generator
+    # .py). Consumes the iterator, which is what CPython's `in` does to
+    # an iterator too.
+    while self.__pyc_more__():
+      if self.__next__() == item:
+        return True
+    return False
+  def __pyc_tolist__(self):
+    # list(it) / tuple(it) / anything reaching __pyc_seq_source__
+    # (__pyc_any_type__ above). Same consuming semantics.
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
 class __pyc_None_type__:
   def __bool__(self):
     return False

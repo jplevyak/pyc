@@ -23,7 +23,17 @@ struct PycScope : public gc {
   // and therefore any codegen that walks a scope without an explicit sort,
   // non-reproducible across runs of byte-identical input).
   HashMap<cchar *, StringHashFns, PycSymbol *> map;
-  PycScope() : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0) { id = scope_id++; }
+  // issues/116: set on a CLASS scope whose body defines CPython's
+  // `__next__` but not pyc's `__pyc_more__`. Such a class gets the
+  // __pyc_iterator__ bridge as a base, and its own `__next__` is
+  // installed under `__pyc_user_next__` so the bridge's peek-then-fetch
+  // pair can sit in front of it. Read by PY_funcdef while emitting the
+  // method's class setter, which is why it lives on the scope.
+  bool iter_bridge;
+  PycScope()
+      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false) {
+    id = scope_id++;
+  }
 };
 
 // -- Globals defined in python_ifa_util.cc --
