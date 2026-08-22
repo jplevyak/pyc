@@ -1,1 +1,1 @@
-issues/052 (LLVM prints None for 0) / issues/048 (C refuses) -- {nil,int64} on a scalar field
+issues/048 -- {nil,int64} on a scalar field has no representation: a null test cannot distinguish None from 0. Both backends now REFUSE this at compile time (issues/052, closed by e1381dc7, was the LLVM half silently printing None for 0)

@@ -1,7 +1,13 @@
 # 052 — LLVM backend: a `{None, int}` value that is 0 prints as `None`
 
-**Status:** RESOLVED 2026-08-19 (`e1381dc7`) by REFUSING, not by fixing the representation — see below.
-[048](048-none-int-field-pair-runtime-abort.md) in `cg.cc`. **Silent
+**Status:** CLOSED — resolved 2026-08-19 (`e1381dc7`) by REFUSING, not
+by fixing the representation; see "Resolved by refusing" below. The
+silent wrong answer this issue exists for is gone (both backends now
+reject the dispatch at compile time). Giving `{None, int}` an actual
+representation remains [048](../048-none-int-field-pair-runtime-abort.md)'s
+open problem, which is what `tests/none_int_field_zero.py` still waits
+on.
+[048](../048-none-int-field-pair-runtime-abort.md) in `cg.cc`. **Silent
 wrong answer** — no diagnostic, correct-looking output, wrong value.
 Repro: `tests/none_int_field_zero.py`.
 
@@ -63,8 +69,8 @@ representation is scalar and a nil branch exists, refuse rather than
 emit `icmp eq ptr … null` — unless the selector is one of the
 truthiness ones. That converts a silent wrong answer into the same loud
 failure the C backend gives, which is the honest state of affairs until
-the representation gap ([048](048-none-int-field-pair-runtime-abort.md),
-[030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md))
+the representation gap ([048](../048-none-int-field-pair-runtime-abort.md),
+[030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md))
 is closed.
 
 Making it actually *work* on either backend needs the union to stop being

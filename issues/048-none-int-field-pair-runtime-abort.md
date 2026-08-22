@@ -45,7 +45,7 @@ With the field set to **0** instead:
 | | output |
 |---|---|
 | CPython | `0 2` |
-| LLVM | **`None 2`** — silently wrong, filed as [052](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md) |
+| LLVM | **`None 2`** — silently wrong, filed as [052](closed/052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md) |
 | C | aborts, as here |
 
 LLVM keeps the `{nil, int64}` union in pointer representation and

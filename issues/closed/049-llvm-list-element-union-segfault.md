@@ -1,11 +1,19 @@
 # 049 — LLVM backend segfaults on `list_element_type_union.py`; the C backend is correct
 
-**Status:** open, 2026-08-15. **This is a live regression on a supported
-backend**, introduced today by making `PYC_NOMARK=1` the default
-(ifa/issues/074). `tests/list_element_type_union.py` is deliberately left
-FAILING under `PYC_FLAGS="-b"` rather than tagged `.known_issue`, because
-suppressing a regression the same day it is introduced is how it gets
-forgotten.
+**Status:** CLOSED — fixed 2026-08-20 by `c77045b7`, under
+[ifa/issues/051](../../ifa/issues/closed/051-LLVM-nested-list-index-mixed-union-crash.md),
+which turned out to be the same defect seen from the ifa side (nested
+list indexing where the outer list's element type is a mixed
+`Type_SUM`). `tests/list_element_type_union.py` now compiles and runs
+correctly on BOTH backends and is execution-verified in the suite; this
+file's status was simply never updated when that landed.
+
+Originally filed 2026-08-15 as a **live regression on a supported
+backend**, introduced that day by making `PYC_NOMARK=1` the default
+(ifa/issues/074). The test was deliberately left FAILING under
+`PYC_FLAGS="-b"` rather than tagged `.known_issue`, because suppressing
+a regression the same day it is introduced is how it gets forgotten —
+which is exactly why it was still visible when the ifa-side fix landed.
 
 ## Symptom
 
@@ -46,7 +54,7 @@ union where marks previously kept it separated, and the **LLVM backend
 lacks a guard the C backend has** for that shape.
 
 That is the same family as
-[035](035-list-element-cast-salvage-guard-and-set-item-union.md), whose
+[035](../035-list-element-cast-salvage-guard-and-set-item-union.md), whose
 guards live in `cg.cc` — including the read-side one added the same day
 (`P_prim_index_object`'s constant-index record branch). `cg_emit_llvm.cc`
 has no counterpart, so where C emits a defined value (or the established

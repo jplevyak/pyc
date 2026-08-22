@@ -128,7 +128,7 @@ to minimise.
   — `repr(bytes)` emits raw bytes instead of `\xNN`, so output containing
   binary data diverges from CPython (and diffs report "Binary files
   differ"). `tests/bytes_repr_escapes.py`.
-- [049-llvm-list-element-union-segfault.md](049-llvm-list-element-union-segfault.md)
+- [049-llvm-list-element-union-segfault.md](closed/049-llvm-list-element-union-segfault.md)
   — **live regression on a supported backend.** `PYC_NOMARK=1` becoming
   the default (2026-08-15) makes the LLVM backend segfault on
   `tests/list_element_type_union.py`; the C backend compiles and runs the
@@ -142,12 +142,12 @@ to minimise.
   **Corrected 2026-08-16: this is not a codegen bug.** `cg.cc` refuses on
   purpose — a nil test on a scalar cannot tell `None` from `0` — and it is
   right to: set the field to **0** and LLVM, which "passes" at 1, silently
-  prints `None` ([052](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)).
+  prints `None` ([052](closed/052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)).
   The real defect is upstream, a `{nil,int64}` union surviving to codegen
   on a field that is provably an int at the point of use — same family as
   018's surviving half. `tests/none_int_field_pair.py`,
   `tests/none_int_field_zero.py`.
-- [052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)
+- [052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md](closed/052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)
   — **silent wrong answer on the LLVM backend.** It keeps `{nil,int64}` in
   pointer representation and discriminates with `icmp eq ptr %x, null`;
   `inttoptr (i64 0)` is null, so the integer 0 takes the `None` branch and
@@ -164,7 +164,7 @@ to minimise.
   always omitting the same parameter, is clean. Root cause of
   `shedskin_examples/sat`'s unhandled `AssertionError`, and a very common
   Python shape, so the blast radius is wider than one program.
-- [047-cg-nameless-lvalue-assert-on-prim.md](047-cg-nameless-lvalue-assert-on-prim.md)
+- [047-cg-nameless-lvalue-assert-on-prim.md](closed/047-cg-nameless-lvalue-assert-on-prim.md)
   — `write_c_prim` **aborts the compiler** (`cg.cc:389`) on a nameless
   primitive destination, on a 27-line program. Same untyped/unreached-
   contour condition that `P_prim_index_object` already guards explicitly;
@@ -296,6 +296,51 @@ to minimise.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [118](closed/118-str-case-predicates-missing.md) — `str.islower`,
+  `isspace` and `swapcase` were simply absent from `__pyc__/01_str.py`,
+  so any program calling one failed to compile. Added (ASCII-only, like
+  their neighbours), `tests/str_case_predicates.py`.
+- [117](closed/117-string-literal-decoder-truncation.md) — two silent
+  wrong answers in the string-literal decoder: implicit concatenation
+  (`"a" "b"`, including across lines and around comments) kept only the
+  first fragment, and a literal containing an escaped quote was
+  truncated at that quote. Rewritten around an escape-aware
+  `scan_string_literal` that walks every fragment and folds at compile
+  time; f-strings take the same fragment sequence.
+  `tests/string_literal_concat.py`.
+- [116](closed/116-iterator-protocol-needs-pyc-more.md) — a class
+  implementing CPython's iterator protocol (`__iter__`/`__next__` with
+  StopIteration — what every user class and ported library writes)
+  iterated ZERO times, silently, exit 0: pyc's loop is peek-then-fetch
+  and `object.__pyc_more__` answered False. **The plan filed with the
+  issue was not implementable** — it wanted the loop shape chosen at
+  lowering time, but build_if1 has no receiver type for `for x in f()`.
+  Fixed by `61d71524` with a `__pyc_iterator__` bridge class injected as
+  a base in build_syms instead, and `object.__pyc_more__` removed.
+  `tests/iterator_protocol_bridge.py`. Three bugs stood behind it,
+  including one — a for loop never checking for a pending exception
+  after advancing its iterator — that was pre-existing and unrelated.
+- [052](closed/052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)
+  — the LLVM backend printed `None` for a `{None, int}` value that was
+  0: a null test cannot tell None from 0. Resolved by `e1381dc7` by
+  **refusing** rather than by fixing the representation — LLVM now
+  rejects the dispatch at compile time exactly as the C backend already
+  did, so both backends refuse instead of one guessing. The silent wrong
+  answer is gone; giving the union a representation stays
+  [048](048-none-int-field-pair-runtime-abort.md)'s problem, which is
+  what `tests/none_int_field_zero.py` still waits on.
+- [049](closed/049-llvm-list-element-union-segfault.md) — the LLVM
+  backend segfaulted on `tests/list_element_type_union.py` while the C
+  backend was correct; a regression from making `PYC_NOMARK=1` the
+  default. Fixed 2026-08-20 by `c77045b7` under
+  [ifa/051](../ifa/issues/closed/051-LLVM-nested-list-index-mixed-union-crash.md),
+  the same defect seen from the ifa side. Deliberately left *failing*
+  rather than tagged `.known_issue` at the time — which is why it was
+  still visible when the ifa-side fix landed. Status was never updated;
+  archived 2026-08-22 after re-verifying the test passes on both
+  backends.
+- [047](closed/047-cg-nameless-lvalue-assert-on-prim.md) — fixed
+  2026-08-19 (`c7468a91`).
 - [115](closed/115-generator-methods-unsupported.md) — a generator
   METHOD was not a generator at all: any `yield` inside a `def` in a
   class body compiled to an ordinary function that ran its body to

@@ -1,6 +1,6 @@
 # 116 — a class with `__iter__`/`__next__` iterates zero times, silently
 
-**Status:** FIXED 2026-08-22. Found 2026-08-21 while clearing
+**Status:** CLOSED — fixed 2026-08-22 (`61d71524`). Found 2026-08-21 while clearing
 issues/115's residue. See the FIXED section at the bottom -- the
 plan sketched under "Fix" below turned out **not to be
 implementable as written**, and what shipped is a different shape.

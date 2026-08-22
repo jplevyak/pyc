@@ -415,7 +415,7 @@ class T : public pyobj {
 So `{None, tuple}` needs no union at all — the null pointer *is* the
 `None` case. That works because both members are pointer-represented,
 which is exactly the distinction
-[052](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md) turns on:
+[052](closed/052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md) turns on:
 `{None, int}` is unrepresentable this way (0 is a valid `int`), while
 `{None, container}` is free.
 

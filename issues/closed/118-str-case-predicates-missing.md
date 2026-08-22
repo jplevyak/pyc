@@ -1,6 +1,6 @@
 # 118 — str.islower / isspace / swapcase did not exist
 
-**Status:** FIXED 2026-08-21, found while clearing issues/115's residue.
+**Status:** CLOSED — fixed 2026-08-21, found while clearing issues/115's residue.
 
 ## Symptom
 

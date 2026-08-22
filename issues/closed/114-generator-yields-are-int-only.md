@@ -106,7 +106,7 @@ print(b.v)          # pyc: assert(!"runtime error: matching function not found")
 
 That is issues/018's family — a scalar unioned with a pointer, which
 needs the tagged representation of
-[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md).
+[ifa/030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md).
 
 **A third hazard**, if anyone reaches for the obvious shortcut: moving
 the yielded value into `fn->ret` in LIVE code would clobber the

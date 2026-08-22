@@ -1,6 +1,6 @@
 # 117 — implicit string concatenation dropped; escaped quotes truncate
 
-**Status:** FIXED 2026-08-21, found while clearing issues/115's residue.
+**Status:** CLOSED — fixed 2026-08-21, found while clearing issues/115's residue.
 Both were **silent wrong answers** — no diagnostic, plausible output.
 
 ## Symptoms

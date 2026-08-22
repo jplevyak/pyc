@@ -1,7 +1,7 @@
 # 047 — `write_c_prim` aborts the compiler on a nameless primitive destination
 
-**Status:** FIXED 2026-08-19 (`c7468a91`). Originally filed 2026-08-15. Found while narrowing
-[046](046-default-arg-omitted-differently-silently-wrong.md); unrelated to
+**Status:** CLOSED — fixed 2026-08-19 (`c7468a91`). Originally filed 2026-08-15. Found while narrowing
+[046](../046-default-arg-omitted-differently-silently-wrong.md); unrelated to
 it. **pyc aborts** (SIGABRT) rather than diagnosing. Repro landed as
 `tests/method_setter_field_pair_compiler_abort.py` with a `.known_issue`
 tag.

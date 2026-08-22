@@ -1,7 +1,28 @@
 # 107 — an undefined name compiles (exit 0) and the binary segfaults
 
-**Status: FIXED 2026-08-18.** An undefined name is now a compile error
-naming the symbol, with a non-zero exit. See "The fix" at the end.
+**Status: open — mostly fixed 2026-08-18 (`c8d7da8d`), ONE shape
+remains.** An undefined name is now a compile error naming the symbol,
+with a non-zero exit — see "The fix" at the end — **except when the name
+appears as a call argument**, which is exactly the shape this issue's
+own test uses, and why `tests/undefined_name_executed.py` still carries
+a `.known_issue` tag.
+
+Measured 2026-08-22, on `c8d7da8d`'s own code (not a regression — this
+was never covered):
+
+```
+x = NoSuchName            -> error line 1, name 'NoSuchName' is not defined   rc=1
+def f(): return NoSuchName -> error line 2, ...                              rc=1
+print(NoSuchName)         -> three "has no type" warnings                     rc=0
+f(NoSuchName)             -> same, for a user-defined f                       rc=0
+len(NoSuchName)           -> same, for a builtin                              rc=0
+```
+
+So `report_undefined_names` never sees the use: the argument position
+does not record a pending use the way an ordinary load does. The status
+line previously read a flat "FIXED", which is how the gap survived — the
+`.known_issue` tag naming this issue was the only thing still telling
+the truth.
 
 **Originally filed** 2026-08-18 while delta-reducing `plcfrs` for
 [ifa/issues/105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md).
