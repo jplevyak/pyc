@@ -139,14 +139,36 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
       return;
     }
   }
+  // issues/114: cast the result to the DECLARED type. __pyc_c_call__'s
+  // first argument says what the call yields as far as FA is
+  // concerned, and that no longer always matches the C function's own
+  // return type -- _CG_generator_value returns a machine word while
+  // the declared type is now whatever the generator yields. The word
+  // IS the pointer. A no-op when the two already agree.
+  if (n->lvals.n && n->lvals[0]->cg_string && n->lvals[0]->type && n->lvals[0]->type->cg_string)
+    fprintf(fp, "(%s)", n->lvals[0]->type->cg_string);
   fputs(name, fp);
   fputs("(", fp);
   int first = 1;
+  // issues/114: for pyc's own generator entry points, cast each
+  // int-declared argument to `long long`. Their handle argument is a
+  // machine word but now arrives typed `{None, <yielded>}`, and
+  // passing that verbatim is a C++ overload-resolution failure.
+  //
+  // Scoped to `_CG_generator_*` deliberately: a blanket argument cast
+  // is NOT safe, because some sites declare a type that does not match
+  // what they pass on purpose -- list.__add__ declares `int` for a
+  // whole LIST because _CG_list_add runs each side through
+  // _CG_to_list, and casting there would destroy the pointer.
+  bool cast_args = name && !strncmp(name, "_CG_generator_", 14);
   for (int i = 5; i < n->rvals.n; i += 2) {
     if (!first) {
       fputs(", ", fp);
     } else
       first = 0;
+    if (cast_args && n->rvals[i - 1] && n->rvals[i - 1]->sym && n->rvals[i - 1]->sym->name &&
+        !strcmp(n->rvals[i - 1]->sym->name, "int"))
+      fputs("(long long)", fp);
     fputs(n->rvals[i]->cg_string, fp);
   }
   fputs(");\n", fp);

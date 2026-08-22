@@ -1956,6 +1956,39 @@ static void add_send_constraints(PNode *p, EntrySet *es) {
         for (int i = 3; i < p->rvals.n; i++) {
           AVar *r = make_AVar(p->rvals[i], es);
           flow_vars(r, es->rets[i - 3]);
+          // issues/114: a GENERATOR's return may never be a singleton
+          // constant, however certain FA is of the value.
+          //
+          // For every other function, "FA proved the return is 5" and
+          // "the C call produces 5" are the same statement. For a
+          // generator they are not: the backends discard the emitted
+          // return entirely and hand back the coroutine handle instead
+          // (cg.cc's `return (%s)(uintptr_t)__g_1014.handle.address()`,
+          // and cg_emit_llvm.cc's counterpart), while fn->ret carries
+          // whatever the body's yields and returns put there -- a type
+          // channel, not a value. So a body that yields ONE constant
+          // (`yield 1`, then a raise or a fall-through) looked like a
+          // function certain to return 1, and dead.cc's get_constant
+          // let every consumer inline that literal in place of the
+          // handle: the generator object was built around the address
+          // 1 and the first resume segfaulted, with nothing visibly
+          // wrong in the emitted C.
+          //
+          // Unioning in the constant's own abstract type is enough --
+          // two distinct CreationSets is exactly what get_constant
+          // refuses to fold -- and it costs nothing else: the widened
+          // arm is the type the constant already had. Done here rather
+          // than at the fold because SSU gives the call's result and
+          // each later use separate Vars AND separate Syms, so there is
+          // no single downstream thing to exempt; the type is.
+          //
+          // Same root as issues/022's P_prim_await liveness exception:
+          // a coroutine handle is not a value the optimizer may reason
+          // about through its contents.
+          if (es->fun->sym->is_generator)
+            for (CreationSet *cs : r->out->sorted)
+              if (cs->sym->is_constant && cs->sym->type)
+                update_gen(es->rets[i - 3], make_abstract_type(cs->sym->type));
         }
         break;
       case P_prim_make:
@@ -2935,7 +2968,19 @@ static void add_send_edges_pnode(PNode *p, EntrySet *es) {
         for (CreationSet *cs : t->out->sorted) {
           AVar *elem = get_element_avar(cs);
           if (elem) elem->arg_of_send.add(result);
-          if (cs->no_static_arity || (elem && elem->out != fa->type_world.bottom_type) ||
+          // issues/114: a CreationSet with NO DEFS was not built by any
+          // creation site in this program -- it is abstract, or
+          // synthesised for the result of an opaque `__pyc_c_call__`
+          // (a generator's value channel is exactly that). Its
+          // `vars.n` is 0 because nothing ever filled it, NOT because
+          // the container is empty, so folding len() to 0 is simply
+          // wrong. Measured: a tuple arriving through a generator had
+          // correct contents -- `len(x)` and `x[0]` were right at the
+          // use site -- but inside tuple::__eq__, whose formal carries
+          // the synthesised CS, `len(self)` folded to 0, so the very
+          // first `n != len(t)` check returned False and `x == (1, 2)`
+          // was silently False for a tuple that WAS (1, 2).
+          if (cs->no_static_arity || !cs->defs.n || (elem && elem->out != fa->type_world.bottom_type) ||
               sym_string->specializers.set_in(cs->sym) || sym_bytes->specializers.set_in(cs->sym))
             rtype = type_union(rtype, fa->type_world.size_type);
           else

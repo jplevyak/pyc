@@ -1,0 +1,13 @@
+6 abcdef
+6 abcdef
+4 abcd
+3 a'b
+3 x"y
+4 a\'b
+6 triple
+13
+b'abcd'
+n=5 done
+start 5
+a5b5
+5 True

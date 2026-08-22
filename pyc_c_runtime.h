@@ -218,6 +218,28 @@ inline bool _CG_generator_send(long long raw_handle, long long value) {
   return !h.done();
 }
 
+// issues/114: an identity on the coroutine handle whose only job is to
+// be OPAQUE to flow analysis.
+//
+// A generator function's IF1 return value and its C return value are
+// two different things: FA sees whatever the body's yields/returns put
+// in fn->ret, while cg.cc overrides the emitted `return` to hand back
+// the coroutine handle. That divergence is normally harmless, but a
+// generator with a single constant yield (`yield 1`, then a raise or a
+// fall-through) makes FA's view of the return a SINGLETON CONSTANT --
+// and the caller then inlines that literal in place of the call's
+// result (ifa/optimize/dead.cc's get_constant), so the wrapper
+// constructed __pyc_generator__(1) and every later resume dereferenced
+// 1 as a coroutine frame. Routing the handle through this call, whose
+// declared FA type is a plain `int` meta type rather than an example
+// value, gives the wrapper an abstract non-constant int to carry the
+// handle in, leaving the call's own result free to carry the yielded
+// TYPE (which is all __pyc_generator__ wants from it).
+//
+// Same family as issues/022's P_prim_await liveness fix: a coroutine
+// handle is not a value FA may reason about by its contents.
+inline long long _CG_generator_handle(long long raw_handle) { return raw_handle; }
+
 inline long long _CG_generator_value(long long raw_handle) {
   auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
   return (long long)(uintptr_t)h.promise().value;

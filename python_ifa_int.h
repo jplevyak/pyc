@@ -23,7 +23,17 @@ struct PycScope : public gc {
   // and therefore any codegen that walks a scope without an explicit sort,
   // non-reproducible across runs of byte-identical input).
   HashMap<cchar *, StringHashFns, PycSymbol *> map;
-  PycScope() : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0) { id = scope_id++; }
+  // issues/116: set on a CLASS scope whose body defines CPython's
+  // `__next__` but not pyc's `__pyc_more__`. Such a class gets the
+  // __pyc_iterator__ bridge as a base, and its own `__next__` is
+  // installed under `__pyc_user_next__` so the bridge's peek-then-fetch
+  // pair can sit in front of it. Read by PY_funcdef while emitting the
+  // method's class setter, which is why it lives on the scope.
+  bool iter_bridge;
+  PycScope()
+      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false) {
+    id = scope_id++;
+  }
 };
 
 // -- Globals defined in python_ifa_util.cc --
@@ -117,6 +127,15 @@ class PycCompiler : public PycCallbacks {
   // `X.attr` to the module's member symbol at compile time (modules
   // are compile-time-known namespaces, not runtime objects).
   Map<Sym *, PycModule *> module_syms;
+
+  // issues/115: per generator METHOD's coroutine-body Fun, the
+  // __pyc_generator__ wrapper Fun installed into the class under the
+  // method's name in its place. Created in build_syms (the setter that
+  // installs it is emitted there, before the body exists); its body is
+  // filled in by build_if1 once gen_fun_pyda has built the coroutine.
+  // Empty for a plain def, whose wrapper is built entirely in build_if1
+  // and needs no cross-pass handoff.
+  Map<Sym *, Sym *> gen_method_wrapper;
 
   // issue 011 (exception handling, option C):
   Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)
