@@ -1,4 +1,3 @@
-
 ac_encode/ac_encode
 adatron/adatron
 amaze/amaze
@@ -12,8 +11,10 @@ chaos/chaos
 chess/chess
 chull/chull
 circle/circle
+collatz/collatz
 dijkstra/dijkstra
 dijkstra2/dijkstra2
+doom/doom
 fysphun/fysphun
 genetic/genetic
 genetic2/genetic2
@@ -40,6 +41,8 @@ neural1/neural1
 neural2/neural2
 oliva2/oliva2
 othello/othello
+othello2/othello2
+othello3/othello3
 path_tracing/path_tracing
 pisang/pisang
 plcfrs/plcfrs
@@ -58,6 +61,7 @@ sat/sat
 score4/score4
 sha/sha
 sieve/sieve
+softrender/softrender
 sokoban/sokoban
 solitaire/solitaire
 stereo/stereo
@@ -77,4 +81,12 @@ voronoi2/voronoi2
 webserver/webserver
 yopyra/yopyra
 
-
+# Two programs have a source PACKAGE directory with the same name as the
+# program, so the entry above matches the directory as well as the binary
+# and silently hides the package. A trailing slash matches directories
+# only, so these re-include the directory while the entry above still
+# ignores the compiled file. Without them a newly added module in either
+# package is invisible to git -- the same class of accident that got
+# collatz/doom/othello2 committed in ce380ff4.
+!c64/c64/
+!pylot/pylot/
