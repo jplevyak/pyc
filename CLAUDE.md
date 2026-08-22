@@ -28,6 +28,68 @@ and what fixing it would unblock. See
 [ifa/issues/README.md](ifa/issues/README.md) for conventions and
 when to file vs. fix-now.
 
+## Change acceptance — run what CI runs, before committing
+
+CI (`.github/workflows/ci.yml`) gates every push to `main`. A change
+is not done until these five pass locally, in this order. They take
+roughly four minutes together.
+
+```sh
+make                          # 1. builds pyc + ifa (CI sets USE_LLVM=1)
+make test                     # 2. ifa --test, then test-ir, then test-e2e
+make -C ifa test_llvm         # 3. V-language LLVM backend smoke
+PYC_FLAGS=-b ./test_pyc.py    # 4. LLVM-backend pyc e2e
+make test_dparse              # 5. grammar validation
+```
+
+**`make test` is the one that gets skipped, and it is the one that
+matters.** It chains three gates and `set -e`s out of the first
+failure, so a red `test-ir` means `test-e2e` NEVER RAN and its summary
+is absent rather than failing — easy to read as "fine". Two habits
+follow:
+
+- Running `./test_pyc.py` alone is NOT the gate. It is only step 2's
+  last third. `make test` is what CI runs.
+- `test-ir` covers **16 phases**, and `./ifa-test --phase <name>` prints
+  a per-phase summary. Reading the tail of `make test-ir` shows you the
+  LAST phase only. Check every phase's `failed:` line, or just trust
+  `make test`'s exit code, which is the point of running it.
+
+Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed with
+2 known (below); `test_pyc.py` 0 failed on both backends; step 4 well
+above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml when
+a change lifts the count).
+
+### Goldens: re-bless only what the change is ABOUT
+
+`ifa-test --rebless` rewrites `.expected` files wholesale. Before using
+it, diff the old goldens against the new output and confirm every
+changed line belongs to your change. Two real cases from this repo:
+
+- All 22 `codegen-c` goldens went stale for ten days because
+  `93a771e3` added `_CG_set_argv(argc, argv)` to the emitted `main()`
+  and nobody re-blessed. Correct behaviour, stale fixture: re-bless.
+- `mark_distance_skew` / `mark_setter_skew` (ifa/issues/007) differ by
+  `ess=3` vs `ess=4` — a splitter stage that stopped firing. The golden
+  is the RIGHT answer: re-blessing would bake the regression in and
+  silently retire the coverage. These carry
+  `<fixture>.<phase>.known_issue` instead, which reports `KNOWN`,
+  does not fail the run, and flips to `PASS` by itself when the stage
+  works again. `--rebless` refuses to touch a fixture that has one.
+
+Same rule as `tests/<name>.py.known_issue` for the pyc suite — see
+[issues/README.md](issues/README.md). Prefer it over baking in wrong
+output whenever you intend to fix the bug.
+
+### CI's environment is not yours
+
+CI pins clang/LLVM **20** on ubuntu-24.04 (the unversioned packages
+resolve to 18, whose coroutine ABI breaks the async tests) and exports
+`USE_LLVM=1` job-wide. A local box on a different LLVM can pass all
+five steps and still surface a version-specific failure there — the
+C-backend goldens are text and version-independent, but anything
+touching coroutines or emitted IR is not.
+
 ## Do not check in build artifacts
 
 Never `git add` compiled binaries, object files, generated IR, or
