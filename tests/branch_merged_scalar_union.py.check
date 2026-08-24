@@ -1,0 +1,29 @@
+branch_merged_scalar_union.py:23:29: error: 'x' has mixed basic types:( int64 str ) 
+    if cond:
+            ^
+branch_merged_scalar_union.py:28:64: warning: illegal primitive argument type 'x' illegal: int64 
+        print(x + 10)
+                     ^
+  called from branch_merged_scalar_union.py:28
+branch_merged_scalar_union.py:30:80: warning: expression has no type
+        print(x + " world")
+                           ^
+  called from branch_merged_scalar_union.py:30
+branch_merged_scalar_union.py:30:80: warning: illegal primitive argument type 'x' illegal: str 
+        print(x + " world")
+                           ^
+  called from branch_merged_scalar_union.py:30
+branch_merged_scalar_union.py:28:63: error: expression has mixed basic types:( int64 str ) 
+        print(x + 10)
+                     ^
+branch_merged_scalar_union.py:28:64: error: expression has mixed basic types:( int64 str ) 
+        print(x + 10)
+                     ^
+branch_merged_scalar_union.py:28:64: error: expression has mixed basic types:( int64 str ) 
+        print(x + 10)
+                     ^
+  called from branch_merged_scalar_union.py:28
+branch_merged_scalar_union.py:30:79: error: expression has mixed basic types:( int64 str ) 
+        print(x + " world")
+                           ^
+fail: program does not type

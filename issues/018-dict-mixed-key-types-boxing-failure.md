@@ -1,8 +1,22 @@
 # Issue 018: Using `dict`/`set` with two different element types in one program fails to compile
 
-**Status:** open — but **the container half is FIXED** (verified
-2026-08-16) and only the bare-scalar half remains. Retested every shape
-this doc describes:
+**Status:** open — but only for a DIAGNOSTIC gap now. Two of the three
+halves are done:
+
+- containers (two dicts with different key types, sets, mixed values,
+  object keys) — **fixed** 2026-08-16;
+- bare branch-merged scalar — **resolved 2026-08-24 by REFUSING**, not
+  by making the program work. Boxing is a project-level No, a
+  `{int64, str}` union has no runtime representation, so a compile error
+  naming the variable and the union is the only honest answer, and that
+  is what pyc now emits;
+- `{scalar, container}` (`tests/container_scalar_union_add.py`) —
+  **still open**, and it is NOT the same defect: it emits no BOXING
+  violation at all, it dies on an internal assertion from inside the
+  builtin library (`sizeof_element of non-container type` in
+  `__pyc__.py`). What it needs is the "copy shedskin's diagnostic" half
+  of this issue: name the variable and its union instead of surfacing
+  analyser internals. See "Precedent: naming the user-level problem".
 
 | shape | today |
 |---|---|
@@ -11,12 +25,14 @@ this doc describes:
 | mixed *value* types across two dicts | **passes** |
 | object keys alongside `int` keys | **passes** |
 | three key types (`int`/`str`/`float`) in one program | **passes** |
-| **bare branch-merged scalar** (`x = 5` / `x = "hi"`, then `x + ...`) | **still fails** |
+| **bare branch-merged scalar** (`x = 5` / `x = "hi"`) | **rejected at compile time** (was: 8 warnings, exit 0, crashing binary) |
 
-The five passing shapes are pinned by `tests/dict_mixed_key_types.py`.
-The failure is pinned by `tests/branch_merged_scalar_union.py`
-(`.known_issue`): 8 warnings, compiles, then the binary aborts with
-`matching function not found` where CPython prints `hi world`.
+The five passing shapes stay pinned by `tests/dict_mixed_key_types.py`.
+The refusal is pinned by `tests/branch_merged_scalar_union.py`
+(`.check_fail` + `.check`), which used to carry a `.known_issue`.
+
+See "Resolved by refusing" at the end for the change, the measurement,
+and what is deliberately still not solved.
 
 **Correction (2026-08-16): this residue is NOT
 [048](048-none-int-field-pair-runtime-abort.md)**, despite both aborting
@@ -402,3 +418,88 @@ unions: say *which variable* holds *which union*, as shedskin's
 `*WARNING* Variable 'x' has dynamic (sub)type: {float, list}` does,
 rather than surfacing an internal `sizeof_element` assertion from inside
 `__pyc__.py`.
+
+
+## The bare-scalar half: resolved by refusing (2026-08-24)
+
+### The decision that settles it
+
+Boxing is not on the table for this project. Without it, a variable
+whose type mixes basic types has **no runtime representation at all** —
+so no amount of FA work makes `x = 5 / x = "hi"; x + 10` run. "Fix 018"
+could only ever mean one of two things, and only one of them is
+reachable:
+
+- make the program work → requires boxing → **excluded by decision**
+- refuse it clearly → **done**
+
+### What changed
+
+`ifa/analysis/fa.cc`. Permissive mode (pyc's default,
+`runtime_errors = true`) turns type violations into warnings plus
+inserted runtime checks. **`ATypeViolation_kind::BOXING` is now an error
+regardless**, in two places: `show_violations` prints `error` rather
+than `warning` for it, and `FA::analyze` returns -1 if any BOXING
+violation survives.
+
+The reasoning is specific to this violation kind and does not
+generalise: permissive mode's bargain is *"warn, and insert a runtime
+check"*, but there is no check to insert for a value that cannot be
+represented. Every other violation kind keeps its current behaviour.
+
+Before and after on the repro:
+
+    before   8 warnings, exit 0, binary aborts:
+             Assertion `!"runtime error: matching function not found"'
+    after    error: 'x' has mixed basic types:( int64 str )
+             fail: program does not type
+             exit 1, no .c and no binary emitted
+
+### shedskin does not solve this either — measured, not assumed
+
+Same repro, same day:
+
+    *WARNING* bm.py: Variable 'x' has dynamic (sub)type: {int, str}
+    *WARNING* bm.py:21: expression has dynamic (sub)type: {int, str}
+
+and its generated C++ then **fails to compile**:
+`invalid conversion from '__ss_int' to 'pyobj*'`. Its union
+representation is `pyobj*` with no scalar boxing, so it hits the same
+wall — it just hits it at build time rather than at run time. pyc now
+matches that, one stage earlier and with a better message.
+
+### Cost, measured across the corpus
+
+77 programs compiled with the change; five emit BOXING violations:
+
+    plcfrs   rc=1 (already rc=1 before)   1023 violations
+    quameon  rc=1 (already rc=1 before)   1455
+    sudoku5  rc=1 (already rc=1 before)    455
+    sunfish  compile timeout, before and after   28
+    rdb      rc=0 BEFORE -> rc=1 NOW       172   <-- the only change
+
+**Exactly one program is newly rejected: `rdb`.** And it was already
+broken — the 2026-08-22 sweep recorded `rdb compile=0 run=134`: it
+compiled and then aborted at runtime. So the change converts its
+crashing binary into a compile error, which is the whole point.
+
+In the test suite, 1 of 323 programs emitted a BOXING violation — this
+issue's own repro.
+
+Both suites: 294/295 passed, 0 failed, all five CI gates green.
+
+### What this does NOT solve, deliberately
+
+- The union still has no representation. Programs that genuinely need
+  one are now rejected instead of miscompiled; they are not made to
+  work.
+- `tests/container_scalar_union_add.py` ({list, float} in one variable)
+  keeps its `.known_issue` on this number. Its diagnostic is still the
+  internal `sizeof_element of non-container type 'float64'` from inside
+  `__pyc__.py`, not a message naming the variable — the "copy
+  shedskin's diagnostic" half of this issue, still open for that shape.
+  Precedent for how it should read: issues/107.
+- Narrowing that would avoid FORMING the union is
+  [ifa/025](../ifa/issues/025-FA-intra-function-union-narrowing.md), and
+  that issue records (2026-08-22) that these scalar cases are not
+  narrowing problems in the first place.
