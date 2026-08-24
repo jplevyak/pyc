@@ -131,7 +131,11 @@ to minimise.
   prints `None` ([052](closed/052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)).
   The real defect is upstream, a `{nil,int64}` union surviving to codegen
   on a field that is provably an int at the point of use — same family as
-  018's surviving half. `tests/none_int_field_pair.py`,
+  [018](closed/018-dict-mixed-key-types-boxing-failure.md), which closed
+  2026-08-24 by REFUSING rather than by finding a representation; this
+  one is still open because a `{nil,int64}` field CAN often be proved
+  int-only at the point of use, which is a real fix rather than a
+  refusal. `tests/none_int_field_pair.py`,
   `tests/none_int_field_zero.py`.
 - [052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md](closed/052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md)
   — **silent wrong answer on the LLVM backend.** It keeps `{nil,int64}` in

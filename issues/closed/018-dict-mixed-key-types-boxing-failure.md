@@ -1,6 +1,6 @@
 # Issue 018: Using `dict`/`set` with two different element types in one program fails to compile
 
-**Status:** CLOSED 2026-08-24 (`a220c5ac` + this commit) — **resolved by REFUSING**, not by making
+**Status:** CLOSED 2026-08-24 (`a220c5ac`, `4160b75b`) — **resolved by REFUSING**, not by making
 the programs work. Boxing is a project-level No; without it a variable
 holding a mixed union has no runtime representation, so no FA work can
 make these run. All three shapes now end correctly:
