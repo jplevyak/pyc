@@ -1,0 +1,5 @@
+container_scalar_union_add.py:38:45: warning: illegal primitive argument type 'x' illegal: list 
+    print(x + x)
+                ^
+  called from container_scalar_union_add.py:38
+fail: a variable holding {list, float64} has no representation: '__add__' resolved to the CONTAINER method, whose receiver may be a scalar. pyc does not box, so a {container, scalar} union cannot be represented (issues/018)

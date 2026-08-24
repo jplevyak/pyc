@@ -1,22 +1,16 @@
 # Issue 018: Using `dict`/`set` with two different element types in one program fails to compile
 
-**Status:** open — but only for a DIAGNOSTIC gap now. Two of the three
-halves are done:
+**Status:** CLOSED 2026-08-24 (`a220c5ac` + this commit) — **resolved by REFUSING**, not by making
+the programs work. Boxing is a project-level No; without it a variable
+holding a mixed union has no runtime representation, so no FA work can
+make these run. All three shapes now end correctly:
 
-- containers (two dicts with different key types, sets, mixed values,
-  object keys) — **fixed** 2026-08-16;
-- bare branch-merged scalar — **resolved 2026-08-24 by REFUSING**, not
-  by making the program work. Boxing is a project-level No, a
-  `{int64, str}` union has no runtime representation, so a compile error
-  naming the variable and the union is the only honest answer, and that
-  is what pyc now emits;
-- `{scalar, container}` (`tests/container_scalar_union_add.py`) —
-  **still open**, and it is NOT the same defect: it emits no BOXING
-  violation at all, it dies on an internal assertion from inside the
-  builtin library (`sizeof_element of non-container type` in
-  `__pyc__.py`). What it needs is the "copy shedskin's diagnostic" half
-  of this issue: name the variable and its union instead of surfacing
-  analyser internals. See "Precedent: naming the user-level problem".
+- **containers** (two dicts with different key types, sets, mixed
+  values, object keys) — fixed 2026-08-16, they compile and run;
+- **bare branch-merged scalar** (`x = 5` / `x = "hi"`) — refused, with
+  an error naming the variable and the union;
+- **`{container, scalar}`** (`x = [1] if ... else 3.5`) — refused, with
+  an error naming the union, **on both backends**.
 
 | shape | today |
 |---|---|
@@ -26,6 +20,7 @@ halves are done:
 | object keys alongside `int` keys | **passes** |
 | three key types (`int`/`str`/`float`) in one program | **passes** |
 | **bare branch-merged scalar** (`x = 5` / `x = "hi"`) | **rejected at compile time** (was: 8 warnings, exit 0, crashing binary) |
+| **`{container, scalar}`** (`[1] if … else 3.5`) | **rejected on both backends** (was: C failed with an internal assertion, LLVM silently printed nothing) |
 
 The five passing shapes stay pinned by `tests/dict_mixed_key_types.py`.
 The refusal is pinned by `tests/branch_merged_scalar_union.py`
@@ -35,7 +30,7 @@ See "Resolved by refusing" at the end for the change, the measurement,
 and what is deliberately still not solved.
 
 **Correction (2026-08-16): this residue is NOT
-[048](048-none-int-field-pair-runtime-abort.md)**, despite both aborting
+[048](../048-none-int-field-pair-runtime-abort.md)**, despite both aborting
 with `matching function not found` on the C backend. They share a symptom
 string, not a cause, and the backends separate them cleanly:
 
@@ -49,9 +44,9 @@ genuinely does not resolve the union, exactly as the section below
 describes (it clones `str.__add__` for the union's `str` member with the
 call site's literal `10` baked in). That is this issue's own mechanism,
 and no other open issue covers it — 048 is codegen,
-[075](../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md) is
+[075](../../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md) is
 the container-method-per-element-CS plan, and
-[030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md) is
+[030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md) is
 classtag dispatch for object receivers, which this doc already notes does
 not cover a raw `int`/`str` scalar union.
 
@@ -59,7 +54,7 @@ not cover a raw `int`/`str` scalar union.
 half is done.
 
 **Further (2026-08-16):** with the boundary now measured (see
-[048](048-none-int-field-pair-runtime-abort.md)'s table), this residue and
+[048](../048-none-int-field-pair-runtime-abort.md)'s table), this residue and
 048 are **the same defect** after all: pyc represents a union only as a
 nullable pointer or a widened numeric, and every failing case is a scalar
 unioned with something that fits neither — `{None,int}`, `{None,float}`,
@@ -70,10 +65,10 @@ is not codegen and wrong that they differ.
 
 Note also that the `sizeof_element of non-container` guard in `cg.cc`
 still cites this issue and still fires: it blocked the C-helper form of
-[050](050-pyc-string-builders-are-quadratic.md)'s fix when a trajectory
+[050](../050-pyc-string-builders-are-quadratic.md)'s fix when a trajectory
 change let `list.__add__` be specialised against a `bytes` receiver. So
 the *mechanism* named here is alive even though the dict/set symptoms are
-gone; [075](../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
+gone; [075](../../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
 remains the fix vehicle for that half.
 
 **Original status:** open.
@@ -90,8 +85,8 @@ and zero comprehension code involved. Also affects `set` (issue
 008's new class) identically — same shared-linear-scan-comparison
 shape, same failure. Not a literal duplicate of any single
 `ifa/issues/` file, but the same underlying gap as
-[ifa/issues/063](../ifa/issues/closed/063-no-type-bucket-triage.md) (diagnosis)
-/ [ifa/issues/075](../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
+[ifa/issues/063](../../ifa/issues/closed/063-no-type-bucket-triage.md) (diagnosis)
+/ [ifa/issues/075](../../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
 (concrete build plan) — pyc's shared `list`/`dict` container methods
 aren't cloned per element/key-CS, so a program with two
 differently-keyed dict instances gets one merged AVar for `key`
@@ -101,14 +96,14 @@ of [multiple element types]") for the object-key/NOTYPE flavor, and
 this issue is the basic-scalar-key/BOXING flavor of the identical
 mechanism — 075's CSM (clone container methods per element-CS)
 should fix both together. Also already informally paired with
-[ifa/issues/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+[ifa/issues/030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 elsewhere in the tree (`ifa/issues/073`, `ifa/issues/README.md` both
 say "the 018/030 heterogeneous-union boxing family") — 030's classtag
 dispatch is for object/class receivers though, so it doesn't directly
 cover this issue's raw `int`/`str` scalar union; it's the sibling
 bucket, not the fix vehicle. Confirmed via code: `__pyc__/04_sequence.py`
 (list) already opts into `__pyc_clone_constants__`/`clone_methods_per_cs`
-(closed [ifa/issues/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md));
+(closed [ifa/issues/045](../../ifa/issues/closed/045-receiver-cs-method-cloning.md));
 `__pyc__/07_dict.py` has none — but 045's mechanism is
 receiver-*identity*-based (same type, different instance, e.g.
 empty vs non-empty list), not element-*type*-based, so opting dict
@@ -214,7 +209,7 @@ picked up — flagging now so it isn't assumed covered "for free."
 
 ## Scope confirmed broader still (2026-08-11): no container needed at all — a bare branch-merged scalar hits the identical mechanism
 
-Found while digging into [ifa/issues/025](../ifa/issues/025-FA-intra-function-union-narrowing.md)'s
+Found while digging into [ifa/issues/025](../../ifa/issues/025-FA-intra-function-union-narrowing.md)'s
 "Case 1" (originally framed as an intra-function narrowing gap) —
 then confirmed that **all three** of 025's originally-described cases
 reduce to this same mechanism, not just Case 1 (see that issue for the
@@ -256,7 +251,7 @@ on whether the *specific* invalid clone this mechanism generates
 happens to produce C/IR that's still well-typed enough to build — not
 on anything more principled.
 
-This also answers a question [030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+This also answers a question [030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 left implicit: classtag dispatch requires `cg_has_classtag`, which
 requires `type_kind == Type_RECORD` — `int64` and `str` are never
 `Type_RECORD`, so a call site whose receiver is a *raw scalar* union
@@ -296,7 +291,7 @@ mechanism).
 ## A more severe manifestation: shared container method specialized against a genuine non-container (2026-08-11)
 
 Found compiling `shedskin_examples/rdb/rdb.py` after fixing
-[issues/041](041-stdlib-shim-stubs-silently-wrong.md)'s `getopt`/`os`
+[issues/041](../041-stdlib-shim-stubs-silently-wrong.md)'s `getopt`/`os`
 stubs (unrelated to this issue directly — real `getopt`/`os.listdir`
 made previously-dead-code-eliminated branches in `rdb.py` live for the
 first time, and one of them hits this). Hard compile-time failure, not
@@ -336,7 +331,7 @@ this issue's, but recording the cross-reference here since it was
 found alongside: several `__pyc_c_call__` sites (`_CG_fopen`,
 `_CG_chr`, `_CG_str_to_int64_base`) fail with "no matching function...
 cannot convert argument of incomplete type `_CG_any`". This is
-[closed/077](closed/077-primitive-equality-codegen-missing-salvage-guard.md)'s
+[closed/077](../../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)'s
 own documented, deliberately-unfixed remainder — that issue's final
 design explicitly whitelists only the `str`-comparison family
 (`_CG_str_eq` and siblings) for a salvage guard, and its own text says
@@ -346,7 +341,7 @@ and unaffected" — `_CG_fopen`/`_CG_chr`/`_CG_str_to_int64_base` are
 exactly such unchecked sites. Not a new bug, but a live, currently-
 failing corpus program rather than only a theoretical remainder, so
 it's tracked as its own open issue —
-[ifa/issues/096](../ifa/issues/closed/096-extend-c-call-salvage-guard-past-str-comparisons.md)
+[ifa/issues/096](../../ifa/issues/closed/096-extend-c-call-salvage-guard-past-str-comparisons.md)
 — rather than folded into this issue or into reopening 077.
 
 ## Verification plan
@@ -392,12 +387,12 @@ open), but the **diagnostic** is worth copying: naming the variable, its
 class and the exact union beats pyc's current
 `sizeof_element of non-container type 'float64'` from inside `__pyc__.py`.
 
-Full measurements in [ifa/issues/101](../ifa/issues/101-FA-first-time-forever-splitting.md).
+Full measurements in [ifa/issues/101](../../ifa/issues/101-FA-first-time-forever-splitting.md).
 
 
 ## Precedent: naming the user-level problem (2026-08-18)
 
-[107](107-undefined-names-warn-then-segfault.md) is the first instance of
+[107](../107-undefined-names-warn-then-segfault.md) is the first instance of
 the "copy shedskin's diagnostics" half of this issue actually landing. An
 undefined name used to produce `'X' has no type` / `expression has no
 type` — analyser state — then compile with exit 0 and segfault. It now
@@ -500,6 +495,102 @@ Both suites: 294/295 passed, 0 failed, all five CI gates green.
   shedskin's diagnostic" half of this issue, still open for that shape.
   Precedent for how it should read: issues/107.
 - Narrowing that would avoid FORMING the union is
-  [ifa/025](../ifa/issues/025-FA-intra-function-union-narrowing.md), and
+  [ifa/025](../../ifa/issues/025-FA-intra-function-union-narrowing.md), and
   that issue records (2026-08-22) that these scalar cases are not
   narrowing problems in the first place.
+
+
+## The `{container, scalar}` half: finished 2026-08-24
+
+Closing this out turned up a **silent wrong answer** that the old
+`.known_issue` classification had been hiding.
+
+### What was actually wrong
+
+`x = [1] if … else 3.5; print(x + x)` — CPython prints `7.0`.
+
+    C backend      fail: __pyc__.py:1155: internal: sizeof_element of
+                   non-container type '<anonymous>' (in __add__)
+    LLVM backend   compiles, runs, exit 0, prints NOTHING
+
+Three things wrong with the C message and one much worse thing with
+LLVM:
+
+- it said **`internal:`**, implying a compiler bug; it is an
+  unsupported program;
+- it pointed at **`__pyc__.py:1155`**, a line in the builtin library
+  where `__add__` happens to be defined — that reads as "the bug is in
+  the library" and sent at least one investigation the wrong way;
+- it named the union **`'<anonymous>'`** instead of naming it;
+- and the LLVM backend did not refuse at all. It **silently produced a
+  binary that printed nothing**.
+
+### Root cause of the backend divergence
+
+`sizeof_element` on a `Type_SUM` asks whether the members agree on a
+common element size. The two backends were asking different questions:
+
+    cg.cc            does each member's ELEMENT have a size?
+    cg_emit_llvm.cc  does each member itself have a size?
+
+`{list, float64}` are both pointer-width, so LLVM's test answered
+"uniform, 8" and carried on; a `float64` has no elements at all, so
+cg.cc's test correctly answered "no". LLVM now applies the element
+rule, matching cg.cc including its empty-container skip.
+
+### What shipped
+
+- One shared helper, `cg_fail_unrepresentable_container_union`
+  (`codegen_common`), called by BOTH emitters so they cannot drift
+  again and one test `.check` pins both.
+- The message names the union and drops the `internal:` framing:
+
+  ```
+  fail: a variable holding {list, float64} has no representation:
+  '__add__' resolved to the CONTAINER method, whose receiver may be a
+  scalar. pyc does not box, so a {container, scalar} union cannot be
+  represented (issues/018)
+  ```
+
+  Deliberately **no file:line**: the only location available there is
+  the builtin's, and the user's own line is already named by the FA
+  warning immediately above it (`illegal primitive argument type 'x'`).
+  No location beats a misleading one.
+- `tests/container_scalar_union_add.py` converts from `.known_issue` to
+  `.check_fail` + `.check`. `.known_issue` implied an intended fix;
+  there is none to make without boxing, so what the test should pin is
+  the refusal and its message.
+
+### Cost, measured on both backends
+
+C backend, 77 corpus programs: five emit BOXING violations, four of
+which (`plcfrs`, `quameon`, `sudoku5`, `sunfish`) already failed to
+compile. **Exactly one is newly rejected — `rdb`** — and the 2026-08-22
+sweep recorded it as `compile=0 run=134`: it compiled and then aborted
+at runtime. The change converts its crashing binary into a compile
+error, which is the point.
+
+LLVM backend, same 77: **zero programs hit the new refusal.** Two
+(`genetic2`, `go`) initially looked like hits and were not — they fail
+on the PRE-EXISTING `{None, int64}` guard from
+[048](../048-none-int-field-pair-runtime-abort.md) /
+[closed/052](052-llvm-nil-test-on-scalar-union-prints-none-for-zero.md),
+whose message happens to share the phrase "has no representation", so
+the sweep's grep matched the wrong thing. Both were verified failing on
+LLVM *before* this change too (`rc=1`, no binary). Recorded because the
+naive reading of that sweep is a two-program regression that does not
+exist.
+
+In the test suite, 1 of 323 programs emitted a BOXING violation: this
+issue's own repro. Both suites: 296 passed, 0 failed; all five CI gates
+green.
+
+### Still not solved, and deliberately so
+
+The message names the union but not the **variable** — `x` — because at
+that point in codegen the receiver's user-level name is not available.
+The FA warning above it does name `x`, so the pair is usable, but a
+single shedskin-style line (`Variable 'x' has dynamic (sub)type:
+{float, list}`) would be better. That is diagnostic polish, not a
+representation problem, and it is not worth holding this issue open
+for.

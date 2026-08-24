@@ -88,21 +88,7 @@ to minimise.
 
 ## Current open issues
 
-- [018-dict-mixed-key-types-boxing-failure.md](018-dict-mixed-key-types-boxing-failure.md)
-  — **container half FIXED** (verified 2026-08-16): two dicts with
-  different key types, two sets, mixed value types, object keys, and
-  three key types in one program all pass now
-  (`tests/dict_mixed_key_types.py`). What remains is the **bare
-  branch-merged scalar** — `x = 5` / `x = "hi"` then `x + ...` — which
-  compiles and aborts with `matching function not found`
-  (`tests/branch_merged_scalar_union.py`) — and **fails on both
-  backends** (LLVM: `call ptr @_CG_strcat(ptr %0, i64 10)` fails module
-  verification), so unlike [048](048-none-int-field-pair-runtime-abort.md)
-  it is an FA defect, not codegen. Not redundant with anything: 048 is
-  `cg.cc`, ifa/075 is the container-method plan, ifa/030 is classtag
-  dispatch for object receivers. The `sizeof_element of non-container`
-  guard in `cg.cc` still cites this issue and still fires (it blocked
-  050's C-helper fix).
+
 - [035-list-element-cast-salvage-guard-and-set-item-union.md](035-list-element-cast-salvage-guard-and-set-item-union.md)
   — **substantially fixed 2026-08-16.** `n * [0]` then `x[i] += 1.5` used
   to compile with zero diagnostics and abort at run time; issue 025's
@@ -266,17 +252,6 @@ to minimise.
   call doesn't route through constructor lowering), dotted-name
   decorators (silent no-op), and decorated *methods* (legacy
   no-op).
-- [018-dict-mixed-key-types-boxing-failure.md](018-dict-mixed-key-types-boxing-failure.md)
-  — A program using `dict` (or `set`) with two different key/
-  element types anywhere fails to compile with a `BOXING`/"mixed
-  basic types" FA violation — each shared internal comparison
-  method (`_keys[i] == key`) isn't specialized per key type. No
-  container needed, either: any raw scalar (e.g. `int | str`) union,
-  however it arises (branch merge, function return, list literal),
-  has no coherent runtime representation for a generic consumer
-  (`+`, `print`, `isinstance`, ...) to dispatch on — this is also
-  the real blocker behind `ifa/issues/025`'s three originally-filed
-  narrowing cases, not a narrowing gap.
 - [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected
@@ -296,6 +271,19 @@ to minimise.
 Closed issues live in [`closed/`](closed/) with the closing
 commit ref recorded in each file's status line.
 
+- [018](closed/018-dict-mixed-key-types-boxing-failure.md) — two
+  different element types in one program. **Resolved by REFUSING, not
+  by making it work**: boxing is a project-level No, so a mixed union
+  has no runtime representation and no FA work can save it. The
+  container shapes were fixed 2026-08-16; the two union shapes are now
+  compile errors naming the union. Closing it out found a silent wrong
+  answer the old `.known_issue` had hidden — `{list, float}` compiled
+  on the LLVM backend and printed NOTHING where CPython prints 7.0,
+  because the two emitters asked different questions about
+  `sizeof_element` on a `Type_SUM` (does each member's ELEMENT have a
+  size, vs does each member itself). Both now use one shared
+  diagnostic. Newly rejected corpus programs: one on C (`rdb`, which
+  already compiled-then-aborted), zero on LLVM.
 - [118](closed/118-str-case-predicates-missing.md) — `str.islower`,
   `isspace` and `swapcase` were simply absent from `__pyc__/01_str.py`,
   so any program calling one failed to compile. Added (ASCII-only, like
