@@ -20,6 +20,10 @@ EXTERN int codegen_jit EXTERN_INIT(0);
 // ifa lib's llvm.cc reads PYC_VERIFY_EACH from getenv directly
 // (the flag system populates the env var from --verify-each).
 EXTERN bool runtime_errors EXTERN_INIT(true);
+// --safe (ifa/issues/039): initialize a possibly-unbound local to its
+// type's zero instead of leaving it holding garbage. Mirrored into the
+// ifa library's fauto_init_unbound alongside runtime_errors.
+EXTERN bool auto_init_unbound EXTERN_INIT(false);
 EXTERN int fgraph EXTERN_INIT(0);
 EXTERN int fdump_html EXTERN_INIT(0);
 EXTERN int fcg EXTERN_INIT(1);

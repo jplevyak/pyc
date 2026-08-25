@@ -60,6 +60,17 @@ Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed with
 above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml when
 a change lifts the count).
 
+**Touched a header? `make clean` first, before you trust any of it.**
+Header dependencies are incomplete, so `make` alone happily links stale
+objects against a changed layout. The resulting failure looks like a
+real bug and is not: adding a bit to `Sym` produced `fail: no instance
+for type 'int'` and a bogus `Primitives::find` assertion, and inserting
+a `virtual` into `IFACallbacks` (which renumbers the vtable) segfaulted
+`ifa-test --phase codegen-c` with no output at all. Each time the fix
+was `make clean && make`, and each time the crash first read as a
+regression worth debugging. Anything that changes a struct layout, a
+bitfield, an enum's numbering, or a vtable needs the clean build.
+
 ### Goldens: re-bless only what the change is ABOUT
 
 `ifa-test --rebless` rewrites `.expected` files wholesale. Before using

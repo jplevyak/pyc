@@ -23,6 +23,7 @@ static char pyc_ifa_log[256];
 // each mode means.
 static bool pyc_strict_mode = false;
 static bool pyc_permissive_mode = false;
+static bool pyc_safe_mode = false;
 
 static void help(ArgumentState *arg_state, char *arg_unused) {
   char ver[1000];
@@ -71,6 +72,18 @@ static void permissive_mode_arg(ArgumentState *arg_state, char *arg_unused) {
   ifa_no_implicit_none = 0;
 }
 
+// --safe: the third environment of ifa/issues/039. Permissive about
+// types, but no local is ever read holding garbage -- one the analysis
+// reports as POSSIBLY used before assignment is zero-initialized
+// instead of checked. (DEFINITELY used before assignment stays a
+// compile error here, as in every mode: no path makes such a program
+// right, so there is nothing to be safe about.)
+static void safe_mode_arg(ArgumentState *arg_state, char *arg_unused) {
+  runtime_errors = true;
+  ifa_no_implicit_none = 0;
+  auto_init_unbound = true;
+}
+
 static ArgumentDescription arg_desc[] = {
     {"repl", ' ', "Interactive REPL (requires -b; implies -b -j)", "F", &do_repl, "PYC_REPL", NULL},
     {"debug-info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
@@ -85,6 +98,8 @@ static ArgumentDescription arg_desc[] = {
      "F", &pyc_strict_mode, "PYC_STRICT", strict_mode_arg},
     {"permissive", ' ', "Permissive mode (default): type violations warn + insert runtime checks, CPython-faithful implicit None",
      "F", &pyc_permissive_mode, "PYC_PERMISSIVE", permissive_mode_arg},
+    {"safe", ' ', "Safe mode: permissive, plus zero-initialize locals that may be read before assignment",
+     "F", &pyc_safe_mode, "PYC_SAFE", safe_mode_arg},
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
     {"system-directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
     {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
@@ -299,6 +314,7 @@ int main(int argc, char *argv[]) {
     }
   }
   fruntime_errors = runtime_errors;
+  fauto_init_unbound = auto_init_unbound;
   if (mods.n > 1) {
     ast_to_if1(mods);
     compile(first_filename);

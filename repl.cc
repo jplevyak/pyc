@@ -284,6 +284,7 @@ static void run_compile_jit(const char *tmpfile, const char *cache_path) {
   mods.add(s_builtin_mod);
   mods.add(user);
   fruntime_errors = runtime_errors;
+  fauto_init_unbound = auto_init_unbound;
   if (ast_to_if1_extend(mods, s_baseline) < 0) exit(1);
   compile(tmpfile);  // FA → codegen → llvm_jit_execute (writes cache, forks for exit() safety)
   exit(0);
