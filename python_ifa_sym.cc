@@ -421,6 +421,11 @@ static bool promote_field(CreationSet *cs, cchar *name) {
 
 bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   bool again = false;
+  // ifa/issues/055 probe: PYC_NOPROMOTE=1 skips both field-promotion
+  // paths (keeping the numeric coercion), to measure how much of
+  // plcfrs's non-convergence is promotion-driven.
+  static int nopromote = -1;
+  if (nopromote < 0) nopromote = getenv("PYC_NOPROMOTE") ? atoi(getenv("PYC_NOPROMOTE")) : 0;
   int n_notype_promote = 0, n_eager_promote = 0;  // ifa/issues/111 M1 probe
   // (1) NOTYPE-violation-driven promotion (legacy path).
   // Some reads through union receivers don't bubble up
@@ -428,7 +433,7 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // CSs are missing the field), so this path alone misses
   // CSs that received writes from inside-function Node
   // creation patterns — issue 026's third bug.
-  for (auto v : type_violations.values()) if (v) {
+  if (!nopromote) for (auto v : type_violations.values()) if (v) {
     if (v->kind == ATypeViolation_kind::NOTYPE) {
       if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
@@ -450,7 +455,7 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // it into var_map, so the dispatch over union receivers
   // at the read site sees only the outer-scope Node's
   // value contribution and constant-folds.
-  for (CreationSet *cs : fa->css) {
+  if (!nopromote) for (CreationSet *cs : fa->css) {
     if (!cs) continue;
     for (auto i : cs->unknown_vars.values()) {
       if (promote_field(cs, i)) { again = true; ++n_eager_promote; }
