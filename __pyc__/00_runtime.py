@@ -94,6 +94,27 @@ class object:
     return True
   def __len__(self):
     return 1
+  # issues/117: Python's REFLECTED ordering fallback. `a > b` first
+  # tries `a.__gt__(b)`; when that does not exist it falls back to
+  # `b.__lt__(a)`. pyc's frontend lowers `>` straight to a `__gt__`
+  # call (python_ifa_build_if1.cc, PY_CMP_GT), so a class defining only
+  # `__lt__` -- which is all Python asks of you, and what voronoi2's
+  # Halfedge does -- dispatched to nothing and aborted at runtime with
+  # "matching function not found".
+  #
+  # Defining the fallback HERE rather than in the dispatcher gets the
+  # resolution order right for free: a class with its own __gt__
+  # overrides this, and one with only __lt__ inherits the reflection.
+  #
+  # Deliberately only this direction. Reflecting __lt__ to __gt__ as
+  # well would make a class defining NEITHER recurse for ever between
+  # the two; leaving it undefined keeps that case reporting an
+  # unresolved call exactly as it does today. CPython raises TypeError
+  # there, so nothing correct is lost.
+  def __gt__(self, x):
+    return x.__lt__(self)
+  def __ge__(self, x):
+    return x.__le__(self)
   def __pyc_to_bool__(self):
     # Default truthiness: __bool__() (True unless overridden) combined
     # with __len__() != 0 (1 unless overridden), so a class overriding
