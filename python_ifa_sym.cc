@@ -433,7 +433,9 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // CSs are missing the field), so this path alone misses
   // CSs that received writes from inside-function Node
   // creation patterns — issue 026's third bug.
-  if (!nopromote) for (auto v : type_violations.values()) if (v) {
+  bool do_promote = !nopromote && ifa_reanalyze_phase != 2;
+  bool do_coerce = ifa_reanalyze_phase != 1;
+  if (do_promote) for (auto v : type_violations.values()) if (v) {
     if (v->kind == ATypeViolation_kind::NOTYPE) {
       if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
@@ -455,7 +457,7 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // it into var_map, so the dispatch over union receivers
   // at the read site sees only the outer-scope Node's
   // value contribution and constant-folds.
-  if (!nopromote) for (CreationSet *cs : fa->css) {
+  if (do_promote) for (CreationSet *cs : fa->css) {
     if (!cs) continue;
     for (auto i : cs->unknown_vars.values()) {
       if (promote_field(cs, i)) { again = true; ++n_eager_promote; }
@@ -473,7 +475,7 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // path where the variable would still hold the original int at
   // runtime (e.g. the loop never ran), it now holds the float
   // (prints 0.0, not 0) -- the shedskin-style compromise.
-  bool coerced = fa_coerce_numeric_confluences(type_violations);
+  bool coerced = do_coerce && fa_coerce_numeric_confluences(type_violations);
   if (coerced) again = true;
   // ifa/issues/111 M1: which path keeps the outer loop alive? The
   // closure probe showed passes with ZERO split marks still costing a
