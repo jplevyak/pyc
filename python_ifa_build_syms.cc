@@ -318,6 +318,19 @@ void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name) {
 
 // ---- PyDAST (pyda) build_syms path ----
 
+// `del o[i]` / `del o[i:j]`: the subscript must lower as a STORE, because
+// build_if1's PY_power trailer walk defers the object+index for a STORE
+// and calls __getitem__ for a LOAD -- and a LOAD gives emit_del_target
+// nothing to delete from. Deliberately NOT mark_store(): that also marks
+// a bare PY_name, which would BIND the name rather than read it, and
+// `del v` must stay a read (it is a no-op, see emit_del_target).
+static void mark_del_targets(PyDAST *n) {
+  if (!n) return;
+  if (n->kind == PY_power) { n->ctx = PY_STORE; return; }
+  if (n->kind == PY_tuple || n->kind == PY_testlist || n->kind == PY_exprlist)
+    for (auto c : n->children.values()) mark_del_targets(c);
+}
+
 // Recursively mark PY_name nodes in lvalue position as PY_STORE
 static void mark_store(PyDAST *n) {
   if (!n) return;
@@ -1702,9 +1715,14 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);
       return 0;
 
+    case PY_del_stmt:
+      // See mark_del_targets.
+      for (auto c : n->children.values()) mark_del_targets(c);
+      for (auto c : n->children.values()) build_syms_pyda(c, ctx);
+      return 0;
+
     case PY_expr_stmt:
     case PY_pass_stmt:
-    case PY_del_stmt:
     case PY_if_stmt:
     case PY_elif_clause:
     case PY_else_clause:

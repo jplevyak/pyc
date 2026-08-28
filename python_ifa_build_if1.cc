@@ -2443,6 +2443,63 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
   }
 }
 
+// `del` used to be lowered as `pass` -- silently nothing at all (this
+// file's PY_del_stmt case sat next to PY_pass_stmt and returned 0).
+// shedskin_examples/block's Huffman `iterate()` is
+//
+//     del c[0]
+//     root = iterate(c)
+//
+// so the list never shrank, `len(c) > 1` stayed true, and the binary
+// blew its stack after 6800 frames -- having compiled with ZERO
+// diagnostics. linalg's `del list1[lasti:n]` is the same shape.
+//
+// Lowered the way the equivalent assignment already is:
+//
+//     del o[i]     ->  o.__delitem__(i)
+//     del o[i:j]   ->  o[i:j] = []      (__pyc_setslice__ with an empty
+//                      value, which is how list.__delitem__ is itself
+//                      written in __pyc__/04_sequence.py)
+//
+// `del name` and `del o.attr` stay no-ops. Neither has an effect a
+// compiled program can observe without a runtime binding model, and
+// CPython's own observable effect -- a later NameError/AttributeError --
+// is not modelled either.
+static void emit_del_target(PyDAST *tgt, PycAST *ast, PycCompiler &ctx) {
+  if (!tgt) return;
+  if (tgt->kind == PY_tuple || tgt->kind == PY_testlist || tgt->kind == PY_exprlist) {
+    for (auto c : tgt->children.values()) emit_del_target(c, ast, ctx);
+    return;
+  }
+  bool saved = ctx.building_assign_target;
+  ctx.building_assign_target = true;
+  build_if1_pyda(tgt, ctx);
+  ctx.building_assign_target = saved;
+  PycAST *a = getAST(tgt, ctx);
+  if (!a->is_object_index) {
+    if1_gen(if1, &ast->code, a->code);
+    return;
+  }
+  if (a->is_slice) {
+    // The empty list must be DEFINED before the __pyc_setslice__ send it
+    // feeds, and that send is already inside a->code -- so build it
+    // first, then gen the target, then append it as the value argument.
+    // Same order the assignment path uses (build value, build target,
+    // if1_add_send_arg).
+    Code *mk = if1_send1(if1, &ast->code, ast);
+    if1_add_send_arg(if1, mk, sym_primitive);
+    if1_add_send_arg(if1, mk, sym_make);
+    if1_add_send_arg(if1, mk, sym_list);
+    Sym *empty = new_sym(ast);
+    if1_add_send_result(if1, mk, empty);
+    if1_gen(if1, &ast->code, a->code);
+    if1_add_send_arg(if1, find_send(a->code), empty);
+  } else {
+    if1_gen(if1, &ast->code, a->code);
+    call_method(&ast->code, ast, a->rval, make_symbol("__delitem__"), new_sym(ast), 1, a->sym);
+  }
+}
+
 static void build_if1_assign_target(PyDAST *tgt, PycAST *v, PycAST *ast, PycCompiler &ctx) {
   bool saved = ctx.building_assign_target;
   ctx.building_assign_target = true;
@@ -3256,8 +3313,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
 
     case PY_pass_stmt:
-    case PY_del_stmt:
       return 0;
+
+    case PY_del_stmt: {
+      // See emit_del_target: this used to sit next to PY_pass_stmt.
+      for (auto c : n->children.values()) emit_del_target(c, ast, ctx);
+      return 0;
+    }
 
     case PY_break_stmt:
     case PY_continue_stmt: {

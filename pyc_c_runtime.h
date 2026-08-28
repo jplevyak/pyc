@@ -1308,7 +1308,15 @@ static inline _CG_list _CG_list_getslice_internal(_CG_list v, uint32 size, int32
 }
 
 static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int32 l, int32 h, _CG_list l2) {
-  uint32 len1 = _CG_prim_len(0, l1), len2 = _CG_prim_len(0, l2);
+  // SIGNED. These used to be uint32, which made `l > len1` promote a
+  // negative bound to a huge unsigned value: the omitted-lower sentinel
+  // INT_MIN read as 2147483648, so `del x[:]` clamped l to len1 instead
+  // of 0 and deleted NOTHING. (`del x[i:j]` with explicit non-negative
+  // bounds was unaffected, which is why it went unnoticed -- and until
+  // `del` was lowered at all, nothing reached here.) A negative bound is
+  // the whole point of the two `if (... < 0)` branches just below, so
+  // the comparison feeding them has to be signed too.
+  int32 len1 = (int32)_CG_prim_len(0, l1), len2 = (int32)_CG_prim_len(0, l2);
   if (l > len1) l = len1;
   if (l < 0) {
     l = len1 + l;

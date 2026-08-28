@@ -101,6 +101,50 @@ five steps and still surface a version-specific failure there — the
 C-backend goldens are text and version-independent, but anything
 touching coroutines or emitted IR is not.
 
+## Corpus sweeps — check the cache before running one
+
+A `shedskin_examples` sweep costs 15-40 minutes, and the same one gets
+re-run across sessions because nothing recorded that it had been done, or
+what tree it was done against. `./corpus_sweep.sh` fixes both: results
+are cached under `sweeps/`, keyed on the WORKING TREE — HEAD's short
+hash, plus a digest of the uncommitted diff when the tree is dirty — so a
+repeat on an unchanged tree returns instantly, and a result from a
+different tree is never mistaken for a current one.
+
+```sh
+./corpus_sweep.sh -l                      # what has already been measured
+./corpus_sweep.sh -m compile              # pyc exit status only      (~15 min)
+./corpus_sweep.sh -m run                  # + the binary's exit status (~25 min)
+./corpus_sweep.sh -m check                # + warnings, CPython rc,
+                                          #   and stdout vs CPython    (~40 min)
+./corpus_sweep.sh -m compile -e "PYC_CSELEM=3"
+```
+
+**Run `-l` before starting a sweep**, and record the result of any new one
+in the issue it was measured for. `sweeps/*.tsv` is text and IS committed
+— it is a record of what has been measured, not a build artifact.
+
+`compile` is not enough evidence for most changes. A binary that builds
+and then segfaults is invisible to it and to the test harness alike
+(ifa/issues/102), and `check` is the only mode that catches a program
+that compiles with **no warnings at all** and still prints the wrong
+answer.
+
+Two ways to get a sweep that looks real and is not:
+
+- **Never run two sweeps concurrently.** They contend for the machine and
+  produce spurious `rc=124` timeouts — a "regression" in one arm of an
+  A/B that vanishes when the program is re-run alone. One such reading
+  survived into a comparison in this repo before being caught.
+- **Never `make` while a sweep is running.** Relinking `pyc` mid-sweep
+  makes in-flight invocations die with `Permission denied`, which the
+  sweep records as a compile failure.
+
+`shedskin_sweep.sh` (parallel, compile-only, buckets failures by their
+first diagnostic) is still the right tool for *triaging* what is broken;
+`corpus_sweep.sh` is for *comparing two trees* and for the run/output
+status. `ifa/issues/runstatus.sh` predates both.
+
 ## Do not check in build artifacts
 
 Never `git add` compiled binaries, object files, generated IR, or
