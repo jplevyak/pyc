@@ -22,6 +22,19 @@ class __list_iter__:
   def __pyc_more__(self):
     return self.position < len(self.thelist)
   def __next__(self):
+    # issues/117: a BARE `it.__next__()` / `next(it)` outside a loop
+    # must raise StopIteration past exhaustion, as CPython guarantees --
+    # voronoi2's `getnext` is exactly `try: return w.__next__() except
+    # StopIteration: return None`. Without the raise the except branch
+    # is dead, FA types getnext's result as Site (never None), the
+    # `if newsite and ...` guard folds to always-true, and the exhausted
+    # call indexes out of range and hands back a null Site.
+    #
+    # A for-loop never reaches the raise: __pyc_more__ guards it and is
+    # called first. Same contract as __pyc_iterator__.__next__ in
+    # 00_runtime.py, which already documents it.
+    if self.position >= len(self.thelist):
+      raise StopIteration(0)
     self.position += 1
     return self.thelist.__getitem__(self.position-1)
 

@@ -1,8 +1,9 @@
 # 117 — `property` (read-only subset) and reflected ordering
 
 **Status:** partially implemented 2026-08-27. The read-only
-`NAME = property(GETTER)` subset and Python's reflected ordering
-fallback both work; the general descriptor protocol does not.
+`NAME = property(GETTER)` subset, Python's reflected ordering fallback
+and `__list_iter__.__next__`'s StopIteration contract all work, and
+voronoi2 COMPILES AND RUNS; the general descriptor protocol does not.
 **Affects:** `python_ifa_build_syms.cc` (`rewrite_class_properties`),
 `__pyc__/00_runtime.py` (`object.__gt__` / `object.__ge__`).
 **Found:** blocking `shedskin_examples/voronoi2`, the last corpus
@@ -87,19 +88,70 @@ One re-bless: `tests/minmax_3arg.py.check`. Adding 21 lines to
 reordered two warnings; the warning SET is byte-identical, verified
 before re-blessing.
 
-## Not fixed
+## The runtime crash: `__next__` never raised StopIteration
 
-**voronoi2 still crashes at runtime**, now in `Site::__lt__` with a NULL
-receiver. The guard is
+The crash after the compile fix was `Site::__lt__` with a NULL receiver,
+from
 
 ```python
 if (newsite and (priorityQ.isEmpty() or newsite < minpt)):
 ```
 
-and `getnext()` returns `Site | None`; pyc does not narrow the Optional
-at the `and`, so it emits the comparison with a possibly-null receiver.
-That is the Optional-without-narrowing gap (the same one
-`prim_period_offset`'s nil_type comment describes), not this issue.
+and it looked like an Optional-narrowing gap. It was not. `getnext` is
+
+```python
+def getnext(whatsit):
+    try:    return whatsit.__next__()
+    except StopIteration:  return None
+```
+
+and `__list_iter__.__next__` **never raised**:
+
+```python
+def __pyc_more__(self): return self.position < len(self.thelist)
+def __next__(self):
+    self.position += 1
+    return self.thelist.__getitem__(self.position-1)
+```
+
+It relies on the `__pyc_more__` protocol that a for-loop calls first. A
+bare `it.__next__()` past the end therefore indexed out of range instead
+of raising, so the `except` branch was DEAD, `getnext`'s result was
+typed `Site` (never `None`), `if newsite and ...` folded to always-true,
+and the out-of-range read handed back a null Site. The
+`__pyc_iterator__` bridge in `00_runtime.py` already documents exactly
+this contract ("re-raises StopIteration past exhaustion like CPython");
+`__list_iter__` simply did not honour it.
+
+Fixed by raising when exhausted. **Write the guard inline, not as a
+call**: the first version used `if not self.__pyc_more__()` and that
+broke `min(3, 7)` -- `builtins_batch` grew "illegal call argument type"
+warnings, because the extra METHOD CALL perturbed contour splitting
+enough that FA stopped proving `min`'s `b is None` sequence branch dead.
+`if self.position >= len(self.thelist)` keeps the raise and costs
+nothing. The exception was never the problem; the call was.
+
+### Corpus effect, measured compile AND run
+
+Compile-only is not sufficient evidence for a change to every list
+iteration, so both were swept, before and after:
+
+    compiled     72 -> 72
+    ran cleanly  20 -> 23
+
+    score4           timeout -> RUNS
+    tonyjpegdecoder  timeout -> RUNS
+    voronoi2         segfault -> RUNS
+    richards         timeout -> abort (see below)
+
+score4 and tonyjpegdecoder were looping for ever off the end of an
+iterator; the raise terminates them. richards changed from a 120 s
+timeout to a fast abort on "polymorphic dispatch: no branch matched" --
+it did not work before either (a benchmark that should finish in well
+under a second was hanging), so this is hang -> fail-fast, not a
+regression, but the dispatch gap it now exposes is real and unfiled.
+
+## Not fixed
 
 **The general descriptor protocol** -- a getter that computes, `@property`
 decorator syntax, `@x.setter` -- is not implemented and would need the
