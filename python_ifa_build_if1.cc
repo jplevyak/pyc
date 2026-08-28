@@ -1157,15 +1157,51 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       sprintf(cmd, "#include \"%s\"\n", pathname);
     }
   } else if (f == sym_print) {
-    // Python 3 print() function: write each arg (space-separated) then writeln
+    // Python 3 print(*args, sep=' ', end='\n', file=None, flush=False).
+    //
+    // The keyword arguments used to be DROPPED -- this branch only ever
+    // looked at pos_args -- so `print(x, file=f)` wrote x to STDOUT and
+    // left the file empty, silently and with no warning.
+    // shedskin_examples/hq2x writes its entire PPM that way: its output
+    // went to the terminal (1.4MB of it) and randam2.ppm came out empty,
+    // while the compile reported nothing at all.
+    //
+    // The caller has already built AND gen'd every positional and keyword
+    // value, in source order, so the rvals can be read straight off.
+    PyDAST *sep_node = nullptr, *end_node = nullptr, *file_node = nullptr;
+    for (int ki = 0; ki < kw_keys.n; ki++) {
+      cchar *k = kw_keys[ki]->str_val;
+      if (!k) continue;
+      if (!strcmp(k, "sep")) sep_node = kw_vals[ki];
+      else if (!strcmp(k, "end")) end_node = kw_vals[ki];
+      else if (!strcmp(k, "file")) file_node = kw_vals[ki];
+      else if (!strcmp(k, "flush")) continue;  // nothing is buffered to flush
+      else fail("error line %d: print() got an unexpected keyword argument '%s'", ctx.lineno, k);
+    }
+    Sym *sep = sep_node ? getAST(sep_node, ctx)->rval : make_string(" ");
+    Sym *fileval = file_node ? getAST(file_node, ctx)->rval : nullptr;
+    // One emitter for both destinations: the primitive `write` for
+    // stdout, `file.write(s)` for an explicit file= (__pyc__/07_file.py
+    // gives every file object a write method).
+    auto emit_write = [&](Sym *v) {
+      if (fileval)
+        call_method(&ast->code, ast, fileval, make_symbol("write"), new_sym(ast), 1, v);
+      else
+        if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, v, new_sym(ast))->ast = ast;
+    };
     for (int i = 0; i < pos_args.n; i++) {
       PycAST *a = getAST(pos_args[i], ctx);
-      if (i) if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, make_string(" "), new_sym(ast))->ast = ast;
+      if (i) emit_write(sep);
       Sym *t = new_sym(ast);
       call_method(&ast->code, ast, a->rval, sym___str__, t, 0);
-      if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_write, t, new_sym(ast))->ast = ast;
+      emit_write(t);
     }
-    if1_send(if1, &ast->code, 2, 1, sym_primitive, sym_writeln, new_sym(ast))->ast = ast;
+    if (end_node)
+      emit_write(getAST(end_node, ctx)->rval);
+    else if (fileval)
+      emit_write(make_string("\n"));
+    else
+      if1_send(if1, &ast->code, 2, 1, sym_primitive, sym_writeln, new_sym(ast))->ast = ast;
     ast->rval = sym_nil;
   } else
     fail("unimplemented builtin '%s'", f->name);
