@@ -315,6 +315,15 @@ int main(int argc, char *argv[]) {
   }
   fruntime_errors = runtime_errors;
   fauto_init_unbound = auto_init_unbound;
+  // ifa/issues/118: --strict bundles two knobs that are orthogonal.
+  // runtime_errors turns type violations into warnings + inserted
+  // checks; ifa_no_implicit_none gives a function whose fall-off path
+  // would need an implicit None a shedskin-style typed default instead
+  // (shedskin does exactly this -- it compiles the issue's 7-line repro
+  // by returning False where CPython returns None). The second is what
+  // clears the {bool, None} BOXING refusal, and wanting it does not
+  // imply wanting the first. PYC_NO_IMPLICIT_NONE sets it on its own.
+  if (cchar *v = getenv("PYC_NO_IMPLICIT_NONE")) ifa_no_implicit_none = atoi(v);
   if (mods.n > 1) {
     ast_to_if1(mods);
     compile(first_filename);
