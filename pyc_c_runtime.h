@@ -1237,14 +1237,43 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
   return x;
 }
 
+// list.append() is this function with new_len = len + 1, so it used to
+// MALLOC a fresh buffer and memcpy the WHOLE list on every single append
+// -- O(n^2) copies and n allocations to build a list of n elements.
+// Measured: 200000 appends took CPython 0.01s and pyc more than 9s
+// without finishing. shedskin_examples/collatz builds a 131072-entry
+// lookup table that way and never got past its own setup.
+//
+// The header already had the slot for the fix. `total_len` was written
+// everywhere and READ nowhere -- always just set equal to `len` -- so it
+// is free to mean what its name says: the allocated CAPACITY. Grow it
+// geometrically and an append is O(1) amortized. Every other constructor
+// in this file (_CG_list_add_internal, _CG_list_setslice_internal,
+// _CG_prim_tuple_list_internal, _CG_TUPLE_TO_LIST_FUN) already sets
+// total_len to exactly what it allocated, so capacity == total_len is an
+// invariant they all satisfy already, including the ones that store
+// their elements INLINE in the header.
 static inline _CG_list _CG_list_resize_internal(_CG_list l1, uint32 size1, uint32 new_len) {
   uint32 s1 = _CG_prim_len(0, l1);
-  _CG_list x = new_len ? (_CG_list)MALLOC(size1 * new_len) : 0;
+  uint32 cap = _CG_list_total_len(0, l1);
+  if (new_len && new_len <= cap && _CG_list_ptr(l1)) {
+    // Already big enough: move the length and zero anything newly
+    // exposed. No allocation, no copy -- this is the amortized path.
+    if (new_len > s1) memset(((char *)_CG_list_ptr(l1)) + s1 * size1, 0, (new_len - s1) * size1);
+    _CG_list_len(l1) = new_len;
+    return l1;
+  }
+  uint32 newcap = cap < 4 ? 4 : cap * 2;
+  if (newcap < new_len) newcap = new_len;
+  _CG_list x = new_len ? (_CG_list)MALLOC(size1 * newcap) : 0;
+  // `y * size1`, not `s1 * size1`: the old code sized the copy by the
+  // OLD length while allocating for the new one, so shrinking a list
+  // read and wrote past the end of the fresh buffer.
   uint32 y = s1 < new_len ? s1 : new_len;
-  if (y) memcpy(x, _CG_list_ptr(l1), s1 * size1);
+  if (y) memcpy(x, _CG_list_ptr(l1), y * size1);
   if (new_len > s1) memset(((char *)x) + s1 * size1, 0, (new_len - s1) * size1);
   _CG_list_len(l1) = new_len;
-  _CG_list_total_len(0, l1) = new_len;
+  _CG_list_total_len(0, l1) = new_len ? newcap : 0;
   _CG_list_ptr(l1) = x;
   return l1;
 }
