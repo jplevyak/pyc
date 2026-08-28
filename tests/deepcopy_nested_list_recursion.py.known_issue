@@ -1,0 +1,1 @@
+ifa/issues/105 -- copy.deepcopy of a nested list degenerates to {int64, list} through list.__deepcopy__'s shared accumulator; shedskin_examples/linalg's compile failure in 10 lines

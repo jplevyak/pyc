@@ -284,6 +284,7 @@ int main(int argc, char *argv[]) {
   }
   cchar *first_filename = 0;
   Vec<PycModule *> mods;
+  int parse_errors = 0;
   for (int i = -1; i < arg_state.nfile_arguments; i++) {
     cchar *filename = 0;
     PyDAST *pymod = nullptr;
@@ -311,7 +312,19 @@ int main(int argc, char *argv[]) {
       PycModule *m = new PycModule(filename, i < 0);
       m->pymod = pymod;
       mods.add(m);
-    }
+    } else
+      parse_errors++;
+  }
+  // A file that does not parse used to just not be added to `mods`, and
+  // with only the builtin module left the `mods.n > 1` guard below
+  // skipped compilation entirely -- so pyc printed "dparse: parse error"
+  // and then exited 0. Any script or harness reading the exit code saw a
+  // successful build that produced no binary. (Found while delta-debugging
+  // ifa/118: ast.unparse emits no trailing newline, pyc's grammar requires
+  // one, and every candidate therefore "compiled clean".)
+  if (parse_errors) {
+    Service::stop_all();
+    exit(1);
   }
   fruntime_errors = runtime_errors;
   fauto_init_unbound = auto_init_unbound;

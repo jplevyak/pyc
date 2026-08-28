@@ -24,6 +24,27 @@ static D_Parser *make_python_parser(const char *filename, const char *buf, int l
   return p;
 }
 
+// CPython's tokenizer synthesizes a NEWLINE at end of input, so a source
+// file whose last line has no '\n' is perfectly legal Python. python.g's
+// `file_input: (NL | stmt)*` has no equivalent rule, so DParser reported
+// "syntax error after ..." on the FINAL statement and pyc rejected a
+// program CPython accepts. dparse_builtin_dir below already appends
+// exactly this separator when it concatenates the builtin files; this
+// does the same for a single file.
+//
+// buf_read's allocation is len+2 with both trailing bytes NUL (terminator
+// + sentinel), so there is no room to write the newline in place -- copy.
+static char *ensure_trailing_newline(char *buf, int *len) {
+  if (*len > 0 && buf[*len - 1] == '\n') return buf;
+  char *copy = (char *)MALLOC(*len + 3);
+  memcpy(copy, buf, *len);
+  copy[*len] = '\n';
+  copy[*len + 1] = 0;
+  copy[*len + 2] = 0;
+  (*len)++;
+  return copy;
+}
+
 int dparse_python_file(const char *filename) {
   char *buf = 0;
   int len = 0;
@@ -37,6 +58,7 @@ int dparse_python_file(const char *filename) {
     fprintf(stderr, "dparse: unable to read '%s'\n", filename);
     return -1;
   }
+  buf = ensure_trailing_newline(buf, &len);
   D_Parser *p = make_python_parser(filename, buf, len);
   D_ParseNode *pn = dparse(p, buf, len);
   int ok = pn && !p->syntax_errors;
@@ -49,6 +71,7 @@ int dparse_python_file(const char *filename) {
 
 
 static PyDAST *dparse_buf_to_ast_impl(const char *label, char *buf, int len) {
+  buf = ensure_trailing_newline(buf, &len);
   D_Parser *p = make_python_parser(label, buf, len);
   dparse(p, buf, len);
   PythonGlobals *pg = (PythonGlobals *)p->initial_globals;
