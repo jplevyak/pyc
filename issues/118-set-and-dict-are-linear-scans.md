@@ -1,0 +1,110 @@
+# 118 — `set` and `dict` are linear scans, so building one is O(n²)
+
+**Status:** open, filed 2026-08-28. Diagnosed and a fix prototyped, then
+**reverted** — the prototype is correct and fast but costs analysis
+precision, for a reason that is itself the interesting part.
+**Affects:** `__pyc__/08_set.py`, `__pyc__/07_dict.py`.
+**Blocks:** `shedskin_examples/loop`.
+
+## Symptom
+
+`shedskin_examples/loop` compiles with **zero warnings on both backends**
+and then runs past 300 s where CPython finishes in 64 s. Nothing in the
+harness or in a compile-only sweep sees this.
+
+## Cause
+
+Both containers are linear scans over a list.
+
+```python
+class set:
+  def __contains__(self, item):
+    i = 0
+    while i < self._len:
+      if self._items[i] == item: return True
+      i += 1
+    return False
+  def add(self, item):
+    if not self.__contains__(item): ...
+```
+
+`dict.__getitem__`, `__setitem__`, `get` and `__contains__` are the same
+shape over `_keys`. So every lookup is O(n) and building a container of n
+entries is O(n²).
+
+Measured — 20000 adds plus 20000 membership tests:
+
+| | CPython | pyc |
+|---|---|---|
+| `set` | 0.00 s | **6.00 s** |
+
+`loop`'s entire benchmark is sets of basic blocks plus two dicts
+(`basic_block_map_` keyed by name, `number` keyed by *object*), at
+15000+ nodes.
+
+## The prototype, and why it was reverted
+
+An open-addressed hash index over the existing storage — `_index` mapping
+slot to position-plus-one, flat `list[int]` rather than buckets-of-lists
+(a list-of-lists field on a class shared program-wide is exactly the
+shape that unions element types across every container in the program),
+grown at 50 % load, rebuilt after the shift in `discard`/`__delitem__`.
+Plus `object.__hash__` returning `id(self)`, because `__hash__` existed
+only on str/bytes/numeric/list/tuple and a set of class INSTANCES had
+none.
+
+It works, and it is as fast as it should be:
+
+| | before | after |
+|---|---|---|
+| 20000 set adds + lookups | 6.00 s | **0.00 s** |
+| 20000 dict stores + lookups | quadratic | **0.00 s** |
+| int-, str- and object-keyed containers | — | output identical to CPython |
+
+**It regresses the analysis, and the reason is structural.** Hashing has
+to call `element.__hash__()`. A linear scan only ever uses `==`, which
+pyc tolerates on a value whose type it does not know; a *dispatch* on
+that value is not tolerated. So an EMPTY container — whose element type
+the analysis has nothing to infer from (the [ifa/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)
+family) — now reports `'item' has no type`:
+
+```
+set_from_iterable.py:20: warning: 'item' has no type
+    empty = set([])
+  called from __pyc__.py:2708
+```
+
+Two suite tests regress (`set_from_iterable`, and
+`list_index_type_mismatch_salvage`), plus `loop` itself goes 0 → 3
+warnings on `for liter in loop.children_`, a set that is only ever
+iterated and never added to.
+
+**The dict half is worse than a warning.** With the hashed dict, `loop`
+compiles and then computes the WRONG ANSWER (`Found 1 loops` against
+CPython's `Found 76002`) and segfaults on a null `nodes[current]`.
+Bisected: the hashed set alone gives the correct answer, the hashed dict
+alone reproduces the failure, so it is the dict, not the set, and not
+`object.__hash__`. Root cause not found.
+
+## So the fix is gated on something else
+
+This is not a drive-by. Hashing needs a container's element type to be
+usable even when the container is empty, which is
+[ifa/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md),
+and it needs whatever makes the dict variant miscompile `loop` understood
+first. Either would be worth doing on its own; together they are the
+prerequisite for this.
+
+The prototype is preserved at `wip_set_hashed.py` / `wip_dict_hashed.py`
+in the session scratch and is straightforward to re-derive from this
+description.
+
+## Verification plan
+
+- The set/dict micro-benchmarks above drop from 6.00 s to ~0.
+- `shedskin_examples/loop` finishes and prints
+  `Found 76002 loops (including artificial root node)(3800100)`.
+- No new `has no type` warnings anywhere: `set_from_iterable` and
+  `list_index_type_mismatch_salvage` stay clean, and `loop` stays at 0.
+- `minmax_3arg.py.check` needs re-blessing whenever `__pyc__` line
+  numbers shift ([issues/111](111-checks-embed-builtin-library-line-numbers.md)).
