@@ -37,6 +37,12 @@ class __pyc_any_type__:
     return self.__getitem__(slice(i,j,s))
   def __repr__(self):
     return self.__str__()
+  def __hash__(self):
+    # Identity hash, as CPython's object.__hash__ is. __hash__ existed on
+    # str/bytes/numeric/list/tuple but not on `object`, so a set of class
+    # INSTANCES -- or a dict keyed by one -- had nothing to hash with.
+    # See __pyc_any_type__.__hash__ above for the fallback below this one.
+    return __pyc_primitive__(__pyc_symbol__("id"), self)
   def __deepcopy__(self):
     # issues/029 fallback: value types (scalars, strings) and shapes
     # with no per-field recursion (tuples, closures) deep-copy as a

@@ -167,3 +167,47 @@ trying before anything larger.
 
 The dict miscompile (`Found 1 loops`, then a null `nodes[current]`) is
 separate and still unexplained; shedskin's design says nothing about it.
+
+
+## Tried it: the empty-container hash does NOT work, and here is why
+
+Acting on the section above -- add pyc's analogue of `hasher(void *)` --
+produced two measured results, one useful and one that corrects the
+reframing itself.
+
+**`object.__hash__` is a real fix on its own, and landed.** `__hash__`
+existed on str/bytes/numeric/list/tuple but not on `object`, so `hash(x)`
+of a class INSTANCE, or of a FUNCTION, compiled with one warning and then
+died with `matching function not found`. `object.__hash__` returning
+`id(self)` is CPython's own default and shedskin's
+`pyobj::__hash__ { return (intptr_t)this; }`. Pinned by
+`tests/hash_of_object_and_function.py`.
+
+**`__pyc_any_type__.__hash__` was tried and REVERTED — twice wrong.**
+
+1. It BREAKS what it was meant to help. With both defined, `hash(a)` on a
+   plain instance becomes a multi-candidate dispatch and aborts:
+   `hash(instance)` and `hash(function)` both worked with only
+   `object.__hash__` and both failed with the pair. That is exactly the
+   hazard `00_runtime.py` already records for hypothetical
+   `__getitem__` / `__len__` stubs on `object` -- a stub turns sites that
+   have one candidate into sites that have several.
+
+2. It would not have reached the case that motivated it anyway. The
+   warning is not on an *any-typed* value, it is on a value with **no
+   type at all**:
+
+       set_from_iterable.py:20: warning: 'item' has no type
+           empty = set([])
+         called from __pyc__.py:2648      <- set.update's `for item in other`
+
+   pyc types an empty container's element as **bottom**. shedskin's
+   `set<void *>` is a CONCRETE type with a hasher; bottom is not a type
+   with a missing method, it is the absence of one, and no fallback
+   method can attach to it.
+
+So the shedskin comparison pointed at the **type lattice**, not at a
+missing method: what is needed is for an empty container's element type
+to BE something (ifa/072), at which point `object.__hash__` already
+covers it. The previous section's "narrower and much more tractable" read
+was wrong, and this one supersedes it.
