@@ -108,3 +108,62 @@ description.
   `list_index_type_mismatch_salvage` stay clean, and `loop` stays at 0.
 - `minmax_3arg.py.check` needs re-blessing whenever `__pyc__` line
   numbers shift ([issues/111](111-checks-embed-builtin-library-line-numbers.md)).
+
+## How shedskin handles it — and it renames this issue's blocker
+
+shedskin **builds and runs `loop` in 20 s** (CPython 64 s; pyc does not
+finish in 300 s), printing the right answer:
+
+    Found 76002 loops (including artificial root node)(3800100)
+
+Its containers are C++ templates in the runtime, so its type analyser
+never sees a hash function at all:
+
+```cpp
+template<class T> class set : public pyiter<T> { __GC_SET<T> gcs; ... };
+
+using __GC_SET  = boost::unordered_flat_set<T,    ss_hash<T>, ss_eq<T>, ...>;
+using __GC_DICT = boost::unordered_flat_map<K, V, ss_hash<K>, ss_eq<K>, ...>;
+```
+
+Hashing is `hasher<T>`, an overload set resolved at C++ compile time on
+the STATIC type — the generic form for pointers plus explicit
+specializations:
+
+```cpp
+template<class T> inline long hasher(T t) {
+    if(t == NULL) return 0;
+    return t->__hash__();          // virtual; pyobj::__hash__ is (intptr_t)this
+}
+template<> inline long hasher(__ss_int a)   { return std::hash<__ss_int>{}(a); }
+template<> inline long hasher(__ss_float a) { return std::hash<__ss_float>{}(a); }
+template<> inline long hasher(void *v)      { return std::hash<void *>{}(v); }
+```
+
+`pyobj::__hash__` returning `(intptr_t)this` is exactly the
+`object.__hash__` the prototype added, so that half was right.
+
+### The part that matters: an empty container is `void *`, not "no type"
+
+`loop`'s own generated header:
+
+```cpp
+set<void *> *children_;                       // only ever iterated
+dict<Basic_block *, __ss_int> *number;        // object-keyed
+dict<__ss_int, Basic_block *> *basic_block_map_;
+```
+
+and `set([])` in a two-line program comes out `set<void *>` too. The
+element type of an empty container is not unknown there — it is `void *`,
+which has an explicit `hasher` specialization that always compiles.
+
+So shedskin never has to dispatch a hash on a value whose type it does
+not know, which is precisely what made the prototype warn. **That
+reframes the blocker.** It is not "ifa/072 must be solved first"; it is
+narrower and much more tractable: **the unknown/empty element type needs
+a `__hash__` of its own** — pyc's analogue of `hasher(void *)` — so that
+`item.__hash__()` resolves even when `item`'s type is unknown. Worth
+trying before anything larger.
+
+The dict miscompile (`Found 1 loops`, then a null `nodes[current]`) is
+separate and still unexplained; shedskin's design says nothing about it.
