@@ -1,22 +1,49 @@
-# issues/119: printing a NESTED tuple aborts at runtime.
+# issues/119: printing a HETEROGENEOUS tuple aborted at runtime.
 #
-#     print((1, (2, 3)))
+# Filed as "nested", but nesting was incidental -- the rule is that the
+# element types DIFFER:
 #
-# compiles with ZERO diagnostics, exits 0 from the compiler, and then:
+#     print((1, (2, 3)))     aborted   (int64 + tuple)
+#     print((1, [2]))        aborted   (int64 + list)
+#     print((1, "a"))        REFUSED   ("mixed basic types: ( int64 str )")
+#     print(((1, 2), (3, 4)))    fine  -- homogeneous, which hid the bug
 #
-#     _CG_string _CG_f_176_14(_CG_any): Assertion
-#       `!"runtime error: matching function not found"' failed.
+# tuple.__str__ was an index loop doing `self[k].__repr__()`. With a
+# runtime k, `self[k]` is the union of every field type, so the per-
+# element __repr__ dispatch had no single resolution: the C backend
+# aborted with "matching function not found" and the LLVM backend
+# silently printed `(, )`. Where the union mixed WIDTHS (int64 + str) it
+# never got that far -- the BOXING check refused the program.
 #
-# The failing function returns _CG_string and takes _CG_any -- the
-# __repr__ dispatch on a tuple element whose type is the ANY type,
-# because this tuple's elements are an int64 and another tuple. A tuple
-# stores its elements as record fields, and tuple.__str__'s loop
-# dispatches __repr__ per element with no single resolution.
+# tuple.__hash__ had the identical loop and the identical bug, under a
+# comment asserting it was safe here because the result type is int
+# either way. It is the DISPATCH that fails, not the result type.
 #
-# `print((1, 2))` and `print([(1, 2)])` are both fine -- it is
-# specifically a tuple element sitting alongside a scalar one.
+# Fixed by generating __str__/__hash__ UNROLLED at the program's max
+# tuple arity (inject_tuple_methods, python_ifa_main.cc), joining
+# __eq__/__lt__ which were already unrolled for this exact reason. A
+# CONSTANT index names ONE field, so every dispatch resolves and no
+# element union is ever formed -- which is also why the mixed-width case
+# now compiles: there is nothing to box.
 #
-# NOT ifa/061, which is a LIST of tuples contaminated by an unrelated
-# list's .sort() clone and fails at C COMPILE time. They were found
-# together only because 061's repro prints a list of nested tuples.
+# The slice below is the other half. A sliced tuple has RUNTIME arity, so
+# none of the unrolled `n >= k` guards fold and the constant-index path
+# stays live -- on a CreationSet that clone.cc had given RECORD layout
+# with ZERO members ("runtime error: bad getter"). PYC_TUPLE_AS_LIST now
+# defaults on so such a tuple gets LIST layout instead. That defect was
+# already reachable without any of this: `s[0]` and `s == (1, 2)` on a
+# slice both aborted before this change too.
 print((1, (2, 3)))
+print((1, [2]))
+print((1, "a"))
+print(("a", 1, (2, 3), [4]))
+print(((1, 2), (3, 4)))
+print((1, 2))
+print((1,))
+print(())
+print(hash((1, (2, 3))) == hash((1, (2, 3))))
+t = (1, 2, 3, 4)
+s = t[0:2]
+print(s)
+print(s[0])
+print(s == (1, 2))

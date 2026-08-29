@@ -371,6 +371,12 @@ class __tuple_iter__:
     return self.thetuple.__getitem__(self.position-1)
 
 class tuple:
+  # __str__ and __hash__ are NOT here: both dispatch a method on an
+  # ELEMENT, so a loop index (whose type is the union of every field)
+  # leaves the dispatch unresolvable for a heterogeneous tuple
+  # (issues/119). They are generated UNROLLED at the program's max
+  # arity by inject_tuple_methods (python_ifa_main.cc), like
+  # __eq__/__lt__ before them.
   def __pyc_getslice__(self, i, j, s):
     # ifa/issues/109: a tuple slice has a RUNTIME arity, which a
     # fixed-arity record cannot express -- but a tuple does not have to
@@ -399,30 +405,16 @@ class tuple:
     # `x in (a, b, c)` (collatz's `rest9 in (2, 4, 5, 8)`). INDEX loop,
     # not `for x in self`: sharing one __tuple_iter__ CS across
     # different-arity tuples cross-wires per-arity len/method slots
-    # (ifa/issues/047) -- the same reason __pyc_tolist__/__str__ index.
+    # (ifa/issues/047) -- the same reason __pyc_tolist__ indexes.
+    # (__str__ used to be listed here; it is generated unrolled now,
+    # issues/119. __contains__ stays a loop safely because the only
+    # operation on self[k] is `==`, which is itself unrolled.)
     for k in range(len(self)):
       if self[k] == item:
         return True
     return False
   def __pyc_to_bool__(self):
     return self.__len__() != 0
-  def __hash__(self):
-    # issue 025 R1 "missing sequence ops": tuple had no __hash__ at
-    # all (sudoku1/sudoku2's `hash(tuple(puzzle[c]))` board-row memo
-    # key). INDEX loop, like __str__/__contains__ above -- safe here
-    # (unlike __eq__/__lt__, which need the per-arity unrolled
-    # generated form) because the only operation on self[k] is
-    # dispatching its own __hash__(), whose result type doesn't
-    # depend on which heterogeneous branch is taken. Simple
-    # polynomial combiner (CPython's pre-SipHash tuple multiplier);
-    # exact values don't need to match CPython, only be
-    # self-consistent within one run (see hash()'s own comment,
-    # __pyc__/05_builtins.py).
-    h = 0
-    n = len(self)
-    for k in range(n):
-      h = h * 1000003 + self[k].__hash__()
-    return h
   def __pyc_tolist__(self):
     # list(t) and dynamic tuple(xs) both land here via the
     # list()/tuple() intercepts (python_ifa_build_if1.cc, issue
@@ -489,14 +481,3 @@ class tuple:
     return t.__lt__(self)
   def __ge__(self, t):
     return not self.__lt__(t)
-  def __str__(self):
-    n = len(self)
-    x = "("
-    for k in range(0, n):
-      if (k):
-        x += ", "
-      x += self[k].__repr__()
-    if n == 1:
-      x += ","
-    x += ")"
-    return x

@@ -533,7 +533,7 @@ static void scan_max_tuple_arity(PyDAST *n, int &mx) {
 // min_arity: a floor for the unroll count. The REPL can't pre-scan future
 // interactive input, so it passes a generous floor; the batch path passes 0
 // and gets the exact program max.
-void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
+void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   int max_arity = min_arity;
   for (PycModule *m : mods) scan_max_tuple_arity(m->pymod, max_arity);
   // Generate the two methods at exactly max_arity, wrapped in a throwaway
@@ -591,6 +591,43 @@ void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
   fputs("        if self[i] < t[i]: return True\n", f);
   fputs("        if t[i] < self[i]: return False\n", f);
   fputs("    return n < m\n", f);
+  // issues/119: __str__ and __hash__ need the same unroll, for the same
+  // reason. Both dispatch a method ON AN ELEMENT (self[k].__repr__() /
+  // self[k].__hash__()); with a loop index the element type is the union
+  // of every field type, and for a HETEROGENEOUS tuple that union has no
+  // single resolution. `print((1, (2, 3)))` compiled with zero
+  // diagnostics and then aborted with `matching function not found` on
+  // the C backend, and silently printed `(, )` on the LLVM one.
+  // __hash__ carried a comment claiming the index loop was safe here
+  // because the result type is int either way -- but it is the DISPATCH
+  // that fails, not the result type, so `hash((1, (2, 3)))` aborted too.
+  // A CONSTANT index makes self[k] one field, so each dispatch resolves.
+  // Homogeneous tuples never hit this, which is why `print((1, 2))` and
+  // `print(((1, 2), (3, 4)))` were fine and hid the bug.
+  fputs("  def __str__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    x = \"(\"\n", f);
+  for (int i = 0; i < max_arity; i++) {
+    fprintf(f, "    if n >= %d:\n", i + 1);
+    if (i) fputs("      x += \", \"\n", f);
+    fprintf(f, "      x += self[%d].__repr__()\n", i);
+  }
+  fprintf(f, "    if n > %d:\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        if i: x += \", \"\n", f);
+  fputs("        x += self[i].__repr__()\n", f);
+  fputs("    if n == 1: x += \",\"\n", f);
+  fputs("    x += \")\"\n", f);
+  fputs("    return x\n", f);
+  fputs("  def __hash__(self):\n", f);
+  fputs("    h = 0\n", f);
+  fputs("    n = len(self)\n", f);
+  for (int i = 0; i < max_arity; i++)
+    fprintf(f, "    if n >= %d: h = h * 1000003 + self[%d].__hash__()\n", i + 1, i);
+  fprintf(f, "    if n > %d:\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        h = h * 1000003 + self[i].__hash__()\n", f);
+  fputs("    return h\n", f);
   fclose(f);
   PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", buf, (int)sz);
   free(buf);
@@ -616,7 +653,7 @@ void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity) {
 }
 
 int ast_to_if1(Vec<PycModule *> &mods) {
-  inject_tuple_compare(mods, 0);  // issue 069: program-sized tuple __eq__/__lt__
+  inject_tuple_methods(mods, 0);  // issue 069: program-sized tuple __eq__/__lt__
   // For the non-REPL path: build baseline for mods[0] (builtin), then extend.
   // The builtin_mods Vec is local; ctx->modules is updated to &mods by extend.
   Vec<PycModule *> builtin_mods;

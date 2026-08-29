@@ -144,6 +144,6 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl);
 // issue 069: generate tuple __eq__/__lt__ at the program's max tuple arity
 // (min_arity floors it -- the REPL passes a generous value since it can't
 // pre-scan future interactive input) and append them to the builtin tuple.
-void inject_tuple_compare(Vec<PycModule *> &mods, int min_arity);
+void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity);
 
 #endif
