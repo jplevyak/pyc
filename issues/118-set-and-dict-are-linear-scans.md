@@ -349,3 +349,72 @@ user-defined classes -- and it is closely related to
 family of member-slot problems. Anything else that makes a user class
 reach a polymorphic `__eq__` will hit it without any hashing involved,
 which is worth a reproducer of its own.
+
+
+## Is the dispatch even necessary? No -- it is an artifact
+
+`loop` contains exactly **two** dicts:
+
+```python
+number = {}                    # keys: Basic_block
+self.basic_block_map_ = {}     # keys: int
+```
+
+and `Union_find_node` appears **only in a list** --
+`nodes = [Union_find_node() for _ in range(size)]` -- never as a dict
+key. So **no `==` receiver in the program is genuinely polymorphic over
+`{Basic_block, Union_find_node}`.** The union is manufactured by the
+analysis: `dict._keys` is one `list` field on a class shared
+program-wide, so its element type collects from every dict (and, being a
+list, from the program's other lists too). That is
+[ifa/105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)
+and [issues/039](039-list-mul-shared-element-type-cross-contamination.md),
+the same shared-CreationSet degeneration as everywhere else.
+
+With precise contours `_slot`'s `==` would be monomorphic, codegen would
+emit a direct call, the uninitialized slot would never be read, and there
+would be no bug.
+
+### shedskin resolves it monomorphically, by construction
+
+```cpp
+dict<Basic_block *, __ss_int> *number;
+dict<__ss_int, Basic_block *> *basic_block_map_;
+list<Union_find_node *> *nodes;
+```
+
+`dict<K,V>` is keyed on `K`, so those are two separate template
+instantiations that cannot contaminate each other. The key comparison is
+
+```cpp
+template<class T> class ss_eq {
+    bool operator()(const T a, const T b) const { return __eq<T>(a, b); }
+};
+template<class T> inline __ss_bool __eq(T a, T b) {
+    return ((a&&b) ? (a->__eq__(b)) : __mbool(a==b));
+}
+```
+
+-- `T` is statically `Basic_block *`, so `a->__eq__(b)` is an ordinary
+C++ virtual call on a known class. No type-tag switch, no slot table to
+populate, nothing to leave empty.
+
+### Which means there are two independent fixes
+
+Either one unblocks the hashed dict:
+
+1. **Populate the slot.** `cg_build_new_to_val_map` must cover every
+   (class, method) pair reachable from a polymorphic site. This makes the
+   polymorphic path CORRECT, and is worth doing regardless -- the bug is
+   reachable from any program that gets a user class to a polymorphic
+   `__eq__`, hashing or not.
+2. **Remove the polymorphism.** Split `dict._keys` per dict contour, so
+   the site is monomorphic and the slot is never consulted. This is what
+   ifa/105 has wanted all along, and it is also what would make the
+   hashing FAST rather than merely correct -- the same union is why the
+   hash dispatches to `__pyc_any_type__::__hash__` and every key lands in
+   bucket 0.
+
+Fix 1 alone gives a correct but degenerate hash table. Fix 2 alone gives
+a fast and correct one, and retires the codegen bug's reachability here
+without fixing it.
