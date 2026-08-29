@@ -287,3 +287,65 @@ read is typed in its own contour. That is where to look next.
 Not fixed. But "root cause not found" is no longer accurate: the failure
 is a union-typed key slot that neither hashes nor compares as itself, and
 either defect alone is enough to lose the entry.
+
+
+## The actual root cause: an uninitialized method slot
+
+The section above stopped at two symptoms and called them the cause. They
+are not. Instrumenting the probe with identities settles it:
+
+```
+DFS 0 11
+   probe i= 0 p= 1 stored_id= 136251752655840 key_id= 136251752655840 eq= False
+```
+
+**Same pointer, `eq= False`.** So this is not about hashing, unions, or
+`_slot`'s indexing: `a == a` on one object returns False.
+
+`object.__eq__` is `__pyc_primitive__("is", self, x)` and its emitted
+body is a correct pointer compare:
+
+```c
+_CG_bool _CG_f_307_3/*object::__eq__*/(_CG_any a1, _CG_any a2) {
+  t1 = ((void *)t2 == (void *)t3);   /* right */
+```
+
+The defect is in **how it is reached**. Because `_keys`' element is a
+union of two user classes, codegen emits a vtable-style dispatch through
+the instance's method slot rather than a direct call:
+
+```c
+if ((*(_CG_TypeObject**)(void*)t70) == &_CG_type_Basic_block) {
+  t62 = ((_CG_bool(*)(void*, _CG_any))((_CG_ps14653)(void*)t70)->e1)((void*)t70, ...);
+```
+
+`e1` is the `__eq__` slot, and **it is never written for `Basic_block`**.
+Grepping every `->e1 = ...__eq__` assignment in the generated C: the
+builtin prototypes get one, and among the user classes
+`Basic_block_edge` (`_CG_ps14631`) gets one — `Basic_block`
+(`_CG_ps14632`) does not. Its prototype is `_CG_prim_new`'d (so the slot
+is zero), `__pyc_tag` is set, `___init___` runs, and every instance is
+cloned from it. The dispatch calls through that slot anyway.
+
+That is `cg_build_new_to_val_map` in `ifa/codegen/codegen_common.cc`. It
+registers a class's slot by tracing "the FA creation chain from that
+arg's AType through `cs->defs` to the creator function"; for
+`Basic_block` that trace does not produce a creator, so no assignment is
+emitted. The two earlier symptoms follow from the same site being
+polymorphic: the hash dispatches to `__pyc_any_type__::__hash__` (so
+`&mask` is 0 and every key shares a bucket), and the comparison dispatches
+through the empty slot (so nothing ever matches).
+
+**Why the linear dict is unaffected**: its `==` sites are monomorphic
+per contour, so codegen emits a DIRECT call to `object::__eq__` and never
+reads the slot. The hashed version did not introduce a new kind of
+comparison — it introduced a new POLYMORPHIC one, and that is what
+exposed the missing slot.
+
+So this is not really a dict bug at all. It is a codegen bug --
+a polymorphic dispatch site whose method-slot table is incomplete for
+user-defined classes -- and it is closely related to
+[ifa/110](../ifa/issues/110-FA-method-override-second-member-slot.md)'s
+family of member-slot problems. Anything else that makes a user class
+reach a polymorphic `__eq__` will hit it without any hashing involved,
+which is worth a reproducer of its own.
