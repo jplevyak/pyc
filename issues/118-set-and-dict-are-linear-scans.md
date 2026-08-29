@@ -418,3 +418,62 @@ Either one unblocks the hashed dict:
 Fix 1 alone gives a correct but degenerate hash table. Fix 2 alone gives
 a fast and correct one, and retires the codegen bug's reachability here
 without fixing it.
+
+
+## Removing the polymorphic split: it works, and the split was self-inflicted
+
+Asked to attack the union rather than the codegen slot. Three
+measurements of the same list CreationSets on `loop`
+(`IFA_DBG_ELEMTYPE_DUMP`), and they settle it:
+
+| dict implementation | element types |
+|---|---|
+| linear (shipped) | `[ Union_find_node ]`, `[ Basic_block ]` — **monomorphic** |
+| hashed, with a `_slot(self, key)` helper | `[ int64 __pyc_None_type__ Basic_block Union_find_node ]` |
+| hashed, probe **inlined** into each caller | monomorphic again |
+
+So the union was not pre-existing and it was not `loop`'s: **the helper
+method created it.** `_slot(self, key)` is one more shared generic method
+on a class every program instantiates, and its `key` parameter merges
+every dict's key type into one contour — [ifa/105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)'s
+mechanism exactly, introduced by the very code that then tripped over it.
+
+**Inlining the probe fixes the miscompile.** The reduced `loop` now
+prints `Found 102 loops (including artificial root node)(5100)` — CPython's
+answer — where the `_slot` version printed `Found 1 loops` and segfaulted.
+The full `loop` gets from an immediate crash to running normally through
+its "Another 50 iterations..." phase.
+
+Four copies of an eight-line probe is the price. A C++ template would
+duplicate them too; the difference is that shedskin's duplication is per
+instantiated key type and this one is per call site.
+
+### What still blocks it
+
+1. **The untyped key, again.** Six tests regress, all the same shape as
+   the set's:
+
+       dict_from_iterable.py:21: warning: 'pair' has no type
+           empty = dict([])
+
+   `dict([])` and `set([])` have nothing to infer a key/element type
+   from, and hashing must call a method on it. Same wall, same issue
+   (ifa/072), now confirmed on both containers.
+
+2. **The full `loop` needs a bigger C stack.** Its DFS recurses ~16000
+   deep (the program itself calls `sys.setrecursionlimit(100000)`); at
+   the default 8 MB the compiled binary overflows, and `ulimit -s
+   1048576` turns the segfault into a normal run. CPython heap-allocates
+   frames and does not care. That is a separate limitation, not this
+   issue.
+
+The inlined implementation is preserved at `dict_hashed_inlined.py` in
+the session scratch. It is correct and fast; only the untyped-key
+warnings keep it out of the tree.
+
+### And the codegen bug does not go away
+
+Removing the split makes the bad dispatch unreachable *here*, but
+`cg_build_new_to_val_map` still fails to write `Basic_block`'s `__eq__`
+slot. Any other program that reaches a polymorphic `__eq__` on a user
+class hits it. That deserves its own reproducer and its own fix.
