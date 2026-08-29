@@ -120,7 +120,7 @@ static void build_import_if1(char *sym, char *as, char *from, PycCompiler &ctx) 
 // constant-elision protocol assumes consumers reference these
 // directly, so a load temp for them would be declared but never
 // defined).
-static bool is_module_data_var(Sym *s) {
+bool is_module_data_var(Sym *s) {
   return s && s->nesting_depth == 0 && s->name && !s->is_fun && !s->is_module && !s->is_symbol && !s->is_constant &&
          !s->constant && !s->type_kind && !s->is_meta_type && !s->is_external && !s->is_builtin;
 }

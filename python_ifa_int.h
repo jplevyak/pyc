@@ -64,6 +64,8 @@ struct PycTryFrame {
   Sym *fun;
 };
 
+bool is_module_data_var(Sym *s);  // python_ifa_build_if1.cc
+
 class PycCompiler : public PycCallbacks {
  public:
   // --- State (formerly PycContext) ---
@@ -167,6 +169,10 @@ class PycCompiler : public PycCallbacks {
   // this method's definition (python_ifa_sym.cc) for the specific
   // __pyc_exc__ pattern it recognizes.
   AType *provably_constant_isinstance(AVar *operand_av, EntrySet *es, PNode *send_pnode);
+  // ifa/issues/050 (3b, stage 1): resolve a load from a module-level data
+  // cell to the single store it provably sees. See ifa.h's declaration
+  // for the contract, python_ifa_sym.cc for the rule.
+  AType *provably_constant_load(AVar *src_av, EntrySet *es, PNode *move_pnode);
 
   // --- Entry point ---
   int run(Vec<PycModule *> &mods);

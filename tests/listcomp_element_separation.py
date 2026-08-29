@@ -7,6 +7,13 @@
 # here. The equivalent explicit for/append loops separate fine.
 #
 # Runs correctly either way; this guards the answer, not the analysis.
+#
+# The warning this used to record is GONE as of ifa/issues/050 stage 1:
+# `h` is a module-level cell, and resolving its load to the store that
+# dominates it (IFACallbacks::provably_constant_load) keeps `aas`' element
+# type at A, so the "illegal call argument type 'a' illegal: B" line no
+# longer appears. The contour-naming limitation above is unchanged --
+# what changed is that this program no longer reaches it.
 class A:
     def __init__(self):
         self.dead = False

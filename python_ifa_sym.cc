@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
+#include "optimize/dom.h"  // ifa/issues/050 3b: Dom::is_dominated_by
 
 PycSymbol *new_PycSymbol(cchar *name) {
   PycSymbol *s = new PycSymbol;
@@ -514,6 +515,107 @@ AType *PycCompiler::provably_constant_isinstance(AVar *operand_av, EntrySet *es,
   }
   if (!found_any) return nullptr;  // no matching outgoing edge (yet) -- stay conservative
   return fa->type_world.true_type;
+}
+
+// ifa/issues/050 (3b, stage 1): resolve a load from a module-level data
+// cell to the store it provably sees.
+//
+// A global cell's AVar lives in the single shared GLOBAL_CONTOUR (fa.h),
+// so FA's type for a read is the union of EVERY store in the program --
+// `g = 0` then `g = "five"` makes every read {int64, str} even though the
+// second store obviously kills the first. issues/031 step 2 gave each
+// READ an EntrySet-contoured temp; the stores still share the cell, and
+// this closes that half for the case where the answer is intraprocedural.
+//
+// The rule, deliberately narrow so it is sound with no mod/ref analysis:
+// fold to the nearest dominating store IFF **every** store to that cell
+// in the whole program is in the same Fun as the load and dominates it.
+// Then no other store can reach -- in particular no call can write the
+// cell, because a call that did would BE a store in another Fun and would
+// have failed the test. When a program-wide mod-set exists (050 stage 2)
+// that relaxes to "no intervening call may write the cell"; the
+// interprocedural case (050 stage 3) stays conservative here.
+//
+// STABILITY is the contract that makes a transfer-function fold legal at
+// all: update_gen() unions rather than replaces, so an answer that
+// sharpens across passes is permanent poison rather than a refinement.
+// The store set is therefore built from Fun::collect_PNodes -- the static
+// IF1 graph, complete from pass 0 -- and NOT from Fun::fa_move_PNodes,
+// which is filled lazily per Fun as EntrySets are reached and so grows
+// during analysis. Measured: with the lazy list, an early pass folds to
+// int64 and a later one to str, and the load ends up holding both.
+struct PycGlobalStore {
+  PNode *p;
+  Fun *f;
+};
+static Map<Var *, Vec<PycGlobalStore> *> *pyc_cell_stores = nullptr;
+
+static Vec<PycGlobalStore> *pyc_stores_for_cell(Var *cell) {
+  // Rebuild whenever the Fun set changes: an early call can arrive before
+  // fa->funs is populated, and a map memoized from an EMPTY world would
+  // report "no stores anywhere" forever. Rebuilding on a changed count
+  // keeps the answer derived from the whole program rather than from
+  // however much of it existed at the first call -- which is the
+  // stability the transfer-function contract requires.
+  // Built from if1->allclosures, NOT from fa->funs: fa->funs is populated
+  // as analysis proceeds and is EMPTY on the first call, and a map
+  // memoized from an empty world reports "no stores anywhere" forever --
+  // worse, the un-folded path then runs on pass 0 and update_gen() unions
+  // the whole-program type into the load temp permanently. allclosures is
+  // the static closure list, complete before analyze() is entered, so the
+  // answer is the same on every pass. That is the stability the
+  // transfer-function contract requires (see ifa.h).
+  if (!pyc_cell_stores) {
+    pyc_cell_stores = new Map<Var *, Vec<PycGlobalStore> *>();
+    for (Sym *fs : if1->allclosures) {
+      Fun *g = fs ? fs->fun : nullptr;
+      if (!g || !g->entry) continue;
+      Vec<PNode *> ps;
+      g->collect_PNodes(ps);
+      for (PNode *p : ps) {
+        if (!p || !p->code || p->code->kind != Code_MOVE || !p->lvals.n) continue;
+        Var *lv = p->lvals[0];
+        if (!lv || !lv->sym || !is_module_data_var(lv->sym)) continue;
+        Vec<PycGlobalStore> *v = pyc_cell_stores->get(lv);
+        if (!v) {
+          v = new Vec<PycGlobalStore>();
+          pyc_cell_stores->put(lv, v);
+        }
+        PycGlobalStore gs;
+        gs.p = p;
+        gs.f = g;
+        v->add(gs);
+      }
+    }
+  }
+  return pyc_cell_stores->get(cell);
+}
+
+AType *PycCompiler::provably_constant_load(AVar *src_av, EntrySet *es, PNode *move_pnode) {
+  if (!src_av || !src_av->var || !es || !es->fun || !move_pnode) return nullptr;
+  // Only the shared cell itself: a load temp or a local is already
+  // contoured and needs nothing from here.
+  if (src_av->contour != GLOBAL_CONTOUR) return nullptr;
+  Var *cell = src_av->var;
+  if (!cell->sym || !is_module_data_var(cell->sym)) return nullptr;
+  if (!move_pnode->dom) return nullptr;
+  Vec<PycGlobalStore> *stores = pyc_stores_for_cell(cell);
+  if (getenv("PYC_DBG_GLOADS") && cell->sym->name)
+    fprintf(stderr, "[gload] %s stores=%d\n", cell->sym->name, stores ? stores->n : -1);
+  if (!stores || !stores->n) return nullptr;
+  PNode *best = nullptr;
+  for (int i = 0; i < stores->n; i++) {
+    PNode *sp = (*stores)[i].p;
+    if ((*stores)[i].f != es->fun) return nullptr;                       // a store elsewhere
+    if (!sp->dom || !move_pnode->dom->is_dominated_by(sp->dom)) return nullptr;  // may reach another way
+    if (!best || sp->dom->is_dominated_by(best->dom)) best = sp;         // nearest = deepest
+  }
+  if (getenv("PYC_DBG_GLOADS") && cell->sym->name)
+    fprintf(stderr, "[gload] %s FOLD best=%p\n", cell->sym->name, (void *)best);
+  if (!best || !best->rvals.n) return nullptr;
+  AVar *stored = make_AVar(best->rvals[0], es);
+  if (!stored || !stored->out || stored->out == fa->type_world.bottom_type) return nullptr;
+  return stored->out;
 }
 
 bool PycCompiler::c_codegen_pre_file(FILE *fp) {
