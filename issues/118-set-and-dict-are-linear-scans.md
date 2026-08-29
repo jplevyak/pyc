@@ -485,3 +485,55 @@ Removing the split makes the bad dispatch unreachable *here*, but
 `cg_build_new_to_val_map` still fails to write `Basic_block`'s `__eq__`
 slot. Any other program that reaches a polymorphic `__eq__` on a user
 class hits it. That deserves its own reproducer and its own fix.
+
+
+## Tried to build a minimal repro for the codegen bug. It does not exist standalone.
+
+Four constructed programs, each a polymorphic `==` over two user classes
+with no `__eq__` override:
+
+| program | result |
+|---|---|
+| two classes, mixed list, compare each against one element | correct |
+| same, built through a factory method and stored in a dict | correct |
+| same, with different field counts | correct |
+| same, with monomorphic comparisons first to force per-type clones | correct |
+
+Every one emits a **direct call** to a SINGLE clone of `object::__eq__`
+whose first parameter is `_CG_any`:
+
+```c
+t10 = _CG_f_307_0/*object::__eq__*/(t11, t12);
+```
+
+Not one of them contains a type-tag dispatch (`== &_CG_type_`) at all, so
+the method slot is never consulted and its being unwritten costs nothing.
+Grepping confirms it: `->e1 = ...__eq__` appears ZERO times in those
+programs' generated C, and they still give the right answer.
+
+The failing configuration is different in exactly one measurable way:
+
+    loop, hashed dict with _slot()   object::__eq__ clones: 2
+                                     type-tag dispatches:  18
+
+**Two clones of the same method reaching one call site is what turns on
+the slot path** — `cg_build_new_to_val_map`'s pass 1 collects method
+names where `fns->n > 1`. A single generic `_CG_any` clone never needs a
+vtable.
+
+### So the two fixes are NOT independent, and I said they were
+
+The earlier claim that "any other program that reaches a polymorphic
+`__eq__` on a user class will hit it" is not supported. The slot path is
+reached only when FA has split `object::__eq__` into several clones, and
+the only way seen to do that is the contour degeneration the shared
+`_slot` method caused. **Removing the split removes the only known route
+to the codegen bug.**
+
+That reorders the work. Fix 2 (split `dict._keys` per contour, or simply
+do not add shared generic helpers to the builtin containers) is the one
+to do: it makes the hashing correct AND fast, and it retires the codegen
+path rather than merely making it correct. Fix 1 stays worth doing on its
+own terms — an unwritten slot behind a dispatch is a latent bug whatever
+reaches it — but it is not a prerequisite, and there is no test to write
+for it yet.
