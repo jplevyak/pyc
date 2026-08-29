@@ -1,0 +1,1 @@
+ifa/issues/050 (3b) -- a global read gets the whole-program union of every write, not a call-graph-precise value: g is {int64, str} though use() only ever runs after setup()
