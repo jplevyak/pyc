@@ -8,6 +8,8 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__f2501586` | 2026-08-29 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
+| `check__default__f2501586+0a43ff92` | 2026-08-29 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
 
 ## Backfilled from the 2026-08-28 session
 
@@ -29,3 +31,43 @@ apparent difference was an artifact.** `ac_encode` came back `rc=1` in the
 baseline arm and `rc=0` in the test arm; re-run alone under the baseline it
 is `rc=0`. Two sweeps contending for the machine produce spurious 400s
 timeouts. Run them one at a time — the script does not enforce this.
+
+## The 2026-08-29 A/B: issues/119, unrolled tuple `__str__`/`__hash__`
+
+The two `f2501586` rows above are one A/B — baseline is clean `f2501586`,
+the `+0a43ff92` arm is the same tree plus the issues/119 fix (unrolled
+`tuple.__str__`/`__hash__`, `PYC_TUPLE_AS_LIST` defaulted on). Run
+SEQUENTIALLY, with a rebuild between arms and a positive control
+confirming the baseline binary still reproduced the bug.
+
+Diffing the TSVs program-by-program, **all 77 programs are identical
+except one line**:
+
+```
+< richards   0  4  134  124  -      baseline: SIGABRT
+> richards   0  4    0  124  -      with fix: exit 0
+```
+
+**That is not a win, and the totals mislead.** `richards` prints `False`
+ten times and `TIME 0.00`; CPython prints `True`. It went from a loud
+abort to a SILENT WRONG ANSWER — the shape ifa/102 is about. It escaped
+the `stdout_differs` column only because CPython itself times out on
+richards (`cpy_rc=124`), so the sweep never compared the output.
+
+It is not new wrong logic: richards has no dict, no set, no `hash()`, and
+never prints a tuple, so the unrolled methods cannot change its
+semantics. The baseline aborted in a polymorphic dispatch with `no branch
+matched`, so that arm could not have produced the right answer either.
+Both arms are wrong; only the failure mode moved. Filed as issues/120.
+
+### Two traps this A/B walked into, for whoever runs the next one
+
+- **`git stash -u` eats the result you just measured.** A finished
+  `.tsv` is untracked, so stashing to build the baseline arm swept it
+  away, and the pop then conflicted because BOTH arms had overwritten the
+  same tracked corpus outputs (`shedskin_examples/**/*.ppm`, `.bmp`) and
+  `INDEX.md`. Commit or copy the `.tsv` out before stashing.
+- **A sweep dirties the working tree**, which changes the tree key. Any
+  edit — even to `corpus_sweep.sh` itself — makes the next invocation
+  MISS the cache and silently start a fresh 40-minute run. Check that a
+  repeat prints `cached:` and nothing else.

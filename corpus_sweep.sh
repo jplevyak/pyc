@@ -75,6 +75,7 @@ summarize() {
   local f=$1
   awk -F'\t' '
     /^#/ || /^DONE/ { next }
+    /^name\tcompile_rc/ { next }   # the TSV header is not a program
     { n++
       if ($2 != "0") { cfail++; cf = cf " " $1 }
       else {
@@ -160,5 +161,11 @@ if ! grep -q "^| \`$KEY\`" "$SWEEPS/INDEX.md" 2>/dev/null; then
       echo "|---|---|---|"
     } > "$SWEEPS/INDEX.md"
   fi
-  printf '| `%s` | %s | %s |\n' "$KEY" "$(date -I)" "$(echo "$SUM" | head -1)" >> "$SWEEPS/INDEX.md"
+  # Insert INTO the table, not at EOF: the file continues with prose and a
+  # second (backfill) table below, so `>>` put rows where -l would not show
+  # them under the header they belong to.
+  ROW=$(printf '| `%s` | %s | %s |' "$KEY" "$(date -I)" "$(echo "$SUM" | head -1)")
+  awk -v row="$ROW" '
+    !done && /^\|---\|---\|---\|$/ { print; print row; done=1; next }
+    { print }' "$SWEEPS/INDEX.md" > "$SWEEPS/INDEX.md.tmp" && mv "$SWEEPS/INDEX.md.tmp" "$SWEEPS/INDEX.md"
 fi
