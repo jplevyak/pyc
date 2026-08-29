@@ -2142,7 +2142,7 @@ operator dispatch now having one more polymorphic candidate
 including all the unrelated integer arithmetic. **Reverted** (`git
 checkout -- __pyc__/08_set.py`) rather than shipped with a live
 compiler-crash regression; filed as
-[ifa/issues/055](../ifa/issues/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)
+[ifa/issues/055](../ifa/issues/closed/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)
 with the full bisection trail. `set.__sub__` remains unimplemented.
 
 With `__pyc__/08_set.py` reverted (the actual committed state),
@@ -2244,7 +2244,7 @@ every new dict-method code path together, found that combining
 `sorted()` on a plain string list with `list(d.items())` +
 `sorted()` on the resulting tuple list hangs the compiler (same
 worklist-churn-without-bound signature as
-[ifa/issues/055](../ifa/issues/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md),
+[ifa/issues/055](../ifa/issues/closed/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md),
 confirmed via the same printf-bisection technique) -- but reproduces
 in **4 lines**, no 500-line real program needed, and isn't
 dict-specific (a bare `sorted(["p","q"])` triggers it just as well as
@@ -2303,7 +2303,7 @@ the routine corpus was anywhere close to tripping this). Not added
 as an automated test (the ~2-minute cost to actually trigger the
 guard doesn't fit the routine ~30s suite); 057's own file carries the
 full verification record instead. Re-tested against
-[055](../ifa/issues/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)'s
+[055](../ifa/issues/closed/055-FA-set-dunder-method-triggers-fa-nonconvergence-on-plcfrs.md)'s
 `plcfrs.py`/`set.__sub__` repro directly: the new guard does **not**
 help there -- that repro segfaults in ~7s (a fast crash, not the slow
 zero-`ess.n`-growth stall this guard targets), so 055 stays open and
