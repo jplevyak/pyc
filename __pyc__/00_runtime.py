@@ -38,10 +38,18 @@ class __pyc_any_type__:
   def __repr__(self):
     return self.__str__()
   def __hash__(self):
-    # Identity hash, as CPython's object.__hash__ is. __hash__ existed on
-    # str/bytes/numeric/list/tuple but not on `object`, so a set of class
-    # INSTANCES -- or a dict keyed by one -- had nothing to hash with.
-    # See __pyc_any_type__.__hash__ above for the fallback below this one.
+    # Identity hash, as CPython's object.__hash__ is, and as shedskin's
+    # `long pyobj::__hash__() { return (intptr_t)this; }`. __hash__ existed
+    # on str/bytes/numeric/list/tuple and NOWHERE ELSE, so `hash(x)` of a
+    # class instance -- or of a function -- compiled with a warning and
+    # then died with "matching function not found".
+    #
+    # On __pyc_any_type__ and NOT on `object`, which is where it was first
+    # written and is wrong twice over. A closure never reaches `object`'s
+    # class hierarchy at all (see __pyc_to_bool__ below for why), so
+    # hash(some_function) still failed there; and defining it on BOTH
+    # makes hash() a multi-candidate dispatch that aborts on a plain
+    # instance. One definition, on the top type, covers everything.
     return __pyc_primitive__(__pyc_symbol__("id"), self)
   def __deepcopy__(self):
     # issues/029 fallback: value types (scalars, strings) and shapes

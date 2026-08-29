@@ -1,40 +1,40 @@
 minmax_3arg.py:16:185: warning: illegal call argument type 'c' illegal: 
     print(min(2, 9))
                     ^
-  called from __pyc__.py:1780
+  called from __pyc__.py:1788
 minmax_3arg.py:16:185: warning: illegal call argument type 'm' illegal: int64 
     print(min(2, 9))
                     ^
-  called from __pyc__.py:1780
+  called from __pyc__.py:1788
 minmax_3arg.py:16:185: warning: unresolved call '__lt__'
     print(min(2, 9))
                     ^
-  called from __pyc__.py:1780
+  called from __pyc__.py:1788
 minmax_3arg.py:16:185: warning: illegal call argument type expression illegal: 
     print(min(2, 9))
                     ^
-  called from __pyc__.py:1780
+  called from __pyc__.py:1788
 minmax_3arg.py:16:185: warning: expression has no type
     print(min(2, 9))
                     ^
-  called from __pyc__.py:1780
+  called from __pyc__.py:1788
 minmax_3arg.py:15:170: warning: unresolved call '__gt__'
     print(max(2, 9))
                     ^
-  called from __pyc__.py:1811
+  called from __pyc__.py:1819
 minmax_3arg.py:15:170: warning: illegal call argument type 'c' illegal: 
     print(max(2, 9))
                     ^
-  called from __pyc__.py:1811
+  called from __pyc__.py:1819
 minmax_3arg.py:15:170: warning: illegal call argument type 'm' illegal: int64 
     print(max(2, 9))
                     ^
-  called from __pyc__.py:1811
+  called from __pyc__.py:1819
 minmax_3arg.py:15:170: warning: illegal call argument type expression illegal: 
     print(max(2, 9))
                     ^
-  called from __pyc__.py:1811
+  called from __pyc__.py:1819
 minmax_3arg.py:15:170: warning: expression has no type
     print(max(2, 9))
                     ^
-  called from __pyc__.py:1811
+  called from __pyc__.py:1819

@@ -7,20 +7,21 @@
 #
 #   runtime error: matching function not found
 #
-# `object.__hash__` returning id(self) is CPython's own default (identity
-# hash), and it is what shedskin's `long pyobj::__hash__() { return
-# (intptr_t)this; }` does too. It covers functions as well: a closure
-# never reaches object's class hierarchy, but it does reach this dispatch.
+# An identity hash returning id(self) is CPython's own default, and is
+# what shedskin's `long pyobj::__hash__() { return (intptr_t)this; }` does
+# too.
 #
-# NB the matching fallback on `__pyc_any_type__` was tried and REVERTED.
-# It looked right by analogy with __pyc_to_bool__ (and with shedskin's
-# `hasher(void *)` specialization), but it turns `hash(x)` into a
-# multi-candidate dispatch and breaks exactly the cases below -- the
-# hazard 00_runtime.py already records for hypothetical __getitem__ /
-# __len__ stubs. It also would not have helped what motivated it: an
-# EMPTY container's element type in pyc is bottom ("has no type"), not the
-# any type, so there is no receiver for a fallback to attach to. See
-# issues/118.
+# It lives on `__pyc_any_type__`, the top type -- NOT on `object`, where
+# it was first written. Two reasons, both measured: a closure never
+# reaches object's class hierarchy, so `hash(f)` below still failed with
+# it there; and defining it on BOTH turns hash() into a multi-candidate
+# dispatch that aborts even on a plain instance. One definition, on the
+# top type, covers instances and functions alike.
+#
+# It does NOT make an empty container hashable, which is what motivated
+# adding it: pyc types an empty container's element as bottom ("has no
+# type"), not as the any type, so there is no receiver for a top-type
+# method to attach to. See issues/118.
 class A:
     def __init__(self, v):
         self.v = v

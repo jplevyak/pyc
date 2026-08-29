@@ -211,3 +211,79 @@ missing method: what is needed is for an empty container's element type
 to BE something (ifa/072), at which point `object.__hash__` already
 covers it. The previous section's "narrower and much more tractable" read
 was wrong, and this one supersedes it.
+
+
+## The dict miscompile, root-caused
+
+Reproduced on a 5-second cut of `loop` (dummy loops 15000 -> 3, the two
+CFG-building loops 10/100/25 -> 2/5/3), which CPython answers `Found 102
+loops` in under a second.
+
+**First, a diagnostic obstacle worth its own note.** The crashing binary
+printed NOTHING, which made it look as though it died before `main`.
+`_CG_Syscall_Write` is `fwrite(..., stdout)` — **buffered** — so a
+segfault loses every line the program produced. `stdbuf -o0` gets it
+back, and every runtime failure in this corpus is easier to diagnose
+with it.
+
+With output restored, instrumenting `dfs`:
+
+```
+SIZE 11
+DFS 0 11
+  set-> -1 len 12        <- number[current_node] = current did not take
+DFS 1 12
+  set-> -1 len 13
+```
+
+`number[current_node] = current` **appends a duplicate instead of
+overwriting**: `len` climbs 11, 12, 13, … and reading the key back still
+gives the old `-1`. The `K_UNVISITED` guard in `dfs` therefore never
+clears, the DFS revisits nodes forever, `current` runs past
+`size = len(basic_block_map_)`, and `nodes[current]` — a list of exactly
+`size` elements — hands back NULL. `Union_find_node::init(NULL, ...)`
+segfaults. That is the whole chain, and `Found 1 loops` is the same cause
+seen from the other end.
+
+Instrumenting `_slot` shows why the overwrite misses:
+
+```
+DFS 0 11
+   probe i= 0 p= 1 eq= False
+   probe i= 1 p= 2 eq= False
+   ...
+   probe i= 10 p= 11 eq= False
+SET h= 123944734424032 mask= 31 slot= 11 p= 0 len= 11
+```
+
+**Two independent defects.**
+
+1. **Every key lands in bucket 0.** The probe starts at `i = 0` with
+   `mask = 31` for pointer-valued hashes that are certainly not
+   0 mod 32. The generated C says why:
+
+       t57 = _CG_f_183_135/*__pyc_any_type__::__hash__*/(t48);
+       t55 = _CG_prim_and(t57, _CG_Symbol(7588, "&"), t49);
+
+   `key.__hash__()` dispatches to the TOP TYPE's hash because `_keys`'
+   element is a union (`{int64, Basic_block, ...}` — `loop` has an
+   int-keyed dict and an object-keyed one, and they share one
+   CreationSet), and `&` on that result yields 0 every time. The table
+   degenerates to one probe chain. Slow, not yet wrong.
+
+2. **`self._keys[p - 1] == key` is False even against the identical
+   object** — `eq= False` on all eleven probes, one of which compared the
+   key with itself. THIS is the wrong answer. The emitted comparison
+   branches on the type tag (`== &_CG_type_Basic_block`,
+   `== &_CG_type_Union_find_node`); reading the key back out of the union
+   slot evidently does not present the tag the comparison expects, so
+   every branch falls through to False.
+
+The linear dict compares the *same* expression, `self._keys[i] == key`,
+and gets it right — so this is not "== on a union is broken" in general.
+What differs is that `_slot` is a separate method whose `self._keys[...]`
+read is typed in its own contour. That is where to look next.
+
+Not fixed. But "root cause not found" is no longer accurate: the failure
+is a union-typed key slot that neither hashes nor compares as itself, and
+either defect alone is enough to lose the entry.
