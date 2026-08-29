@@ -537,3 +537,38 @@ path rather than merely making it correct. Fix 1 stays worth doing on its
 own terms — an unwritten slot behind a dispatch is a latent bug whatever
 reaches it — but it is not a prerequisite, and there is no test to write
 for it yet.
+
+
+## Fix 2, attempted both ways
+
+**Way A — do not create the shared helper (inline the probe). DONE, and
+it works.** Measured above: it removes the union and fixes the
+miscompile. The rule is now written up in
+[RUNTIME.md](../RUNTIME.md#do-not-add-a-shared-helper-method-to-a-builtin-container-class),
+since it applies to any future edit of `dict`/`set`/`list`, not just to
+hashing.
+
+**Way B — mark `dict`/`set` `clone_methods_per_cs`, so each instance
+gets its own field CSs.** Prototyped behind `PYC_PERCS_CONTAINERS` and
+**reverted: it changes nothing measurable here.** The existing route to
+that flag is a `__pyc_clone_constants__` ctor parameter (ifa/045), which
+neither class can reach since neither takes ctor arguments, so the flag
+had to be set by class name. With the probe already inlined, `loop` is
+correct with and without it (3 warnings either way, same output), and it
+does not touch the remaining blocker at all. A knob in this codebase is
+supposed to carry a measurement that justifies it; this one has none, so
+it is not in the tree.
+
+### What is left is not fix 2
+
+The hashed containers still cannot land, and the reason is unchanged and
+orthogonal to the split:
+
+    dict_from_iterable.py:21: warning: 'pair' has no type
+        empty = dict([])
+
+`dict([])` and `set([])` have no element type to infer, hashing must call
+a method on the key, and a bottom-typed value has no method. Per-CS
+splitting cannot help — an empty dict's own `_keys` is still empty. This
+is ifa/072 and nothing else, now demonstrated from three directions
+(set, dict, and the per-CS experiment).

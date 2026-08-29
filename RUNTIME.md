@@ -344,6 +344,36 @@ discrepancy, the directory wins.
 
 ---
 
+### Do not add a shared helper method to a builtin container class
+
+`dict`, `set` and `list` are instantiated by every program, so a method
+on them is one contour shared by every container in the program and its
+PARAMETERS merge every caller's types. Factoring a few lines out of
+`__getitem__`/`__setitem__`/`__contains__` into a helper is therefore not
+free the way it would be in ordinary code — it manufactures a union that
+did not exist.
+
+Measured (issues/118), on `shedskin_examples/loop`, the same list
+CreationSets under three implementations of `dict`:
+
+| implementation | element types |
+|---|---|
+| linear scan (shipped) | `[ Union_find_node ]`, `[ Basic_block ]` — monomorphic |
+| hashed, with a `_slot(self, key)` helper | `[ int64 __pyc_None_type__ Basic_block Union_find_node ]` |
+| hashed, probe **inlined** into each caller | monomorphic again |
+
+The helper's `key` parameter merged every dict's key type into one
+contour. That union then made `==` a polymorphic dispatch, which went
+through a method slot codegen never wrote, and the program computed the
+wrong answer. Inlining the same eight lines into each caller — four
+copies — restored both the types and the answer.
+
+So: duplicate the code. A C++ template does the same thing; the only
+difference is that it duplicates per instantiated type rather than per
+call site. If a helper is genuinely necessary, give it no parameters
+beyond `self` and plain scalars (`_rehash(self, want)` is fine — `want`
+is an `int` from the receiver's own state and merges nothing).
+
 ## 5. The compat shim (`pyc_compat.py`)
 
 ```python
