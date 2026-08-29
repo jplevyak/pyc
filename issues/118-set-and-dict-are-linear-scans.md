@@ -572,3 +572,63 @@ a method on the key, and a bottom-typed value has no method. Per-CS
 splitting cannot help — an empty dict's own `_keys` is still empty. This
 is ifa/072 and nothing else, now demonstrated from three directions
 (set, dict, and the per-CS experiment).
+
+
+## Fix 1 done: a method may only claim a class's slot if it OWNS that class
+
+Worth doing after all, and the reproducible failing configuration (the
+`_slot`-helper hashed dict) made it verifiable end to end.
+
+`IFA_DBG_POLYSLOT` (added) reports every registration and rejection in
+`cg_build_new_to_val_map`. On the failing build:
+
+    [polyslot] __eq__ fun=37 selfunion=0 selftype=Basic_block
+                : cs Basic_block slot 1 defs=1 es_defs=1 live=1
+
+and yet the emitted `Basic_block::__new__` contained
+
+    ((_CG_ps14509)t1)->e1 = (void*)_CG_f_431_6/*__pyc_None_type__::__eq__*/;
+
+**The slot was not empty. It held the WRONG method.** `__pyc_None_type__
+.__eq__` is None's identity compare -- it answers False for every
+non-None argument -- so a dict never matched its own key, and the earlier
+write-up's "uninitialized slot" was a misreading of the same evidence.
+
+It got there because a clone's self AType carries every CreationSet that
+reached it. With `_keys` degenerate, None's `__eq__` had a self typed
+`{nil, Basic_block, ...}`, so it registered itself as `Basic_block`'s
+`__eq__` and won the specificity tie-break.
+
+**The guard**: a clone may only implement a class's slot when the class
+it was DECLARED on -- the method Sym's self formal's `must_specialize`,
+the same thing `assign_fun_cg_strings` prints as the `Class::` half of a
+clone's name -- is that class or an ancestor of it.
+
+```cpp
+Sym *owner = (fun_val->sym->has.n > 1) ? fun_val->sym->has[1]->must_specialize : nullptr;
+if (owner && cs->sym != owner && !owner->specializers.set_in(cs->sym)) continue;
+```
+
+`object::__eq__` still registers for everything (object is everyone's
+ancestor), and an inherited method with a `Type_SUM` self still registers
+for the members that specialize its owner, which is issue 026's case.
+
+Verified against the failing configuration: the reduced `loop` with the
+`_slot` hashed dict goes from `Found 1 loops` plus a segfault to
+`Found 102 loops (including artificial root node)(5100)` -- CPython's
+answer -- and the bad slot write is gone. Five CI gates green,
+305 / 0 / 14 on both backends.
+
+**So both fixes are now done**, by different routes: fix 2 removes the
+degenerate union that manufactures the bad receiver, fix 1 makes the
+dispatch correct even when a degenerate union exists. Neither is in the
+tree as a *hashed container*, because what still blocks that is
+[ifa/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)
+and only that.
+
+No standalone reproducer for fix 1 exists -- see the section above; a
+single generic `_CG_any` clone never needs a vtable, so no small program
+takes the slot path. The regression risk is covered by the suite, which
+exercises the polymorphic-dispatch tests (`poly_dispatch_low/high`,
+`method_override_field_offset`, the issue-026 inheritance cases) that this
+code was built for.
