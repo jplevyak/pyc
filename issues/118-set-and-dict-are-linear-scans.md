@@ -467,6 +467,14 @@ instantiated key type and this one is per call site.
    frames and does not care. That is a separate limitation, not this
    issue.
 
+3. **The hashed dict alone is not enough to make `loop` fast.** With the
+   stack raised it runs correctly but reached only 27 of its 50
+   iterations in 280 s — still slower than CPython's 64 s for all 50.
+   That is the `set` half: `non_back_preds[w].add(v)` over thousands of
+   nodes is still the O(n^2) linear scan, since only the dict was hashed
+   for this experiment. `loop` needs BOTH containers, which is what this
+   issue said at the top and is now measured from both ends.
+
 The inlined implementation is preserved at `dict_hashed_inlined.py` in
 the session scratch. It is correct and fast; only the untyped-key
 warnings keep it out of the tree.
