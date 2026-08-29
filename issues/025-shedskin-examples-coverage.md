@@ -1939,7 +1939,7 @@ no-op `if key < 0: pass` inside `list.__getitem__` was enough to
 break `b = [2, 3]; print(b); k = []; print(k)`. A ternary form
 (`key = key + self.__len__() if key < 0 else key`) hit the identical
 failure. Reverted both. Filed as its own tracked issue --
-[ifa/issues/052](../ifa/issues/052-FA-shared-method-branch-reopens-empty-list-fragility.md)
+[ifa/issues/052](../ifa/issues/closed/052-FA-shared-method-branch-reopens-empty-list-fragility.md)
 -- since this reopens issue 040's own verification repro with an
 otherwise-unrelated change, a real constraint on future work touching
 any `clone_methods_per_cs` class's shared methods, not just something
@@ -2005,7 +2005,7 @@ above applies. Fixed directly in Python source instead
 `range.__getitem__`'s existing pattern) -- safe here specifically
 because `bytearray`, unlike `list`, is **not**
 `clone_methods_per_cs`-flagged, so it isn't exposed to
-[ifa/issues/052](../ifa/issues/052-FA-shared-method-branch-reopens-empty-list-fragility.md)'s
+[ifa/issues/052](../ifa/issues/closed/052-FA-shared-method-branch-reopens-empty-list-fragility.md)'s
 fragility. Confirmed empirically before landing: an
 empty-plus-non-empty `bytearray` in one program (`bytearray(5)`
 alongside `bytearray(0)`) compiles and runs clean with the new
