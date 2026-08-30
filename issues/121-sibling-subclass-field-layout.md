@@ -3,17 +3,19 @@
 **Status: FIXED 2026-08-30**, filed the same day while root-causing
 [120](120-richards-silent-wrong-answer.md). `promote_field` now promotes
 a CreationSet's pending fields in name-sorted order, so sibling classes
-agree on slot assignment. The cost is recorded below and in
-`tests/deepcopy_objects.py.known_issue`: this makes
+agree on slot assignment. It briefly cost a `.known_issue` on
+`tests/deepcopy_objects.py` — once sibling classes stop getting
+different field orders they become genuinely equivalent, and
 [ifa/112](../ifa/issues/112-CGEN-nondeterministic-emitted-c.md)'s
-nondeterminism reachable on that one fixture, which is a deliberate
-trade — a real silent miscompile fixed in exchange for a documented,
-semantically-harmless instability in the emitted C.
+pointer-hashed tiebreaks started deciding between them. **That cost is
+gone**: the same session fixed the FA-side source (violation iteration
+order), and `deepcopy_objects` is deterministic across 8 compiles with
+no sidecar.
 **Affects:** `python_ifa_sym.cc` (`promote_field`),
 `ifa/analysis/clone.cc` (`determine_layouts`, `compute_member_types`).
 **Severity:** silent — zero warnings, exit 0, wrong values.
-**Reproducer:** `tests/sibling_subclass_field_layout.py`, 22 lines,
-with a `.known_issue` sidecar.
+**Reproducer:** `tests/sibling_subclass_field_layout.py`, 22 lines
+(passing since the fix; no sidecar).
 
 ## Symptom
 
@@ -71,8 +73,7 @@ promote `a, b, c` in order. Measured:
   **identical to CPython's for every traced iteration**.
 - Whole suite otherwise unchanged, both backends.
 
-**It destabilises `tests/deepcopy_objects.py`** (now carrying a
-`.known_issue` for ifa/112) — the NONDET check
+**It initially destabilised `tests/deepcopy_objects.py`** — the NONDET check
 (same source, two different `.c` files) starts failing about half the
 time, where the baseline is stable 5/5. The reason: promotion order
 varies across reanalyze **ROUNDS**, not only within one, so sorting
@@ -117,5 +118,6 @@ promoted fields.
   than this and stays open.
 - All five gates green.
 
-Still owed: `tests/deepcopy_objects.py` deterministic across repeated
-compiles, which is ifa/112's job.
+- `tests/deepcopy_objects.py` deterministic across 8 compiles, with no
+  `.known_issue` — the FA-side ordering fix that made this possible is
+  recorded in ifa/112.

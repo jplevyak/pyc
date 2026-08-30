@@ -466,7 +466,13 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // creation patterns — issue 026's third bug.
   bool do_promote = !nopromote && ifa_reanalyze_phase != 2;
   bool do_coerce = ifa_reanalyze_phase != 1;
-  if (do_promote) for (auto v : type_violations.values()) if (v) {
+  // ifa/issues/112: iterate violations in a STABLE order. The raw Vec is
+  // set_add-populated, so its order follows heap layout and moves between
+  // runs -- and promotion order decides struct slot assignment
+  // (issues/121), so this changes results, not just diagnostics.
+  Vec<ATypeViolation *> ordered_violations;
+  fa_sorted_type_violations(type_violations, ordered_violations);
+  if (do_promote) for (auto v : ordered_violations) if (v) {
     if (v->kind == ATypeViolation_kind::NOTYPE) {
       if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
