@@ -415,9 +415,39 @@ static bool promote_field(CreationSet *cs, cchar *name) {
   if (!field_sym) {
     field_sym = new_PycSymbol(name)->sym;
     field_sym->var = new Var(field_sym);
+    // IFA_DBG_LAYOUT prints the slot each promoted field lands on. This
+    // is the probe that found issues/121 -- two sibling subclasses
+    // showing the same names at different indices is the whole bug,
+    // visible in one line each.
+    if (getenv("IFA_DBG_LAYOUT"))
+      fprintf(stderr, "PROMOTE %s.%s -> index %d\n", cs->sym->name ? cs->sym->name : "?", name, cs->sym->has.n);
     cs->sym->has.add(field_sym);
   }
   return promote_field_one(cs, field_sym, name);
+}
+
+// issues/121: promote a CreationSet's pending fields in a CANONICAL
+// (name-sorted) order.
+//
+// `unknown_vars` is a hash set, so its iteration order varies between
+// two CreationSets that acquired the same names. promote_field appends
+// to `cs->sym->has`, and that index IS the emitted struct's `eN` suffix
+// -- so two SIBLING SUBCLASSES of one base ended up with the same
+// fields at DIFFERENT slots. Measured on a 22-line program: S1 got
+// (a,b,c) at e15..e17 and S2 got (c,b,a), and since every access casts
+// a union receiver to ONE struct type, S2's fields read back reversed
+// with no diagnostic at all.
+//
+// determine_layouts (clone.cc) already walks fields NAME-SORTED to
+// compute byte offsets, which is what prim_period_offset validates --
+// so the check passed on an ordering the emitter did not use. Sorting
+// here makes the two agree for classes that share a field set.
+static void sorted_unknown_vars(CreationSet *cs, Vec<cchar *> &out) {
+  for (auto i : cs->unknown_vars.values()) if (i) out.add(i);
+  if (out.n > 1)
+    qsort(out.v, out.n, sizeof(out[0]), [](const void *a, const void *b) {
+      return strcmp(*(cchar *const *)a, *(cchar *const *)b);
+    });
 }
 
 bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
@@ -441,7 +471,9 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
       if (!v->av->var->def || v->av->var->def->rvals.n < 2) continue;
       AVar *av = make_AVar(v->av->var->def->rvals[1], (EntrySet *)v->av->contour);
       for (auto cs : av->out->sorted.values()) {
-        for (auto i : cs->unknown_vars.values()) {
+        Vec<cchar *> names;
+        sorted_unknown_vars(cs, names);
+        for (cchar *i : names) {
           if (promote_field(cs, i)) { again = true; ++n_notype_promote; }
         }
       }
@@ -460,7 +492,9 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // value contribution and constant-folds.
   if (do_promote) for (CreationSet *cs : fa->css) {
     if (!cs) continue;
-    for (auto i : cs->unknown_vars.values()) {
+    Vec<cchar *> names;
+    sorted_unknown_vars(cs, names);
+    for (cchar *i : names) {
       if (promote_field(cs, i)) { again = true; ++n_eager_promote; }
     }
   }

@@ -3,7 +3,7 @@
 **Status:** open, filed 2026-08-29 from the issues/119 corpus A/B.
 **Affects:** `shedskin_examples/richards/richards.py`; a polymorphic
 dispatch that resolves to nothing useful.
-**Severity:** silent. Zero warnings, exit 0, wrong output — the shape
+**Severity:** silent. Exit 0, wrong output (it does emit 4 warnings, all named below) — the shape
 [ifa/102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
 is about, one step worse than the abort it replaced.
 
@@ -72,3 +72,57 @@ the wrong one.
 - A reduced richards prints `True` on both backends and matches CPython.
 - The full program prints `True` ten times and a nonzero `TIME`.
 - `corpus_sweep.sh -m check` reports richards with a real oracle.
+
+## Investigated 2026-08-30: three defects, one of them root-caused
+
+`schedule()` walks the task list and does nothing, so `holdCount` and
+`qpktCount` stay 0 and the self-check fails. Instrumenting the loop
+against CPython:
+
+```
+        CPython                 pyc
+loop 1  ident 6                 ident 6
+loop 2  ident 5                 ident 5
+loop 3  ident 4                 ident 3000        <- priority, not ident
+loop 4  ident 4                 ident 0
+loop 5  ident 4                 ident -44889163002019841
+```
+
+**1. Wrong field offsets — FIXED, see
+[121](121-sibling-subclass-field-layout.md).** The four `Task`
+subclasses get their inherited data fields at different struct slots
+(`ident` at e31/e32/e33 across siblings), so a union receiver reads a
+neighbouring field. `3000` is `HandlerTask`'s `priority`. Fixing this
+alone makes the traced prefix match CPython **exactly**. Landed 2026-08-30;
+richards still prints False, so 2 and 3 remain.
+
+**2. `t` is typed `Packet` in `schedule()`.** Two warnings pyc already
+emits:
+
+    richards.py:358: illegal call argument type 't' illegal: Packet
+
+`Packet` and `Task` both have `link` and `ident` fields. Renaming
+`Packet.link` to `plink` (semantics-preserving; CPython still prints
+`True`) removes both warnings, so the task list's element type really is
+being contaminated by `Packet`. A two-class shared-field-name repro
+(`tests/`-sized, both classes with `link` + their own id field) does
+NOT reproduce it, so something further in richards' shape is required —
+not yet isolated.
+
+**3. The `TaskRec` union is not narrowed.** Two more warnings:
+
+    richards.py:272: illegal call argument type 'h'
+                     illegal: ( DeviceTaskRec IdleTaskRec WorkerTaskRec )
+
+`Task.handle` is one member slot shared by all four subclasses, so
+`self.fn(msg, self.handle)` in `runTask` passes the union of all four
+`TaskRec` types into each `fn`, and `assert isinstance(h,
+HandlerTaskRec)` does not narrow it away. The union is pure imprecision
+— a `HandlerTask`'s handle is always a `HandlerTaskRec`. A 20-line
+repro of that shape (base storing a handle, subclasses asserting its
+type) compiles clean and runs correctly, so again richards needs more
+than the obvious pattern. Converting the `assert` to `if not
+isinstance(...): return` makes it worse (11 warnings, compile fails).
+
+With 1 fixed and 2 worked around by the rename, richards still prints
+`False` — so 3, or something past it, is independently wrong.
