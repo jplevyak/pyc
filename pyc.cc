@@ -175,6 +175,7 @@ void compile(cchar *fn) {
   // different, general property of mark_live_code's design.
   mark_exc_checks_constant(fa);
   if (ifa_optimize() < 0) fail("unable to optimize program");
+  ifa_dbg_bodies("after-optimize");  // ifa/issues/112
   if (fgraph) ifa_graph(fn);
   if (fdump_html) {
     char mktree_dir[512];
