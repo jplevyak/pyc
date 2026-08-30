@@ -8,6 +8,8 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__de4ea252+36eaaedb` | 2026-08-30 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
+| `check__default__de4ea252` | 2026-08-30 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
 | `check__default__f2501586` | 2026-08-29 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
 | `check__default__f2501586+0a43ff92` | 2026-08-29 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
 
@@ -71,3 +73,34 @@ Both arms are wrong; only the failure mode moved. Filed as issues/120.
   edit — even to `corpus_sweep.sh` itself — makes the next invocation
   MISS the cache and silently start a fresh 40-minute run. Check that a
   repeat prints `cached:` and nothing else.
+
+## The 2026-08-30 A/B: ifa/112's `remove_unused_closures` `return` -> `break`
+
+The two `de4ea252` rows are one A/B. Baseline is clean HEAD; the
+`+36eaaedb` arm changes the `return` at `fa.cc:9382` to `break`, so that
+EVERY AVar of a Var gets its unused closures cleaned rather than only
+the first one reached. Run sequentially, with a rebuild between arms.
+
+Program by program across all 77, the diff is **one line**:
+
+```
+score4   baseline run_rc=124 (timeout)   break run_rc=0 (completes)
+```
+
+**That difference is NOISE, not an effect.** Re-run alone under the SAME
+(break) build, score4 gives `rc=124`, `rc=0`, `rc=124` across three
+runs: its runtime straddles the 120s `-t` boundary, and CPython times
+out on it too (`cpy_rc=124`, so there is no stdout oracle either). Same
+shape as the `ac_encode` artifact recorded above, with one difference —
+these arms were run SEQUENTIALLY, so contention is not the cause.
+score4 simply sits on the limit.
+
+So the A/B is **neutral**: no real change in compile status, warning
+counts, run status or stdout anywhere in the corpus. `break` does change
+the emitted C (32 structural lines on msp_ss, all additional getters,
+41367 -> 41383 lines) — it is just not a change the corpus can observe.
+
+Worth knowing for the next A/B: a program whose runtime is near `-t`
+flips on its own. Check any single-program difference by re-running that
+program alone, several times, under ONE build, before attributing it to
+the change under test.
