@@ -103,22 +103,45 @@ touching coroutines or emitted IR is not.
 
 ## Corpus sweeps — check the cache before running one
 
-A `shedskin_examples` sweep costs 15-40 minutes, and the same one gets
-re-run across sessions because nothing recorded that it had been done, or
-what tree it was done against. `./corpus_sweep.sh` fixes both: results
-are cached under `sweeps/`, keyed on the WORKING TREE — HEAD's short
-hash, plus a digest of the uncommitted diff when the tree is dirty — so a
-repeat on an unchanged tree returns instantly, and a result from a
-different tree is never mistaken for a current one.
+A `shedskin_examples` sweep gets re-run across sessions because nothing
+recorded that it had been done, or what tree it was done against.
+`./corpus_sweep.sh` fixes that: results are cached under `sweeps/`, keyed
+on the WORKING TREE — HEAD's short hash, plus a digest of the uncommitted
+diff when the tree is dirty — so a repeat on an unchanged tree returns
+instantly, and a result from a different tree is never mistaken for a
+current one.
 
 ```sh
 ./corpus_sweep.sh -l                      # what has already been measured
-./corpus_sweep.sh -m compile              # pyc exit status only      (~15 min)
-./corpus_sweep.sh -m run                  # + the binary's exit status (~25 min)
+./corpus_sweep.sh -m compile              # pyc exit status only       (~5 min)
+./corpus_sweep.sh -m run                  # + the binary's exit status (~11 min)
 ./corpus_sweep.sh -m check                # + warnings, CPython rc,
-                                          #   and stdout vs CPython    (~40 min)
+                                          #   and stdout vs CPython    (~11 min)
 ./corpus_sweep.sh -m compile -e "PYC_CSELEM=3"
+./corpus_sweep.sh -m check -R             # + confirm run timeouts alone
 ```
+
+**It runs parallel (2026-08-31): `-j` compiles at `nproc`, `-J` runs and
+CPython at `nproc/4`, and CPython results are cached in
+`sweeps/cpython-cache/` (gitignored) across sweeps.** `check` went 40 →
+11 minutes, validated at 76-of-77 programs byte-identical to the serial
+script on one tree and one binary; the 77th is `score4`, which straddles
+the 120 s cap and flips on repeats of a single build. The remaining floor
+is `othello3`, which takes 317 s **on its own** to fail to compile.
+
+Two things follow from the cache. CPython's answer changes only when the
+corpus does, so the key is the corpus tree hash + uncommitted `**/*.py` +
+the python3 version — pass `-C` to force a re-run (a few programs, e.g.
+`oliva2`, read a file their own run rewrites). And a timeout is the one
+verdict a parallel pass can fabricate, so `rc=124` is always re-taken
+ALONE for CPython (`hq2x` needs 116 s of the 120 s cap and WAS being
+fabricated) and under `-R` for the pyc binaries (measured: 0 of 72).
+
+**The tree key deliberately ignores what a sweep itself writes** — its own
+`sweeps/*.tsv` and `INDEX.md` row, and every corpus output file the
+binaries rewrite (`chaos/py.ppm`, `tonyjpegdecoder/tiger1.bmp`, …). It
+did not before, so finishing a sweep changed the key it had just recorded
+and **the cache could never hit**. A corpus `.py` edit still invalidates.
 
 **Run `-l` before starting a sweep**, and record the result of any new one
 in the issue it was measured for. `sweeps/*.tsv` is text and IS committed
@@ -132,10 +155,12 @@ answer.
 
 Two ways to get a sweep that looks real and is not:
 
-- **Never run two sweeps concurrently.** They contend for the machine and
-  produce spurious `rc=124` timeouts — a "regression" in one arm of an
-  A/B that vanishes when the program is re-run alone. One such reading
-  survived into a comparison in this repo before being caught.
+- **Never run two sweeps concurrently.** More so now that one sweep uses
+  the whole machine. They contend and produce spurious `rc=124` timeouts
+  — a "regression" in one arm of an A/B that vanishes when the program is
+  re-run alone. One such reading survived into a comparison in this repo
+  before being caught. Within a single sweep this is now handled: see the
+  confirmation rule above.
 - **Never `make` while a sweep is running.** Relinking `pyc` mid-sweep
   makes in-flight invocations die with `Permission denied`, which the
   sweep records as a compile failure.

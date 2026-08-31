@@ -154,3 +154,4 @@ out_class
 out_dyn
 out_mc
 baseline
+sweeps/cpython-cache/

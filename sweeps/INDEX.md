@@ -127,3 +127,82 @@ were previously swallowed. It is *not* purely cosmetic, though —
 `fa->type_violations.set_count()` gates the splitter's self-product
 eviction — which is why the run/stdout columns were the ones to check,
 and why `-m compile` would not have been evidence.
+
+## 2026-08-31: corpus_sweep.sh went parallel, and CPython results are cached
+
+`check` went from **~40 minutes to ~11** (657 s warm), and the result is
+not a different measurement — validated against the serial script on the
+same tree and the same `pyc` binary, **76 of 77 programs byte-identical**.
+
+Where the time goes now, and what bounds it:
+
+| phase | wall | bound by |
+|---|---|---|
+| compile, `-j32` | 311 s | `othello3` ALONE — it takes 306 s to fail |
+| run, `-J8` | 334 s | the ten binaries that sit on the 120 s cap |
+| CPython, `-J8` | **0 s** | 72/72 cache hits |
+
+Total 646 s. Whether the compile phase can overlap the run phase is the
+only remaining lever, and it is not obviously worth taking: `othello3`
+alone is 306 of the 311 s, and running binaries under a 32-wide compile
+is exactly the contention the confirmation rule below exists to detect.
+
+The CPython cache lives in `sweeps/cpython-cache/<key>/` (gitignored, 17
+MB), keyed on the corpus tree hash + uncommitted `**/*.py` + the python3
+version. It is worth having because **19 of the 77 programs time out
+under CPython** — 38 minutes per `check` sweep spent re-deriving a
+constant that only a corpus change can move. `-C` forces a re-run.
+
+### The one differing program, and what it taught
+
+```
+score4   serial baseline run_rc=0   parallel run_rc=124
+```
+
+Not parallelism. Re-run ALONE under this build, score4 gives `rc=124`
+three times out of three (plus the run inside the confirmation pass), and
+the 2026-08-30 A/B above already recorded it flipping 124/0/124 alone. It
+straddles the cap. The *serial baseline's* `0` was the outlier.
+
+### Why the confirmation rule is "rc=124 only"
+
+The first attempt re-ran anything that used more than half its timeout:
+**51 programs, 89 minutes, one finding.** The rule is now the useful half
+of that. A parallel pass can only turn a completion into a timeout, never
+the reverse, so `rc=124` is the only verdict contention can fabricate.
+
+The one real fabrication it caught is worth recording: at `-J8`, CPython
+reported `hq2x` as `rc=124`; alone it finishes in **116 s of a 120 s
+cap**. No `-J` setting fixes a program that close to the line — only the
+alone-run does. And a fabricated CPython timeout is not cosmetic: it
+drops the program out of the stdout comparison entirely (`stdout_match`
+becomes `-`), so `hq2x` would have silently stopped being checked. That
+is why CPython's timeouts are confirmed unconditionally while the pyc
+side is `-R`: the CPython answer is cached, so it is paid once per
+corpus, and the pyc side measured **0 fabrications in 72 programs**.
+
+### The cache never hit, in any session, ever
+
+Found while testing the above, and older than any of it. The tree key is
+`sha1(git diff HEAD + git status --porcelain)`, and **finishing a sweep
+mutates all of its own inputs**: it writes a new untracked
+`sweeps/*.tsv`, appends a row to the tracked `sweeps/INDEX.md`, and lets
+every corpus binary rewrite its own output files (`chaos/py.ppm`,
+`tonyjpegdecoder/tiger1.bmp`, `oliva2/oliva.pgm`, …, all tracked). So the
+key computed on the next invocation never matched the one just recorded —
+measured directly: three different digests off one unchanged source tree.
+Every "repeat" was a fresh 40-minute sweep.
+
+The key now excludes `sweeps/` and everything under `shedskin_examples/`
+that is not a `.py`. A corpus SOURCE edit still invalidates it; a corpus
+OUTPUT does not. Proven end to end: two `-m check` runs back to back, no
+edits between them — 646 s, then `cached:` instantly.
+
+One trap for whoever touches this next: it needs TWO `git` invocations,
+not one clever pathspec. Git applies every `:!` exclusion *after* all
+inclusions, so `-- . ':!shedskin_examples' ':(glob)shedskin_examples/**/*.py'`
+silently drops the re-include and a corpus source edit stops
+invalidating the key. The "must differ" case is what caught it.
+
+**"Never run two sweeps concurrently" still holds** — more so now, since
+one sweep already uses the whole machine.
