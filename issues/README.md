@@ -773,3 +773,4 @@ commit ref recorded in each file's status line.
 - [107](107-undefined-names-warn-then-segfault.md) — an undefined name compiles with exit 0 and segfaults; target is a CPython-consistent `name 'X' is not defined` error.
 - [108](closed/108-async-with-as-target-not-bound.md) **(closed)** — `with … as X` (sync *and* async) did not bind `X`; found and fixed via 107.
 - [110](110-tuple-from-iterable-returns-a-list.md) — `tuple(iterable)` returns a list; prints `[..]` not `(..)`, and manufactures the `{list, tuple}` union behind sunfish's abort.
+- [122](122-list-ordering-comparisons-missing.md) — `list` has no `__lt__`/`__le__`/`__gt__`/`__ge__`, so `[1,2] < [1,3]` and any tuple compare that ties into its list tail are unresolvable; surfaced (not caused) by ifa/098's second-defect fix.

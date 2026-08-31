@@ -1,0 +1,1 @@
+issues/122 -- `list` has no ordering comparisons (__lt__/__le__/__gt__/__ge__); `[1,2] < [1,3]` is an unresolved call, and a tuple compare that ties into its list tail (mastermind2) degrades to a bottom-typed condition. Surfaced by ifa/issues/098 second-defect fix; the check file holds CPython output and flips to PASS when list ordering lands.

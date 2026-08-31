@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__c8fbb054+2b9aa817` | 2026-08-31 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
 | `check__default__de4ea252+36eaaedb` | 2026-08-30 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
 | `check__default__de4ea252` | 2026-08-30 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
 | `check__default__f2501586` | 2026-08-29 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
@@ -104,3 +105,25 @@ Worth knowing for the next A/B: a program whose runtime is near `-t`
 flips on its own. Check any single-program difference by re-running that
 program alone, several times, under ONE build, before attributing it to
 the change under test.
+
+## The 2026-08-31 A/B: ifa/098's second defect (silent dispatch failures)
+
+Baseline is `check__default__de4ea252+36eaaedb`, whose tree content is
+identical to clean HEAD `c8fbb054` (the `+36eaaedb` arm IS what
+`c8fbb054` committed) — so no baseline arm had to be re-run. The test arm
+`c8fbb054+2b9aa817` adds ifa/098's `dispatched_this_pass` fix to
+`collect_argument_type_violations`: an `out_edge_map` entry no longer
+counts as "dispatched" unless one of its edges is in the per-pass
+`EntrySet::out_edges`.
+
+Totals are identical (`compile_fail=5 run_fail=41 stdout_differs=23
+with_warnings=42`), and **program by program every difference is in the
+`warns` column alone** — `compile_rc`, `run_rc`, `cpy_rc` and
+`stdout_match` match on all 77. Warnings rise on 20 programs, 1615 →
+2040 corpus-wide (`rubik` 67 → 176, `doom` 92 → 210, `plcfrs` 82 → 123).
+
+That is the intended shape: the change surfaces dispatch failures that
+were previously swallowed. It is *not* purely cosmetic, though —
+`fa->type_violations.set_count()` gates the splitter's self-product
+eviction — which is why the run/stdout columns were the ones to check,
+and why `-m compile` would not have been evidence.
