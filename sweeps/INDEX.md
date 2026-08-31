@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__028c1150+7d0964f7` | 2026-08-31 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
 | `check__default__c8fbb054+2b9aa817` | 2026-08-31 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
 | `check__default__de4ea252+36eaaedb` | 2026-08-30 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
 | `check__default__de4ea252` | 2026-08-30 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
@@ -203,6 +204,32 @@ not one clever pathspec. Git applies every `:!` exclusion *after* all
 inclusions, so `-- . ':!shedskin_examples' ':(glob)shedskin_examples/**/*.py'`
 silently drops the re-include and a corpus source edit stops
 invalidating the key. The "must differ" case is what caught it.
+
+### …and then the commit orphaned it anyway
+
+Fixing the above exposed the other half. The tree key answers a HUMAN's
+question — *which commit was this measured against?* — and it therefore
+changes when you **commit**. So the ten minutes you just spent measuring
+a change were thrown away by the very commit that landed it. Reproduced
+directly: commit, re-run, watch a full sweep start.
+
+There is now a second key answering the machine's question — *is the
+thing under test the same?* — written into every new TSV as
+`# content <digest>`, over the `pyc` binary (libifa is linked into it),
+`__pyc__/*.py` (read at run time, not linked), every corpus `*.py`, the
+`-e` overrides, the mode, and **both timeouts** — a `-t 20` sweep is not
+the same measurement as a `-t 120` one, and the tree key never noticed.
+Lookup tries the exact filename first, then any same-mode/same-env TSV
+carrying the same content digest, reporting which one it matched.
+
+It is deliberately conservative. `make clean` re-stamps `BUILD_VERSION`
+into `version.o` and changes the binary with no source change, costing a
+needless re-measure. A false MISS wastes time; a false HIT would report
+a stale answer as current.
+
+Filenames are unchanged, so nothing in this directory moved and the
+five older TSVs still resolve by tree name exactly as before — they
+simply carry no content line to match on.
 
 **"Never run two sweeps concurrently" still holds** — more so now, since
 one sweep already uses the whole machine.

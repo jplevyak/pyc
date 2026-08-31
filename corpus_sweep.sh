@@ -199,6 +199,29 @@ CPYCACHE="$SWEEPS/cpython-cache/$CPYKEY"
 
 mkdir -p "$SWEEPS"
 
+# --- the content key ----------------------------------------------------
+# The tree key names a sweep for a HUMAN ("which commit was this?"), and
+# it necessarily changes when you COMMIT -- so the measurement you just
+# paid ten minutes for is orphaned by the very commit that lands it.
+# This second key answers the machine's question instead: is the thing
+# under test the same? Everything that can change a sweep's result and
+# nothing that cannot --
+#   * the `pyc` binary (libifa is linked into it, so this covers ifa too)
+#   * `__pyc__/*.py`, which pyc READS at run time rather than linking
+#   * every corpus `*.py`
+#   * the env overrides and both timeouts (a `-t 20` sweep is not the
+#     same measurement as a `-t 120` one -- the old key ignored this)
+# It is deliberately conservative: `make clean` re-stamps BUILD_VERSION
+# into version.o and changes the binary with no source change, which
+# costs a needless re-measure. A false MISS wastes time; a false HIT
+# would report a stale answer as current.
+CONTENT=$( { sha1sum "$ROOT/pyc" 2>/dev/null || echo nopyc
+             cat "$ROOT"/__pyc__/*.py 2>/dev/null | sha1sum
+             find "$ROOT/shedskin_examples" -name '*.py' -print0 2>/dev/null \
+               | sort -z | xargs -0 -r cat | sha1sum
+             printf '%s|%s|%s\n' "${ENVS:-}" "${TMO:-}" "$MODE"
+           } | sha1sum | cut -c1-12 )
+
 summarize() {
   local f=$1
   awk -F'\t' '
@@ -221,11 +244,26 @@ summarize() {
     }' "$f"
 }
 
-if [ -f "$OUT" ] && grep -q '^DONE' "$OUT" && [ "$FORCE" = 0 ]; then
-  echo "cached: $OUT"
-  sed -n '2,4p' "$OUT" | sed 's/^/  /'
-  summarize "$OUT"
-  exit 0
+if [ "$FORCE" = 0 ]; then
+  HIT=""
+  if [ -f "$OUT" ] && grep -q '^DONE' "$OUT"; then
+    HIT=$OUT
+  else
+    # Same content measured under a different tree name -- typically the
+    # same work, before and after the commit that landed it.
+    for f in "$SWEEPS/${MODE}__${ENVSLUG}__"*.tsv; do
+      [ -f "$f" ] || continue
+      grep -q '^DONE' "$f" || continue
+      grep -qx "# content $CONTENT" "$f" || continue
+      HIT=$f; break
+    done
+  fi
+  if [ -n "$HIT" ]; then
+    [ "$HIT" = "$OUT" ] && echo "cached: $HIT" || echo "cached (same content, measured as $(basename "$HIT" .tsv)): $HIT"
+    sed -n '2,5p' "$HIT" | sed 's/^/  /'
+    summarize "$HIT"
+    exit 0
+  fi
 fi
 
 CT=${TMO:-400}
@@ -320,6 +358,7 @@ fi
   echo "# key   $KEY"
   echo "# mode  $MODE   env: ${ENVS:-(default)}"
   echo "# tree  $TREE"
+  echo "# content $CONTENT"
   echo "# date  $(date -Is)"
   printf 'name\tcompile_rc\twarns\trun_rc\tcpy_rc\tstdout_match\n'
 } > "$OUT"

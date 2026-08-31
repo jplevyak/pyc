@@ -137,11 +137,17 @@ verdict a parallel pass can fabricate, so `rc=124` is always re-taken
 ALONE for CPython (`hq2x` needs 116 s of the 120 s cap and WAS being
 fabricated) and under `-R` for the pyc binaries (measured: 0 of 72).
 
-**The tree key deliberately ignores what a sweep itself writes** — its own
-`sweeps/*.tsv` and `INDEX.md` row, and every corpus output file the
-binaries rewrite (`chaos/py.ppm`, `tonyjpegdecoder/tiger1.bmp`, …). It
-did not before, so finishing a sweep changed the key it had just recorded
-and **the cache could never hit**. A corpus `.py` edit still invalidates.
+**The cache is keyed twice.** The `tree` key names a sweep for a human
+(which commit?) and deliberately ignores what a sweep itself writes — its
+own `sweeps/*.tsv` and `INDEX.md` row, and every corpus output file the
+binaries rewrite (`chaos/py.ppm`, `tonyjpegdecoder/tiger1.bmp`, …).
+Without that, finishing a sweep changed the key it had just recorded, so
+**the cache could never hit**. The `# content` key answers the other
+question — is the thing under test the same? — over the `pyc` binary,
+`__pyc__/*.py`, every corpus `*.py`, `-e`, the mode and both timeouts. It
+exists because the tree key necessarily changes when you COMMIT, which
+orphaned the measurement the commit was landing. Lookup tries the
+filename, then the content digest. A corpus `.py` edit invalidates both.
 
 **Run `-l` before starting a sweep**, and record the result of any new one
 in the issue it was measured for. `sweeps/*.tsv` is text and IS committed
