@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__b073a011+6142c9e1` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
 | `check__default__b0aa9f0b+e265215f` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
 | `check__PYC_CLONE_CSEQ_1__b0aa9f0b+e265215f` | 2026-09-01 | programs=77 compile_fail=4 run_fail=44 stdout_differs=22 with_warnings=43 |
 | `check__default__9a2ddd0d+06523fde` | 2026-09-01 | programs=77 compile_fail=4 run_fail=43 stdout_differs=23 with_warnings=43 |
@@ -310,3 +311,14 @@ goldens move, `clone` and `dce` on `iterator_missing_field`, `funs=4 → 3`
 ifa/121 DCE already dropped). **The test suites do not see this
 regression at all.** Only the corpus does, which is the whole argument
 for running it on anything touching clone equivalence.
+
+## 2026-09-01: zero-width struct placeholders (ifa/121)
+
+`check__default__b073a011+6142c9e1` vs `check__default__b0aa9f0b+e265215f`:
+**identical on all 77 programs**, no column changed.
+
+The struct emitter must emit a member for every `has` index — eliding one
+breaks the `eN` numbering that several access sites compute independently
+— but the typeless ones do not need STORAGE. `_CG_void eN;` became
+`char eN[0];`: **7078 placeholders across 60 programs, 56624 bytes of
+struct storage removed**, pygmy's rendered image byte-identical.
