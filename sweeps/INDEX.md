@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__635d26b6+c1a28ccc` | 2026-09-01 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
 | `check__default__e3fd890d+8e66a2b0` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
 | `check__default__b073a011+6142c9e1` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
 | `check__default__b0aa9f0b+e265215f` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
@@ -323,3 +324,26 @@ breaks the `eN` numbering that several access sites compute independently
 — but the typeless ones do not need STORAGE. `_CG_void eN;` became
 `char eN[0];`: **7078 placeholders across 60 programs, 56624 bytes of
 struct storage removed**, pygmy's rendered image byte-identical.
+
+## 2026-09-01: ifa/122's layout check made fatal
+
+`check__default__635d26b6+c1a28ccc` vs `check__default__e3fd890d+8e66a2b0`,
+a two-line diff and both lines are the intended trade:
+
+```
+< bh   compile_rc=0  run_rc=139     > bh   compile_rc=1
+< go   compile_rc=0  run_rc=139     > go   compile_rc=1
+```
+
+`compile_fail` **3 → 5**, `run_fail` **44 → 42**. Nothing else in the
+corpus trips the check — the same two programs the census found, and no
+surprises from making it an error.
+
+This is a deliberate regression in the "programs that build" column and
+not a regression in anything that worked: both already produced a
+segfault (`go`) and a corrupted heap (`bh`), and ifa/123 traced `go`'s
+crash to exactly the construct the check names. Unlike a type violation,
+a layout violation has no permissive meaning — there is no runtime check
+to insert, only a program that reads one class's field through another's
+layout — so it is fatal in every mode rather than gated on
+`fruntime_errors`.
