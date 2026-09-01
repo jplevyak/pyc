@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__9a2ddd0d+06523fde` | 2026-09-01 | programs=77 compile_fail=4 run_fail=43 stdout_differs=23 with_warnings=43 |
 | `check__default__028c1150+7d0964f7` | 2026-08-31 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
 | `check__default__c8fbb054+2b9aa817` | 2026-08-31 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
 | `check__default__de4ea252+36eaaedb` | 2026-08-30 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
@@ -233,3 +234,28 @@ simply carry no content line to match on.
 
 **"Never run two sweeps concurrently" still holds** — more so now, since
 one sweep already uses the whole machine.
+
+## The 2026-09-01 A/B: ifa/121's codegen DCE
+
+Baseline `check__default__028c1150+7d0964f7`, test arm
+`check__default__9a2ddd0d+06523fde`. The change emits each function body
+into its own buffer and writes out only what `init` transitively names.
+
+Program by program across all 77, the diff is **one line, and it is a
+win**:
+
+```
+< linalg   compile_rc=1   (6 C errors, all in functions this drops)
+> linalg   compile_rc=0   run_rc=134
+```
+
+`linalg` was one of the five corpus compile failures; its errors
+(`no matching function for call to '_CG_list_mult_internal'`) were all
+inside emitted-but-unreferenced clones. **Compile failures 5 → 4.** It
+still aborts at run time — ifa/102's class, expected for a program that
+does not converge. `run_fail` 42 → 43 and `with_warnings` 42 → 43 are
+the same event: linalg now produces a binary and a warning count where
+before it produced neither.
+
+Everything else — `run_rc`, `cpy_rc`, `stdout_match`, warning counts —
+is identical on all 77 programs.
