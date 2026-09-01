@@ -8,6 +8,8 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__b0aa9f0b+e265215f` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
+| `check__PYC_CLONE_CSEQ_1__b0aa9f0b+e265215f` | 2026-09-01 | programs=77 compile_fail=4 run_fail=44 stdout_differs=22 with_warnings=43 |
 | `check__default__9a2ddd0d+06523fde` | 2026-09-01 | programs=77 compile_fail=4 run_fail=43 stdout_differs=23 with_warnings=43 |
 | `check__default__028c1150+7d0964f7` | 2026-08-31 | programs=77 compile_fail=5 run_fail=42 stdout_differs=23 with_warnings=42 |
 | `check__default__c8fbb054+2b9aa817` | 2026-08-31 | programs=77 compile_fail=5 run_fail=41 stdout_differs=23 with_warnings=42 |
@@ -259,3 +261,52 @@ before it produced neither.
 
 Everything else — `run_rc`, `cpy_rc`, `stdout_match`, warning counts —
 is identical on all 77 programs.
+
+## The 2026-09-01 A/B: ifa/121's two clone-equivalence changes
+
+Both arms ran on one tree; the second differs only by `PYC_CLONE_CSEQ=1`.
+They answer different questions and got opposite verdicts.
+
+### A — `prim_period_offset` answers instead of aborting. LANDED.
+
+`check__default__b0aa9f0b+e265215f` vs `check__default__9a2ddd0d+06523fde`,
+**one line**:
+
+```
+< go   compile_rc=1   (fail: missmatched offsets)
+> go   compile_rc=0   run_rc=139
+```
+
+`prim_period_offset` has exactly one caller — `ES_FN::equivalent` — and it
+called `fail()` when a union receiver's member classes disagreed about a
+field's offset, killing the compile from inside an equivalence QUESTION.
+`go` is the only corpus program that hits it. It now returns a
+`kOffsetAmbiguous` sentinel and the predicate answers "not equivalent",
+which is conservative: strictly more splitting than a merge would be.
+Compile failures **4 → 3**. `go` then core-dumps, so it moves into
+ifa/102's compiles-then-crashes bucket rather than becoming a working
+program — an honest improvement, not a win.
+
+### B — let the `cssyms` loop decide clone equivalence. REJECTED.
+
+`check__PYC_CLONE_CSEQ_1__b0aa9f0b+e265215f`, same tree plus the
+coarsening, **two lines** — one of them a regression:
+
+```
+  go        compile_rc=1 -> 0     (this is A's doing, not B's)
+  voronoi2  compile_rc=0 -> 1     REGRESSION
+```
+
+`voronoi2` compiled AND ran at the baseline; under B it fails with
+`no matching function for call to '_CG_f_16022_133'` — issue 097's exact
+signature, a call site whose argument type diverges from the merged
+callee's formal. So CreationSet equivalence plus the offset check is
+still not sufficient evidence to merge two contours.
+
+It was tempting: pygmy goes 244 → 183 clones with a byte-identical
+rendered image, and both e2e suites stay at 308/0 (only two ifa-test
+goldens move, `clone` and `dce` on `iterator_missing_field`, `funs=4 → 3`
+— `codegen-c` is unchanged, because the merged clone was one the
+ifa/121 DCE already dropped). **The test suites do not see this
+regression at all.** Only the corpus does, which is the whole argument
+for running it on anything touching clone equivalence.
