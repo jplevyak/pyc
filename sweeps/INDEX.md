@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__e3fd890d+8e66a2b0` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
 | `check__default__b073a011+6142c9e1` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
 | `check__default__b0aa9f0b+e265215f` | 2026-09-01 | programs=77 compile_fail=3 run_fail=44 stdout_differs=23 with_warnings=44 |
 | `check__PYC_CLONE_CSEQ_1__b0aa9f0b+e265215f` | 2026-09-01 | programs=77 compile_fail=4 run_fail=44 stdout_differs=22 with_warnings=43 |
