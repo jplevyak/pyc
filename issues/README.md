@@ -256,13 +256,13 @@ to minimise.
   call doesn't route through constructor lowering), dotted-name
   decorators (silent no-op), and decorated *methods* (legacy
   no-op).
-- [028-raise-exception-regression-qualified-dispatch.md](028-raise-exception-regression-qualified-dispatch.md)
+- [028-raise-exception-regression-qualified-dispatch.md](closed/028-raise-exception-regression-qualified-dispatch.md)
   — `raise Exception("...")` regressed bh and richards from
   compile-with-warn to FAIL (`'Exception' has no type`); bisected
   to `a32a6467` (issue 027's qualified-static-dispatch commit),
   which simultaneously fixed go and loop, so corpus bucket COUNTS
   didn't move — compare member sets, not counts.
-- [030-with-exit-not-called-on-exception.md](030-with-exit-not-called-on-exception.md)
+- [030-with-exit-not-called-on-exception.md](closed/030-with-exit-not-called-on-exception.md)
   — `with`'s `__exit__` is never called when the body raises (and
   can't suppress the exception the way real Python allows) — the
   exception-safety gap issue 012's own filing anticipated and
@@ -511,7 +511,7 @@ commit ref recorded in each file's status line.
   calls. File had been left in `issues/` (never moved to `closed/`)
   for several days despite being fully implemented — moved as part of
   the same 2026-07-21 pass that filed
-  [030](030-with-exit-not-called-on-exception.md); its content needed
+  [030](closed/030-with-exit-not-called-on-exception.md); its content needed
   no correction, only relocation. `with`'s exception-safety
   integration was the one real gap this surfaced — see 030.
 - [012](closed/012-with-statement-unimplemented.md) — `with`
@@ -524,7 +524,7 @@ commit ref recorded in each file's status line.
   (`__exit__` on a raising body) was correctly anticipated as a
   follow-on dependent on issue 011, which landed after this issue
   closed and was never revisited — now concretely confirmed broken
-  and filed as [030](030-with-exit-not-called-on-exception.md).
+  and filed as [030](closed/030-with-exit-not-called-on-exception.md).
 - [016](closed/016-missing-grammar-level-syntax.md) — the five
   grouped parse-gap syntax forms (`async`/`await`, walrus `:=`,
   `match`/`case`, PEP 484 annotations, extended iterable unpacking)

@@ -106,7 +106,7 @@ Consistent with CPython, and taking advantage of pyc being static:
   wording should name the undefined symbol, in CPython's terms.
 
 This is the same lesson recorded against shedskin's diagnostics in
-[018](018-dict-mixed-key-types-boxing-failure.md): shedskin reports
+[018](closed/018-dict-mixed-key-types-boxing-failure.md): shedskin reports
 `*WARNING* Variable 'x' has dynamic (sub)type: {float, list}` where pyc
 reports an internal `sizeof_element` assertion. Naming the user-level
 problem is the cheap, high-value half of these issues.

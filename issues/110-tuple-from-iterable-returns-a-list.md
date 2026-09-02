@@ -326,7 +326,7 @@ machinery is not the gap either.
 
 That points at the `{None, tuple}` union rather than at `make_seq`: a
 deepcopy whose source is `None`-or-container is the
-[018](018-dict-mixed-key-types-boxing-failure.md) shape, and the new
+[018](closed/018-dict-mixed-key-types-boxing-failure.md) shape, and the new
 list-layout tuple changes which side of it resolves.
 
 ### Where this leaves 110
@@ -377,7 +377,7 @@ _CG_void t3;
 t1 = (_CG_void)_CG_prim_copy_dst(_CG_void, t2);
 ```
 
-That is the [018](018-dict-mixed-key-types-boxing-failure.md) union shape
+That is the [018](closed/018-dict-mixed-key-types-boxing-failure.md) union shape
 reached through `copy`, **not** a defect in `make_seq` — `tuple(...)` on
 its own matches CPython on `len`, indexing, `repr` and `hash`. What the
 new list-layout tuple changes is which side of that union resolves.

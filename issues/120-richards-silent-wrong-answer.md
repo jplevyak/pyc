@@ -89,7 +89,7 @@ loop 5  ident 4                 ident -44889163002019841
 ```
 
 **1. Wrong field offsets — FIXED, see
-[121](121-sibling-subclass-field-layout.md).** The four `Task`
+[121](closed/121-sibling-subclass-field-layout.md).** The four `Task`
 subclasses get their inherited data fields at different struct slots
 (`ident` at e31/e32/e33 across siblings), so a union receiver reads a
 neighbouring field. `3000` is `HandlerTask`'s `priority`. Fixing this

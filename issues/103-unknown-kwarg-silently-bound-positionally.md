@@ -195,7 +195,7 @@ and `life` calls both `defaultdict(int)` and `defaultdict(int, board)`,
 so `initial` is the union `{None, defaultdict}` at the iteration site.
 `None` has no `__iter__`, so there is no single candidate — and the `if
 initial:` guard does not narrow the type. That is the
-[018](018-dict-mixed-key-types-boxing-failure.md) family, **not** this
+[018](closed/018-dict-mixed-key-types-boxing-failure.md) family, **not** this
 issue, and the `void_type` operands in `process`/`snext` are downstream
 consequences of it.
 

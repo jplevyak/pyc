@@ -73,7 +73,7 @@ behaviours. This issue is not a codegen bug at all.
 | `{int, float}` | **works** | issue 025's numeric widening, extended to container elements 2026-08-16 (issues/035) |
 | `{None, int}` | compiles, **aborts** at dispatch | this issue; `(_CG_void)7` is a legal int→pointer cast, so it gets as far as run time |
 | `{None, float}` | **raw clang error**, no pyc diagnostic | `error: cannot cast from type 'double' to pointer type '_CG_void'` — a double cannot make that cast, so it fails earlier and more crudely. `tests/none_float_field.py` |
-| `{int, str}` | compiles, **aborts** at dispatch | [018](018-dict-mixed-key-types-boxing-failure.md)'s residue; `tests/branch_merged_scalar_union.py` |
+| `{int, str}` | compiles, **aborts** at dispatch | [018](closed/018-dict-mixed-key-types-boxing-failure.md)'s residue; `tests/branch_merged_scalar_union.py` |
 
 So the two working rows are exactly the two representations pyc *has* —
 a pointer that can be null, and a widened numeric — and every failing row
@@ -141,7 +141,7 @@ cannot represent, and neither is a `cg.cc` defect.
   (or `int64::__str__`) being dispatched on a boxed `None|int` field whose
   runtime tag matches neither arm.
 - It places the shape in the `None`-in-a-union family with
-  [018](018-dict-mixed-key-types-boxing-failure.md),
+  [018](closed/018-dict-mixed-key-types-boxing-failure.md),
   [030](030-int-float-in-place-list-mutation.md) and
   [035](035-list-element-cast-salvage-guard-and-set-item-union.md),
   but unlike those it needs no container, no in-place mutation and no

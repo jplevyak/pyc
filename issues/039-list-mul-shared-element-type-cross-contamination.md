@@ -8,7 +8,7 @@ type-sharing FA machinery `__mul__`'s `__pyc_c_call__("_CG_list_mult",
 ...)` and its `__pyc_primitive__("merge", self, self)` operand route
 through — not traced past the `__pyc__`-level symptom into `fa.cc`
 itself.
-**Related:** [035](closed/035-list-element-cast-salvage-guard-and-set-item-union.md)/[036](closed/036-list-pop-insert-tuple-hash-and-unary-literal-defaults.md)
+**Related:** [035](035-list-element-cast-salvage-guard-and-set-item-union.md)/[036](closed/036-list-pop-insert-tuple-hash-and-unary-literal-defaults.md)
 — the exact same architectural gap ("pyc's list-element-type inference
 for the general dynamic-list representation isn't scoped per
 allocation site"), first found via `tictactoe.py`'s `scores`/`set`
@@ -16,7 +16,7 @@ allocation site"), first found via `tictactoe.py`'s `scores`/`set`
 a single call site." **This issue traces it further**: `bh.py` gives a
 much cleaner, more precise trigger, and pins the mechanism specifically
 to `list.__mul__`/`__rmul__` (an `n * [x]`-shaped construction) rather
-than list construction/mutation in general. [018](018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+than list construction/mutation in general. [018](closed/018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 — the general heterogeneous-container-representation gap this is a
 member of.
 
@@ -98,7 +98,7 @@ way — only `Tree.bodies`'s *unrelated* element type changes, from
 to the shared `int.__mul__`/`list.__rmul__` construction path itself
 (not, e.g., general list-element inference, or something about `Cell`/
 `Body`/`Node`'s class hierarchy) — the same class of finding
-[035](closed/035-list-element-cast-salvage-guard-and-set-item-union.md)
+[035](035-list-element-cast-salvage-guard-and-set-item-union.md)
 described as "not fully traced" for `tictactoe.py`'s structurally
 identical `scores`/`set._items` symptom, now traced one level further.
 
@@ -152,5 +152,5 @@ step_system(i)` loop) rather than the from-scratch attempt above.
   is meant to stay homogeneous risks the same cross-contamination —
   not `bh.py`-specific, just first isolated precisely there. Likely
   the same root cause behind `tictactoe.py`'s still-open runtime crash
-  ([035](closed/035-list-element-cast-salvage-guard-and-set-item-union.md)),
+  ([035](035-list-element-cast-salvage-guard-and-set-item-union.md)),
   now with a much cleaner reproduction path to work from.

@@ -345,7 +345,7 @@ exposed the missing slot.
 So this is not really a dict bug at all. It is a codegen bug --
 a polymorphic dispatch site whose method-slot table is incomplete for
 user-defined classes -- and it is closely related to
-[ifa/110](../ifa/issues/110-FA-method-override-second-member-slot.md)'s
+[ifa/110](../ifa/issues/closed/110-override-duplicates-member-slot.md)'s
 family of member-slot problems. Anything else that makes a user class
 reach a polymorphic `__eq__` will hit it without any hashing involved,
 which is worth a reproducer of its own.

@@ -273,7 +273,7 @@ type — is tracked separately as
 [ifa/issues/097](../ifa/issues/097-CGEN-callsite-vs-clone-formal-type-mismatch.md)).
 `rdb.py` hits `sizeof_element of non-container type
 'str' (in __add__) — FA specialized a container method against a
-scalar` — [issues/018](018-dict-mixed-key-types-boxing-failure.md)'s
+scalar` — [issues/018](closed/018-dict-mixed-key-types-boxing-failure.md)'s
 own mechanism (a shared container method not cloned per element/
 receiver type), one step more severe than that issue's core repro (a
 genuine non-container reaching the method, not just a differently-typed

@@ -1,12 +1,16 @@
 # 121 — sibling subclasses of one base get inherited fields at different struct slots
 
-**Status: FIXED 2026-08-30**, filed the same day while root-causing
-[120](120-richards-silent-wrong-answer.md). `promote_field` now promotes
+**Status: CLOSED 2026-09-02** — fixed 2026-08-30, archived after
+re-verifying: `tests/sibling_subclass_field_layout.py` is in the suite
+with no `.known_issue` sidecar and passes (suite green, 308/17/0).
+
+**FIXED 2026-08-30**, filed the same day while root-causing
+[120](../120-richards-silent-wrong-answer.md). `promote_field` now promotes
 a CreationSet's pending fields in name-sorted order, so sibling classes
 agree on slot assignment. It briefly cost a `.known_issue` on
 `tests/deepcopy_objects.py` — once sibling classes stop getting
 different field orders they become genuinely equivalent, and
-[ifa/112](../ifa/issues/112-CGEN-nondeterministic-emitted-c.md)'s
+[ifa/112](../../ifa/issues/closed/112-CGEN-nondeterministic-emitted-c.md)'s
 pointer-hashed tiebreaks started deciding between them. **That cost is
 gone**: the same session fixed the FA-side source (violation iteration
 order), and `deepcopy_objects` is deterministic across 8 compiles with
@@ -58,7 +62,7 @@ offsets that `prim_period_offset` validates ("mismatched offsets"). The
 emitter uses `cs->vars` / `has` order instead. **The check passes on an
 ordering the emitter does not use**, so the two never disagree where it
 would be noticed. Related to
-[ifa/118](../ifa/issues/118-union-field-representation-and-polymorphic-field-offset.md)'s
+[ifa/118](../../ifa/issues/118-union-field-representation-and-polymorphic-field-offset.md)'s
 `go` half ("one field name, two classes, two offsets"), which is the
 same disagreement caught at compile time instead of miscompiled.
 
@@ -114,7 +118,7 @@ promoted fields.
 - `tests/sibling_subclass_field_layout.py` matches CPython on both
   backends (landed, no `.known_issue`).
 - richards' scheduler trace now matches CPython for every traced
-  iteration — [120](120-richards-silent-wrong-answer.md) needs more
+  iteration — [120](../120-richards-silent-wrong-answer.md) needs more
   than this and stays open.
 - All five gates green.
 

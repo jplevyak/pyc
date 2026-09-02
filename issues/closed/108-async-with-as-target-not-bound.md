@@ -1,7 +1,7 @@
 # 108 — `async with … as X` does not bind `X`
 
 **Status: FIXED 2026-08-18**, same day, as part of
-[107](107-undefined-names-warn-then-segfault.md). `PY_with_item` now
+[107](../107-undefined-names-warn-then-segfault.md). `PY_with_item` now
 marks its `as` target `PY_STORE`, exactly as assignment targets and `for`
 variables are marked.
 
@@ -12,7 +12,7 @@ anywhere in the file masked it. With scope-aware tracking, `with_basic.py`
 failed too — and one fix resolved both.
 
 **Status:** open, found 2026-08-18 when
-[107](107-undefined-names-warn-then-segfault.md)'s undefined-name check
+[107](../107-undefined-names-warn-then-segfault.md)'s undefined-name check
 made it visible. Repro: `tests/async_syntax.py` (`.known_issue`).
 
 ## Symptom

@@ -207,7 +207,7 @@ run it's `set(row)`'s construction inside `isvictory()`, well before
 is not the source, just the first victim in this program's
 particular execution order.
 
-This is the same class of gap [018](018-dict-mixed-key-types-boxing-failure.md)
+This is the same class of gap [018](closed/018-dict-mixed-key-types-boxing-failure.md)
 / [ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 already track (no boxed/tagged representation for a genuinely
 heterogeneous scalar union) and the same *category* of finding as

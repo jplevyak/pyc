@@ -14,7 +14,7 @@ for several days — moved as part of a 2026-07-21 documentation-hygiene
 pass; no content in the status block below needed correcting; only
 `with`'s exception-safety integration (see the last "Related" entry)
 was actually still outstanding, now filed as
-[030](../030-with-exit-not-called-on-exception.md).
+[030](030-with-exit-not-called-on-exception.md).
 `raise`/`try`/`except`/`else`/`finally`, typed
 clauses (`except X as e:`, tuple forms), bare re-raise, and
 cross-function propagation all work on both backends. Landing it

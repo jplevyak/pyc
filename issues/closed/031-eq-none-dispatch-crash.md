@@ -125,7 +125,7 @@ PY_CMP_IS_NOT)`, non-None operands) is also untouched.
 ## Related
 
 - [ifa/issues/closed/024](../../ifa/issues/closed/024-is-comparison-narrowing.md)
-  and [closed/004](closed/004-is-operator-unimplemented.md) — the
+  and [closed/004](004-is-operator-unimplemented.md) — the
   `is`/`is not` → `prim_isinstance`/`prim_is` lowering this fix
   mirrors.
 - [ifa/issues/063](../../ifa/issues/closed/063-no-type-bucket-triage.md) —

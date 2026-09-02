@@ -10,7 +10,7 @@
 > **O(n²)** in pyc's own builtin library, so each `main()` takes ~15 s on
 > this ~250 KB image and a 20-iteration run simply exceeds any timeout.
 > The general defect is filed as
-> [050](050-pyc-string-builders-are-quadratic.md); this issue is its first
+> [050](../050-pyc-string-builders-are-quadratic.md); this issue is its first
 > victim and should be closed with it.
 
 ## Bisection, 2026-08-15
@@ -53,7 +53,7 @@ prototype state, and not the second call.
 
 
 **Status:** open, found 2026-08-08 while diagnosing
-[issues/025](025-shedskin-examples-coverage.md)'s TODO list item 5.
+[issues/025](../025-shedskin-examples-coverage.md)'s TODO list item 5.
 The doc's own "tonyjpegdecoder crashes the compiler with an FPE"
 claim is **stale** — re-verified today, the compiler no longer
 crashes at all (see the two fixes below); this issue tracks the
@@ -112,9 +112,9 @@ Each `main()` call constructs an entirely fresh `TonyJpegDecoder()`,
 calls. This shape (independently-constructed instances behaving as
 if they share state) matches the general *family* of bugs this
 session already found and fixed twice this week —
-[issues/closed/017](closed/017-multi-instance-mutation-corruption.md)
+[issues/closed/017](017-multi-instance-mutation-corruption.md)
 (dict/set sharing a class-body prototype's mutable list fields) and
-[issues/closed/044](closed/044-list-add-mutates-receiver.md)
+[issues/closed/044](044-list-add-mutates-receiver.md)
 (`list.__add__` mutating its receiver) — but neither of those
 specific mechanisms was confirmed here: `TonyJpegDecoder.__init__`
 already gives every mutable field (lists, dicts, `HUFFTABLE()`
@@ -128,11 +128,11 @@ pattern), and no obvious `list + [...]` accumulation pattern
 `pyc -r tonyjpegdecoder.py` (with `-r` passed) fails outright at
 compile time: `fail: unable to resolve to a single function at call
 site` — the exact message
-[ifa/issues/090](../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md)
+[ifa/issues/090](../../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md)
 documents. This originally looked backwards against `if
 (!fruntime_errors) fail(...)` (`ifa/codegen/cg.cc:956`) — passing `-r`
 seemed like it should *suppress* this fail, not cause it. Resolved
-while implementing [ifa/085](../ifa/issues/closed/085-CGEN-dead-if-unresolved-condition-no-guard.md)'s
+while implementing [ifa/085](../../ifa/issues/closed/085-CGEN-dead-if-unresolved-condition-no-guard.md)'s
 fix: `-r`/`--runtime_errors` is a **negative** flag — `pyc.cc`'s
 `ArgumentDescription` entry uses type code `'f'` (lowercase), which
 `ifa/common/arg.cc` sets to `false` when the flag is *given*; the

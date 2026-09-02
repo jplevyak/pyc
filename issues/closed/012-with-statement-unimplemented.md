@@ -24,7 +24,7 @@ landed 2026-07-17, well after this issue was closed, so the
 dependency was never revisited. Confirmed via direct test: pyc's
 `with` skips `__exit__` and the "after with" line entirely when the
 body raises, diverging from CPython. Filed as
-[030](../030-with-exit-not-called-on-exception.md).
+[030](030-with-exit-not-called-on-exception.md).
 
 **Affects:** `python_ifa_build_if1.cc` (`build_if1_with_items`,
 `build_if1_assign_target` — new; `PY_with_stmt` case; `ctx.with_stack`
@@ -34,7 +34,7 @@ cleanup emission at `PY_return_stmt`/`PY_break_stmt`/`PY_continue_stmt`);
 **Related:** [011](011-exception-handling-unimplemented.md)
 (exception handling — landed 2026-07-17, three weeks after this
 issue closed; its unwinding path was never wired into `with`'s
-cleanup, hence issue 030); [030](../030-with-exit-not-called-on-exception.md)
+cleanup, hence issue 030); [030](030-with-exit-not-called-on-exception.md)
 (the exception-safety follow-on this issue's own text anticipated).
 
 ## Symptom
@@ -126,7 +126,7 @@ decremented around `for`/`while` bodies for exactly this check).
 4. (Follow-on, blocked on issue 011 at filing time) `__exit__` still
    runs when `BODY` raises. **Still broken** — issue 011 has since
    landed but this was never revisited; confirmed by direct test and
-   filed as [030](../030-with-exit-not-called-on-exception.md).
+   filed as [030](030-with-exit-not-called-on-exception.md).
 5. Add `tests/with_basic.py` + `.exec.check` — done; also
    `tests/with_break.py` (break out of a loop with nested `with`s)
    and `tests/with_return.py` (return from inside a `with`), both

@@ -102,7 +102,7 @@ reverted**, and the reason is worth keeping: removing the
 `chr()`/`str.__add__` loop shifted FA's trajectory enough that
 `list.__add__` began being specialised against a `bytes` receiver, and
 `rdb.py` stopped compiling with `sizeof_element of non-container type
-'bytes'` (the [018](018-dict-mixed-key-types-boxing-failure.md) family).
+'bytes'` (the [018](closed/018-dict-mixed-key-types-boxing-failure.md) family).
 The chunked version keeps that loop and costs nothing on the corpus: zero
 exit-code changes, +1.4% analysis time, and `doom` and `rdb` each *lose*
 a few violations.

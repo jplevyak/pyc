@@ -4,7 +4,7 @@
 proposed fix sketch (direct IF1-level desugaring, not literal
 try/except AST synthesis). See "Fix landed" below.
 Found 2026-07-20 while auditing
-[closed/012](closed/012-with-statement-unimplemented.md) (`with`
+[closed/012](012-with-statement-unimplemented.md) (`with`
 statement) for staleness — its own original text anticipated exactly
 this gap and deferred it pending exception support, but that
 follow-up was never revisited once issue 011 (exception handling)
@@ -14,9 +14,9 @@ the `ctx.with_stack` cleanup emission at `PY_return_stmt`/
 `PY_break_stmt`/`PY_continue_stmt` — none of these are wired into
 issue 011's `raise`/unwinding machinery at all; `with`'s cleanup only
 fires on normal fallthrough, `return`, and loop `break`/`continue`.
-**Related:** [011](closed/011-exception-handling-unimplemented.md)
+**Related:** [011](011-exception-handling-unimplemented.md)
 (exception handling — the unwinding mechanism this issue needs to
-hook into); [012](closed/012-with-statement-unimplemented.md) (the
+hook into); [012](012-with-statement-unimplemented.md) (the
 `with` implementation this is a follow-on gap for).
 
 ## Symptom

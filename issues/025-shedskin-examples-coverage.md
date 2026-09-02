@@ -2745,7 +2745,7 @@ list-write executes first at runtime (here, `set(row)` inside
 assert — which is why the trace pointed at `set::add`→`list::append`
 and looked `set`-specific. It isn't; `set` is the first victim, not
 the source. Same class of gap as
-[018](018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+[018](closed/018-dict-mixed-key-types-boxing-failure.md)/[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 (no boxed/tagged representation for a genuine scalar-kind union); a
 silent-widening shortcut was considered and rejected (would change
 observable output, `0` → `0.0`, the same principle 035's own guard
