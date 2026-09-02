@@ -140,6 +140,7 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime
 
 .PHONY: all defaulttarget install deinstall clean realclean clean-tests \
         test test-e2e test-unit test-ir test-dparse test_dparse \
+        test-links test_links \
         $(IFALIB) pullifa pushifa diffifa
 
 all: defaulttarget
@@ -240,6 +241,13 @@ test-unit: $(IFALIB)
 
 test-ir:
 	$(MAKE) -C $(IFA_DIR) test-ir
+
+# `make test-links` — every relative Markdown link in a tracked *.md
+# resolves. Needs no build. Exists because a 2026-09-02 sweep found 95 of
+# 1100 issue-tree links broken (plus 61 elsewhere): archiving an issue into
+# `closed/` never updated the links pointing at it, and nothing checked.
+test-links test_links:
+	@python3 check_doc_links.py
 
 test-dparse test_dparse: $(PYC)
 	@echo "--- DParser parse validation ---"; \

@@ -31,8 +31,8 @@ when to file vs. fix-now.
 ## Change acceptance — run what CI runs, before committing
 
 CI (`.github/workflows/ci.yml`) gates every push to `main`. A change
-is not done until these five pass locally, in this order. They take
-roughly four minutes together.
+is not done until these six pass locally, in this order. They take
+roughly four minutes together (step 6 is instant and needs no build).
 
 ```sh
 make                          # 1. builds pyc + ifa (CI sets USE_LLVM=1)
@@ -40,6 +40,7 @@ make test                     # 2. ifa --test, then test-ir, then test-e2e
 make -C ifa test_llvm         # 3. V-language LLVM backend smoke
 PYC_FLAGS=-b ./test_pyc.py    # 4. LLVM-backend pyc e2e
 make test_dparse              # 5. grammar validation
+make test_links               # 6. every doc link resolves (no build)
 ```
 
 **`make test` is the one that gets skipped, and it is the one that

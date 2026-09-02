@@ -141,12 +141,15 @@ cannot represent, and neither is a `cg.cc` defect.
   (or `int64::__str__`) being dispatched on a boxed `None|int` field whose
   runtime tag matches neither arm.
 - It places the shape in the `None`-in-a-union family with
-  [018](closed/018-dict-mixed-key-types-boxing-failure.md),
-  [030](030-int-float-in-place-list-mutation.md) and
+  [018](closed/018-dict-mixed-key-types-boxing-failure.md) and
   [035](035-list-element-cast-salvage-guard-and-set-item-union.md),
   but unlike those it needs no container, no in-place mutation and no
   heterogeneous element type — two plain scalar fields are enough, which
-  makes it by far the smallest witness in that family.
+  makes it by far the smallest witness in that family. (This list cited a
+  third issue, `030-int-float-in-place-list-mutation`, which never
+  existed under that name in this repo's history; both the in-place
+  mutation and the heterogeneous element witnesses are 035's --
+  `tests/list_mul_heterogeneous_element.py` -- so it is folded in here.)
 
 Not investigated further than that; the above is inference from the
 message plus the field layout, not a traced dispatch.

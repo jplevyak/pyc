@@ -136,3 +136,11 @@ jobs:
 
       - name: DParser grammar validation (make test_dparse)
         run: make test_dparse
+
+      # Docs-only, no build needed. A 2026-09-02 sweep found 95 of 1100
+      # links in the issue trees dangling (and 61 more elsewhere): issues
+      # get archived into `closed/` and the links pointing at them are
+      # never updated. Four named files that had NEVER existed under that
+      # name. All of it invisible because nothing checked.
+      - name: Doc link check (make test_links)
+        run: make test_links
