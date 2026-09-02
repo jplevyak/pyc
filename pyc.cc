@@ -87,6 +87,10 @@ static void safe_mode_arg(ArgumentState *arg_state, char *arg_unused) {
 static ArgumentDescription arg_desc[] = {
     {"repl", ' ', "Interactive REPL (requires -b; implies -b -j)", "F", &do_repl, "PYC_REPL", NULL},
     {"debug-info", 'g', "Produce Debugging Information", "F", &codegen_debug, "PYC_DEBUG_INFO", NULL},
+    {"refuse-imprecise", ' ',
+     "Refuse a program whose inference left a container element or parameter untyped, instead of guessing its layout "
+     "(ifa/issues/124)",
+     "F", &frefuse_imprecise, "PYC_REFUSE_IMPRECISE", NULL},
     {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
     {"output", 'o', "Output File", "S511", codegen_output, "PYC_OUTPUT", NULL},
 #ifdef USE_LLVM
