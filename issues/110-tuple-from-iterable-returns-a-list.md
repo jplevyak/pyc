@@ -49,7 +49,7 @@ A one-argument `tuple(x)` is lowered to `x.__pyc_tolist__()`.
 3. **The blocker that motivated the compromise is gone.** Returning a
    real tuple used to be impossible for an iterable of unknown length,
    because pyc's tuples were fixed-arity records. As of
-   [ifa/issues/109](../ifa/issues/109-mixed-arity-tuple-slice-dispatch.md)
+   [ifa/issues/109](../ifa/issues/closed/109-mixed-arity-tuple-slice-dispatch.md)
    a tuple CreationSet whose generic element is populated takes **list
    layout** — variable length, known element type. So a genuine
    variable-length tuple is now representable.
@@ -162,7 +162,7 @@ iterable's element**. Populating the element is exactly what makes
 `tuple_able()` false, so `clone.cc` gives the CreationSet list layout —
 variable length, known element type — which is the representation
 `tuple.__pyc_getslice__` already returns today
-([ifa/issues/109](../ifa/issues/109-mixed-arity-tuple-slice-dispatch.md))
+([ifa/issues/109](../ifa/issues/closed/109-mixed-arity-tuple-slice-dispatch.md))
 and which shedskin spells `tuple<T>`.
 
 That needs three pieces, none of them large but none of them expressible
