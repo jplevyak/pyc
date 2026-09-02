@@ -3028,7 +3028,7 @@ through (or move to a "filed" note) as each gets its own issue.
      site" — a clean compile-time reject, not a crash, but possibly a
      genuine architectural limit (tuples are fixed-arity types) rather
      than a fixable bug. Filed as
-     [ifa/issues/090](../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md).
+     [ifa/issues/090](../ifa/issues/closed/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md).
 5. ~~**tonyjpegdecoder crashes the compiler with an FPE**~~ — **STALE
    claim, re-verified 2026-08-08: the compiler does not crash at all
    today.** Two real bugs found and fixed getting to the actual

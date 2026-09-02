@@ -128,7 +128,7 @@ pattern), and no obvious `list + [...]` accumulation pattern
 `pyc -r tonyjpegdecoder.py` (with `-r` passed) fails outright at
 compile time: `fail: unable to resolve to a single function at call
 site` — the exact message
-[ifa/issues/090](../../ifa/issues/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md)
+[ifa/issues/090](../../ifa/issues/closed/090-CGEN-tuple-arity-cant-vary-across-loop-iterations.md)
 documents. This originally looked backwards against `if
 (!fruntime_errors) fail(...)` (`ifa/codegen/cg.cc:956`) — passing `-r`
 seemed like it should *suppress* this fail, not cause it. Resolved
