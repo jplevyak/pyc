@@ -134,6 +134,16 @@ def rowAttack(board, attackers, ix, dir):
       return False
     if board[k]:
       return (board[k] * own < 0) and board[k] in attackers
+  # Every ray in `dir` eventually leaves the board, so `k & 0x88` fires
+  # and this is unreachable -- but only 0x88 arithmetic says so, which no
+  # type analysis is going to prove. Falling off the end here returns an
+  # implicit None, making the return type {bool, None}: 1-byte bool
+  # unioned with an 8-byte None, which has no unboxed representation
+  # (ifa/issues/118). Saying `False` explicitly is what the code already
+  # means -- CPython never reaches it either, and would TypeError in
+  # `max()` if it did -- and it is what lets the function be typed
+  # monomorphically as returning bool.
+  return False
 
 def nonpawnAttacks(board, ix, color):
   return (max([board[ix + i] == color * 2 for i in knightMoves]) or 
