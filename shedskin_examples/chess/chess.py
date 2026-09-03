@@ -42,12 +42,22 @@ def evaluate(board):
   evals = (0, 100, 300, 330, 510, 950, 100000, -100000, -950, -510, -330, -300, -100)
   return sum([evals[board[i]] for i in squares])
 
-#def printBoard(board):
-#  for i in range(7,-1,-1):
-#    for j in range(8):
-#      ix = i * 16 + j
-#      print((pieces[board[ix]]))
-#    print()
+def printBoard(board):
+  # 0x88 board: rank i, file j lives at i*16 + j. Ranks print from 8 down
+  # to 1. Black pieces are stored negative and index `pieces` from the
+  # end (pieces[-1] == 'P'), which is why no sign handling is needed.
+  #
+  # Was commented out, and had been mis-translated from Python 2: the
+  # original `print pieces[board[ix]],` lost its trailing comma, so the
+  # uncommented version printed one character per LINE instead of a rank
+  # per line. Joining the rank is the Python 3 spelling of that comma.
+  for i in range(7, -1, -1):
+    row = []
+    for j in range(8):
+      ix = i * 16 + j
+      row.append(pieces[board[ix]])
+    print(' '.join(row))
+  print()
 
 def move(board, mv):
   ix = (mv >> 8) & 0xff
@@ -369,6 +379,7 @@ def speedTest():
   print(res)
 
 if __name__ == '__main__':
+    printBoard(list(setup))
     for m in range(10):
         if m == 5:
             t0 = time.time()  # pypy has stabilized
