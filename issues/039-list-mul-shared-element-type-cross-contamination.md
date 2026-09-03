@@ -154,3 +154,74 @@ step_system(i)` loop) rather than the from-scratch attempt above.
   the same root cause behind `tictactoe.py`'s still-open runtime crash
   ([035](035-list-element-cast-salvage-guard-and-set-item-union.md)),
   now with a much cleaner reproduction path to work from.
+
+## 2026-09-03: confirmed an imprecision, against shedskin as the oracle
+
+Asked directly whether bh's failure is imprecision or a genuine union.
+It is imprecision, on two independent lines of evidence.
+
+**1. pyc invents fields on `Cell`.** `IFA_DBG_LAYOUT=1` prints:
+
+```
+PROMOTE Cell.acc -> index 25
+PROMOTE Cell.vel -> index 26
+error: object layout: 'Cell' is blind-cast to 'Body' and read at e28,
+       but member absent at e27 (_CG_float64 vs <absent>)
+```
+
+`Cell.__init__` sets only `mass`, `pos` and `subp`. The only writes to
+`.acc`/`.vel` anywhere are `Body.__init__` and `BH.vp`'s
+`for b in reversed(bodies): ... b.acc = copy(acc1)`. So FA has `Cell` in
+`bodies`' element type — and the program only ever writes `Body()` there
+(`self.bodies[i] = p`, `p = Body()`). The promoted fields ARE the
+imprecision, printed.
+
+**2. shedskin types it monomorphically.** `shedskin translate bh.py`
+succeeds, and `bh.hpp` says:
+
+```cpp
+class Cell : ... { list<Node *> *subp; }                // polymorphic, correctly
+class Tree : ... { list<Body *> *bodies; }              // NO Cell
+static void *vp(list<Body *> *bodies, __ss_int nstep);  // so b.acc is on a Body*
+```
+
+Two separate mechanisms, worth keeping apart:
+
+- `bodies` is **`list<Body *>`** — shedskin does not merge it with
+  `subp`, so the leak this issue is about does not happen there.
+- `subp` is **genuinely** heterogeneous, and shedskin has a name for
+  that union: the least common superclass, `list<Node *>`. It needs no
+  union representation because C++ single inheritance gives every
+  `Node` subclass the base fields at a common prefix offset, and
+  `Body`-only fields are reachable only through a `Body *`.
+
+The second point is a gap in
+[ifa/123](../ifa/issues/123-CGEN-union-receiver-field-access-has-no-discrimination.md)'s
+option list, which offers per-class classtag dispatch on field access or
+a global slot assignment. shedskin's answer is a third: **lay classes
+out with the base-class prefix first**, so sibling subclasses share
+their inherited fields' offsets by construction. pyc assigns members
+per class in name-sorted order, so `Cell` and `Body` share no prefix and
+a `{Cell, Body}` receiver has no single layout. (bh does not actually
+need that today — fixing the `bodies` imprecision is enough, because
+nothing reads a `Body`-only field through `subp`.)
+
+### Two mechanism hypotheses tested and REFUTED
+
+Do not re-test these; neither is where the merge happens:
+
+- **The two `[None] * n` sites sharing a contour.** `Tree.bodies =
+  [None] * nbody` and `Cell.subp = [None] * Cell.NSUB` looked like the
+  obvious pair. Replacing the first with a comprehension leaves the
+  failure byte-identical. (Not fully conclusive on its own — a
+  comprehension has its own contour-sharing, ifa/124 — but it does rule
+  out `__mul__`-site pairing as a sufficient explanation.)
+- **`list.__setitem__` sharing a contour**, the shape ifa/124 found for
+  `list.append`. `IFA_DBG_DECIDE=__setitem__` does show two unsplit
+  confluences (`do=0 stay=2 groups=0`) on bh, but both are over `Vec3`
+  CreationSets with identical types on both edges — nothing to split,
+  and nothing to do with `Cell`/`Body`.
+
+So the title's `__mul__` attribution is still the best guess and still
+not traced into `fa.cc`. Note bh.py has **CRLF line endings**, which
+silently breaks `$`-anchored `sed` patching — patch it in Python.
