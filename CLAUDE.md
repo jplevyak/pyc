@@ -102,6 +102,64 @@ five steps and still surface a version-specific failure there — the
 C-backend goldens are text and version-independent, but anything
 touching coroutines or emitted IR is not.
 
+## Be aggressive. A conservative fallback needs hard proof, not a failing test
+
+When the better solution hits a problem, ROOT CAUSE THE PROBLEM. Do not
+retreat to a weaker rule that makes the symptom go away. A conservative
+fallback is only acceptable with hard proof that the better solution is
+not achievable — and "I tried it and N tests failed" is not that proof,
+it is the start of the investigation.
+
+The failure mode to avoid, from this repo: slot elision (`ifa/issues/123`)
+measured 93-98% of method slots as never read. `tests/deepcopy_objects`
+then failed with `'T' is blind-cast to 'T' ... member width differs`,
+because two CLONES of one class disagreed on a slot. The response was to
+require every clone of a class to agree before eliding — which passed the
+suite and collapsed the win from ~425 slots to 5-28. That is a retreat
+dressed as a fix: the real question, never asked, is WHY clones of one
+class have divergent member types, and whether the blind cast between
+them is legitimate at all.
+
+Symptoms of the retreat: the numbers get much worse and the change still
+"passes"; the new rule is described as "conservative" or "safe"; the
+underlying disagreement is worked around rather than explained.
+
+Do this instead: name the mechanism producing the conflict, decide
+whether it is itself a bug, and fix that. If the aggressive version is
+genuinely unreachable, say what specifically makes it so.
+
+## Never analyse or decide by NAME
+
+pyc has a precise call graph and a real class hierarchy. Any analysis or
+codegen decision must be derived from those, never from matching
+identifier strings.
+
+This is not style. Name matching has produced wrong answers here
+repeatedly, in both directions:
+
+- "is this member a method slot?" asked as *does some function share
+  this name* counts every DATA field whose name coincides with a
+  function, and misses a method whose name does not.
+- "is this slot read?" asked as *does any `P_prim_period` selector match
+  this name* counted every `x.f()` as a slot read — but a call the call
+  graph resolves to one target is emitted as a DIRECT call and touches
+  no slot. That measurement read 65% → 59-85% → 0% → 41-54% across four
+  name-based formulations, all wrong, before the structural one
+  (`ifa/issues/123`) gave 93-98%.
+- a name-global set says a member read on ANY class is read on EVERY
+  class; a per-name set still diverges per-INDEX, because sibling classes
+  hold the same name at different slots.
+
+Use instead: `Fun::calls` and the resolved candidate sets for the call
+graph; `Sym::specializes` / `Sym::has` and CreationSet identity for the
+hierarchy; and where codegen already computes the answer
+(`poly_dispatch_classtag_targets`, `resolve_union_receiver`,
+`get_target_fun_core`), CALL IT rather than restating what it does — a
+reimplementation drifts, and the drift is silent.
+
+Names are for diagnostics and for talking to humans. They are not
+evidence.
+
 ## Corpus sweeps — check the cache before running one
 
 A `shedskin_examples` sweep gets re-run across sessions because nothing
