@@ -42,3 +42,27 @@ Nothing is blocked, but any program that prints a `bytes` containing
 binary data currently produces output that differs from CPython — and
 because the difference is *binary*, a diff-based test looks unhelpful
 until you know to look for this.
+
+## 2026-09-03: `repr(str)` has it too, not just `repr(bytes)`
+
+Found alongside [124](124-crlf-source-not-newline-normalized.md). The
+title says `bytes`, but plain `str` is identical:
+
+```python
+print(repr("a\nb"))
+print(repr("x\ty"))
+```
+
+| | output |
+|---|---|
+| CPython | `'a\nb'` / `'x\ty'` |
+| **pyc**  | a literal newline / a literal tab inside the quotes |
+
+So the escaping gap is in the shared repr path, not something specific
+to `bytes`. Whatever fix lands should cover both, and the verification
+should check `str` as well as `bytes` — `tests/bytes_repr_escapes.py`
+currently pins only the `bytes` half.
+
+Worth noting it is invisible in most corpus programs because `repr` of a
+control-character-bearing string is rare, but it makes `repr` unusable
+for the thing it exists for: an unambiguous rendering.
