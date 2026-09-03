@@ -202,9 +202,14 @@ a global slot assignment. shedskin's answer is a third: **lay classes
 out with the base-class prefix first**, so sibling subclasses share
 their inherited fields' offsets by construction. pyc assigns members
 per class in name-sorted order, so `Cell` and `Body` share no prefix and
-a `{Cell, Body}` receiver has no single layout. (bh does not actually
-need that today — fixing the `bodies` imprecision is enough, because
-nothing reads a `Body`-only field through `subp`.)
+a `{Cell, Body}` receiver has no single layout. **CORRECTION, same day:** an earlier version of this paragraph said bh
+"does not actually need that today — fixing the `bodies` imprecision is
+enough, because nothing reads a `Body`-only field through `subp`." The
+premise is true and the conclusion does not follow. Reading a **shared**
+field through a union still needs a common offset, and that is exactly
+what bh does — see the layout analysis now in
+[ifa/123](../ifa/issues/123-CGEN-union-receiver-field-access-has-no-discrimination.md).
+Fixing this issue's imprecision does NOT unblock bh.
 
 ### Two mechanism hypotheses tested and REFUTED
 
