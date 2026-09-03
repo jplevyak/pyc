@@ -162,6 +162,8 @@ sweeps/cpython-cache/
 # legitimate .ppm/.png/.zip INPUT data that must stay tracked.
 # `git add -A shedskin_examples` swept these into a commit once; that is
 # what this prevents.
+shedskin_examples/ac_encode/tmp.zip
+shedskin_examples/ac_encode/tmp2
 shedskin_examples/block/tmp.zip
 shedskin_examples/block/tmp2
 shedskin_examples/lz2/tmp.zip
