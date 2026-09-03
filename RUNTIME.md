@@ -116,7 +116,7 @@ typedef uint8 _CG_bool;
 The `_CG_*` prefix means "Codegen". Every type the C backend emits
 uses one of these. The mapping between IF1 Syms and `_CG_*` names is
 set up by `cg.cc:build_type_strings` (see
-[CODEGEN_C.md](CODEGEN_C.md) §3.2) — `Sym::cg_string` holds the
+[CODEGEN_C.md](ifa/CODEGEN_C.md) §3.2) — `Sym::cg_string` holds the
 chosen `_CG_*` name.
 
 ### 3.3 Constant helpers
@@ -173,7 +173,7 @@ Each returns a fresh pointer of the matching `_CG_*` type. The
 caller then assigns `result->e0 = arg0; result->e1 = arg1; ...`.
 
 The list/tuple structs are defined per-type by `cg.cc` (see
-[CODEGEN_C.md](CODEGEN_C.md) §3.2):
+[CODEGEN_C.md](ifa/CODEGEN_C.md) §3.2):
 
 ```c
 typedef struct Tn *Tn;
@@ -181,13 +181,13 @@ struct Tn { T0 e0; T1 e1; T2 e2; ... };
 ```
 
 So `e0, e1, e2, ...` are the fields. Cloning's
-`compute_member_types` (see [CLONE.md](CLONE.md) §8.2) sets up the
+`compute_member_types` (see [CLONE.md](ifa/CLONE.md) §8.2) sets up the
 `has` for each `Type_RECORD`, which `cg.cc` then translates into
 these field declarations.
 
 ### 3.6 Numeric operators
 
-Each table primitive (see [PRIMITIVES.md](PRIMITIVES.md) §9) has a
+Each table primitive (see [PRIMITIVES.md](ifa/PRIMITIVES.md) §9) has a
 corresponding `_CG_<name>` macro or inline function:
 
 ```c
@@ -474,7 +474,7 @@ Concrete recipes for common changes:
 6. Use from Python via `__pyc_primitive__(__pyc_symbol__("__pyc_sqrt__"),
    x)`.
 
-See [PRIMITIVES.md](PRIMITIVES.md) §11 for the full recipe.
+See [PRIMITIVES.md](ifa/PRIMITIVES.md) §11 for the full recipe.
 
 ### 9.3 New runtime type (e.g., set)
 
