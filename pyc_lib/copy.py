@@ -1,7 +1,12 @@
 # pyc shim for the standard `copy` module
 
 def copy(obj):
-    return __pyc_primitive__(__pyc_symbol__("copy"), obj)
+    # ifa/issues/118: one dispatch, mirroring deepcopy below. The bare
+    # copy PRIMITIVE is identity for any non-Type_RECORD destination
+    # (cg.cc), so it aliased a generic list -- chess's legalMoves does
+    # `board2 = copy(board)` and then mutates board2, which corrupted
+    # the caller's board and made every search return a cutoff.
+    return obj.__pyc_copy__()
 
 def deepcopy(obj):
     # issues/029: one dispatch -- __deepcopy__ is defined everywhere.

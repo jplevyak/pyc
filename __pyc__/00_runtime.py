@@ -51,6 +51,19 @@ class __pyc_any_type__:
     # makes hash() a multi-candidate dispatch that aborts on a plain
     # instance. One definition, on the top type, covers everything.
     return __pyc_primitive__(__pyc_symbol__("id"), self)
+  def __pyc_copy__(self):
+    # ifa/issues/118: shallow `copy.copy`. The copy PRIMITIVE alone is
+    # not a correct implementation of it -- cg.cc emits identity for any
+    # destination that is not Type_RECORD, and a generic `list` is
+    # Type_PRIMITIVE, so `copy(list(setup))` handed back an ALIAS. chess
+    # depends on it: legalMoves does `board2 = copy(board)` and then
+    # mutates board2, which silently corrupted the caller's board.
+    #
+    # Dispatched per type exactly as __deepcopy__ is, so each shape can
+    # say what a shallow copy means for it. This one is the value-type
+    # fallback: scalars, strings, tuples and closures, where the prim's
+    # identity-or-struct-clone is right.
+    return __pyc_primitive__(__pyc_symbol__("copy"), self)
   def __deepcopy__(self):
     # issues/029 fallback: value types (scalars, strings) and shapes
     # with no per-field recursion (tuples, closures) deep-copy as a
@@ -245,6 +258,9 @@ class __pyc_None_type__:
     return False
   def __not__(self):
     return True
+  def __pyc_copy__(self):
+    # None is immutable; a shallow copy is identity.
+    return self
   def __deepcopy__(self):
     # None is immutable; deepcopy is identity (also keeps the nil
     # member of Optional[T] fields typed through the synthesized
