@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_CSELEM_3__de9fca7d+adf4abe8` | 2026-09-04 | programs=77 compile_fail=3 run_fail=38 stdout_differs=24 with_warnings=43 cs/shapes=3081/626=4.92 pratio=3.25 n=76 |
 | `check__PYC_CSELEM_3__40c21ff9+adf4abe8` | 2026-09-04 | programs=77 compile_fail=3 run_fail=38 stdout_differs=24 with_warnings=43 cs/shapes=3081/626=4.92 pratio=3.25 n=76 |
 | `check__default__a935532b+adf4abe8` | 2026-09-04 | programs=77 compile_fail=2 run_fail=39 stdout_differs=24 with_warnings=44 cs/shapes=3748/626=5.99 pratio=3.92 n=76 |
 | `check__default__7a1823c4` | 2026-09-04 | programs=77 compile_fail=2 run_fail=39 stdout_differs=24 with_warnings=44 cs/shapes=3748/626=5.99 pratio=3.92 n=76 |
