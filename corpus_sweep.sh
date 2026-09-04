@@ -27,6 +27,13 @@
 #   -f        re-run and overwrite even if a cached sweep result exists
 #   -l        list cached sweeps and exit
 #
+# Every mode also records the ifa/issues/129 DEMAND columns per program --
+# ess, css, and the container CreationSet count against the content shapes
+# those CSs stand for. The summary carries `cs/shapes=N/K=R`: R is how far
+# CreationSet identity over-discriminates against the element type it
+# exists to carry, and driving it toward 1.0 is what 129 is about. It is
+# free (one extra stderr line per compile) and is NOT part of the cache key.
+#
 # Output: sweeps/<mode>__<env-slug>__<tree>.tsv, plus a row in sweeps/INDEX.md.
 # Results are TEXT and are meant to be committed -- they are a record of what
 # has been measured, not a build artifact.
@@ -81,14 +88,19 @@ if [ "${1:-}" = "--worker" ]; then
     compile)
       clog="$LOGS/$name.compile"
       t0=$(date +%s)
-      if [ -n "$ENVS" ]; then
-        env $ENVS timeout "$CT" "$ROOT/pyc" -D "$ROOT" "$name.py" > "$clog" 2>&1
-      else
-        timeout "$CT" "$ROOT/pyc" -D "$ROOT" "$name.py" > "$clog" 2>&1
-      fi
+      # IFA_DBG_DEMAND is set HERE and not folded into $ENVS on purpose:
+      # $ENVS is part of the cache key and of the sweep's name, so putting
+      # it there would fork every default sweep into a second one measuring
+      # the same thing. It only adds a line to stderr (ifa/issues/129).
+      env IFA_DBG_DEMAND=1 $ENVS timeout "$CT" "$ROOT/pyc" -D "$ROOT" "$name.py" > "$clog" 2>&1
       echo $? > "$LOGS/$name.crc"
       echo $(( $(date +%s) - t0 )) > "$LOGS/$name.cwall"
       grep -c "warning:" "$clog" > "$LOGS/$name.warns"
+      # The LAST DEMAND line: FA converges twice by default
+      # (ifa_fa_inline), and the second round is the state codegen sees.
+      grep '^DEMAND ' "$clog" | tail -1 \
+        | sed -n 's/.* ess=\([0-9]*\) css=\([0-9]*\) container_cs=\([0-9]*\) shapes=\([0-9]*\) pshapes=\([0-9]*\) .*/\1\t\2\t\3\t\4\t\5/p' \
+        > "$LOGS/$name.demand"
       ;;
     run)
       t0=$(date +%s)
@@ -234,10 +246,15 @@ summarize() {
         if ($4 != "-" && $4 != "0") { rfail++; rf = rf " " $1 }
         if ($6 == "NO") { diff++; df = df " " $1 }
       }
+      # ifa/issues/129 step 1: the demand ratio, corpus-wide. Absent from
+      # TSVs written before the columns existed, hence the numeric guard.
+      if ($9 ~ /^[0-9]+$/) { nd++; cs += $9; sh += $10; ps += $11 }
     }
     END {
-      printf "programs=%d compile_fail=%d run_fail=%d stdout_differs=%d with_warnings=%d\n",
+      printf "programs=%d compile_fail=%d run_fail=%d stdout_differs=%d with_warnings=%d",
              n, cfail, rfail, diff, warned
+      if (nd && sh) printf " cs/shapes=%d/%d=%.2f pratio=%.2f n=%d", cs, sh, cs/sh, ps ? cs/ps : 0, nd
+      printf "\n"
       if (cfail) printf "  compile-fail:%s\n", cf
       if (rfail) printf "  run-fail:%s\n", rf
       if (diff)  printf "  stdout-differs:%s\n", df
@@ -360,19 +377,24 @@ fi
   echo "# tree  $TREE"
   echo "# content $CONTENT"
   echo "# date  $(date -Is)"
-  printf 'name\tcompile_rc\twarns\trun_rc\tcpy_rc\tstdout_match\n'
+  printf 'name\tcompile_rc\twarns\trun_rc\tcpy_rc\tstdout_match\tess\tcss\tcontainer_cs\tshapes\tpshapes\n'
 } > "$OUT"
 
 for name in "${PROGS[@]}"; do
   crc=$(cat "$LOGS/$name.crc" 2>/dev/null || echo 1)
   warns=$(cat "$LOGS/$name.warns" 2>/dev/null || echo 0)
+  # ifa/issues/129 step 1: the demand columns are recorded even for a
+  # program whose COMPILE failed -- FA can converge and codegen still
+  # fail, and that program's contours are as measurable as any other's.
+  dem=$(cat "$LOGS/$name.demand" 2>/dev/null)
+  [ -n "$dem" ] || dem=$(printf -- '-\t-\t-\t-\t-')
   if [ "$crc" != 0 ] || [ "$MODE" = compile ]; then
-    printf '%s\t%s\t%s\t-\t-\t-\n' "$name" "$crc" "$warns" >> "$OUT"
+    printf '%s\t%s\t%s\t-\t-\t-\t%s\n' "$name" "$crc" "$warns" "$dem" >> "$OUT"
     continue
   fi
   rrc=$(cat "$LOGS/$name.rrc" 2>/dev/null || echo 1)
   if [ "$MODE" = run ]; then
-    printf '%s\t0\t%s\t%s\t-\t-\n' "$name" "$warns" "$rrc" >> "$OUT"
+    printf '%s\t0\t%s\t%s\t-\t-\t%s\n' "$name" "$warns" "$rrc" "$dem" >> "$OUT"
     continue
   fi
   prc=$(cat "$LOGS/$name.prc" 2>/dev/null || echo 1)
@@ -380,7 +402,7 @@ for name in "${PROGS[@]}"; do
   if [ "$rrc" = 0 ] && [ "$prc" = 0 ]; then
     if cmp -s "$LOGS/$name.pyc.out" "$LOGS/$name.cpy.out"; then same=yes; else same=NO; fi
   fi
-  printf '%s\t0\t%s\t%s\t%s\t%s\n' "$name" "$warns" "$rrc" "$prc" "$same" >> "$OUT"
+  printf '%s\t0\t%s\t%s\t%s\t%s\t%s\n' "$name" "$warns" "$rrc" "$prc" "$same" "$dem" >> "$OUT"
 done
 echo DONE >> "$OUT"
 
