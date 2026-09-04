@@ -10,6 +10,34 @@
 #include <time.h>
 
 #include "gc.h"
+
+/* PYC_NO_GC: route the GENERATED program's allocations to calloc instead
+ * of the collector, so they live in malloc's heap where valgrind can see
+ * them exactly. Boehm is deliberately valgrind-hostile -- it scans memory
+ * conservatively and reads uninitialised bytes by design -- so a heap bug
+ * in emitted code surfaces only as a mysterious crash inside
+ * GC_clear_fl_marks / GC_set_fl_marks on a garbage free-list pointer,
+ * with no indication of who corrupted it. Under this switch the same
+ * out-of-bounds write lands in a malloc block and valgrind names the
+ * culprit line.
+ *
+ * calloc, not malloc: GC_MALLOC returns ZEROED memory and the emitted
+ * code relies on that (a fresh object's unwritten fields must read as
+ * null/0). Plain malloc would hand back garbage and manufacture failures
+ * that have nothing to do with the bug being chased.
+ *
+ * The collector stays linked and initialised -- pyc_runtime.o and
+ * libifa_gc.a use it -- it simply ends up managing almost nothing. This
+ * LEAKS by construction; it is a debugging mode, not a runtime option.
+ */
+#ifdef PYC_NO_GC
+#undef GC_MALLOC
+#undef GC_MALLOC_ATOMIC
+#undef GC_REALLOC
+#define GC_MALLOC(sz) calloc(1, (size_t)(sz))
+#define GC_MALLOC_ATOMIC(sz) calloc(1, (size_t)(sz))
+#define GC_REALLOC(p, sz) realloc((p), (size_t)(sz))
+#endif
 #include <sys/time.h>
 #include <unistd.h>
 #include <sys/socket.h>

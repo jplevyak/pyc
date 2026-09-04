@@ -1,6 +1,12 @@
 OS_TYPE = $(shell uname -s | \
   awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
 
+# NO_GC=1: see pyc_c_runtime.h's PYC_NO_GC block -- the generated
+# program's allocations become calloc so valgrind can see them. Leaks by
+# construction; debugging only.
+ifdef NO_GC
+  CFLAGS += -DPYC_NO_GC=1
+endif
 CFLAGS += -DUSE_GC=1 -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I$(CG_ROOT)/ifa/common -I/usr/local/include/gc -I/usr/local/include -I/opt/homebrew/include -I/opt/homebrew/include/gc -g -Wno-deprecated
 
 LIBS = -L/opt/homebrew/lib -L/usr/local/lib -lm -lgc -lpcre
