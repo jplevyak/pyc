@@ -1,3 +1,5 @@
+**The primary purpose of IFA is the demand splitting of Creation Sets: control and data flow analysis with demand contour creation, especially data contours, which IFA calls Creation Sets.**
+
 # Document Index
 
 ## Project-wide
@@ -8,6 +10,27 @@
 - [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) — Plan for filling out the rest of the documentation set, with checkboxes.
 
 ## IFA library
+
+**The primary purpose of IFA is the demand splitting of Creation Sets:
+control and data flow analysis with demand contour creation, especially
+data contours, which IFA calls Creation Sets.**
+
+That is the yardstick for any change in `ifa/analysis/`. A contour —
+function (EntrySet) or data (CreationSet) — exists because something
+observed a distinction that required it, not because the surrounding
+structure happened to split. Splitting driven by structure rather than
+by demand is a defect, however well it converges.
+
+pyc does not currently meet this. `creation_point` memoizes on the AVar,
+so it mints one CreationSet per *(allocation site × contour)* and never
+asks whether two could be the same; measured on chess, 95 list CSs stand
+for 6 distinct element types, and every one of the five reuse routes is
+inert. See [ifa/issues/128](ifa/issues/128-cs-identity-over-discriminates-vs-element-type.md)
+for the root cause — demand splitting requires being able to start
+merged and separate on evidence, which requires *unlearning* a merge,
+which a monotone analysis cannot do — and
+[ifa/issues/111](ifa/issues/111-FA-selective-invalidation-per-pass.md)
+for why that makes it one change with the re-derivation architecture.
 
 See [ifa/INDEX.md](ifa/INDEX.md) for the full per-subsystem index
 (ARCHITECTURE, IR, IFA, CLONE, DISPATCH, PRIMITIVES, CFG_SSU,
