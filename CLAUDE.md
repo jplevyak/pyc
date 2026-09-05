@@ -25,12 +25,26 @@ pyc does not currently meet this. `creation_point` memoizes on the AVar,
 so it mints one CreationSet per *(allocation site × contour)* and never
 asks whether two could be the same; measured on chess, 95 list CSs stand
 for 6 distinct element types, and every one of the five reuse routes is
-inert. See [ifa/issues/128](ifa/issues/128-cs-identity-over-discriminates-vs-element-type.md)
-for the root cause — demand splitting requires being able to start
-merged and separate on evidence, which requires *unlearning* a merge,
-which a monotone analysis cannot do — and
-[ifa/issues/111](ifa/issues/111-FA-selective-invalidation-per-pass.md)
-for why that makes it one change with the re-derivation architecture.
+inert at the default. See
+[ifa/issues/128](ifa/issues/128-cs-identity-over-discriminates-vs-element-type.md)
+for the root cause and
+[ifa/issues/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md)
+for the plan and every measurement.
+
+**Corrected 2026-09-05:** 128 used to say a merge cannot be unlearned
+because the analysis is monotone, and that 128 and 111 were therefore one
+change. Both are wrong. `analyze_to_convergence` resets *before* every
+pass, so derived types are already re-derived from bottom; what persists
+is the DECISION, `av->cs_map`. Taking a decision back works — measured
+twice, by a re-join that reverses 36 of them corpus-wide with every
+verdict unchanged, and by `PYC_CSDCPA1` (start merged, one CreationSet
+per sym), which gives **−32% container CreationSets** with `ess` going
+DOWN. ifa/111 is a performance lever for the extra passes, not a
+precondition. What was actually missing were the separation mechanisms:
+[132](ifa/issues/132-arity-is-representation-not-provenance.md) (landed)
+and [133](ifa/issues/133-split-a-container-on-its-element-type.md) (open),
+plus [134](ifa/issues/134-remove-the-frontend-forced-split-opt-in.md) for
+the frontend annotations that still force splits by hand.
 
 See [ifa/INDEX.md](ifa/INDEX.md) for the full per-subsystem index
 (ARCHITECTURE, IR, IFA, CLONE, DISPATCH, PRIMITIVES, CFG_SSU,
