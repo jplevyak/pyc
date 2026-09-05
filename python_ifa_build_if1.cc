@@ -1110,7 +1110,16 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     if (pos_args.n != 1) fail("bad number of arguments to builtin function %s", f->name);
     PycAST *a0 = getAST(pos_args[0], ctx);
     ast->rval = a0->rval;
-    ast->rval->clone_for_constants = 1;
+    // ifa/134: the single origin of the frontend's FORCED-SPLIT opt-in.
+    // Marking a formal here sets Sym::clone_for_constants, which in turn
+    // sets clone_methods_per_cs on the class, the __new__ wrapper and
+    // __init__ (python_ifa_build_syms.cc), and those two flags gate 20
+    // sites in fa.cc. PYC_NO_FORCED_SPLIT=1 turns the whole opt-in off in
+    // one place, so what it buys can be measured -- the first step of
+    // making these splits demand-driven instead of annotation-driven.
+    static int off = -1;
+    if (off < 0) off = getenv("PYC_NO_FORCED_SPLIT") ? atoi(getenv("PYC_NO_FORCED_SPLIT")) : 0;
+    if (!off) ast->rval->clone_for_constants = 1;
   } else if (f == sym___pyc_c_call__) {
     Code *send = if1_send1(if1, &ast->code, ast);
     if1_add_send_arg(if1, send, sym_primitive);
