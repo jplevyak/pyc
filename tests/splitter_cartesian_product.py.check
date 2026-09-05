@@ -3,3 +3,4 @@ splitter_cartesian_product.py:47:184: warning: illegal call argument type expres
                                             ^
   called from splitter_cartesian_product.py:47
 STAGES: TYPE_CONFL CPA
+CALLS: direct=68 dynamic=1
