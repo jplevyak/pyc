@@ -262,6 +262,33 @@ retired it.
 Provenance is for diagnostics and for talking to humans, like names. It is
 not identity.
 
+**Refinement (author, 2026-09-06): the rule is about the REASON to split,
+not the MECHANISM that expresses it.**
+
+A split needs two separate things: a *reason* — some demand, an observed
+distinction — and a *way to name the parts*. The rule forbids provenance
+as the REASON. It does not forbid using a provenance-shaped handle to
+express a partition that demand has already justified and that nothing in
+the types can name.
+
+Concretely: an irrepresentable element union is a demand. If the types of
+the contributors are identical at every formal, the analysis has no
+type-shaped way to say *which* contributor is which — but the call site
+does. Using it there is a mechanism, not a reason.
+
+The test to apply:
+
+- **Would this split happen if the demand were absent?** If yes, the
+  provenance is driving it and it is forbidden. A split that fires
+  wherever call sites differ is 1-CFA by the back door.
+- **Does the demand alone decide WHETHER to split, with the handle only
+  deciding WHICH parts?** Then it is a mechanism, and it is allowed.
+
+So `creation_point` keying on `(allocation site x contour)` is still
+wrong — the site is the reason there, and it splits with no demand at all.
+Splitting an EntrySet per caller *because* a container it allocates has an
+irrepresentable element, and only then, is not.
+
 ## Never analyse or decide by NAME
 
 pyc has a precise call graph and a real class hierarchy. Any analysis or
