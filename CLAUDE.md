@@ -289,6 +289,21 @@ wrong — the site is the reason there, and it splits with no demand at all.
 Splitting an EntrySet per caller *because* a container it allocates has an
 irrepresentable element, and only then, is not.
 
+**And keep three things apart** (author, 2026-09-06;
+[136](ifa/issues/136-creation-point-identity-is-es-x-call-site.md)):
+
+| | decided by |
+| --- | --- |
+| **assignment** — which CreationSet a value flows into | types |
+| **identity** — which creation point this is | ES × call site |
+| **compatibility** — may two creation points share a CS | demand |
+
+Identity may be as fine as it likes; that is not a split. Call-site
+difference makes two creation points DISTINGUISHABLE, so a demanded
+partition has something to partition — it must never by itself make them
+*incompatible*. Turning a finer identity directly into more contours is
+the same error as splitting on structure, wearing different clothes.
+
 ## Never analyse or decide by NAME
 
 pyc has a precise call graph and a real class hierarchy. Any analysis or
