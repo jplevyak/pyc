@@ -62,8 +62,23 @@ class list:
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
                              __pyc_clone_constants__(key), value)
+  def __pyc_delslice__(self, i, j, s):
+    # ifa/133: deletion cannot ADD an element type, so the constraint
+    # must be a SELF-merge (as append uses), not merge_in(self, v).
+    # Routing through __pyc_setslice__ asserted that the empty literal's
+    # element flows into self -- false on its own terms, and under one
+    # CreationSet per sym that literal shares a contour with every user
+    # `[]`, so anything a user put in an empty list leaked into every
+    # list that had an element deleted.
+    return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
+                          "_CG_list_setslice",
+                          list, self,
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
+                          int, i,
+                          int, j,
+                          list, [])
   def __delitem__(self, key):
-    return self.__pyc_setslice__(key, key + 1, 1, [])
+    return self.__pyc_delslice__(key, key + 1, 1)
   def remove(self, item):
     i = 0
     while i < self.__len__():
