@@ -1,4 +1,6 @@
-**The primary purpose of IFA is the demand splitting of Creation Sets: control and data flow analysis with demand contour creation, especially data contours, which IFA calls Creation Sets.**
+**IFA is a SIMULTANEOUS data and control flow analysis based on abstract interpretation against a type-value lattice.** It starts with the MINIMUM function contours (EntrySets) and data contours (CreationSets) and proceeds in passes, splitting them to increase precision — by types, by setters, and so on.
+
+**A contour is NEVER split because a surrounding contour was split. Splitting is only ever on demand.** The primary purpose of IFA is that demand splitting, especially of data contours, which IFA calls Creation Sets.
 
 # Document Index
 
@@ -11,15 +13,34 @@
 
 ## IFA library
 
-**The primary purpose of IFA is the demand splitting of Creation Sets:
-control and data flow analysis with demand contour creation, especially
-data contours, which IFA calls Creation Sets.**
+**IFA is a simultaneous data and control flow analysis based on abstract
+interpretation against a type-value lattice.** It starts with the minimum
+function contours (EntrySets) and data contours (CreationSets) and
+proceeds in passes, splitting them to increase precision — by types, by
+setters, and so on. **A contour is never split because a surrounding
+contour was split; splitting is only ever on demand.** The primary purpose
+of IFA is that demand splitting, especially of data contours, which IFA
+calls Creation Sets.
 
 That is the yardstick for any change in `ifa/analysis/`. A contour —
 function (EntrySet) or data (CreationSet) — exists because something
 observed a distinction that required it, not because the surrounding
 structure happened to split. Splitting driven by structure rather than
 by demand is a defect, however well it converges.
+
+**This keeps getting forgotten, so name the two places it is violated
+today.** Both are structural splitting wearing the analysis's clothes:
+
+- `creation_point` mints one CreationSet per *(allocation site ×
+  contour)*, so an EntrySet split MULTIPLIES CreationSets as a side
+  effect. Nothing asked for those contours.
+- `PYC_CSSPLIT=1` makes a CreationSet follow an EntrySet split by
+  construction — the rule stated as a mechanism.
+
+The correct dependency is the inverse: an EntrySet is split **so that** a
+CreationSet split becomes possible, when a demand test has asked for one.
+An ES split is a means to separate creation points, never a reason to
+create data contours.
 
 pyc does not currently meet this. `creation_point` memoizes on the AVar,
 so it mints one CreationSet per *(allocation site × contour)* and never
@@ -164,6 +185,53 @@ underlying disagreement is worked around rather than explained.
 Do this instead: name the mechanism producing the conflict, decide
 whether it is itself a bug, and fix that. If the aggressive version is
 genuinely unreachable, say what specifically makes it so.
+
+## Provenance is never the answer
+
+**Author's directive.** Contour identity — EntrySet or CreationSet — may
+key on **types and CreationSet partitioning only**. Where a value came
+from is never a legitimate component of it, and "record where it came
+from so we can separate it later" is never the design.
+
+Provenance is anything that answers *where did this come from* rather than
+*what is this*: the allocation site (`v->var->id`), the lexical display,
+mark distance, recursion depth, which module or file a creation point is
+in, a per-write tag naming the container a value passed through. All of it
+is out.
+
+The rule has paid for itself every time it has been applied here:
+
+- The lexical display was removed from every compatibility check
+  (ifa/100) — contour counts fell 40-80% corpus-wide.
+- Mark-based splitting was retired (`PYC_NOMARK` defaults to 1) — mark
+  distance is depth-from-a-generating-AVar, so no type tuple can name what
+  it separates. Guard trips 18 → 10, −55% analysis time, −12.3% contours.
+- The per-site key `v<id>|` in `cselem_shape_key` fragments contour
+  identity 2.53× (ifa/129), and it is exactly provenance.
+- ifa/128's whole complaint is that CS identity is *(allocation site ×
+  contour)* — a product with provenance on one side.
+
+The test to apply, from ifa/129: **does the rule encode what the deduced
+types ARE, or where the value CAME FROM?** The first is identity; the
+second is not. A third category exists and is legitimate — what the target
+language can REPRESENT (arity, member width, `None` in a union) — and that
+belongs behind `IFACallbacks`, not in the key and not in provenance. See
+[132](ifa/issues/132-arity-is-representation-not-provenance.md), whose
+title is that distinction.
+
+**Corollary: a merge you cannot undo is not a reason to record provenance.**
+It is a reason to split coarser and let the analysis re-derive. Every pass
+already re-derives from bottom (`analyze_to_convergence` resets *before*
+each pass), so wholesale splitting by creation point costs precision, not
+correctness, and shedskin's ladder tries the finer routes first for
+exactly that reason. Attribution is the tempting shortcut and it is the
+wrong one — recorded in
+[133](ifa/issues/133-split-a-container-on-its-element-type.md), where
+"record provenance on element writes" was a live option until this rule
+retired it.
+
+Provenance is for diagnostics and for talking to humans, like names. It is
+not identity.
 
 ## Never analyse or decide by NAME
 
