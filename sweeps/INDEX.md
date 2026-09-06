@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_CSDCPA1_2__c81a7b1a+f3cb2d55` | 2026-09-06 | programs=77 compile_fail=12 run_fail=35 stdout_differs=23 with_warnings=37 cs/shapes=2955/604=4.89 pratio=3.20 n=76 |
 | `check__default__af7176ef+ac5f4016` | 2026-09-06 | programs=77 compile_fail=2 run_fail=39 stdout_differs=24 with_warnings=44 cs/shapes=3713/626=5.93 pratio=3.89 n=76 |
 | `check__PYC_CSDCPA1_2_PYC_CSDEFSPLIT_0__88c773c9+f3cb2d55` | 2026-09-06 | programs=77 compile_fail=16 run_fail=35 stdout_differs=20 with_warnings=39 cs/shapes=2708/591=4.58 pratio=2.99 n=76 |
 | `check__PYC_CSDCPA1_2__88c773c9+f3cb2d55` | 2026-09-06 | programs=77 compile_fail=16 run_fail=34 stdout_differs=20 with_warnings=38 cs/shapes=2764/591=4.68 pratio=3.04 n=76 |
