@@ -186,6 +186,35 @@ Do this instead: name the mechanism producing the conflict, decide
 whether it is itself a bug, and fix that. If the aggressive version is
 genuinely unreachable, say what specifically makes it so.
 
+## Boxing is never the answer for a corpus program
+
+**Author's directive.** No `shedskin_examples` program requires boxing.
+shedskin compiles the whole corpus without a boxed representation, so
+every one of those programs is statically typeable as written. **Never
+propose boxing, or "this needs a representation for {scalar, container}",
+as the explanation or the fix for a corpus failure.**
+
+When a corpus program produces `has mixed basic types`, `a variable
+holding {str, list} has no representation`, or a `BOXING` violation, the
+union is a **pyc inference deficiency**, not a property of the program.
+Something merged two things the program keeps apart — a contour that
+should have split, a false constraint in `__pyc__`, an element channel
+polluted by an unrelated creation point. Find that, and name the
+mechanism.
+
+The tempting sentence to avoid is *"this is a known representation gap
+(issues/018) that boxing would solve and the project has decided
+against."* It reads as analysis and is an excuse: it treats a merge pyc
+invented as a fact about the source. issues/018 is CLOSED and closed by
+REFUSING — its five container shapes pass, and the refusals it kept are
+for genuinely branch-merged scalars in hand-written tests, not for corpus
+programs.
+
+The corpus is the evidence: 77 programs shedskin compiles without boxing.
+If pyc needs boxing for one of them, pyc is wrong. See
+[shedskin comparison](issues/025-shedskin-examples-coverage.md) and
+[018](issues/closed/018-dict-mixed-key-types-boxing-failure.md).
+
 ## Provenance is never the answer
 
 **Author's directive.** Contour identity — EntrySet or CreationSet — may

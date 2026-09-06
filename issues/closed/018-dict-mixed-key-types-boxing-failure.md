@@ -1,5 +1,16 @@
 # Issue 018: Using `dict`/`set` with two different element types in one program fails to compile
 
+> **Do not cite this issue to explain a `shedskin_examples` failure.**
+> Author's directive, 2026-09-06: **no corpus program requires boxing** —
+> shedskin compiles all 77 without a boxed representation, so each is
+> statically typeable as written. A corpus program that trips `mixed basic
+> types` or `{str, list} has no representation` is showing a pyc INFERENCE
+> deficiency: something merged two things the program keeps apart. Name
+> that mechanism; never answer with "boxing would fix it, and boxing is a
+> project No". The refusals this issue kept are for genuinely
+> branch-merged scalars in hand-written tests. See CLAUDE.md, "Boxing is
+> never the answer for a corpus program".
+
 **Status:** CLOSED 2026-08-24 (`a220c5ac`, `4160b75b`) — **resolved by REFUSING**, not by making
 the programs work. Boxing is a project-level No; without it a variable
 holding a mixed union has no runtime representation, so no FA work can
