@@ -8,6 +8,11 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_CSDCPA1_2_PYC_CSLADDER_3__20f76f27+a206be07` | 2026-09-07 | programs=77 compile_fail=4 run_fail=39 stdout_differs=23 with_warnings=42 cs/shapes=3281/622=5.27 pratio=3.55 n=76 |
+| `check__default__20f76f27+a206be07` | 2026-09-07 | programs=77 compile_fail=2 run_fail=39 stdout_differs=24 with_warnings=44 cs/shapes=3713/626=5.93 pratio=3.89 n=76 |
+| `check__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_CSDEFSPLIT_2__20f76f27+62a5a8d4` | 2026-09-07 | programs=77 compile_fail=4 run_fail=39 stdout_differs=23 with_warnings=42 cs/shapes=3260/627=5.20 pratio=3.49 n=76 |
+| `check__PYC_CSDCPA1_2_PYC_CSLADDER_3__20f76f27+62a5a8d4` | 2026-09-07 | programs=77 compile_fail=5 run_fail=38 stdout_differs=23 with_warnings=41 cs/shapes=3269/616=5.31 pratio=3.52 n=76 |
+| `check__default__20f76f27+1e42a1e5` | 2026-09-07 | programs=77 compile_fail=2 run_fail=39 stdout_differs=24 with_warnings=44 cs/shapes=3713/626=5.93 pratio=3.89 n=76 |
 | `check__default__cbc105e3+b208dad9` | 2026-09-07 | programs=77 compile_fail=2 run_fail=39 stdout_differs=24 with_warnings=44 cs/shapes=3713/626=5.93 pratio=3.89 n=76 |
 | `check__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_CSDEFSPLIT_2__818790f0+f3cb2d55` | 2026-09-07 | programs=77 compile_fail=4 run_fail=39 stdout_differs=23 with_warnings=42 cs/shapes=3273/627=5.22 pratio=3.45 n=76 |
 | `check__PYC_CSDCPA1_2_PYC_CSLADDER_3__e40a5fcd+f3cb2d55` | 2026-09-07 | programs=77 compile_fail=9 run_fail=35 stdout_differs=23 with_warnings=37 cs/shapes=2835/595=4.76 pratio=3.15 n=76 |
