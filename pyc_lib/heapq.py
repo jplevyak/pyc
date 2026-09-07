@@ -1,7 +1,22 @@
 # pyc shim for the standard `heapq` module (binary min-heap on a plain
-# list). Algorithm mirrors CPython's heapq.py (siftdown/siftup); list
-# shrinking uses slice-assignment to an empty list since pyc's list
-# has no pop().
+# list). Algorithm mirrors CPython's heapq.py (siftdown/siftup),
+# including its `heap.pop()` for the shrink.
+#
+# It used to shrink with `heap[n-1:n] = []`, because `list.pop()` did not
+# exist when this shim was written; issues/025 R1 added it and the note
+# went stale. That workaround was not merely redundant -- it was a
+# CORRECTNESS bug under ifa/128's start-merged posture (PYC_CSDCPA1).
+# `__pyc_setslice__` opens with `merge_in(self, v)`, which asserts that
+# v's elements flow into self; with one CreationSet per sym the `[]`
+# literal here shares a contour with every other empty list in the
+# program, so any element any caller put in one leaked into every heap
+# that had an element popped. On tests/test_heapq.py that put `tuple`
+# into the element of `data = [9, 4, 7, ...]`, and codegen then emitted
+# `((_CG_void*)(_CG_list_ptr(t10)))[6] = 8` -- an int stored through a
+# pointer-typed element. See ifa/issues/133, which fixed the same shape
+# in `__pyc__/04_sequence.py`'s `__delitem__` and predicted this one:
+# a hand-written slice assignment keeps the merge, because there the
+# `merge_in` is real.
 
 def _siftdown(heap, startpos, pos):
     newitem = heap[pos]
@@ -35,9 +50,7 @@ def heappush(heap, item):
     _siftdown(heap, 0, len(heap) - 1)
 
 def heappop(heap):
-    n = len(heap)
-    lastelt = heap[n - 1]
-    heap[n - 1:n] = []
+    lastelt = heap.pop()
     if heap:
         returnitem = heap[0]
         heap[0] = lastelt
