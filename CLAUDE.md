@@ -186,6 +186,39 @@ Do this instead: name the mechanism producing the conflict, decide
 whether it is itself a bug, and fix that. If the aggressive version is
 genuinely unreachable, say what specifically makes it so.
 
+## The goal: CPython semantics, not shedskin's
+
+**Author's directive, 2026-09-08.** pyc compiles **well-formed CPython
+programs with the SAME SEMANTICS**, for the subset of those programs that
+can be made monotonic (statically typeable without boxing). That is the
+contract. **Matching shedskin is not a goal** — shedskin is a reference for
+MECHANISM (its ifa ladder, its template monomorphization, its
+diagnostics), never for behaviour.
+
+This distinction has teeth, because shedskin deviates from CPython where it
+suits it and pyc has copied a deviation at least once by mistaking it for a
+technique:
+
+- `math.floor` returns `__ss_float` in shedskin
+  (`shedskin/lib/math/__init__.hpp:36`) and `int` in CPython 3. pyc matches
+  CPython (`pyc_lib/math.py:32`). shedskin's clean typing of `bh` is bought
+  by that deviation, not by better analysis — see
+  [ifa/144](ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md).
+- pyc's own automatic numeric coercion widens an `int` member to `float`,
+  so it prints `1.0` where CPython prints `1`. Landing an *inserted
+  conversion* to fix a contour problem would buy shedskin's answer, not
+  CPython's, and is therefore not the fix it looks like.
+
+**The test to apply:** if a change makes pyc agree with shedskin and
+disagree with CPython, it is wrong however good the contours look. Where
+the two conflict, CPython wins.
+
+**Corollary — an automatic coercion is a PERMISSIVE-only device.** It
+trades semantics for representability, so it belongs behind
+`fruntime_errors`, and `--strict` must error on anything that would
+otherwise require boxing. See
+[ifa/145](ifa/issues/145-numeric-coercion-is-not-gated-on-permissive-mode.md).
+
 ## Boxing is never the answer for a corpus program
 
 **Author's directive.** No `shedskin_examples` program requires boxing.
@@ -214,6 +247,30 @@ The corpus is the evidence: 77 programs shedskin compiles without boxing.
 If pyc needs boxing for one of them, pyc is wrong. See
 [shedskin comparison](issues/025-shedskin-examples-coverage.md) and
 [018](issues/closed/018-dict-mixed-key-types-boxing-failure.md).
+
+**Qualified 2026-09-08 — the premise has one measured counterexample.**
+"shedskin compiles all 77, therefore all 77 are statically typeable AS
+WRITTEN" does not follow, because shedskin's answer is not always CPython's.
+`bh` is the case:
+
+```python
+xp = Vec3()            # __init__ writes self.d0 = 0.0   (float)
+xp[0] = floor(...)     # writes an int into THE SAME object
+```
+
+One object holding `float` then `int` over its lifetime. That is TEMPORAL,
+not per-object, so no contour split can separate it — demand splitting is
+not the missing mechanism here. The only three answers are boxing, a
+semantic deviation, or a cast in the source. shedskin takes the deviation
+(its `floor` returns a double); pyc currently takes a different deviation
+(auto-coercion to float, printing `1.0` for CPython's `1`).
+
+So the directive stands as a rule about pyc's INFERENCE — a `mixed basic
+types` union that pyc invented is still pyc's bug — but it is not a proof
+that every corpus program is typeable with CPython semantics. When a
+program genuinely holds two basic types in one slot over time, saying so is
+the honest answer, and the fix is in the program, not in a coercion that
+changes what it prints.
 
 ## Provenance is never the answer
 
