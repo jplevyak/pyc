@@ -345,6 +345,17 @@ The test to apply:
 - **Does the demand alone decide WHETHER to split, with the handle only
   deciding WHICH parts?** Then it is a mechanism, and it is allowed.
 
+**And the test is only as good as your willingness to ask what the demand
+IS** (author, 2026-09-08, on `PYC_CPA`). A FACT about the program is not a
+demand. "This formal's type is a union", "this CreationSet has several
+creation points", "these two values came from different places" — all
+facts. **A demand is something OBSERVING a distinction and being unable to
+proceed**: a type violation, an irrepresentable union, a dispatch that
+cannot resolve. Reading a fact as a demand is how an arbitrary splitter
+passes the test, and it has happened twice in this repo — see
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s E and its
+note on the refinement.
+
 So `creation_point` keying on `(allocation site x contour)` is still
 wrong — the site is the reason there, and it splits with no demand at all.
 Splitting an EntrySet per caller *because* a container it allocates has an
