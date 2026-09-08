@@ -394,7 +394,22 @@ and then segfaults is invisible to it and to the test harness alike
 that compiles with **no warnings at all** and still prints the wrong
 answer.
 
-Two ways to get a sweep that looks real and is not:
+**The key is the SOURCE TREE; what runs is the BINARY.** A sweep filed
+under a tree it never measured is the worst kind of bad data, because it
+looks like evidence. Any path that changes sources without rebuilding —
+`git stash` / `git stash pop`, `git checkout <commit> -- <file>`, a failed
+compile leaving the previous binary in place — produces exactly that. This
+happened on 2026-09-07: a `stash pop` followed by a sweep with no rebuild
+measured the PREVIOUS commit's compiler, disagreed with a correctly-built
+arm, and the disagreement was written up as "the analysis is
+layout-sensitive" before being traced back to the stale binary. The tell
+was ignored: the two arms differed by 1286 CreationSets on one program,
+which is far too large for a layout perturbation and was proof of a code
+difference all along. `corpus_sweep.sh` now refuses to start when a source
+is newer than `./pyc` (exit 2, `-f` overrides) — but `make` before every
+sweep regardless.
+
+Three ways to get a sweep that looks real and is not:
 
 - **Never run two sweeps concurrently.** More so now that one sweep uses
   the whole machine. They contend and produce spurious `rc=124` timeouts

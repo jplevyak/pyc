@@ -9,9 +9,17 @@
 # dirty), so a repeat request on an unchanged tree returns instantly and a
 # result from a different tree is never mistaken for a current one.
 #
+# THE KEY IS THE SOURCE TREE; WHAT IS MEASURED IS THE BINARY. Those are not
+# the same thing, so the script refuses to start when any source is newer
+# than ./pyc (exit 2) -- otherwise a `git stash pop`, a
+# `git checkout <commit> -- <file>`, or a failed compile leaves the old
+# binary in place and the sweep is filed under a tree it never ran.
+# That cost a wrong conclusion once; see ifa/issues/133. `-f` overrides.
+#
 # Usage:
 #   ./corpus_sweep.sh [-f] [-m MODE] [-e "VAR=VAL"] [-t SECS] [-j N] [-J M] [-R] [-C]
 #
+#   -f        force: ignore the cache AND sweep a stale binary as-is
 #   -m MODE   compile  pyc exit status only                     (~5 min)
 #             run      + the binary's exit status              (~11 min)
 #             check    + warning count, CPython exit status,
@@ -281,6 +289,38 @@ if [ "$FORCE" = 0 ]; then
     summarize "$HIT"
     exit 0
   fi
+fi
+
+# ---- staleness guard ---------------------------------------------------
+# This script keys its result FILENAME on the source tree but can only ever
+# measure the BINARY. Any path that changes sources without rebuilding --
+# `git stash` / `git stash pop`, `git checkout <commit> -- <file>`, a failed
+# compile leaving the previous binary in place -- silently produces a sweep
+# whose label and content disagree.
+#
+# That happened on 2026-09-07 and cost a wrong conclusion: a `stash pop`
+# followed by a sweep with no rebuild measured the PREVIOUS commit's
+# compiler, the result disagreed with a correctly-built arm, and the
+# disagreement was written up as "the analysis is layout-sensitive" before
+# being traced back here. See ifa/issues/133.
+#
+# So: refuse to start when any analysis/codegen source is newer than the
+# binary under test. `-f` (force) skips the check for the rare case where
+# you know the binary is what you want.
+if [ -x "$ROOT/pyc" ]; then
+  STALE=$(find "$ROOT/ifa" "$ROOT"/*.cc "$ROOT"/*.h "$ROOT"/__pyc__ \
+            -name '*.cc' -o -name '*.h' -o -name '*.py' 2>/dev/null \
+          | while read -r f; do [ "$f" -nt "$ROOT/pyc" ] && echo "$f"; done | head -5)
+  if [ -n "$STALE" ]; then
+    echo "ERROR: ./pyc is OLDER than these sources -- the sweep would measure a stale binary:" >&2
+    echo "$STALE" | sed 's/^/  /' >&2
+    echo "  run 'make' first, or pass -f to sweep the binary as-is" >&2
+    [ "${FORCE:-0}" = 1 ] || exit 2
+    echo "  (-f given: proceeding with the stale binary)" >&2
+  fi
+else
+  echo "ERROR: no ./pyc binary to measure -- run 'make' first" >&2
+  exit 2
 fi
 
 CT=${TMO:-400}
