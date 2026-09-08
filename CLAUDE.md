@@ -28,8 +28,12 @@ observed a distinction that required it, not because the surrounding
 structure happened to split. Splitting driven by structure rather than
 by demand is a defect, however well it converges.
 
-**This keeps getting forgotten, so name the two places it is violated
-today.** Both are structural splitting wearing the analysis's clothes:
+**This keeps getting forgotten, so name the places it is violated today.**
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md) is the umbrella
+issue tracking the audit to completion, with the two-question test, the
+non-monotone diagnostic that identifies such a lever, and the running list
+of what has been removed and what is left. Two of them are structural
+splitting wearing the analysis's clothes:
 
 - `creation_point` mints one CreationSet per *(allocation site ×
   contour)*, so an EntrySet split MULTIPLIES CreationSets as a side
