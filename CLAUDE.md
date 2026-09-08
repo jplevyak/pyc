@@ -441,6 +441,13 @@ exists because the tree key necessarily changes when you COMMIT, which
 orphaned the measurement the commit was landing. Lookup tries the
 filename, then the content digest. A corpus `.py` edit invalidates both.
 
+**The corpus itself is edited only under a written policy** —
+[shedskin_examples/PYC_CHANGES.md](shedskin_examples/PYC_CHANGES.md) states it and
+tables every change from upstream. An edit must be a verified CPython
+no-op, must say what the code already meant, must beat any flag that would
+do instead, and must carry its reason as a comment at the edit. Editing a
+corpus `.py` invalidates the sweep cache, which is intended.
+
 **Run `-l` before starting a sweep**, and record the result of any new one
 in the issue it was measured for. `sweeps/*.tsv` is text and IS committed
 — it is a record of what has been measured, not a build artifact.

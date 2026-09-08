@@ -348,13 +348,32 @@ class Body(Node):
         xp = Vec3()
 
         xsc = (self.pos[0] - tree.rmin[0]) / tree.rsize
-        xp[0] = floor(Node.IMAX * xsc)
+        # pyc: `float(...)` around `floor(...)`, six sites in this file.
+        #
+        # `Vec3.__init__` writes `self.d0 = 0.0`, so a fresh Vec3's fields
+        # are float; `floor()` returns an int in CPython 3, so this write
+        # puts an int into the SAME object. One object holding float then
+        # int over its lifetime is TEMPORAL, not per-object, so no contour
+        # split can separate it -- the field's static type is `{int, float}`
+        # and that has no unboxed representation.
+        #
+        # Semantically a no-op: every read of these fields goes through
+        # `int(...)` (`int(xp[k]) & l`, `int(ic[k]) & l`), `Node.IMAX` is
+        # 2**30 and `0.0 <= xsc < 1.0`, so `floor(IMAX*xsc)` lands in
+        # [0, 2**30] and is exact in a double. `int(float(floor(x)))` is
+        # `floor(x)`.
+        #
+        # See shedskin_examples/PYC_CHANGES.md for the policy. NOTE shedskin
+        # compiles this file unedited only because ITS `math.floor` returns
+        # a double (lib/math/__init__.hpp:36), which CPython's does not --
+        # so this is not a pyc deficiency shedskin lacks.
+        xp[0] = float(floor(Node.IMAX * xsc))
 
         xsc = (self.pos[1] - tree.rmin[1]) / tree.rsize
-        xp[1] = floor(Node.IMAX * xsc)
+        xp[1] = float(floor(Node.IMAX * xsc))
 
         xsc = (self.pos[2] - tree.rmin[2]) / tree.rsize
-        xp[2] = floor(Node.IMAX * xsc)
+        xp[2] = float(floor(Node.IMAX * xsc))
 
         i = 0
         for k in range(Vec3.NDIM):
@@ -579,19 +598,19 @@ class Tree:
 
         xsc = (vp[0] - self.rmin[0]) / self.rsize
         if 0.0 <= xsc and xsc < 1.0:
-            xp[0] = floor(Node.IMAX * xsc)
+            xp[0] = float(floor(Node.IMAX * xsc))
         else:
             return None
 
         xsc = (vp[1] - self.rmin[1]) / self.rsize
         if 0.0 <= xsc and xsc < 1.0:
-            xp[1] = floor(Node.IMAX * xsc)
+            xp[1] = float(floor(Node.IMAX * xsc))
         else:
             return None
 
         xsc = (vp[2] - self.rmin[2]) / self.rsize
         if 0.0 <= xsc and xsc < 1.0:
-            xp[2] = floor(Node.IMAX * xsc)
+            xp[2] = float(floor(Node.IMAX * xsc))
         else:
             return None
 
