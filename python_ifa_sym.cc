@@ -631,7 +631,7 @@ static Vec<PycGlobalStore> *pyc_stores_for_cell(Var *cell) {
   return pyc_cell_stores->get(cell);
 }
 
-AType *PycCompiler::provably_constant_load(AVar *src_av, EntrySet *es, PNode *move_pnode) {
+AType *PycCompiler::provably_constant_load(AVar *src_av, EntrySet *es, PNode *move_pnode, AVar **out_src) {
   if (!src_av || !src_av->var || !es || !es->fun || !move_pnode) return nullptr;
   // Only the shared cell itself: a load temp or a local is already
   // contoured and needs nothing from here.
@@ -655,6 +655,7 @@ AType *PycCompiler::provably_constant_load(AVar *src_av, EntrySet *es, PNode *mo
   if (!best || !best->rvals.n) return nullptr;
   AVar *stored = make_AVar(best->rvals[0], es);
   if (!stored || !stored->out || stored->out == fa->type_world.bottom_type) return nullptr;
+  if (out_src) *out_src = stored;  // ifa/146 B: let the caller flow, not snapshot
   return stored->out;
 }
 

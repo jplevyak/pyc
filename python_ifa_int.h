@@ -172,7 +172,7 @@ class PycCompiler : public PycCallbacks {
   // ifa/issues/050 (3b, stage 1): resolve a load from a module-level data
   // cell to the single store it provably sees. See ifa.h's declaration
   // for the contract, python_ifa_sym.cc for the rule.
-  AType *provably_constant_load(AVar *src_av, EntrySet *es, PNode *move_pnode);
+  AType *provably_constant_load(AVar *src_av, EntrySet *es, PNode *move_pnode, AVar **out_src = nullptr);
 
   // --- Entry point ---
   int run(Vec<PycModule *> &mods);
