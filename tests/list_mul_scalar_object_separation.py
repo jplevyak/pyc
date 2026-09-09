@@ -1,5 +1,5 @@
-# ifa/issues/133 (and issues/039): two `[X] * n` lists whose elements are a
-# SCALAR and an OBJECT must not share a CreationSet.
+# ifa/issues/133 (and issues/039): a `[None] * n` list must not share a
+# CreationSet with a list whose elements are a scalar.
 #
 # This is `richards` reduced. That program has exactly two list
 # multiplications --
@@ -12,20 +12,40 @@
 #
 #     illegal call argument type 't' illegal: ( __pyc_None_type__ int64 Packet )
 #
-# where the default arm says plainly `Packet`, and the binary SIGSEGVs.
-# This file reproduces the union shape in 25 lines.
+# where the default arm says plainly `Packet`, and the binary SIGSEGVs with
+# an int64 dereferenced as a task pointer. This file reproduces the union
+# shape in 25 lines.
 #
-# It is a different CREATION ROUTE to the same defect as
-# tests/two_list_element_separation.py, which reaches one shared
-# CreationSet through `append` on two `[]` literals. Keep both: the
-# sequence-multiply route builds its element type from the multiplied
-# operand rather than from a later write, so a fix that only follows
-# writes will pass one and fail the other.
+# WHICH HALF MATTERS, probed by substitution (2026-09-09). The name says
+# "mul" because it mirrors richards, but the multiplication on the SCALAR
+# side is not what does it:
+#
+#   Buf.data          Area.taskTab     PYC_CSDCPA1=2
+#   ---------------   --------------   -------------
+#   [0] * 4           [None] * 4       FAILS   <- richards' shape, this file
+#   [0]               [None] * 4       FAILS
+#   []; append(0)     [None] * 4       clean
+#   [0]               [None]           clean
+#
+# So `[None] * n` is the necessary ingredient -- issues/039's subject
+# exactly -- and it needs a LITERAL-POSITIONAL scalar on the other side.
+# Route the same int through `append` and the merge does not happen, which
+# says the two content channels (positional `cs->vars` vs the generic
+# element, ifa/104) are not equally exposed here. Do not read this file as
+# "sequence multiplication is a distinct creation route"; an earlier
+# version of this comment claimed that and the probe above refutes it.
+#
+# Keep it alongside tests/two_list_element_separation.py, which reaches one
+# shared CreationSet through `append` on two `[]` literals: that one is the
+# channel this file finds CLEAN, so the two cover opposite sides of the
+# same defect and a fix wants both.
 #
 # Unlike issues/039's list_mul_element_cross_contamination.py -- which
 # merges two OBJECT lists and so loses precision without losing
-# representability -- this mix is {int64, object} and has no
-# representation at all. It is a wrong answer, not a wide one.
+# representability -- this mix is {int64, object} and has no representation
+# at all. It is a wrong answer, not a wide one. Swapping the `0` for a
+# string sharpens it from a warning to
+# `error: expression has mixed basic types:( __pyc_None_type__ int64 str )`.
 #
 # STATUS 2026-09-09: passes at the DEFAULT, fails under PYC_CSDCPA1=2 with
 # `illegal call argument type 't' illegal: ( __pyc_None_type__ int64 )`.
