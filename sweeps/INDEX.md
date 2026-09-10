@@ -8,6 +8,12 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1__b847e122+a1c45574` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=44 cs/shapes=2403/618=3.89 pratio=2.63 n=76 |
+| `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1__b847e122+a1c45574` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=45 cs/shapes=2406/617=3.90 pratio=2.64 n=76 |
+| `compile__PYC_WALKCTX_1__b847e122+a1c45574` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2749/625=4.40 pratio=2.98 n=76 |
+| `compile__default__b847e122+a1c45574` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2740/625=4.38 pratio=2.97 n=76 |
+| `compile__PYC_WALKCTX_1__b847e122+4c0f07cf` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=42 cs/shapes=2743/627=4.37 pratio=2.98 n=76 |
+| `compile__default__b847e122+153e711e` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2740/625=4.38 pratio=2.97 n=76 |
 | `compile__PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1__5cb76a2b+09c163b7` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=44 cs/shapes=2826/625=4.52 pratio=3.03 n=76 |
 | `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1__5cb76a2b+09c163b7` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=45 cs/shapes=2406/617=3.90 pratio=2.64 n=76 |
 | `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1__af467129+3e48560d` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=44 cs/shapes=2505/624=4.01 pratio=2.73 n=76 |
