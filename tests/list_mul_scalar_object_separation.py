@@ -47,9 +47,16 @@
 # string sharpens it from a warning to
 # `error: expression has mixed basic types:( __pyc_None_type__ int64 str )`.
 #
-# STATUS 2026-09-09: passes at the DEFAULT, fails under PYC_CSDCPA1=2 with
-# `illegal call argument type 't' illegal: ( __pyc_None_type__ int64 )`.
-# Guards the default arm and pins the flag arm's remaining work.
+# STATUS 2026-09-10: passes on BOTH arms. It failed under PYC_CSDCPA1=2
+# when written; ifa/133's `nilstore` fix (count a None store as a store --
+# `compute_setters` was dropping it because `->type` projects a lone nil to
+# bottom) resolved it, and disabling that fix with PYC_NILSTORE=0 brings the
+# diagnostic straight back. So this is now a REGRESSION GUARD for that fix
+# rather than a pin on outstanding work.
+#
+# It does NOT cover `bh`, despite the shared shape -- see
+# tests/arity1_literal_shares_contour.py, which has a str on the far side
+# and an unmultiplied literal, and which the nilstore fix does not reach.
 class Task:
     def __init__(self, n):
         self.ident = n
