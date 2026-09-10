@@ -1,7 +1,8 @@
 # ifa/issues/143 (and 133): two ARITY-1 list literals holding different
 # types must not share a CreationSet.
 #
-# This is `bh` reduced. That program's failure is entirely:
+# This reproduces `bh`'s SIGNATURE, not (as first claimed) its instance --
+# see the note at the bottom. That program's failure has the same shape:
 #
 #     class Random: __slots__ = ["seed"]      # arity-1 str literal
 #     self.bodies  = [None] * nbody          # arity-1 literal, multiplied
@@ -72,3 +73,11 @@ def main():
 
 
 main()
+# NOT FAITHFUL TO bh (measured 2026-09-10). The two mechanisms that clear
+# this file -- PYC_VIOLCS=2 (walk a violation back to the CreationSet that
+# actually merges) plus PYC_CSMEMBER=1 (partition it by the members its
+# creation points reach) -- take this from 1 diagnostic to 0 and leave `bh`
+# at 10. On `bh` the member key fires on cs=1180 (8 defs -> 7 groups) but
+# its remaining two-def merges decline with "1 group: every creation point
+# on the same assign sets", so the partition it needs is still unnamed.
+# Keep this as the small guard for the shape; `bh` still needs its own.
