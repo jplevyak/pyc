@@ -8,6 +8,14 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1_PYC_CSCALLSITE_3_PYC_CONTAINERUNION_1__39079fd9+99c0e972` | 2026-09-10 | programs=77 compile_fail=4 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2449/622=3.94 pratio=2.65 n=76 |
+| `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1__39079fd9+99c0e972` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=44 cs/shapes=2403/618=3.89 pratio=2.63 n=76 |
+| `compile__PYC_CSCALLSITE_3_PYC_CONTAINERUNION_1__39079fd9+99c0e972` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=42 cs/shapes=2723/625=4.36 pratio=2.96 n=76 |
+| `compile__default__39079fd9+99c0e972` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2740/625=4.38 pratio=2.97 n=76 |
+| `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1_PYC_CSCALLSITE_3_PYC_CONTAINERUNION_1__39079fd9+d47b9ae7` | 2026-09-10 | programs=77 compile_fail=5 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2490/623=4.00 pratio=2.69 n=76 |
+| `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1__39079fd9+474d0ecd` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=44 cs/shapes=2403/618=3.89 pratio=2.63 n=76 |
+| `compile__PYC_CSCALLSITE_3_PYC_CONTAINERUNION_1__39079fd9+474d0ecd` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=42 cs/shapes=2724/625=4.36 pratio=2.96 n=76 |
+| `compile__default__39079fd9+474d0ecd` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2740/625=4.38 pratio=2.97 n=76 |
 | `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1__b847e122+a1c45574` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=44 cs/shapes=2403/618=3.89 pratio=2.63 n=76 |
 | `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1__b847e122+a1c45574` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=45 cs/shapes=2406/617=3.90 pratio=2.64 n=76 |
 | `compile__PYC_WALKCTX_1__b847e122+a1c45574` | 2026-09-10 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2749/625=4.40 pratio=2.98 n=76 |
