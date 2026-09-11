@@ -4,7 +4,7 @@ cross_type_method.py:10:98: warning: illegal call argument type expression illeg
 cross_type_method.py:10:98: warning: illegal call argument type expression illegal: closure 
     print(a.x(2))
                  ^
-cross_type_method.py:10:92: warning: illegal call argument type expression illegal: 
+cross_type_method.py:10:92: warning: illegal call argument type expression illegal: (no type)
     print(a.x(2))
                  ^
 cross_type_method.py:10:98: warning: expression has no type

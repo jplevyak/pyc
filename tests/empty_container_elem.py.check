@@ -2,7 +2,7 @@ empty_container_elem.py:22:10: warning: expression has no type
     print(x[0])
              ^
   called from empty_container_elem.py:22
-empty_container_elem.py:22:4: warning: illegal call argument type expression illegal: 
+empty_container_elem.py:22:4: warning: illegal call argument type expression illegal: (no type)
     print(x[0])
        ^
 empty_container_elem.py:22:10: warning: expression has no type
