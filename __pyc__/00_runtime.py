@@ -319,7 +319,28 @@ class bool:
     else:
       return x
   def __not__(self):
-    if (self):
+    # __pyc_clone_constants__, exactly as __pyc_to_bool__ above uses it
+    # and for the same reason: this method MATERIALIZES a fresh bool
+    # through a branch, so without a per-constant contour one shared
+    # __not__ contour sees `self` as {True, False} and returns {True,
+    # False} -- destroying a constant its caller had already folded.
+    #
+    # That is what made `if x is not None:` behave differently from the
+    # equivalent `if x is None: ... else: ...`. The frontend lowers the
+    # former to `__not__(isinstance(x, __pyc_None_type__))`
+    # (python_ifa_build_if1.cc), and `isinstance` DOES fold to a single
+    # constant per contour -- but the __not__ in between merged the
+    # contours and handed back a polymorphic bool, so neither branch
+    # could be pruned and the dead one was still type-checked.
+    #
+    # The visible cost was `min`/`max`, whose `b=None, c=None` guards are
+    # all of this form: in the 2-argument contour `c` is exactly None,
+    # `if c is not None:` should be statically false, and instead its body
+    # type-checked `c < m` against None and reported `unresolved call
+    # '__lt__'`. 12 corpus programs and 21 of the corpus's 166 unresolved
+    # calls were this one merge (ifa/149). Two lines reproduce it:
+    #   print(min(2, 9)); print(min(3, 7, 1))
+    if __pyc_clone_constants__(self):
       return False
     else:
       return True

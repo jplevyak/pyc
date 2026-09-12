@@ -8,6 +8,10 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__ae80a6ed+240f6fe9` | 2026-09-12 | programs=77 compile_fail=2 run_fail=38 stdout_differs=24 with_warnings=40 cs/shapes=2744/624=4.40 pratio=2.98 n=76 |
+| `compile__default__ae80a6ed+7a8b764e` | 2026-09-12 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=40 cs/shapes=2744/624=4.40 pratio=2.98 n=76 |
+| `compile__default__ae80a6ed+8aae3c6b` | 2026-09-11 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2740/625=4.38 pratio=2.97 n=76 |
+| `compile__default__ae80a6ed+eeea0b01` | 2026-09-11 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2740/625=4.38 pratio=2.97 n=76 |
 | `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1_PYC_CSCALLSITE_3_PYC_CONTAINERUNION_1__39079fd9+99c0e972` | 2026-09-10 | programs=77 compile_fail=4 run_fail=0 stdout_differs=0 with_warnings=43 cs/shapes=2449/622=3.94 pratio=2.65 n=76 |
 | `compile__PYC_CSDCPA1_2_PYC_CSLADDER_3_PYC_VIOLCS_3_PYC_CSMEMBER_1_PYC_CSCONTENT_1_PYC_WALKCTX_1__39079fd9+99c0e972` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=44 cs/shapes=2403/618=3.89 pratio=2.63 n=76 |
 | `compile__PYC_CSCALLSITE_3_PYC_CONTAINERUNION_1__39079fd9+99c0e972` | 2026-09-10 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 with_warnings=42 cs/shapes=2723/625=4.36 pratio=2.96 n=76 |
