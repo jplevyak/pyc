@@ -10,10 +10,6 @@ minmax_3arg.py:16:185: warning: unresolved call '__lt__'
     print(min(2, 9))
                     ^
   called from __pyc__.py:1809
-minmax_3arg.py:16:185: warning: illegal call argument type expression illegal: (no type)
-    print(min(2, 9))
-                    ^
-  called from __pyc__.py:1809
 minmax_3arg.py:16:185: warning: expression has no type
     print(min(2, 9))
                     ^
@@ -27,10 +23,6 @@ minmax_3arg.py:15:170: warning: illegal call argument type 'c' illegal: __pyc_No
                     ^
   called from __pyc__.py:1840
 minmax_3arg.py:15:170: warning: illegal call argument type 'm' illegal: int64 
-    print(max(2, 9))
-                    ^
-  called from __pyc__.py:1840
-minmax_3arg.py:15:170: warning: illegal call argument type expression illegal: (no type)
     print(max(2, 9))
                     ^
   called from __pyc__.py:1840
