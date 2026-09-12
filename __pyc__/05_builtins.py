@@ -98,6 +98,37 @@ class range:
     if idx < 0:
       idx = idx + self.__len__()
     return self.i + idx * self.s
+  def __contains__(self, x):
+    # `x in range(...)`. python_ifa_build_if1.cc's emit_in_pyda lowers `in`
+    # to a direct __contains__ dispatch on the right operand with NO
+    # fallback to the iterable protocol, so without this `x in range(n)`
+    # resolves to nothing -- the same gap __pyc_generator__.__contains__
+    # (09_generator.py) and __pyc_iterator__.__contains__ (00_runtime.py)
+    # were each added to plug by hand. range was missed, and it cannot be
+    # served by either of those: the bridge is only added to non-builtin
+    # classes, and range is a builtin.
+    #
+    # ARITHMETIC, not a scan, for two independent reasons:
+    #   1. It is what CPython does -- range.__contains__ is O(1) for an
+    #      int, which is why `10**9 - 1 in range(10**9)` returns at once.
+    #   2. pyc's range IS its own iterator (__iter__ returns `this` and
+    #      __next__ mutates self.i), so a consuming loop would leave the
+    #      range exhausted. `r = range(10); x in r; for i in r:` would
+    #      silently iterate nothing. CPython's range is re-iterable; this
+    #      deviation is pre-existing, and a scan here would turn it into a
+    #      wrong answer instead of just a missing method.
+    #
+    # The modulo is written over two NON-NEGATIVE operands rather than as
+    # `(x - self.i) % self.s`, which for a negative step relies on Python's
+    # sign-of-divisor modulo and would not survive lowering to C's.
+    d = x - self.i
+    if self.s > 0:
+      if x < self.i or x >= self.j:
+        return False
+      return d % self.s == 0
+    if x > self.i or x <= self.j:
+      return False
+    return (0 - d) % (0 - self.s) == 0
   def __pyc_tolist__(self):
     # list(range(...)) -- see the list() intercept in
     # python_ifa_build_if1.cc (issue 025).
