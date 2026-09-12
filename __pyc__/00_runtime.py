@@ -169,6 +169,31 @@ class object:
     return __pyc_primitive__(__pyc_symbol__("is"), self, x)
   def __ne__(self, x):
     return not self.__eq__(x)
+  def __pyc_tolist__(self):
+    # `list(x)` -- the same missing-fallback shape as issues/125.
+    #
+    # python_ifa_build_if1.cc's list() intercept dispatches
+    # __pyc_tolist__ DIRECTLY on the argument, with no fallback to the
+    # iterable protocol. Ten builtin classes define it (list, tuple, str,
+    # bytes, dict, set, range, the two dict iterators, __pyc_iterator__),
+    # and anything else -- a user class, or a pyc_lib class like
+    # collections.defaultdict -- could not be passed to list() at all:
+    # `list(b)` produced nothing and the failure surfaced downstream as
+    # `unresolved call '__iter__'` on the bottom result
+    # (shedskin_examples life's `for pos in list(board):`).
+    #
+    # Unlike __contains__ (issues/125), CONSUMING is the correct semantics
+    # here: CPython's `list(it)` exhausts an iterator, and a re-iterable
+    # container starts fresh from __iter__, so one definition is right for
+    # both and there is no self-iterator hazard to decide first.
+    #
+    # A class with no __iter__ now fails INSIDE this method rather than at
+    # the list() dispatch. That is the same error either way, and the
+    # ten builtins keep their own more-specific override.
+    r = []
+    for v in self:
+      r.append(v)
+    return r
 
 # issues/116: the bridge from CPython's iterator protocol to pyc's.
 #

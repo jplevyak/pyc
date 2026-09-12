@@ -142,3 +142,50 @@ Three candidate shapes, in increasing order of fidelity:
 
 Until one lands, every new iterable-without-`__contains__` class is a
 silent cascade, and the only remedy is a fourth hand-written method.
+
+## The same defect, second instance: `list(x)` — FIXED 2026-09-12
+
+`list(x)` has the identical shape. `python_ifa_build_if1.cc`'s `list()`
+intercept dispatches **`__pyc_tolist__` directly on the argument**, with no
+fallback. Ten builtin classes define it — list, tuple, str, bytes, dict,
+set, range, the two dict iterators, `__pyc_iterator__` — and anything else
+could not be passed to `list()` at all:
+
+```python
+from collections import defaultdict
+b = defaultdict(int); b[1] = 5
+for k in list(b):          # `unresolved call '__iter__'` on the bottom result
+```
+
+which is exactly `shedskin_examples/life`'s `for pos in list(board):`.
+
+Here the general fallback IS available, and it went in: `object.__pyc_tolist__`
+iterates `self` and collects. **Unlike `__contains__`, consuming is the
+correct semantics** — CPython's `list(it)` exhausts an iterator, and a
+re-iterable container starts fresh from `__iter__` — so one definition is
+right for both and the self-iterator hazard that blocks the `__contains__`
+fallback does not arise. `object` already carries `__pyc_to_bool__`,
+`__not__`, `__eq__` and `__ne__` as exactly this kind of fallback.
+
+`tests/list_of_iterable.py` covers a delegating user class, a user class
+implementing `__next__` directly, `defaultdict`, and listing the same
+container twice to pin that it is not consumed.
+
+**That the `__contains__` half is still open is now the odd one out.** The
+two are the same defect; only the consuming question separates them.
+
+### What it did to `life`, honestly
+
+`life` is the only corpus program affected and its warning count goes UP,
+12 -> 18. That is not a regression: `list(board)` now resolves and the
+analysis reaches the NEXT wall, which is `defaultdict.__getitem__`'s
+`self.factory()` where `factory` unions `{None, int}` because life
+constructs both `defaultdict(int, board)` and `defaultdict(None, board)`.
+`if self.factory:` cannot fold across a merged contour, so the None arm is
+type-checked. Its run status is unchanged (`run_rc=134` before and after) —
+it aborted before and aborts now, a few statements later.
+
+That merge is a concrete instance of
+[ifa/151](../ifa/issues/151-split-an-entryset-on-a-constant-argument-on-demand.md):
+two construction sites disagreeing on a constant argument, merged into one
+contour, with a demand (an unresolved call) blocked on the union.
