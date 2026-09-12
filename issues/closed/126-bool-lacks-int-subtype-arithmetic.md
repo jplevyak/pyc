@@ -1,11 +1,15 @@
 # 126 — `bool` had no int-subtype arithmetic, and fixing it exposed an LLVM sign-extension bug
 
-**Status:** fixed 2026-09-12. Two remaining cases named at the bottom.
+**Status: CLOSED 2026-09-12**, fixed by `b0ee5bb9`. The titled defect —
+`bool` having no int-subtype arithmetic — is fixed and verified on both
+backends, with `tests/bool_int_subtype_arith.py` in the suite and no
+`.known_issue` sidecar. Its leftovers were re-filed rather than left
+dangling here: see "Not fixed here" at the bottom.
 
 Root cause #3 in the `unresolved call` census
-([ifa/149](../ifa/issues/149-the-largest-diagnostic-class-reports-nothing.md)),
-after [ifa/150](../ifa/issues/150-is-not-none-never-folds.md) and
-[125](125-in-has-no-iterable-fallback.md).
+([ifa/149](../../ifa/issues/149-the-largest-diagnostic-class-reports-nothing.md)),
+after [ifa/150](../../ifa/issues/150-is-not-none-never-folds.md) and
+[125](../125-in-has-no-iterable-fallback.md).
 
 ## Symptom
 
@@ -152,19 +156,25 @@ attributable to this change, since the program aborted before producing any
 output at all until now. timsort's CPython side times out (`cpy 124`), so
 it has nothing to compare against either.
 
-## Still open
+## Not fixed here — where each leftover went
 
-- **tarsalzp** `if (b > 0) & (self.divisor(a, b) > 1200) else (a + 1)` still
-  reports `unresolved call '__and__'` with an `illegal: bool` sibling —
-  and `bool.__and__` EXISTS and works in isolation
-  (`(a > b) & (a < b)` compiles clean). So this is not the missing-method
-  gap; something else about that ternary's receiver is. Unexamined.
-- **rdb** `basis &= MatchRule(props, rule)` wants `bool.__iand__` with a
-  CLASS INSTANCE argument. In CPython that is a `TypeError` unless
-  `MatchRule` defines `__rand__`, so the program may be relying on
-  something pyc should not accommodate. rdb is one of the two corpus
-  programs that do not compile at all, so it needs its own look first.
-- `bool.__and__` and `bool.__or__` have the mixed-operand flaw this issue
-  rejected for arithmetic: `True & 3` returns 3 where CPython gives 1.
-  Pre-existing, not introduced here, and fixable with the same
-  `isinstance` split `__xor__` uses.
+- **`bool & int` / `bool | int` give the wrong answer** →
+  [127](../127-bool-bitwise-ops-wrong-for-int-operands.md). `__and__` and
+  `__or__` were never missing; they are present and wrong for a non-bool
+  operand (`True | 4` returns `True`, CPython gives `5`), with zero
+  warnings. That is a different defect from "bool lacks arithmetic" and is
+  not covered by this issue's title or its fix, so it is filed on its own.
+  Verified table there. The fix is the `isinstance` split this issue added
+  for `__xor__`.
+- **`tarsalzp`'s `unresolved call '__and__'`** on
+  `if (b > 0) & (self.divisor(a, b) > 1200) else (a + 1)` — **not this
+  issue.** `bool.__and__` exists and resolves fine in isolation
+  (`(a > b) & (a < b)` compiles clean), so something else about that
+  ternary's receiver is responsible. Unexamined; it is one of the residual
+  sites in [ifa/149](../../ifa/issues/149-the-largest-diagnostic-class-reports-nothing.md)'s
+  census.
+- **`rdb`'s `bool.__iand__`** with a class-instance argument
+  (`basis &= MatchRule(props, rule)`) — a `TypeError` in CPython unless
+  `MatchRule` defines `__rand__`, so pyc may be right to refuse it. `rdb` is
+  also one of the two corpus programs that do not compile at all, so it
+  needs its own look before anything is added for it.

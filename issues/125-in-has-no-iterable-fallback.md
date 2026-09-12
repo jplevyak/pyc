@@ -1,6 +1,25 @@
 # 125 — `in` dispatches `__contains__` directly, with no iterable fallback
 
-**Status:** open. `range` fixed 2026-09-12; the general defect stands.
+**Status: OPEN — and it is the `__contains__` fallback that is open, not
+the two instances.** Both instances found so far are fixed and verified:
+`range.__contains__` (`4509936e`) and, for the identical defect in `list(x)`,
+the general `object.__pyc_tolist__` fallback (`29b6e725`). **The `in`
+fallback itself is still missing**, so a user class that is iterable and does
+not define `__contains__` remains an unresolved dispatch:
+
+```python
+class Bag:
+    def __init__(self): self.v = [1, 2, 3]
+    def __iter__(self): return iter(self.v)
+print(2 in Bag())        # CPython: True.  pyc: unresolved dispatch
+```
+
+Do NOT close this on the strength of the two fixes. The reason it is still
+open while its `list()` twin is closed is one specific question, stated in
+"What is still open" below: **consuming is correct for `list()` and is not
+obviously correct for `in`**, because pyc has self-iterators (`range` is one)
+that a scanning `__contains__` would exhaust. That question has to be
+answered, not worked around with a fourth hand-written method.
 
 Found working the `unresolved call` class
 ([ifa/149](../ifa/issues/149-the-largest-diagnostic-class-reports-nothing.md)),
