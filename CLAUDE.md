@@ -32,14 +32,24 @@ by demand is a defect, however well it converges.
 [ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md) is the umbrella
 issue tracking the audit to completion, with the two-question test, the
 non-monotone diagnostic that identifies such a lever, and the running list
-of what has been removed and what is left. Two of them are structural
-splitting wearing the analysis's clothes:
+of what has been removed and what is left. One remains in the analysis
+proper — structural splitting wearing the analysis's clothes:
 
 - `creation_point` mints one CreationSet per *(allocation site ×
-  contour)*, so an EntrySet split MULTIPLIES CreationSets as a side
-  effect. Nothing asked for those contours.
-- `PYC_CSSPLIT=1` makes a CreationSet follow an EntrySet split by
-  construction — the rule stated as a mechanism.
+  contour)*, so CS identity is decided by structure before any demand test
+  runs. Nothing asked for those contours.
+
+**The rule holds on one side and not the other, and the asymmetry is
+measurable.** EntrySets DO start minimal — one per function — and split on
+demand; a two-call program splits `f` into exactly the two contours its
+argument types ask for. CreationSets do not: `multidef=0` corpus-wide over
+127 522 CreationSets means **every CreationSet has exactly one creation
+point**, i.e. the data contours start maximally split and never merge. The
+start-merged posture is `PYC_CSDCPA1=2` and it is opt-in, not the default.
+
+*(`PYC_CSSPLIT=1` used to be named here as a second violation — a
+CreationSet following an EntrySet split by construction. It was REMOVED
+2026-09-08, ifa/146 A.)*
 
 The correct dependency is the inverse: an EntrySet is split **so that** a
 CreationSet split becomes possible, when a demand test has asked for one.
