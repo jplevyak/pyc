@@ -56,6 +56,27 @@ print(f * 7)
 print(t ^ 3)
 print(f ^ 3)
 
-# and the pre-existing bool & / | still hold
+# issues/127: & and | are bool-valued for a bool operand and INT-valued for
+# an int one, because bool is an int subtype. The bool-only form these had
+# returned `3` for `True & 3` and `True` for `True | 4`, with no warning.
 print(t & f)
 print(t | f)
+print(f & t)
+print(f | t)
+print(t & t)
+print(f | f)
+print(t & 3)
+print(f & 3)
+print(t | 4)
+print(f | 4)
+print(t & 0)
+print(t | 0)
+print(t & 6)
+print(f | 6)
+
+# the three-way compare's siblings, mixed through a variable rather than a
+# literal, so the int operand is not a constant the splitter can fold on
+n = len("abcde")
+print(t & n)
+print(f | n)
+print(t | n)

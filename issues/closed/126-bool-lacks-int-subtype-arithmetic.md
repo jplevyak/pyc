@@ -159,7 +159,7 @@ it has nothing to compare against either.
 ## Not fixed here — where each leftover went
 
 - **`bool & int` / `bool | int` give the wrong answer** →
-  [127](../127-bool-bitwise-ops-wrong-for-int-operands.md). `__and__` and
+  [127](127-bool-bitwise-ops-wrong-for-int-operands.md). `__and__` and
   `__or__` were never missing; they are present and wrong for a non-bool
   operand (`True | 4` returns `True`, CPython gives `5`), with zero
   warnings. That is a different defect from "bool lacks arithmetic" and is

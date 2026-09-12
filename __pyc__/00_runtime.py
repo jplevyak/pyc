@@ -333,16 +333,44 @@ class __pyc_None_type__:
     return True
 
 class bool:
+  # issues/127: `&` and `|` must split on whether the operand is a bool.
+  #
+  # bool is an int SUBTYPE, so CPython's rule differs by operand:
+  # `True & False` is a bool, while `True & 3` is `1 & 3` == 1 -- an int, on
+  # the operands' integer VALUES. The bool-only form these used to have
+  #
+  #     def __and__(self, x):
+  #       if (self): return x
+  #       else:      return self
+  #
+  # is right for a bool `x` and silently wrong for anything else: it returned
+  # `3` for `True & 3` (CPython: 1), `False` for `False & 3` (CPython: 0) and
+  # `True` for `True | 4` (CPython: 5) -- a wrong VALUE, with zero warnings
+  # and exit 0. Both operators are on live corpus paths (tarsalzp's
+  # `(b > 0) & (self.divisor(a, b) > 1200)`, rdb's `basis &= ...`).
+  #
+  # Same shape as __xor__ below, and for the same two reasons: isinstance
+  # folds to a single constant per contour so only one arm survives in each
+  # caller, and in the non-bool arm the int literal is the RECEIVER -- so it
+  # is `int & x`, never `bool & x`. That keeps a bool operand away from the
+  # numeric primitives, which reject one, and avoids int() (`int(True)`
+  # yields -1 on the LLVM backend).
   def __and__(self, x):
-    if (self):
-      return x
-    else:
+    if isinstance(x, bool):
+      if self:
+        return x
       return self
+    if self:
+      return 1 & x
+    return 0 & x
   def __or__(self, x):
-    if (self):
-      return self
-    else:
+    if isinstance(x, bool):
+      if self:
+        return self
       return x
+    if self:
+      return 1 | x
+    return 0 | x
   def __not__(self):
     # __pyc_clone_constants__, exactly as __pyc_to_bool__ above uses it
     # and for the same reason: this method MATERIALIZES a fresh bool

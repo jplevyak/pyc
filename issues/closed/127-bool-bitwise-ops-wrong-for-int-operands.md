@@ -1,9 +1,19 @@
 # 127 — `bool & int` and `bool | int` compile clean and give the wrong answer
 
-**Status:** open. **Silent wrong answer**, which this project treats as the
-worst available outcome — no diagnostic, exit 0, wrong value.
+**Status: CLOSED 2026-09-12**, fixed the same day it was filed. It was a
+**silent wrong answer** — no diagnostic, exit 0, wrong value — which this
+project treats as the worst available outcome.
 
-Split out of [126](closed/126-bool-lacks-int-subtype-arithmetic.md) 2026-09-12,
+The fix is the `isinstance` split described below, applied to both
+`__and__` and `__or__`. All six cases in the table now match CPython, the
+mixed cases are covered by `tests/bool_int_subtype_arith.py` (including an
+int operand that is NOT a constant, so the splitter cannot fold it), six
+gates are green at **318/0 on both backends**, and a corpus `check` sweep
+joined per program shows **not one of the 77 programs changed** `compile_rc`,
+`run_rc`, `cpy_rc` or `stdout_match`. That last result is the one the issue
+predicted: nothing in the corpus was relying on the wrong answer.
+
+Split out of [126](126-bool-lacks-int-subtype-arithmetic.md) 2026-09-12,
 which closed by adding bool's missing arithmetic. `__and__` and `__or__` were
 NOT missing — they are present and wrong — so they are a separate defect and
 were not in 126's title or its fix.
