@@ -369,6 +369,64 @@ class bool:
   # need no numeric primitive at all. (Mixed bool/int ordering like
   # `True < 5` is not the target here and is left to whatever the
   # numeric side supports.)
+  # bool is an int subtype in Python for ARITHMETIC too: `True + True` is
+  # 2, `(a > b) - (a < b)` is the standard three-way compare, and
+  # `True ^ False` is True. Without these, every one of those dispatched to
+  # nothing -- `unresolved call '__sub__'` in shedskin_examples timsort's
+  # `return (a > b) - (a < b)`, `'__xor__'` in quameon's `not(x^y)` and
+  # softrender's `if currentInside ^ previousInside:` (issues/125's
+  # sibling; the corpus census is in ifa/149).
+  #
+  # These CANNOT use the branch-on-self-returning-literals form the
+  # comparisons above use, even though it is shorter:
+  #
+  #     def __add__(self, x):        # WRONG
+  #       if self:
+  #         if x: return 2
+  #         return 1
+  #       ...
+  #
+  # That is right for a bool `x` and SILENTLY WRONG for an int one --
+  # `True + 5` would return 2 instead of 6. An unresolved call is a loud
+  # failure; a wrong answer that compiles clean is the one outcome this
+  # project treats as worse than not compiling at all.
+  #
+  # So: reduce `self` to the int literal 0 or 1 and let the NUMERIC
+  # operator run, which is correct for a bool and an int alike. The
+  # literal is the receiver, so this is `int + x`, never `bool + x` --
+  # measured to work on both backends, and it sidesteps both hazards the
+  # comparison comment above records: no numeric primitive ever receives a
+  # bool operand, and `int()` is never called (`int(True)` yields -1 on
+  # the LLVM backend, a separate sign-extension bug).
+  def __add__(self, x):
+    if self:
+      return 1 + x
+    return 0 + x
+  def __sub__(self, x):
+    if self:
+      return 1 - x
+    return 0 - x
+  def __mul__(self, x):
+    if self:
+      return 1 * x
+    return 0 * x
+  def __xor__(self, x):
+    # `^` is the one that needs the type split: CPython's `bool ^ bool` is
+    # a BOOL (`True ^ False` is `True`, not `1`) while `bool ^ int` is an
+    # int (`True ^ 3` is 2). Returning the int for both would print `1`
+    # where CPython prints `False`. isinstance folds to a single constant
+    # per contour, so only one arm survives in each caller.
+    if isinstance(x, bool):
+      if self:
+        return not x
+      return x
+    if self:
+      return 1 ^ x
+    return 0 ^ x
+  # Deliberately NOT added: __truediv__, __floordiv__, __mod__, __pow__,
+  # __lshift__, __rshift__ and the reflected/in-place forms. No corpus
+  # program and no test needs them, and each would be an untested guess at
+  # a shape (`__ixor__` on a bool, say) that may not even be reachable.
   def __lt__(self, x):     # self < x  : only False < True
     if self:
       return False
