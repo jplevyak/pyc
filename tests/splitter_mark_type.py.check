@@ -2,5 +2,5 @@ splitter_mark_type.py:47:245: warning: illegal call argument type expression ill
             return self.aas[-1].ay()
                                     ^
   called from splitter_mark_type.py:52
-STAGES: TYPE_CONFL
+STAGES: TYPE_CONFL SETTER
 CALLS: direct=69 dynamic=0
