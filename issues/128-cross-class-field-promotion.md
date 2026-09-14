@@ -570,8 +570,49 @@ populations need different answers and must not be fed to a splitter:
 - **RELATED (11)** — hoist to the common ancestor, shedskin's model. A split
   here is wrong and `richards` is the proof.
 - **FUSED (62)** — every writer already carries the union, so there is no
-  key to split on. This is the majority and remains unanswered; `linalg`
-  alone has 30, all fused. Whatever answers it is not step 2-4.
+  key to split on. See below: these are mostly DOWNSTREAM of a confluence
+  rather than 62 independent problems, so the count is not the size of the
+  remaining work.
+
+### What FUSED actually means — the union arrived pre-formed
+
+Corrected 2026-09-14; the step-1 summary first treated FUSED as a separate
+population needing its own answer. It mostly is not.
+
+FUSED means **no two writers disagree cleanly**, so there is no key to
+partition them by. A FUSED channel on `chull` (`cs=1876`):
+
+```
+ELEMWRITER es=312  __setitem__  Vertex#1191 Edge#1276 Edge#1896 Edge#1971 Edge#1972
+ELEMWRITER es=313  __setitem__  Vertex#1191 Edge#1276 Edge#1896 Edge#1971 Edge#1972
+ELEMWRITER es=576  __setitem__  Vertex#1191 Edge#1276 Edge#1896 Edge#1971 Edge#1972
+ELEMWRITER es=671  __setitem__  Edge#1972
+```
+
+Most writers carry the whole union, and the one that does not (`es=671`,
+pure Edge) OVERLAPS them rather than being disjoint, so no pair separates.
+Contrast SEPARABLE `cs=1848`, where `es=680` writes only `Vertex` and
+`es=497` only `Edge`.
+
+**And those fused writers carry the identical five CreationSets, by id, as
+`cs=1848`'s element.** They are not independently forming a union; they are
+copying one that already exists. `cs=1876` is downstream of `cs=1848`.
+
+So a FUSED channel is a VICTIM, not a source: its writers carry the union
+because they read it from somewhere already contaminated. Fixing the sources
+should collapse many of them, which makes the 62 an upper bound on the
+remaining work rather than a count of it.
+
+**But not all of them, and `linalg` is the case that shows it.** It has 30
+FUSED and **0 SEPARABLE**, and all 30 are the same class set — `{int64, list}`
+— one union shape propagated 30 times with no separable element confluence
+to be its source. So the source is upstream in a form this census does not
+look at: a function return, a field, or a formal. A fused channel with no
+separable element source means *find the confluence one level up*, and
+`{int64, list}` is a scalar/container mix, which is
+[ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s
+residual family and issues/018's representation question rather than a
+splittable class union.
 
 ## Plan — find the confluence, create the demand, do the splits
 
@@ -607,6 +648,14 @@ two contours, `defs` becomes 2, and `CS_DEF_PARTITION` partitions the
 element channels with machinery that already exists and is default-on. This
 is the step that needs no new code, and it is the test of whether 1-3 did
 their job.
+
+*Verification for this step must include the FUSED COLLAPSE COUNT.* Re-run
+`IFA_DBG_ELEMCONF` after the sources are separated and record how far the
+62 fused channels fall. The prediction is that most go with their source,
+since they carry the source's CreationSet ids verbatim. **If the count barely
+moves, they are independent after all and need their own answer** — and
+`linalg` is the standing counterexample to watch, with 30 fused, 0
+separable, and every one the same `{int64, list}`.
 
 **5. Then the promotion side becomes a cleanup, not a fix.** With the
 element channel separated, the MIXED write stops arising, `chull`'s
