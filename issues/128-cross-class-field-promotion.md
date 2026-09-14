@@ -438,6 +438,121 @@ further here:
 Default arm unchanged (`chull` still rc=1 at the default, suite 316/0), so
 this is scaffolding with a measured population, not a behaviour change.
 
+## The confluence, located (2026-09-14)
+
+Author: *"We know for certain that the contours can be materialized because
+shedskin does it. As always, find the confluence, create the demand and do
+the splits to get those contours."* Found it, with `IFA_DBG_CSVARS`.
+
+`Hull`'s three list fields, and one of them is contaminated:
+
+```
+var=vertices type= list#1800 list#1802      elem= Vertex          clean
+var=faces    type= list#1801 list#1911      elem= Face Face Face  clean
+var=edges    type= list#1848 list#1887      elem= Vertex Edge Edge Edge Edge
+```
+
+**`Hull.edges`' element channel holds a Vertex.** That is the confluence,
+and everything downstream follows from it: the loop variable in
+`for e in self.edges:` becomes `{Vertex, Edge, …}`, `e.newface = None` is
+then a MIXED write, the MIXED write promotes Edge's fields onto Vertex and
+vice versa, the promoted slots collide (`Edge.onhull` 22 against
+`Vertex.newface` 22), and the union read blind-casts across them.
+
+### The value path is ALREADY split; the receiver is not
+
+`ELEMWRITER` on `cs=1848`:
+
+```
+es=680  __setitem__  type= Vertex#1191                          <- PURE Vertex
+es=497  __setitem__  type= Edge#1896                            <- pure Edge
+es=93   __setitem__  type= Edge#1276 Edge#1971 Edge#1972         <- pure Edge
+es=586  __setitem__  type= Vertex Edge Edge Edge Edge            <- already mixed
+es=91/473/585/679  append  type= Vertex Edge Edge Edge Edge
+```
+
+This is [ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s
+`MIXELEM` reading exactly: **`__setitem__` already has one contour per value
+type** — `es=680` writes only Vertex, `es=497`/`es=93` write only Edge — and
+they all land in ONE element channel because the RECEIVER CreationSet is
+one. Nothing is left to split on the value side.
+
+### And route 4 cannot act, because `defs=1`
+
+```
+cs=1848  defs=1  DEF av=4927  es=82   fun=__init__      <- Hull.__init__'s `self.edges = []`
+cs=1887  defs=1  DEF av=12882 es=191  fun=CleanEdges
+```
+
+`CS_DEF_PARTITION` partitions a CreationSet's own creation points and
+declines at one. So the CS side has nothing to partition — this is precisely
+the residual family 133 names, and it is why five mechanisms have missed it.
+
+### Which makes the split ES-side, and CLAUDE.md already states the rule
+
+> *an EntrySet is split **so that** a CreationSet split becomes possible.*
+
+`cs=1848` has one creation point because `Hull.__init__` has one contour. A
+shared `__setitem__`/`append` contour serves that receiver alongside a
+Vertex-holding list, so the Vertex reaches the edges element channel. Split
+the contour that shares them and the SAME site is reached in two contours →
+`creation_point` mints a second CreationSet → `defs=2` → route 4 partitions
+→ two element channels, one Vertex, one Edge.
+
+That is the chain shedskin gets for free by parameterising `list<T>`: it
+emits `list<Vertex *>` and `list<Face *>` as distinct types. The contours are
+materializable; pyc has to reach them by splitting.
+
+## Plan — find the confluence, create the demand, do the splits
+
+Each step is measurable on its own, and each has a stop condition.
+
+**1. Raise the demand at the ELEMENT CONFLUENCE, not at the field write.**
+The MIXED field write (already recorded in `fieldsplit_demands`) is a
+SYMPTOM three steps downstream; acting on it failed because its receiver is
+a loop local with nothing to filter on. The demand belongs where the
+confluence is: an element channel receiving two classes whose writers are
+already separated. Record `(CreationSet, AType have, AType miss)` there.
+*Stop condition:* if the corpus population of such channels is ~0 outside
+`chull`, this is a one-program mechanism and should be scoped as such.
+
+**2. Find the blocker by test, reusing `PYC_ESBLOCK`.** 133 already has it:
+candidates are AVars on the backward walk that are FORMALS of a contour with
+more than one in-edge; hold each terminal and recompute the per-writer
+signatures; the one whose removal separates Vertex from Edge is the blocker.
+Do not write a second copy — feed this demand into that walk.
+*Stop condition:* if no candidate separates them, the receiver is shared for
+a reason the walk cannot see, and that reason is the next thing to find.
+
+**3. Split it into exactly TWO groups**, `{writers reaching Vertex}` vs
+`{writers reaching Edge}`, by the same rule ESBLOCK uses — first signature
+keeps the contour, everything else peels onto one product. The partition is
+named by the demand and is 2 by construction, so it cannot become
+[ifa/144](../ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
+fan. *Stop condition:* if the group count tracks the caller or member count,
+stop — that is the fan, and it has been built and reverted twice already.
+
+**4. Let route 4 finish the job.** After the ES split the site is reached in
+two contours, `defs` becomes 2, and `CS_DEF_PARTITION` partitions the
+element channels with machinery that already exists and is default-on. This
+is the step that needs no new code, and it is the test of whether 1-3 did
+their job.
+
+**5. Then the promotion side becomes a cleanup, not a fix.** With the
+element channel separated, the MIXED write stops arising, `chull`'s
+cross-class promotion disappears, and the remaining work is the per-pass
+`has` recompute so no residue survives from early imprecise passes — plus
+the diagnostic shedskin has and pyc lacks, for unions that are genuinely
+irreducible (`richards`).
+
+### Verification
+
+- `chull` compiles AND runs at the default and under the flip.
+- `Hull.edges` element is `Edge` only; `IFA_DBG_LAYOUT` gives `Edge` and
+  `Vertex` exactly their own five fields, matching shedskin's emitted C++.
+- `richards` unchanged — its union is real and must survive.
+- `./corpus_sweep.sh -m check` per program on both arms; `ess`/`css` not up.
+
 ## Plan
 
 Ordered so each step is measurable on its own.
