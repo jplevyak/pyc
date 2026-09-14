@@ -684,6 +684,31 @@ teaching a backward walk to cross a folded global load. **So "push the demand
 back through the setters" is an established, landed technique here — the
 question is only where it has to reach.**
 
+### shedskin does not split `Hull` either — it splits the LIST
+
+Checked, because the premise matters: if shedskin needed two `Hull` contours
+then pyc would too, and the target would be the ES above the creation point.
+It does not. shedskin emits ONE `Hull` class and one instantiation
+(`h = new Hull(sphere)`):
+
+```cpp
+class Hull : public pyobj {
+    list<Vertex *> *vertices;
+    list<Edge *> *edges;      // precisely typed -- no Vertex
+    list<Face *> *faces;
+};
+```
+
+The contour that differs in shedskin is the **list**, not the `Hull`: it
+materializes `list<Vertex *>` and `list<Edge *>` as two distinct
+parameterised types. pyc ALREADY HAS the corresponding two CreationSets —
+`cs=1848` is `Hull.edges` with `defs=1`, which is correct — so the contour is
+not missing. What is wrong is that a Vertex reaches it.
+
+That is why the target is the receiver of the shared container methods and
+not the ES above the creation point: there is no second `Hull` to make, and
+no second `self.edges = []`.
+
 ### Where it has to reach is NOT a second creation point
 
 `cs=1848` is created by `Hull.__init__` — verified, `es=82` has receiver
@@ -724,16 +749,51 @@ single-container method contour, not a duplicated creation point.
 - The partition stays at 2: `{writers reaching Vertex}` vs
   `{writers reaching Edge}`, named by the demand.
 
-### The risk to measure first
+### The receiver-cardinality measurement — defined, and taken
 
-A shared container-method contour serving N containers could split N ways,
-which is [144](../ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
-fan. `extend`/`append`/`__setitem__` are the most-shared functions in the
-program, so this is the population where a fan would be most expensive.
-Measure the receiver-formal cardinality of those contours BEFORE splitting,
-and keep the partition at 2 by peeling one group at a time, as
+**What it is:** for every EntrySet, how many distinct CreationSets does its
+RECEIVER formal hold? The receiver is `positional_arg_positions[1]` —
+position 0 is the selector, as the `FUNES` dump shows
+(`args= [__setitem__#44] [list#1848 list#1887] [int64#6] [Edge#1896]`).
+
+**Why it gates the build:** the proposed split partitions a contour by its
+receiver. If receivers routinely hold N containers, the split hands back N
+groups and that is
+[144](../ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
+fan — in the worst possible place, since `extend`/`append`/`__setitem__` are
+the most-shared functions in any program. `IFA_DBG_RECVCARD`.
+
+*(First cut reported `over1=0` on everything, because it picked the formal by
+comparing MPosition POINTERS rather than using the ordered positional list.
+Recorded because the wrong answer looked plausible — "every receiver is
+already precise" — and would have made the whole risk vanish on paper.)*
+
+**chull:**
+
+```
+total=556  receiver>1=92 (17%)  max=4 (__setitem__)
+hist: 1=464  2=52  3=34  4=6
+```
+
+**Corpus, 76 programs:**
+
+```
+contours=29720  receiver>1=2756 (9.3%)  max=20 (enumerate)
+hist: 1=26964  2=1236  3=428  4=192  5=135  6=289  7=95  8+=381
+```
+
+**The risk is real but narrow.** 90.7% of contours already have a
+single-container receiver and need nothing. Of the 9.3% that do not, the
+bulk are 2 or 3 (1664 of 2756), and the tail is genuinely long — 381
+contours at 8 or more, with `enumerate` at 20.
+
+So the rule that follows is not "split by receiver": it is **peel the
+demanded group and leave the rest fused**, exactly as
 [133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s ESBLOCK
-does.
+does with its "take exactly TWO groups" rule. On a receiver holding 20
+containers the demand still names two — the one the Vertex reaches and
+everything else — and a partition of 2 is what must be applied, never 20.
+The tail is the reason that rule is mandatory rather than stylistic.
 
 ## Plan — find the confluence, create the demand, do the splits
 
