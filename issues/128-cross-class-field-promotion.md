@@ -105,14 +105,65 @@ this tree keeps meeting from other directions —
   Name-sorting each promotion batch cannot align classes whose
   pre-promotion `has` counts already differ.
 
-## The gap, stated honestly
+## Step 1 DONE — there is no second path, and the blunt rule is wrong
 
-Suppressing pass-0 union evidence was tried as a diagnostic
-(`PYC_PROMOTELATE`, since removed). On the 14-line reproducer it **fixes it
-completely** — `A` gets only `a`, `B` only `b`, output unchanged. On `chull`
-it does **not**: the cross-class fields are still promoted. So a second path
-reaches `unknown_vars` that `P_prim_setter` does not cover, and finding it is
-the next step. Do not build the fix until it is found.
+**Retracted:** this issue previously said a second path reaches
+`unknown_vars` that `P_prim_setter` does not cover. **There is none.** That
+claim came from an experiment gated on `analysis_pass == 0`, and the union
+writes that matter are not all at pass 0. Suppressing them at EVERY pass
+accounts for all of it.
+
+Established with two probes — `IFA_DBG_PROMOTE` (writes whose receiver is a
+union) and `IFA_DBG_PROMOTED` (the promotions that result). On `chull` the
+sets line up exactly:
+
+```
+promoted onto Edge:    adjface delete duplicate endpts enum mark newface onhull visible
+promoted onto Vertex:  delete duplicate mark newface onhull v vnum visible
+union-receiver writes: delete duplicate mark newface onhull visible
+```
+
+Every CROSS-class field is in the union-write set; every own field
+(`adjface`/`endpts`/`enum`, `v`/`vnum`) is not. One path, fully accounted.
+
+And suppressing it works on `chull`: **rc=0, zero errors**, with each class
+getting exactly its own five fields —
+
+```
+Edge:   adjface delete endpts enum newface
+Vertex: duplicate mark onhull v vnum
+```
+
+— byte-for-byte the field sets shedskin emits. The pyc suite stays at
+**316/0**.
+
+### But "never discover through a union" is the WRONG RULE
+
+Corpus, flip default, union-discovery suppressed
+(`compile__PYC_PROMOTELATE_1__5dbfb6f2+3488e405`) against the flip alone:
+
+| | flip | + suppressed |
+| --- | --- | --- |
+| compile failures | 7 | **8** |
+| programs with warnings | 33 | **29** |
+
+`chull` is fixed and **two programs are lost**:
+
+- **`richards` rc=1** in 3s — a genuine compile failure,
+  `no matching function for call`. A field that only a union-receiver write
+  attests was dropped, so a value's type is wrong downstream. This is the
+  rule being too blunt, not a latent bug being exposed.
+- **`sunfish` rc=124** — a TIMEOUT at 400s, i.e. an analysis-cost blowup
+  rather than a correctness failure. Worth understanding separately.
+
+**So the lever is removed rather than kept**, and this is the useful result:
+the distinction that matters is not *union vs single* receiver, it is
+*transient vs persistent* evidence. A union write at pass 0 that is gone by
+the fixed point should leave nothing behind; a union write that survives to
+the fixed point is the only evidence the field exists and must be kept.
+Suppression cannot tell them apart. **Recomputing the promoted part of
+`has` every pass can** — which is the design's step 3, and this measurement
+is the argument for it over the cheaper rule.
 
 ## How shedskin does field discovery — read from source, verified on both shapes
 
@@ -276,12 +327,11 @@ codegen.
 
 Ordered so each step is measurable on its own.
 
-1. **Find the second path into `unknown_vars`.** Suppressing pass-0 union
-   evidence fixes the 14-line reproducer completely and does NOT fix
-   `chull`, so something else reaches it. Extend `IFA_DBG_PROMOTE` to every
-   site that adds, not just `P_prim_setter`. **Until this is found the rest
-   is guesswork** — in particular, do not conclude that step 3 is sufficient
-   because the reproducer goes green.
+1. ~~**Find the second path into `unknown_vars`.**~~ **DONE — there is
+   none.** See above. The single `P_prim_setter` site accounts for every
+   cross-class promotion on `chull`, and suppressing it fixes `chull` with
+   the suite still at 316/0 — but costs `richards` (a real failure) and
+   `sunfish` (a timeout), which is why the blunt rule is not the fix.
 
 2. **Gate field-discovery-by-write behind `IFACallbacks`**
    (`discovers_fields_by_write()`, default false). Mechanical, no behaviour

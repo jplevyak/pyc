@@ -421,6 +421,13 @@ static bool promote_field(CreationSet *cs, cchar *name) {
     // visible in one line each.
     if (getenv("IFA_DBG_LAYOUT"))
       fprintf(stderr, "PROMOTE %s.%s -> index %d\n", cs->sym->name ? cs->sym->name : "?", name, cs->sym->has.n);
+    // issues/128 step 1: which CreationSet's evidence actually produced this
+    // field. IFA_DBG_PROMOTE reports the WRITES whose receiver was a union;
+    // this reports the promotions that RESULT. A (class, field) pair that
+    // appears here and not there was recorded from a single-class receiver,
+    // which is a different path and is what step 1 is looking for.
+    if (getenv("IFA_DBG_PROMOTED"))
+      fprintf(stderr, "[promoted] cs=%d %s.%s\n", cs->id, cs->sym->name ? cs->sym->name : "?", name);
     cs->sym->has.add(field_sym);
   }
   return promote_field_one(cs, field_sym, name);
