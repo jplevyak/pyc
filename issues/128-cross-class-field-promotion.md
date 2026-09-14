@@ -187,23 +187,129 @@ ancestor as a virtual method or `virtualvars` (`shedskin/virtual.py:125`),
 so C++ inheritance gives one slot at one offset. Detail in
 [ifa/135](../ifa/issues/135-empty-sibling-contour-wins-the-clone-merge.md).
 
+## The design (author, 2026-09-14)
+
+> *"Seems like we should recompute `sym->has` every pass. Adding to
+> `sym->has` should be a front end configuration since that is not something
+> all languages need."*
+
+Both halves check out against the code, and together they are the fix.
+
+### Where the boundary actually sits today — verified
+
+**Adding to `Sym::has` during analysis is ALREADY frontend-only.** Every
+mutation is in `python_ifa_sym.cc:424` (`promote_field`) or
+`python_ifa_build_syms.cc` (class construction). `ifa/analysis/fa.cc` never
+adds. The only other writers are `clone.cc:858/908/1453`, which REBUILD
+`has` for clones after convergence, and the test IR builder. So half of the
+second directive is satisfied.
+
+**What is NOT frontend is the evidence collection.**
+`CreationSet::unknown_vars` is declared in `ifa/analysis/fa.h:309` and
+populated by generic ifa in `P_prim_setter` (`fa.cc:3633`):
+
+```c
+for (CreationSet *cs : obj->out->sorted) {
+  AVar *iv = cs->var_map.get(symbol);
+  if (iv) flow_vars(tval, iv);
+  else    cs->unknown_vars.add(symbol);
+}
+```
+
+That encodes *"a write to a field the class does not have DISCOVERS a
+field on it"* — a Python-ism. A language whose classes declare their fields
+wants the `else` branch to be an ERROR, not a discovery. Generic ifa should
+not be asserting it.
+
+### And `unknown_vars` is already reset per pass — `has` is not
+
+`clear_cs` (`fa.cc:7957`) clears `unknown_vars`, and `clear_results` calls
+it for every CreationSet before each pass. So the *derived* state is already
+handled correctly. `sym->has` is the thing that accumulates, and nothing
+ever clears it. **That asymmetry is the bug**: the evidence is reset each
+pass, the conclusion drawn from it is not.
+
+It is also exactly why the measurements above look the way they do — all
+4/4 and 777/777 promoting sites are at pass 0, yet the fields survive to
+codegen.
+
+### The two changes
+
+1. **Gate the collection behind `IFACallbacks`.** A hook in the shape the
+   file already uses for frontend language policy —
+   `narrowing_is_none_name()`, `bool_is_numeric()`, each defaulting to
+   "this frontend has none":
+
+   ```c
+   // ifa.h
+   virtual bool discovers_fields_by_write() { return false; }
+   ```
+
+   With it false, `P_prim_setter`'s `else` branch stops recording and the
+   missing field is a violation like any other. pyc returns true.
+
+2. **Recompute the promoted part of `has` every pass.** Split `has` into
+   the DECLARED entries (from the frontend's class definition, stable) and
+   the PROMOTED ones (derived). Reset the promoted entries wherever
+   `unknown_vars` is reset, and re-derive them from that pass's evidence.
+   A transient pass-0 union then leaves nothing behind, which is precisely
+   this issue's defect.
+
+   `Sym` has bitfield space (`sym.h:66-83`) for an `is_promoted_field : 1`
+   marker, so the partition is representable without a new structure.
+
+### What to check before building it
+
+- **`has` INDEX is the emitted struct's `eN` suffix.** Codegen runs after
+  convergence, so only the final `has` matters for emission — but anything
+  that caches an index MID-analysis would break. Find those first.
+- **`clone.cc` rebuilds `has` for clones** (858/908/1453). Its interaction
+  with a per-pass reset has to be worked out; clones are made after
+  convergence, so it is probably fine, but "probably" is not measured.
+- **This does NOT fix the genuine-union case.** With `xs = [A(), B()]` the
+  union survives to the fixed point, and re-deriving each pass re-derives
+  the same promotion. That case needs the other two things shedskin has: a
+  DIAGNOSTIC (it warns `expression has dynamic (sub)type: {A, B}`; pyc is
+  silent) and a consistent offset for the shared field. Keep them separate.
+
 ## Plan
 
-1. **Find the second path into `unknown_vars`** — the gap above. Extend
-   `IFA_DBG_PROMOTE` to every site that adds, not just `P_prim_setter`.
-   Until this is done the rest is guesswork.
-2. **Promote from the CONVERGED state, not from accumulated evidence.** The
-   principled rule: a field is promoted onto a class because a write to it
-   was observed *at the fixed point*, not because a transient union at pass
-   0 briefly made it look possible. `unknown_vars` is already cleared per
-   pass; what is missing is that `reanalyze` consumes whatever survived the
-   last pass rather than re-validating it.
-3. **Then decide the layout question separately.** Even with (2), a
-   legitimate union of unrelated classes read through one receiver has no
-   sound blind cast. The options are shedskin's — hoist to a shared base
-   (a REPRESENTATION property, legitimate ground) — or refuse. Do not
-   reach for a better sort order: that is making a shared layout by
-   coincidence, and it cannot work when the base offsets differ.
+Ordered so each step is measurable on its own.
+
+1. **Find the second path into `unknown_vars`.** Suppressing pass-0 union
+   evidence fixes the 14-line reproducer completely and does NOT fix
+   `chull`, so something else reaches it. Extend `IFA_DBG_PROMOTE` to every
+   site that adds, not just `P_prim_setter`. **Until this is found the rest
+   is guesswork** — in particular, do not conclude that step 3 is sufficient
+   because the reproducer goes green.
+
+2. **Gate field-discovery-by-write behind `IFACallbacks`**
+   (`discovers_fields_by_write()`, default false). Mechanical, no behaviour
+   change for pyc, and it puts the language assumption where the other
+   frontend policies already live. Doing it first makes step 3's blast
+   radius visible: every site that would break with the hook off is a site
+   that assumes Python semantics.
+
+3. **Recompute the promoted part of `has` every pass.** Mark promoted
+   entries, reset them where `unknown_vars` is reset, re-derive. This is the
+   fix for THIS issue's defect — a transient union leaving a permanent
+   field. Verify on the 14-line reproducer (`A` keeps only `a`) and then on
+   `chull`, and check the `has`-index and `clone.cc` questions above.
+
+4. **Then the genuine-union case, separately.** A union of unrelated classes
+   read through one receiver has no sound blind cast, and step 3 does not
+   touch it. shedskin does two things pyc does not: it WARNS
+   (`expression has dynamic (sub)type: {A, B}`) and it keeps the shared
+   field at a consistent offset. The warning is cheap and is the higher
+   value of the two — `chull` reached a runtime segfault on main with a
+   clean compile, and a diagnostic there would have surfaced this years
+   earlier.
+
+   Do **not** reach for a better sort order: that makes a shared layout by
+   coincidence and cannot work when the base offsets differ, which is
+   exactly `chull` (15 vs 16). The sound options are shedskin's — hoist to
+   a shared base, a REPRESENTATION property and legitimate ground — or
+   refuse.
 
 ## What this unblocks
 
