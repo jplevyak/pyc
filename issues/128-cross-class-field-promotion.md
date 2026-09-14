@@ -114,6 +114,67 @@ it does **not**: the cross-class fields are still promoted. So a second path
 reaches `unknown_vars` that `P_prim_setter` does not cover, and finding it is
 the next step. Do not build the fix until it is found.
 
+## How shedskin does field discovery — read from source, verified on both shapes
+
+`obj.attr = val` is lowered the same way pyc lowers it: to a fake
+`obj.__setattr__("attr", val)` call (`graph.py:assign_pair`). The difference
+is what happens next.
+
+**`connect_getsetattr` (`infer.py:1350`) attaches the field to the class the
+call RESOLVED to**, not to every class in the receiver's type:
+
+```python
+parent = func.parent                       # the class this call dispatched to
+assert isinstance(parent, (python.Class, python.StaticClass))
+var = default_var(gx, varname, parent, worklist, mv=parent.module.mv)
+```
+
+`func` is the resolved target under CPA's per-receiver templates, so each
+instantiation sees ONE class. pyc's `P_prim_setter` instead takes a single
+receiver AVar and loops over **all** of `obj->out->sorted`, so one write
+with a union receiver fans the field onto every member at once.
+
+**But that is not the whole defence, and on its own it would not be one** —
+if the union is real, CPA instantiates a template per class and each still
+acquires the field. The primary defence is that **the union does not form**:
+
+```cpp
+list<A *> *xs;      // on this issue's 14-line reproducer
+list<B *> *ys;
+class A : public pyobj { __ss_int a; };
+class B : public pyobj { __ss_int b; };
+```
+
+Each class gets exactly its own field, because `xs[0]` is precisely `A *`.
+Same on `chull`: `Edge::endpts` is `list<Vertex *> *` and `adjface` is
+`list<Face *> *`.
+
+**And when the union IS genuine, shedskin says so.** Changing the reproducer
+to `xs = [A(), B()]` with `x.a = 5`:
+
+```
+*WARNING* u4.py:9: expression has dynamic (sub)type: {A, B}
+class A : public pyobj { __ss_int a; };
+class B : public pyobj { __ss_int a;  __ss_int b; };
+```
+
+It promotes `a` onto `B` — the same thing pyc does — but it **warns**, and
+the shared field lands at index 0 in BOTH classes, so a cast between them
+reads `a` correctly. pyc does neither: it is silent, and the shared field
+lands at whatever slot each class had reached.
+
+So the three things pyc is missing, in priority order:
+
+1. **Element precision, so the union does not arise.** This is what
+   shedskin actually relies on and what `chull` needs.
+2. **A diagnostic when a field is promoted across a union.** Today this is
+   silent, which is why `chull` reached a runtime segfault on main with a
+   clean compile. shedskin's "dynamic (sub)type" warning is the model.
+3. **A consistent offset for a shared promoted field**, if it is promoted
+   at all. Whether shedskin's agreement here is by construction or by
+   insertion-order luck was NOT established and should be checked before
+   copying it.
+
 ## How shedskin avoids it
 
 Verified by translating `chull` with shedskin (rc=0) and reading the output:
