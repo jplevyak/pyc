@@ -795,6 +795,55 @@ containers the demand still names two — the one the Vertex reaches and
 everything else — and a partition of 2 is what must be applied, never 20.
 The tail is the reason that rule is mandatory rather than stylistic.
 
+## NEXT STEP: find the SOURCE confluence, not the first one
+
+Every level examined so far has turned out to be a propagator, not an
+origin. The walk, each step measured:
+
+```
+field write  e.newface = None        receiver is a loop local     -> not actionable
+element chan Hull.edges (cs=1848)    SEPARABLE, defs=1            -> ESBLOCK N/A
+writer       __setitem__ es=680      recv {1848,1887}, val Vertex -> value already split
+caller       append es=679           recv {1848,1887}, val Vertex -> same
+caller       extend es=670           recv {1848,1887}, val Vertex -> same
+call site    DoubleTriangle es=84    self.edges.extend(f0.InitEdges())
+```
+
+And the call site is CORRECT Python: the receiver really is `self.edges`, and
+the source is `InitEdges()`'s returned list. **So the Vertex is already in
+that returned list when it arrives.** One more propagator.
+
+**That is the lesson, and it is the same one three times over.** Acting at
+the field write failed (receiver is a local). Acting at the element channel
+failed (`defs=1`, nothing to partition). Acting at the writer contours would
+fail the same way, because their receivers are correct and their values are
+already split. Each is downstream of the actual merge.
+
+**So the next step is to make the census find the ROOT.** `IFA_DBG_ELEMCONF`
+currently reports every channel holding two classes — 87 of them — and
+SEPARABLE/FUSED already distinguishes "my writers disagree" from "my writers
+all carry the union". What it does not do is follow `e->backward`
+transitively to the channel where the two classes FIRST meet. Concretely:
+
+1. For each SEPARABLE-UNRELATED channel, walk the writer chain upward while
+   the writers are themselves confluenced. The topmost channel whose own
+   writers are NOT confluenced is the source.
+2. Report only those. The expectation, from the FUSED analysis, is that the
+   87 collapse to a much smaller set of roots — and that the roots are where
+   `{Vertex, Edge}` is first created, not where it is copied.
+3. Put the demand there. Only at a root is there any chance that splitting
+   separates anything, because only there do two genuinely different values
+   meet for the first time.
+
+*Stop condition:* if a root's writers are already disjoint AND its `defs` is
+1 AND its receiver is correct — the shape found at every level here — then
+the union is not created by any single write and the model is wrong. Say so
+rather than walking further.
+
+This is also the cheapest remaining step: it is a transitive closure over
+`e->backward` using data the census already collects, with no splitter
+involved and no behaviour change.
+
 ## Plan — find the confluence, create the demand, do the splits
 
 Each step is measurable on its own, and each has a stop condition.
