@@ -323,6 +323,68 @@ codegen.
   DIAGNOSTIC (it warns `expression has dynamic (sub)type: {A, B}`; pyc is
   silent) and a consistent offset for the shared field. Keep them separate.
 
+## The rule, measured (author, 2026-09-14)
+
+> *"I think we need to do discovery for unions but clear each pass and use
+> the union discovery as demand to split the union."*
+
+All three parts, and the measurement says the third one has a carve-out that
+matters. `IFA_DBG_FIELDSPLIT` classifies every union-receiver write by how
+many members already have the field:
+
+| | ALL-HAVE | MIXED | ALL-MISS |
+| --- | --- | --- | --- |
+| `chull` | 2540 | **162** | **0** |
+| `richards` | 641 | **43** | **24** |
+
+**ALL-HAVE** — every member has the field. The `iv` branch is taken, nothing
+is recorded, nothing to do. It is the overwhelming majority.
+
+**MIXED — this is the demand.** On `chull` every one of them is
+`have=1 miss=9`: exactly ONE class has the field and nine do not, for
+precisely the cross-class names (`delete`, `duplicate`, `newface`,
+`onhull`, `visible`, `mark`). Something observed a distinction — *this class
+has the field, those do not* — and could not proceed without inventing it
+on nine classes. That is CLAUDE.md's definition of a demand, and the
+partition it asks for is **{have} vs {miss}: exactly 2, named by the demand
+itself**, never a count of things. It passes
+[ifa/146](../ifa/issues/146-remove-all-arbitrary-splitting.md)'s test on
+both questions — it cannot fire without the demand, and the demand alone
+decides whether while field-presence decides which.
+
+**ALL-MISS — not separable, and the carve-out that saves `richards`.**
+`have=0 miss=3` for `handle`, `ident`, `input`, `link`, `packet_pending`,
+`priority`, `task_holding`, `task_waiting`. No member has the field, so
+partitioning by presence yields ONE group and there is nothing to split.
+Here the write genuinely IS the only evidence the field exists, and it must
+still be promoted. **This is exactly what blanket suppression destroyed** —
+`richards` has 24 of them and broke; `chull` has none, which is why
+suppression happened to fix it.
+
+### So the rule is three-way
+
+| receiver | action |
+| --- | --- |
+| ALL-HAVE | flow normally |
+| MIXED | **demand: split the union {have} vs {miss}. Do NOT promote.** |
+| ALL-MISS | promote — but as DERIVED state, re-derived every pass |
+
+The per-pass clear is what makes the third row safe: a transient union at
+pass 0 records a field, and if the union is gone at the fixed point the
+field is not re-derived and leaves nothing behind. Persistent evidence
+survives; transient evidence does not. That is the distinction blanket
+suppression could not draw.
+
+### Why this is the same shape as 146 E
+
+Separating a receiver because a demand cannot proceed on the union, with the
+partition named by the demand rather than by a caller or member count, is
+what [146](../ifa/issues/146-remove-all-arbitrary-splitting.md) E already
+owes for dispatch. This is the same mechanism with field-presence as the
+predicate instead of dispatch resolution, and it is bounded at 2 by
+construction where E's is bounded by the receiver's classes. Whoever builds
+one should look at the other.
+
 ## Plan
 
 Ordered so each step is measurable on its own.
@@ -333,20 +395,27 @@ Ordered so each step is measurable on its own.
    the suite still at 316/0 — but costs `richards` (a real failure) and
    `sunfish` (a timeout), which is why the blunt rule is not the fix.
 
-2. **Gate field-discovery-by-write behind `IFACallbacks`**
+2. **Build the three-way rule above**, in this order: the `IFA_DBG_FIELDSPLIT`
+   classification already exists, so start by making MIXED a demand that
+   splits the receiver, leaving ALL-MISS promoting exactly as today. That
+   alone should fix `chull` without touching `richards` — the prediction is
+   explicit and falsifiable, since `chull` is 0 ALL-MISS and `richards`'
+   failures were all ALL-MISS.
+
+3. **Gate field-discovery-by-write behind `IFACallbacks`**
    (`discovers_fields_by_write()`, default false). Mechanical, no behaviour
    change for pyc, and it puts the language assumption where the other
    frontend policies already live. Doing it first makes step 3's blast
    radius visible: every site that would break with the hook off is a site
    that assumes Python semantics.
 
-3. **Recompute the promoted part of `has` every pass.** Mark promoted
+4. **Recompute the promoted part of `has` every pass.** Mark promoted
    entries, reset them where `unknown_vars` is reset, re-derive. This is the
    fix for THIS issue's defect — a transient union leaving a permanent
    field. Verify on the 14-line reproducer (`A` keeps only `a`) and then on
    `chull`, and check the `has`-index and `clone.cc` questions above.
 
-4. **Then the genuine-union case, separately.** A union of unrelated classes
+5. **Then the genuine-union case, separately.** A union of unrelated classes
    read through one receiver has no sound blind cast, and step 3 does not
    touch it. shedskin does two things pyc does not: it WARNS
    (`expression has dynamic (sub)type: {A, B}`) and it keeps the shared
