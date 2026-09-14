@@ -6,9 +6,17 @@
 # The fixture is kept because the SHAPE it builds is the valuable part, and
 # ifa/142 cites the paragraph below for it. What it now pins is that the
 # shape costs NOTHING to resolve without marks: `CALLS: direct=69
-# dynamic=0`, byte-identical to the numbers MARK_TYPE produced. The STAGES
-# line lost `MARK_TYPE` and gained nothing, which is the point -- the
+# dynamic=0`, byte-identical to the numbers MARK_TYPE produced -- the
 # remaining stages reach the same answer.
+#
+# Corrected 2026-09-14: this used to add "the STAGES line lost `MARK_TYPE`
+# and gained nothing", and that is no longer true. Under the start-merged
+# default (PYC_CSDCPA1=2, ifa/129) the golden reads
+# `STAGES: TYPE_CONFL SETTER`: the contours no longer begin pre-split into
+# the answer, so SETTER has to fire to reach it. The CALLS line is what
+# pins the claim that matters -- resolution is unchanged at direct=69
+# dynamic=0 -- and the STAGES line now records WHICH stages get there,
+# which is a different and also useful thing to pin.
 #
 # Two list comprehensions over lists of different element types. The two
 # `list.append` call edges carry distinct types, but pyc names contours by

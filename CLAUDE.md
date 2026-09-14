@@ -42,10 +42,16 @@ proper — structural splitting wearing the analysis's clothes:
 **The rule holds on one side and not the other, and the asymmetry is
 measurable.** EntrySets DO start minimal — one per function — and split on
 demand; a two-call program splits `f` into exactly the two contours its
-argument types ask for. CreationSets do not: `multidef=0` corpus-wide over
-127 522 CreationSets means **every CreationSet has exactly one creation
-point**, i.e. the data contours start maximally split and never merge. The
-start-merged posture is `PYC_CSDCPA1=2` and it is opt-in, not the default.
+argument types ask for. CreationSets did not: `creation_point` memoizes on
+`v->cs_map` where `v` is an AVar — a *(variable × contour)* pair — so it
+yields one CreationSet per *(allocation site × contour)* and never asks
+whether two could be the same. That is structural, and true by construction
+rather than by measurement.
+
+**`PYC_CSDCPA1=2` — start merged, one CreationSet per sym — is now the
+DEFAULT**, which is that premise implemented. `PYC_CSDCPA1=0` restores the
+old maximal start. What it costs and what is still owed for it is
+[ifa/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md).
 
 *(`PYC_CSSPLIT=1` used to be named here as a second violation — a
 CreationSet following an EntrySet split by construction. It was REMOVED
