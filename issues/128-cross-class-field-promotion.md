@@ -614,6 +614,52 @@ separable element source means *find the confluence one level up*, and
 residual family and issues/018's representation question rather than a
 splittable class union.
 
+## Step 2 — the blocker, found by walking the writers
+
+Traced `chull`'s Vertex contamination back through `IFA_DBG_FUNES`. The
+chain is three contours deep and says the same thing at every level:
+
+```
+__setitem__ es=497  recv=[list#1848 list#1887]  val=[Edge#1896]
+__setitem__ es=680  recv=[list#1848 list#1887]  val=[Vertex#1191]
+   <- append es=679 recv=[list#1848 list#1887]  val=[Vertex#1191]
+      <- extend es=670 recv=[list#1848 list#1887] val=[Vertex#1191]
+```
+
+**The VALUE path is split at every level and the RECEIVER is shared at every
+level.** `__setitem__` has one contour for the Edge write and another for the
+Vertex write — the splitter did its job — but both carry the same receiver
+`{list#1848, list#1887}`, so both writes land in both lists' element
+channels.
+
+And `list#1848` is in `Hull.edges` (`var=edges type= list#1848 list#1887`),
+while the Vertex arrives through `extend`, which is `Edge.__init__`'s
+`self.endpts.extend(endpts)`. **One list CreationSet is serving both
+`Hull.edges` and `Edge.endpts`.** That is ifa/133's subject verbatim — a
+merged container leaking elements between unrelated lists — reached from the
+field-promotion side instead of the element side.
+
+### Why ESBLOCK cannot be reused as-is
+
+`PYC_ESBLOCK` finds the contour that blocks route 4 from partitioning a
+CreationSet's `defs`. Its premise is that the defs exist but group into one.
+Here `cs=1848` has **`defs=1`**: there is a single creation point, so there
+is nothing for route 4 to partition and nothing for ESBLOCK's walk to
+separate. The plan's step 2 assumed the walk would apply; it does not.
+
+**The blocker is the CreationSet IDENTITY itself.** Two different fields are
+served by one CS with one creation point, so no receiver-side split can
+separate them — the receiver is literally the same object to the analysis.
+Separating them needs a SECOND creation point, which needs the EntrySet that
+creates it to split first. That is the dependency CLAUDE.md states, and it is
+upstream of everything measured here.
+
+*Stop condition reached, as written:* "if no candidate separates them, the
+receiver is shared for a reason the walk cannot see, and that reason is the
+next thing to find." The reason is `defs=1`, and the next thing to find is
+why one creation point serves two fields — whether the two `[]` literals are
+genuinely one site, or whether the def list is incomplete.
+
 ## Plan — find the confluence, create the demand, do the splits
 
 Each step is measurable on its own, and each has a stop condition.
