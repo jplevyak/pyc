@@ -660,6 +660,81 @@ next thing to find." The reason is `defs=1`, and the next thing to find is
 why one creation point serves two fields — whether the two `[]` literals are
 genuinely one site, or whether the def list is incomplete.
 
+## Step 3's shape: push the demand back along the RECEIVER, not to a second creation point
+
+Author: *"split the receiver by pushing the demand through or back analysis
+from setters and splitting back to the creation point."* That is the right
+direction and the target needs one correction, which the measurements pin
+down.
+
+**pyc already has the backward machinery and 133 already root-caused why it
+stops.** The SETTER stage (`compute_setters` / `split_for_setters`) walks
+backward over the CONTAINER graph, and the finding — kept from the compacted
+history because it is the general rule — is:
+
+> *types flow forward through the merge; setter attribution does not flow
+> backward through it.*
+
+`update_setter` walks `av->backward` from `x->container`, and a transfer
+function that leaves no backward container edge stops it dead. `P_prim_merge`
+was exactly that (every `__mul__` result def measured `back_closure=1`, an
+empty backward set) and was fixed by teaching the walk to cross it, following
+[146](../ifa/issues/146-remove-all-arbitrary-splitting.md) B's precedent of
+teaching a backward walk to cross a folded global load. **So "push the demand
+back through the setters" is an established, landed technique here — the
+question is only where it has to reach.**
+
+### Where it has to reach is NOT a second creation point
+
+`cs=1848` is created by `Hull.__init__` — verified, `es=82` has receiver
+`Hull#1155` — and it has `defs=1`. That is CORRECT: there is one
+`self.edges = []` in the program and one Hull. Splitting back "to the
+creation point" cannot help, because the creation point is not ambiguous and
+duplicating it would be inventing a second `Hull.edges` that the program does
+not have.
+
+**The ambiguity is in the RECEIVER FORMAL of the shared container methods.**
+The chain measured in step 2:
+
+```
+extend es=670  recv=[list#1848 list#1887]  val=[Vertex]
+  append es=679  recv=[list#1848 list#1887]  val=[Vertex]
+    __setitem__ es=680  recv=[list#1848 list#1887]  val=[Vertex]
+    __setitem__ es=497  recv=[list#1848 list#1887]  val=[Edge]
+```
+
+The VALUE split all the way down and the RECEIVER never did. `extend`'s
+contour serves `Edge.__init__`'s `self.endpts.extend(endpts)` alongside
+whatever reaches `Hull.edges`, and because its receiver formal unions them,
+a Vertex written through it lands in the edges list's element channel.
+
+**So the split to make is on the receiver formal of the shared container
+method contour, propagated backward until each contour serves one container.**
+That is "split the receiver" exactly as stated; the endpoint is a
+single-container method contour, not a duplicated creation point.
+
+### Why this is tractable where the earlier attempts were not
+
+- It needs no new demand: the element confluence (step 1) already names it,
+  and the classification says which ones are worth acting on
+  (SEPARABLE-UNRELATED, 14 corpus sites).
+- It needs no new backward walk: `update_setter`'s container-graph walk is
+  the mechanism, and crossing an opaque transfer function is a technique this
+  tree has already applied once and measured.
+- The partition stays at 2: `{writers reaching Vertex}` vs
+  `{writers reaching Edge}`, named by the demand.
+
+### The risk to measure first
+
+A shared container-method contour serving N containers could split N ways,
+which is [144](../ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
+fan. `extend`/`append`/`__setitem__` are the most-shared functions in the
+program, so this is the population where a fan would be most expensive.
+Measure the receiver-formal cardinality of those contours BEFORE splitting,
+and keep the partition at 2 by peeling one group at a time, as
+[133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s ESBLOCK
+does.
+
 ## Plan — find the confluence, create the demand, do the splits
 
 Each step is measurable on its own, and each has a stop condition.
