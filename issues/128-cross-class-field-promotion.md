@@ -503,6 +503,76 @@ That is the chain shedskin gets for free by parameterising `list<T>`: it
 emits `list<Vertex *>` and `list<Face *>` as distinct types. The contours are
 materializable; pyc has to reach them by splitting.
 
+## Step 1 DONE — the census, and a discriminator the plan did not anticipate
+
+`IFA_DBG_ELEMCONF` reports every element channel holding two or more
+distinct CLASSES, classified two ways.
+
+**Are the writers separated?** SEPARABLE means two writers carry disjoint
+class sets — on `chull`, `es=680 __setitem__ Vertex` against
+`es=497 __setitem__ Edge`, so only the RECEIVER is shared and an ES split
+has a key. FUSED means every writer already carries the whole union, so
+there is nothing to split on.
+
+**Do the classes share a USER-DEFINED ancestor?** This one was not in the
+plan and it changes what the answer should be:
+
+```
+chull:    Vertex -> object __pyc_any_type__
+          Edge   -> object __pyc_any_type__       shared: builtin roots only
+richards: WorkTask -> Task __pyc_any_type__
+          IdleTask -> Task __pyc_any_type__       shared: Task
+```
+
+Every pyc class specializes `object` and `__pyc_any_type__`, so "shares an
+ancestor" is trivially true; the informative test is whether the shared
+ancestor is **user code** (`!is_builtin`) — structural, no names. Two tries
+failed first: `implementors.n < class count` passes for `object` too, since
+its implementors exclude builtins.
+
+- **UNRELATED** (`chull`) — a union of classes with nothing in common. A
+  precision failure, and what should be split away.
+- **RELATED** (`richards`) — `DeviceTask`/`HandlerTask`/`IdleTask`/`WorkTask`
+  all derive from `Task`. **Legitimate polymorphism that must NOT be split.**
+  This is why dropping the write broke `richards`, and it is exactly the case
+  shedskin answers by HOISTING the field to the common ancestor
+  (`virtual.py`'s `virtualvars`), not by separating.
+
+### The corpus population
+
+```
+confluences=87   separable=25 (related=11  UNRELATED=14)   fused=62
+```
+
+across 14 programs. The **stop condition is passed** — this is not a
+one-program mechanism. The actionable set, `SEPARABLE-UNRELATED`:
+
+| program | count |
+| --- | --- |
+| life | 6 |
+| sudoku5 | 5 |
+| webserver | 4 |
+| plcfrs | 4 |
+| chull | 4 |
+| sudoku4 | 2 |
+| bh | 2 |
+
+`sudoku5`, `plcfrs`, `sudoku4` and `chull` are four of the five flag-only
+failures in [ifa/129](../ifa/issues/129-plan-demand-driven-creation-set-splitting.md);
+`bh` and `life` are long-standing element-union cases. So the demand lands
+on the right programs.
+
+### What this changes downstream
+
+**Steps 2-4 apply to SEPARABLE-UNRELATED only — 14 of 87.** The other two
+populations need different answers and must not be fed to a splitter:
+
+- **RELATED (11)** — hoist to the common ancestor, shedskin's model. A split
+  here is wrong and `richards` is the proof.
+- **FUSED (62)** — every writer already carries the union, so there is no
+  key to split on. This is the majority and remains unanswered; `linalg`
+  alone has 30, all fused. Whatever answers it is not step 2-4.
+
 ## Plan — find the confluence, create the demand, do the splits
 
 Each step is measurable on its own, and each has a stop condition.
