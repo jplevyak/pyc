@@ -385,6 +385,59 @@ predicate instead of dispatch resolution, and it is bounded at 2 by
 construction where E's is bounded by the receiver's classes. Whoever builds
 one should look at the other.
 
+## Built: the demand is RECORDED, and it is not actionable at the receiver
+
+**Author's correction, 2026-09-14:** *"keep the mixed write fields but have
+them demand the split. Richards has a real union."* Right on both counts,
+and measured:
+
+- **Dropping a MIXED write is never sound.** Tried it — `chull` compiles
+  clean with each class getting exactly its own five fields (matching
+  shedskin), and `richards` STILL fails with `no matching function for
+  call`. So a MIXED write can be the legitimate first write of a field onto
+  a class that really has it. Reverted.
+- **The demand is additive instead.** MIXED now promotes exactly as before
+  AND records the receiver in `fieldsplit_demands`, cleared per pass beside
+  `tc_cs_dropped` so an imprecise early pass leaves no standing demand.
+  `richards` stays green, which is the point of making it additive.
+
+`PYC_FIELDSPLIT=1` (default 0) drains the list before the CreationSet last
+rung, on quiescence.
+
+### The result: 162 demands, 0 splits
+
+On `chull`: **162 MIXED writes recorded, and `split_entry_set` fired zero
+times.** Every one is rejected by its preconditions — an ES-contoured
+**formal**. chull's receivers are loop locals (`for e in self.edges:` then
+`e.newface = None`), and you cannot filter an edge by a local's value. It is
+the same wall stage 1 already names with `tc_skip_rval`
+("ES/non-formal-rval skipped").
+
+**So the demand is real and correctly identified, and the receiver is the
+wrong place to act on it.** The split has to happen at whatever contour
+FEEDS the local — which is exactly
+[ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s
+`PYC_ESBLOCK` shape ("find the blocker BY TEST": walk back to the formal of
+a contour with more than one in-edge, hold it terminal, and check whether
+the groups then separate) and
+[146](../ifa/issues/146-remove-all-arbitrary-splitting.md) E's.
+
+Two things follow, and they are why this is left gated rather than pushed
+further here:
+
+1. **This wants ESBLOCK's blocker-finding, not a second copy of it.** The
+   next step is to feed `fieldsplit_demands` into that walk instead of
+   calling `split_entry_set` on the receiver directly.
+2. **The partition must stay at 2.** The current action splits by TYPE,
+   which on `chull`'s 10-class union could hand back up to 10 groups —
+   ifa/144's fan signature. The demand names exactly
+   `{have}` vs `{miss}`; whatever acts on it must group edges by
+   field-presence, not by type. `decide_entry_set_split`'s stay/do
+   structure is the place to add that key.
+
+Default arm unchanged (`chull` still rc=1 at the default, suite 316/0), so
+this is scaffolding with a measured population, not a behaviour change.
+
 ## Plan
 
 Ordered so each step is measurable on its own.
