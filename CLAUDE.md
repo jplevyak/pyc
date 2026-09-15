@@ -392,6 +392,59 @@ partition has something to partition — it must never by itself make them
 *incompatible*. Turning a finer identity directly into more contours is
 the same error as splitting on structure, wearing different clothes.
 
+## Find the confluence, backtrack the demand, split. Always.
+
+**Author's directive, 2026-09-14.** When an imprecision shows up, there is one
+method: **find the confluence where the values actually meet, backtrack the
+demand to it, and split there.** Not at the symptom, not at the first union
+you find, not by suppressing something downstream.
+
+**And the contours are realizable — that is settled, not hoped.** shedskin
+compiles the same programs and emits them: `list<Vertex *>` and
+`list<Face *>` as distinct types, every class carrying exactly its own
+fields, one `Hull` with a precisely-typed `edges`. So "these cannot be
+separated" is never the answer. The contour exists; the work is making pyc
+reach it.
+
+**The failure mode is acting anywhere but the confluence**, and
+[issues/128](issues/128-cross-class-field-promotion.md) is a worked record of
+doing it wrong four times in one investigation. Each attempt was locally
+plausible and each was measured dead:
+
+| acted on | why it failed |
+| --- | --- |
+| the field write (`e.newface = None`) | the receiver is a loop local — 162 demands recorded, **0** actionable |
+| dropping the write instead of splitting | fixes `chull`, breaks `richards`, whose union is real |
+| a transitive closure to find the "root" | its own criterion terminates on its first node — it would report where it started |
+| "fixing" a key that looked arbitrary | costs **+129 CreationSets** and fixes nothing |
+
+The last one is the sharpest warning: a one-bit grouping key with no content
+information *looks* like arbitrary splitting by
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s first question,
+and removing it makes the corpus WORSE. 146's own diagnostic settles it —
+an arbitrary lever is **non-monotone**; a lever whose removal costs contours
+is earning its keep. Apply the diagnostic, not just the definition.
+
+**The discipline that goes with the rule:**
+
+- **Locate before acting.** `IFA_DBG_ELEMCONF` (which channels hold two
+  classes, and whether their writers are separable), `IFA_DBG_CSVARS` /
+  `ELEMWRITER` (who writes into an element), `IFA_DBG_FUNES` (a contour's
+  formals and in-edges per call), `IFA_DBG_CSDEFSPLIT`'s `KEY` line (how many
+  assign sets the partition is built from). The confluence is findable; find
+  it.
+- **Classify the confluence before splitting it.** Classes sharing a
+  user-defined ancestor are legitimate polymorphism and must be HOISTED, not
+  split — shedskin's `virtualvars`. `richards`' four `Task` subclasses are
+  that case, and splitting them is what broke it. Only a union of *unrelated*
+  classes is a precision failure.
+- **Every step gets a stop condition, written before the measurement.** Say
+  what result would mean the model is wrong, and when you hit it, stop and say
+  so rather than walking one level further.
+- **A negative result is the deliverable when it is one.** Four of this
+  session's steps ended in "this is not it", each with the measurement that
+  proved it, and that is what stops the next person repeating them.
+
 ## Never analyse or decide by NAME
 
 pyc has a precise call graph and a real class hierarchy. Any analysis or

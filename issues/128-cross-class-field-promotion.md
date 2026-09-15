@@ -1,5 +1,16 @@
 # 128 — a union receiver promotes every class's fields onto every other class
 
+> **Method, per the author 2026-09-14, now a standing directive in CLAUDE.md:**
+> *find the confluence, backtrack the demand to it, and split there. Always.*
+> The contours ARE realizable — shedskin emits them — so "these cannot be
+> separated" is never the answer; the work is making pyc reach them.
+>
+> This file is also the worked record of getting that wrong four times: acting
+> at the field write (receiver is a local, 0 of 162 actionable), dropping the
+> write (breaks `richards`), a closure that terminates on its own first node,
+> and "fixing" a key that looked arbitrary (+129 CreationSets, fixes nothing).
+> Each is measured below. Read them before proposing a fifth.
+
 **Status:** open, root-caused as far as the evidence goes; one gap named
 below. Filed 2026-09-14 while asking why `chull`'s `{Vertex, Edge}` union
 forms.
