@@ -795,7 +795,61 @@ containers the demand still names two — the one the Vertex reaches and
 everything else — and a partition of 2 is what must be applied, never 20.
 The tail is the reason that rule is mandatory rather than stylistic.
 
-## NEXT STEP: find the SOURCE confluence, not the first one
+## The closure achieves NOTHING — retracted before building it
+
+Asked what the closure would achieve, and the answer is nothing. Recorded
+because it was one step from being built.
+
+**It terminates where we already are.** The root criterion proposed below is
+"writers are disjoint and not themselves confluenced". `cs=1848` already
+satisfies it: `es=680` writes a pure `Vertex#1191`, `es=497` a pure
+`Edge#1896`, and neither value is a union. The walk stops on its first node
+and reports the channel it started from.
+
+**And the real source is not an element channel at all.** Measured: the
+`extend` source at `DoubleTriangle` is `cs=1112`, and
+
+```
+CSVARS cs=1112 sym=list defs=9 elem= Vertex
+  ELEMWRITER es=578/584/675/701 __setitem__ type= Vertex#1191
+  ELEMWRITER es=702            append       type= Vertex#1191
+```
+
+**a PURE Vertex list — every writer writes Vertex — with `defs=9`.** There is
+no two-class confluence anywhere in it, so an element-confluence closure has
+nothing to walk to. It would have reported `cs=1848` and stopped, and the
+thing that matters would have been invisible to it.
+
+### What the measurement DID find, which is the opposite of what I was chasing
+
+`cs=1112` has **nine creation points**. It is a merged `[]` CreationSet
+serving nine sites, and it is being used where `InitEdges()`'s edge list
+belongs (`self.edges.extend(f0.InitEdges())`, with `newedges=[]` inside
+`InitEdges`). That is
+[ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s merged
+empty-list literal, and the important part:
+
+> **`defs=9` — so route 4 CAN partition it.** `CS_DEF_PARTITION` declines at
+> one creation point, which is why `cs=1848` (`defs=1`) was a dead end. Nine
+> is inside the cap and is exactly the population that stage was built for.
+
+**So the whole walk was going the wrong way.** I traced downstream-to-upstream
+through channels that were each correct-but-polluted, when the actionable
+object was upstream and had been partitionable all along. The distinguishing
+signal is not SEPARABLE/FUSED and not "who writes it" — it is **`defs`**:
+
+| `defs` | meaning | actionable |
+| --- | --- | --- |
+| 1 | one creation point, genuinely one container | no — nothing to partition |
+| > 1 | a merged literal serving several sites | **yes — route 4's own population** |
+
+The next step is therefore to ask, for each SEPARABLE-UNRELATED confluence,
+whether any list REACHING it has `defs > 1`, and to put the demand on that
+one. Not a closure over element channels — a `defs` test on the sources.
+
+*Superseded proposal, kept so it is not re-proposed:*
+
+## ~~NEXT STEP: find the SOURCE confluence, not the first one~~ (superseded)
 
 Every level examined so far has turned out to be a propagator, not an
 origin. The walk, each step measured:
