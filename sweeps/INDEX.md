@@ -8,6 +8,7 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `compile__PYC_CSKEYSETS_1__04a17bf0+df693813` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2267/617=3.67 pratio=2.52 n=76 |
 | `compile__IFA_DBG_RECVCARD_1__30713208+77498125` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
 | `compile__IFA_DBG_ELEMCONF_1__bac03605+2221ce95` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
 | `compile__IFA_DBG_ELEMCONF_1__bac03605+a2a6cafe` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |

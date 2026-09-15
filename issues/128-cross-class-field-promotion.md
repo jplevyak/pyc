@@ -822,7 +822,36 @@ at p=2.
 when the key DISTINGUISHES anything, so a one-bit key reports
 `informative=1`.
 
-### And requiring two sets does not fix it
+### Is the gate a good mechanism anyway? Measured: NO
+
+Worth asking separately, since the one-bit key looks arbitrary on its face.
+It is not merely "a good mechanism that does not help chull" — the corpus
+says it is a worse mechanism:
+
+| | flip | flip + `keys.n >= 2` gate |
+| --- | --- | --- |
+| compile failures | 7 | 7 (same programs) |
+| programs with warnings | 33 | 33 |
+| container CS / shapes | 2138/629 = **3.40** | 2267/617 = **3.67** |
+| suite | 316/0 | 316/0 |
+
+**+129 CreationSets (+6%) and a worse ratio, for no compensating change
+anywhere.** So the early coarse partition is doing real work despite its key
+carrying no element information: it pre-splits cheaply, and the later
+informative passes (`sets=6`) then have less to separate. Suppressing it
+defers the work to a point where it produces more contours.
+
+That also corrects my own framing. I called it "splitting before the demand
+is observable, the opposite of the rule" — by ifa/146's FIRST question it does
+look arbitrary, since it fires whenever any def is on the single path. But
+146's own diagnostic is that an arbitrary lever is NON-MONOTONE, and this one
+is monotone in the right direction: leaving it in gives fewer contours.
+Removing it is the change that makes results worse.
+
+**Do not "fix" the one-bit key without re-measuring those two rows.** Recorded
+at the code as well.
+
+### And requiring two sets does not fix chull
 
 Tried it (`PYC_CSKEYSETS`, since removed): require `keys.n >= 2` before the
 content key is used. **It works as intended** — p=0 and p=1 then report
