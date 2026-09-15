@@ -1,7 +1,31 @@
 # 132 — Arity is representation, not provenance
 
 **Status:** open. Guard landed (inert at the default); the real fix is
-below. Root-caused while investigating
+below.
+
+**2026-09-14 — this issue is now the blocker for
+[152](152-FA-backtrack-the-demand-to-the-merged-creation-set.md)'s default.**
+A second shape of the same defect, measured on `quameon`: one member holding
+BOTH an arity-recorded literal and an appended element-channel list has no
+slot representation, so codegen emits `_CG_void e19; /* charges */` and reads
+it as `_CG_any` at nine sites, resolving each index from the FA type instead.
+
+```python
+def __init__(self, npos=[], charges=None):
+    if charges == None:
+      self.charges = []                 # element-channel list
+      for ...: self.charges.append(1.0)
+    else:
+      self.charges = charges            # [atom[1][0]] -- an ARITY-1 RECORD
+```
+
+`cs=2912` keeps `no_static_arity=0` right through that confluence. The needed
+rule: **when an arity-recorded literal and a non-arity list meet at a member,
+drop the static arity** — the member is the confluence, and arity is exactly
+the representation property that cannot survive it. Present at the default as
+well as under `PYC_CSBACKTRACK=1`, so this is latent today and only becomes
+fatal when finer contours leave one of those nine reads without a single
+dispatch target. Root-caused while investigating
 [131](131-demand-driven-constant-splitting.md)'s falsified premise, in
 service of [128](128-cs-identity-over-discriminates-vs-element-type.md)'s
 start-merged posture (`PYC_CSDCPA1`).
@@ -146,6 +170,166 @@ one record layout had been feeding.
 All six gates green, and the default is untouched: `make test` rc=0,
 `PYC_FLAGS=-b ./test_pyc.py` 311/0. Note `fa.h` changed, so this needs
 `make clean` (CLAUDE.md).
+
+## The cross-CreationSet case — census, and one bug fixed (2026-09-14)
+
+The landed fix puts arity in CreationSet identity, which is right and keeps
+different arities apart. What it does not cover is the case where **one AVar
+must hold two CreationSets of one sym whose arities disagree.** Identity
+correctly keeps them apart; `determine_basic_clones` then splits them into
+different layout equivalence classes on `cs1->vars.n != cs2->vars.n`
+(clone.cc), so one is a RECORD and the other a LIST — and the slot holding
+both has no type at all. `c_type()` names it `_CG_void`, every read of it is
+`(_CG_any)`, and each access is resolved from the FA type instead of the C
+type.
+
+`get_sym_tup`'s `tup = false` path is designed for exactly this disagreement,
+but it only sees WITHIN one class, and the `vars.n` split happens first.
+
+### Census — `IFA_DBG_SLOTREP`, 84 corpus programs
+
+**976 conflicts in 13 programs. Every one of the 13 COMPILES and then fails
+or prints the wrong answer.**
+
+| program | conflicts | outcome (default sweep) |
+| --- | --- | --- |
+| `amaze` | 393 | `run 134` "getter not resolved" |
+| `pylife` | 330 | `run 124` (CPython finishes) |
+| `chess` | 88 | `run 124` (CPython also 124) |
+| `chaos` | 45 | runs; CPython timed out, undetermined |
+| `neural2` | 36 | **wrong stdout** |
+| `quameon` | 26 | **wrong stdout** |
+| `rubik2` | 21 | `run 124` (CPython also 124) |
+| `sha` | 18 | **wrong stdout** |
+| `ant` | 7 | **wrong stdout** |
+| `pygasus` | 4 | `run 134` |
+| `dijkstra2` | 3 | `run 124` (CPython finishes) |
+| `loop` | 3 | `run 124` (CPython finishes) |
+| `linalg` | 2 | `run 134` "list element type mismatch" |
+
+The other **71 programs have zero conflicts**, so this is not a proxy for
+program size. And three of the aborts name the untyped value directly, which
+is causation rather than correlation:
+
+```
+amaze    Assertion `!"runtime error: getter not resolved"'
+linalg   _CG_f_2935_307(_CG_any, _CG_int64): `!"runtime error: list element type mismatch"'
+quameon  _CG_f_15731_653(_CG_ps26965, _CG_any): `!"runtime error: matching function not found"'
+```
+
+Nine of the thirteen emit **zero warnings**. An unresolved dispatch reaching
+codegen as an `assert(!"runtime error: ...")` with nothing said about it is
+[149](149-the-largest-diagnostic-class-reports-nothing.md)'s family.
+
+### A real bug, found and FIXED
+
+`make_kind`'s element seeding was
+
+```c
+if (cs->no_static_arity)
+  if (AVar *gelem = get_element_avar(cs)) flow_vars(iv, gelem);
+```
+
+`iv` is CS-contoured and so is `gelem`, so this is a **raw CS → CS flow
+edge** — which `compute_setters` asserts against
+(`assert(x->contour_is_entry_set)` over an AVar's backward list), and which
+`vector_elems` builds a trampoline by hand to avoid. Latent until something
+walked that element's setters; `PYC_SLOTARITY` below sets `no_static_arity`
+on far more CreationSets and aborted `quameon` inside `compute_setters`.
+
+Fixed by seeding from `atv` instead of `iv` — the same value (the chain is
+`av -> atv -> iv`), but `atv` is the ES-contoured temp the loop already
+makes and already calls `set_container` on. All six gates green.
+
+### `PYC_SLOTARITY=1` — the demotion, and why it does not pay yet
+
+Default 0. Each pass, group every conflicting pair transitively and demote a
+group to list layout only if it is **jointly homogeneous**. Three conditions,
+each of which cost a measurement to find:
+
+1. **Settled slots.** `basic_type` maps an EMPTY AType and a non-basic one to
+   the same `nullptr`, so an undecided record reads as homogeneous. At pass 0
+   on `quameon` that demoted 45 CreationSets, 40 of them `tuple`.
+2. **Homogeneous.** A list has ONE element type; demoting a heterogeneous
+   record collapses its fields into an element union — the hazard ifa/104's
+   comment in `make_kind` already records. 24 errors of
+   `expression has mixed basic types: ( int64 str )`.
+3. **Jointly, over the whole group.** Per-CreationSet is not enough: sixteen
+   2-tuples whose slots each agreed internally — `(str, str)` here,
+   `(int64, int64)` there — still union to `{int64, str}` once they share one
+   element channel. Same 24 errors.
+
+With all three, `quameon` compiles clean and runs; **but no program's verdict
+changes.** The honest status: this mechanism is correct and conservative, it
+found the CS → CS bug above, and it does not yet pay.
+
+### Why it does not pay — `amaze`'s union is REAL, not a merge
+
+**Corrected 2026-09-14.** The commit that landed this (`33d84dd3`) says
+`tuple#1611` is a MERGED arity-0 contour that ifa/152 should split. **That is
+wrong, and the measurement falsifies it:**
+
+```
+CSVARS cs=1611 sym=tuple vars=0 defs=1 arity=0
+  DEF av=12213 es=194 fun=sortPoints
+```
+
+**One creation point.** Nothing is merged, so there is nothing for route 4 or
+for [152](152-FA-backtrack-the-demand-to-the-merged-creation-set.md) to
+partition, and the sequencing claim in that commit message does not hold.
+
+The source writes the empty tuple itself, `amaze.py:314`:
+
+```python
+def sortPoints(self, points):
+    points2 = [()]*len(points)   # SS
+    ...
+    points2[count] = point       # a 2-tuple
+```
+
+So `points2`' element genuinely holds `{(), (int, int)}` — arity 0 and arity
+2 — and `_current` inherits it. That is a **placeholder idiom**: every `()`
+is overwritten before any is read. It is also not pyc's to blame or to edit:
+the `# SS` marker is upstream shedskin's own change to this file, and `amaze`
+appears nowhere in
+[PYC_CHANGES.md](../../shedskin_examples/PYC_CHANGES.md).
+
+`amaze`'s 393 conflicts all pair `tuple#1611` with one of a dozen 2-tuples,
+and because it conflicts with every one of them the transitive group also
+chains in a 4-tuple and an 8-tuple. The group is then genuinely
+heterogeneous and is correctly skipped.
+
+### What the representable answers actually are
+
+Neither of the two mechanisms in play reaches this:
+
+- **Demote to list layout** — the group is heterogeneous, so the element
+  would be `{int64, ...}` mixed. Refused, correctly.
+- **Split a merged contour** — there is nothing merged. `defs=1`.
+
+A third answer fits the shape and is worth measuring: **widen the arity-0
+container to the arity of its neighbours.** An empty tuple carries no data,
+so a zero-filled 2-field record loses nothing structurally, and the
+placeholder is exactly what the idiom wants.
+
+**But it is not sound in general, and CPython semantics decide it**:
+`len(())` must be 0 and `() == (0,0)` must be False. Representing `()` as a
+zero-filled 2-tuple breaks both. It is only valid where the analysis can
+prove the arity-0 values are never READ — a liveness question, not a contour
+question, and therefore outside demand splitting entirely.
+
+So `amaze` is a candidate second counterexample to "every corpus program is
+statically typeable as written", alongside `bh` (see CLAUDE.md's
+qualification). Two things must be measured before that is claimed:
+
+1. **What does shedskin actually emit for `points2`?** Its tuples are
+   per-arity template classes (`tuple2<A,B>`), so `()` and `(int,int)` are
+   different instantiations and it must be unifying them somehow. shedskin is
+   not installed here, so this is unverified — do not assume it deviates, and
+   do not assume it does not.
+2. **Is the `()` provably dead?** If a liveness pass can show every slot is
+   written before read, widening is sound for this program without any
+   semantic deviation.
 
 ## What is still wrong
 

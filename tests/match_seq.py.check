@@ -10,13 +10,7 @@ match_seq.py:3:26: warning: illegal call argument type expression illegal: int64
             case [[a, b], c]:
                              ^
   called from match_seq.py:22
-match_seq.py:3:26: warning: illegal call argument type expression illegal: int64 
-            case [[a, b], c]:
-                             ^
   called from match_seq.py:23
-match_seq.py:3:26: warning: illegal call argument type expression illegal: int64 
-            case [[a, b], c]:
-                             ^
   called from match_seq.py:24
 match_seq.py:3:26: warning: expression has no type
             case [[a, b], c]:
@@ -30,13 +24,7 @@ match_seq.py:3:26: warning: expression has no type
             case [[a, b], c]:
                              ^
   called from match_seq.py:22
-match_seq.py:3:26: warning: expression has no type
-            case [[a, b], c]:
-                             ^
   called from match_seq.py:23
-match_seq.py:3:26: warning: expression has no type
-            case [[a, b], c]:
-                             ^
   called from match_seq.py:24
 match_seq.py:5:62: warning: illegal call argument type expression illegal: int64 
             case (1, x):

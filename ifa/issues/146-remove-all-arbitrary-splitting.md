@@ -970,6 +970,137 @@ It also is not inert at the default arm — `mark_recursive_single_site`
 gains a third `%walk` contour — so the fa-init goldens move even without
 the flag.
 
+### Re-measured 2026-09-15, after ifa/152 + ifa/154 — the blocker MOVED
+
+The table above predates `PYC_CSDCPA1=2`, `PYC_CSBACKTRACK` and
+`PYC_CSCONTENT` all becoming the default. `plcfrs` and `sudoku5` — the two
+programs ESBLOCK used to cost — **now compile without it**, so the stated
+reason for keeping it opt-in is gone. A new one took its place.
+
+Current default is 3 compile failures (`othello3`, `rdb`, `sudoku4`).
+`PYC_ESBLOCK=1` moves the set, it does not shrink it:
+
+| arm | compile failures | total warnings | container CS / shapes |
+| --- | --- | --- | --- |
+| default | 3 (othello3, rdb, **sudoku4**) | 1364 | 2051/614 = 3.34 |
+| + ESBLOCK | 3 (othello3, rdb, **softrender**) | 1341 | 2073/613 = 3.38 |
+
+**`sudoku4` is exactly what ESBLOCK is for.** Its `cs=1849` is a merged
+comprehension accumulator (6-9 creation points) whose element unions
+`{str, set, list}` — the three dicts' value types, `values`→str,
+`peers`→set, `units`→list, all built by
+`dict([(s, ...) for s in squares])`. Route 4 declines it on every pass with
+**"1 group: every creation point on the same assign sets"**, which is E's
+blocker verbatim, because the accumulators share one `append` EntrySet.
+With ESBLOCK: blind casts 1 → 0, `ELEMCONF` confluences 6 → **0**,
+unresolved calls 32 → 8, `_CG_any` declarations 1062 → 675.
+
+**But it costs `softrender`**, which is rejected with
+`'x'/'y'/'z'/'w' has mixed basic types: ( int64 float64 )`. That program
+really does mix them — `Vector4(0, 0, 0, 0)` at line 279 and
+`Vector4(tu, tv, 0, 0)` at 255 against a `w=1.0` default — and pyc's
+numeric coercion smooths it at the default. Under ESBLOCK it does not, and
+the analysis gets **much worse rather than merely different**:
+
+```
+softrender  ESBLOCK=0   final_pass=55   violations=60
+softrender  ESBLOCK=1   final_pass=101  violations=483
+```
+
+8x the violations. That is this issue's own **non-monotone diagnostic** —
+more splitting, worse results — so ESBLOCK stays opt-in on its own evidence,
+not on a preference for caution.
+
+Ruled out by measurement, so they are not re-tried:
+
+- **`PYC_ESRECV=1` does not rescue it.** `softrender` needs ESBLOCK off
+  (`ESRECV` alone compiles it); `sudoku4` needs ESBLOCK on. The two
+  requirements are symmetric and ESRECV changes neither.
+- **The stall guard is not starving `sudoku4`.** It does trip
+  (`pass_limit_hit=1` at pass 19, 60 violations), but
+  `IFA_STALL_LIMIT=40 IFA_NONIMPROVE_LIMIT=40` makes it WORSE — pass 50, 82
+  violations, same blind cast. This is not the truncation ifa/152 hit on
+  `quameon`.
+
+**And ESBLOCK alone would not finish `sudoku4` anyway**: it compiles and then
+aborts with `"runtime error: matching function not found"` on
+`for s2 in u` in `peers`' comprehension, where `u` comes back `_CG_any` from
+a polymorphic `__list_iter__`/`__base_iter__` dispatch. Eight unresolved
+calls survive.
+
+### (a) ROOT-CAUSED 2026-09-15 — it is not a coercion bug
+
+**Numeric coercion behaves IDENTICALLY in both arms.** Measured with
+`PYC_DBG_NUMC`: **528** annotations either way, the same variable names, the
+same **405** of them whose narrow member is already a runtime value. So
+"ESBLOCK breaks coercion" — the framing above — is wrong and is withdrawn.
+
+What actually happens, each step measured:
+
+1. **ESBLOCK's split criterion cuts across the numeric distinction.** It
+   splits on the blocker it finds BY TEST, which has nothing to do with
+   argument basic types. On `softrender` that repartitions
+   `Vector4.__init__` into slightly MORE contours but with far more
+   int/float mixing:
+
+   | | `__init__` contours | of those, args mixing int64+float64 |
+   | --- | --- | --- |
+   | ESBLOCK=0 | 142 | 10 |
+   | ESBLOCK=1 | 144 | **14** |
+
+2. **A previously-clean creation point acquires the mix.** `cs=2670`'s field
+   `x` is `float64` at ESBLOCK=0 and `int64 float64` under ESBLOCK — same
+   single creation point, different argument types reaching it.
+
+3. **The int is no longer a CONSTANT by then.** A pure-int `Vector4`
+   contour (`cs=2669`, `x: int64`) exists in BOTH arms — the program really
+   writes `Vector4(0, 0, 0, 0)` (line 279) and `a = b = c = 0` (252). FA does
+   not constant-fold `+`, so `Vector4.__add__`'s `self.x + r.x` yields a
+   **runtime** int64. `PYC_DBG_BOXWHY` names the sources exactly:
+
+   ```
+   [boxwhy] av#26520 'x' contour=ES num_coerce=float64 members: int64[runtime] float64[runtime]
+      <- av#77175 'x' in __add__ coerce=no : int64[runtime] float64[runtime]
+   ```
+
+4. **So coercion cannot repair it, by design.** The violating AVar IS
+   annotated (`num_coerce=float64`); `type_coerce_numeric_constants` rewrites
+   CONSTANTS only, and its own comment says so: *"Runtime (non-constant)
+   narrow members are left alone -- they would need an inserted conversion --
+   so their violations persist and are reported honestly."*
+
+**The structural statement.** Numeric coercion is a LOCAL repair: it fires
+where a mix is visible at one AVar, and it works by rewriting the narrow
+CONSTANT at that flow point. **A split can move the mix downstream, past the
+point where the constants were still visible** — the int gets consumed by
+arithmetic into a runtime value first, and arrives at the confluence
+uncoercible. Splitting and constant-based coercion are order-dependent in a
+way neither mechanism knows about.
+
+That also explains why more analysis room does not help: measured with
+`IFA_STALL_LIMIT=60 IFA_NONIMPROVE_LIMIT=60`, `softrender` is
+**bit-identical** — `final_pass=101 pass_limit_hit=0 violations=483`, same 4
+errors. It is a converged answer, not a truncated one.
+
+### What a fix would have to be
+
+Not "make coercion run more". The candidates, none cheap:
+
+- **Widen at construction.** Recognise that the pure-int `Vector4` contour
+  will confluence with float ones downstream and widen it there. That is a
+  whole-program decision, not the local one coercion makes.
+- **Insert a conversion for runtime narrow members.** Exactly what the
+  comment declines. It is also a bigger semantic step than the constant
+  rewrite, and [145](145-numeric-coercion-is-not-gated-on-permissive-mode.md)
+  says any automatic coercion is permissive-only.
+- **Make the split respect the numeric distinction** — but ESBLOCK's whole
+  point is to split on the blocker, so this is really "find a narrower
+  mechanism", which is (b).
+
+So the next step for `sudoku4` is (b): a mechanism narrower than ESBLOCK for
+the "every creation point on the same assign sets" decline — the demand's own
+type naming the partition, rather than an ES split found by test.
+
 ### What it does NOT fix
 
 `plcfrs`. Its union is `{list, tuple, int64, str, ChartItem, Edge, Entry}`

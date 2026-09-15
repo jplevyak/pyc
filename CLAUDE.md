@@ -42,12 +42,16 @@ proper — structural splitting wearing the analysis's clothes:
 **The rule holds on one side and not the other, and the asymmetry is
 measurable.** EntrySets DO start minimal — one per function — and split on
 demand; a two-call program splits `f` into exactly the two contours its
-argument types ask for. CreationSets do not: `creation_point` memoizes on
+argument types ask for. CreationSets did not: `creation_point` memoizes on
 `v->cs_map` where `v` is an AVar — a *(variable × contour)* pair — so it
 yields one CreationSet per *(allocation site × contour)* and never asks
-whether two could be the same. That is structural, true by construction
-rather than by measurement. The start-merged posture is `PYC_CSDCPA1=2` and
-it is opt-in, not the default.
+whether two could be the same. That is structural, and true by construction
+rather than by measurement.
+
+**`PYC_CSDCPA1=2` — start merged, one CreationSet per sym — is now the
+DEFAULT**, which is that premise implemented. `PYC_CSDCPA1=0` restores the
+old maximal start. What it costs and what is still owed for it is
+[ifa/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md).
 
 *(`PYC_CSSPLIT=1` used to be named here as a second violation — a
 CreationSet following an EntrySet split by construction. It was REMOVED
@@ -387,6 +391,85 @@ difference makes two creation points DISTINGUISHABLE, so a demanded
 partition has something to partition — it must never by itself make them
 *incompatible*. Turning a finer identity directly into more contours is
 the same error as splitting on structure, wearing different clothes.
+
+## Find the confluence, backtrack the demand, split. Always.
+
+**Author's directive, 2026-09-14.** When an imprecision shows up, there is one
+method: **find the confluence where the values actually meet, backtrack the
+demand to it, and split there.** Not at the symptom, not at the first union
+you find, not by suppressing something downstream.
+
+**And the contours are realizable — that is settled, not hoped.** shedskin
+compiles the same programs and emits them: `list<Vertex *>` and
+`list<Face *>` as distinct types, every class carrying exactly its own
+fields, one `Hull` with a precisely-typed `edges`. So "these cannot be
+separated" is never the answer. The contour exists; the work is making pyc
+reach it.
+
+**The failure mode is acting anywhere but the confluence**, and
+[issues/128](issues/128-cross-class-field-promotion.md) is a worked record of
+doing it wrong four times in one investigation. Each attempt was locally
+plausible and each was measured dead:
+
+| acted on | why it failed |
+| --- | --- |
+| the field write (`e.newface = None`) | the receiver is a loop local — 162 demands recorded, **0** actionable |
+| dropping the write instead of splitting | fixes `chull`, breaks `richards`, whose union is real |
+| a transitive closure to find the "root" | its own criterion terminates on its first node — it would report where it started |
+| "fixing" a key that looked arbitrary | costs **+129 CreationSets** and fixes nothing |
+
+The last one is the sharpest warning: a one-bit grouping key with no content
+information *looks* like arbitrary splitting by
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s first question,
+and removing it makes the corpus WORSE. 146's own diagnostic settles it —
+an arbitrary lever is **non-monotone**; a lever whose removal costs contours
+is earning its keep. Apply the diagnostic, not just the definition.
+
+**The fifth attempt worked, and its lesson generalizes**
+([ifa/152](ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md),
+which fixes `chull`). All four failures above, and the "find the root"
+walk, were hunting the place where the two classes MEET — a write, a
+channel, a writer contour, a call site. **That place did not exist.** The
+union was created by a CreationSet that nine unrelated creation points
+SHARE, one of which (`Edge.__init__`'s `self.endpts = []`, filled by
+`extend`) supplied the Vertex while another (`InitEdges`' `newedges = []`,
+never written) carried the contour out into `Hull.edges`. No single write
+ever put two classes in one place; two separate writes put them in one
+*contour*.
+
+Two rules follow, and they are the ones to reach for first next time:
+
+- **The confluence is a CONTOUR, not a program point.** Ask *which
+  contour do several creation points share, and does one of them supply the
+  offending type* — not *where do the types meet*.
+- **The demand is observed where the union is USED, which is almost never
+  where the merge happened.** The merged contour is upstream and usually
+  looks perfectly fine from where it sits — `cs=1112`'s element was
+  `{Vertex}`, one class, representable — so no demand test nominates it,
+  while every contour that DOES carry the union has one creation point and
+  nothing to partition. **Backtracking is therefore not optional**; a
+  demand evaluated only at the point of observation cannot reach the
+  merge.
+
+**The discipline that goes with the rule:**
+
+- **Locate before acting.** `IFA_DBG_ELEMCONF` (which channels hold two
+  classes, and whether their writers are separable), `IFA_DBG_CSVARS` /
+  `ELEMWRITER` (who writes into an element), `IFA_DBG_FUNES` (a contour's
+  formals and in-edges per call), `IFA_DBG_CSDEFSPLIT`'s `KEY` line (how many
+  assign sets the partition is built from). The confluence is findable; find
+  it.
+- **Classify the confluence before splitting it.** Classes sharing a
+  user-defined ancestor are legitimate polymorphism and must be HOISTED, not
+  split — shedskin's `virtualvars`. `richards`' four `Task` subclasses are
+  that case, and splitting them is what broke it. Only a union of *unrelated*
+  classes is a precision failure.
+- **Every step gets a stop condition, written before the measurement.** Say
+  what result would mean the model is wrong, and when you hit it, stop and say
+  so rather than walking one level further.
+- **A negative result is the deliverable when it is one.** Four of this
+  session's steps ended in "this is not it", each with the measurement that
+  proved it, and that is what stops the next person repeating them.
 
 ## Never analyse or decide by NAME
 

@@ -1,10 +1,15 @@
 # 135 — an empty sibling CreationSet wins the clone merge and blanks a field
 
 **Status:** open, root-caused 2026-09-06. Group B of
-[129](129-plan-demand-driven-creation-set-splitting.md)'s bill — **6 cases
-from one mechanism**, 4 corpus (`chull`, `kanoodle`, `path_tracing`,
-`pygmy`) and 2 suite (`poly_dispatch_shared_method_extra_args`,
+[129](129-plan-demand-driven-creation-set-splitting.md)'s bill — **5 cases
+from one mechanism**, 3 corpus (`kanoodle`, `path_tracing`, `pygmy`) and 2
+suite (`poly_dispatch_shared_method_extra_args`,
 `sibling_subclass_field_layout`) under `PYC_CSDCPA1=2`.
+
+**`chull` was removed from that list 2026-09-14** — it is a different
+mechanism, and it is now fixed by
+[152](152-FA-backtrack-the-demand-to-the-merged-creation-set.md). See
+"`chull` is NOT this mechanism" below.
 
 This is the question CLAUDE.md's "be aggressive" section says was never
 asked: *why do two clones of one class have divergent member types, and
@@ -44,6 +49,141 @@ subclass method instead of reading the field is clean.
   `a->sym == b->sym`, and S1 and S2 are different syms.
 - **Not the ifa/133 ladder or CS_DEF_PARTITION.** Reproduces with
   `PYC_CSLADDER=0 PYC_CSDEFSPLIT=0`.
+
+## `chull` is NOT this mechanism — measured 2026-09-14
+
+This issue claims `chull` in its status line as one of the four corpus
+cases. That is **wrong**, and the evidence is cheap to re-take.
+
+`chull`'s failure under the flip is
+
+```
+error: object layout: 'Edge' is blind-cast to 'Vertex' and read at e23,
+       but member width differs at e22 (_CG_bool vs _CG_void)
+```
+
+`Edge` and `Vertex` are UNRELATED classes — not two contours of one sym,
+and not sibling subclasses — so neither the prototype route nor the
+empty-sibling clone merge above is in play. `IFA_DBG_LAYOUT`:
+
+```
+Edge:    adjface 15  delete 16  endpts 17  enum 18  mark 19  newface 20
+         duplicate 21  onhull 22  visible 23
+Vertex:  duplicate 16  mark 17  onhull 18  v 19  vnum 20
+         delete 21  newface 22  visible 23
+```
+
+Every class is promoted the OTHER classes' fields — `Edge` gets Vertex's
+`duplicate`/`mark`/`onhull`, `Vertex` gets Edge's `delete`/`newface`, both
+get Face's `visible` — and the same name lands at a different index in each.
+Slot 22 is `onhull` on `Edge` and `newface` on `Vertex`.
+
+**The mechanism is issues/121's, incompletely fixed.**
+`sorted_unknown_vars` (`python_ifa_sym.cc`) promotes each batch of pending
+fields name-sorted, which aligns two classes that acquire the same set in
+the same pass. It does not align them when (a) promotion happens over
+SEVERAL `reanalyze` passes, so each class's batches differ — visible above
+as two sorted runs per class, `15-20` then `21-23` — or (b) the classes'
+pre-promotion `has` counts already differ, which they do here (15 vs 16).
+Global name-sorting would not fix (b) on its own; the base offsets differ.
+
+**And the layouts are BYTE-IDENTICAL at the default and under the flip.**
+Re-measured both arms: same promotions, same indices, same conflict. So the
+layout defect is PRE-EXISTING and latent on main — which is why `chull`
+compiles there and then segfaults (`run 139`). What the flip changes is that
+some read now goes through a `{Vertex, Edge}` union, making the latent
+conflict reachable, so ifa/123's contract catches at compile time what main
+corrupts at runtime.
+
+Two consequences:
+
+1. **`chull` is not a flip regression.** Listing it as one overstates the
+   flip's cost; the honest statement is that the flip surfaces a
+   pre-existing layout bug. ifa/129's bill is annotated accordingly.
+2. **Fixing `chull` is not fixing this issue.** It needs either a layout
+   rule that makes union-co-occurring classes agree on the slot of every
+   shared promoted field, or the union not to form. Neither is the
+   empty-sibling clone merge below.
+
+**Resolved 2026-09-14 by the second branch — the union does not form.**
+[152](152-FA-backtrack-the-demand-to-the-merged-creation-set.md) traced it:
+`InitEdges`'s `newedges = []` shares a CreationSet with `Edge.__init__`'s
+`self.endpts = []` (cs=1112, nine creation points), `extend` fills that
+contour with `Vertex`, and `InitEdges` returns it into `Hull.edges`. The
+five lists carrying the `{Vertex, Edge}` union all have ONE creation point,
+so route 4 declined "single creation point" on all 50 passes while the
+splittable merge sat one backward walk upstream, representable on its own
+and therefore never a candidate. With `PYC_CSBACKTRACK=1` `chull` compiles
+with **0 errors and 0 warnings** and every list element channel holds
+`Vertex` or `Edge`, never both.
+
+**The layout defect this section describes is still real and still
+unfixed** — the promotions remain byte-identical and conflicting. 152 only
+removes the union that made it *reachable*. `chull` still segfaults at
+runtime for the separate reason recorded below (`run 139` on main), so the
+`sorted_unknown_vars` alignment rule above remains worth doing on its own
+merits.
+
+`kanoodle`, `path_tracing` and `pygmy` were attributed to this issue at the
+same time as `chull` and on the same evidence, so **re-verify them before
+trusting their attribution too.**
+
+## How shedskin handles it — read from source and verified on `chull`
+
+shedskin compiles `chull` cleanly (`python3 -m shedskin translate chull.py`,
+rc=0), and its emitted C++ answers the question directly:
+
+```cpp
+class Vertex : public pyobj {
+    __ss_bool mark;  Vector *v;  __ss_int vnum;
+    __ss_bool onhull;  Edge *duplicate;
+};
+class Edge : public pyobj {
+    list<Vertex *> *endpts;  list<Face *> *adjface;
+    __ss_int __ss_enum;  Face *newface;  __ss_bool __ss_delete;
+};
+```
+
+**Each class carries exactly its own five fields. There is no cross-class
+promotion anywhere** — `Vertex` never receives `delete`/`newface`, `Edge`
+never receives `duplicate`/`mark`/`onhull`. `class_variables`
+(`shedskin/cpp.py:1041`) emits `for var in cl.vars.values()` and nothing
+else.
+
+It gets there two ways, and pyc has neither:
+
+**1. The union never forms.** `Edge::endpts` is `list<Vertex *> *` and
+`Edge::adjface` is `list<Face *> *` — distinct parameterised types, so no
+`.field` read ever has a `{Vertex, Edge}` receiver and there is nothing to
+promote. Note the constructor signature keeps the DEFAULT-ARGUMENT list
+apart from the member's: `Edge(list<void *> *adjface, list<Vertex *> *endpts,
+…)`. The all-`None` default `[None, None]` is `list<void *>`, a different
+type from the member it is extended into. That is exactly the distinction
+pyc's merged empty-list contours lose.
+
+**2. When a union legitimately DOES form, it hoists rather than casts.**
+`analyze_virtuals` (`shedskin/virtual.py:125`) takes the receiver's classes,
+computes `lowest_common_parents`, and calls `upgrade_cl` to register the
+member on that common ancestor — as a virtual method, or for attribute
+access as a `virtualvars` entry. C++ inheritance then guarantees ONE slot at
+ONE offset for every subclass. For unrelated classes there is no common
+parent and nothing is hoisted, which is sound precisely because of (1).
+
+**The contrast is the lesson.** Faced with a union receiver, pyc's
+`promote_field` adds the field to EVERY class in the union, at whatever
+index that class's `has` happens to have reached — then tries to make the
+resulting layouts line up by name-sorting each batch
+([issues/121](../../issues/closed/121-sibling-subclass-field-layout.md)).
+That is synthesising a shared layout by COINCIDENCE, and it cannot work in
+general: two classes with different pre-promotion field counts can never
+agree, whatever order the promotions are applied in. shedskin makes the
+shared layout by CONSTRUCTION (a real base class) or does not need one.
+
+So the fix direction for this family is not a better sort. It is either to
+stop the union forming (the element-channel precision in (1), which is
+ifa/133's and ifa/129's territory) or to hoist a polymorphically-accessed
+member to a real shared base, which is a representation property and
+therefore legitimate ground under CLAUDE.md.
 
 ## Root cause
 

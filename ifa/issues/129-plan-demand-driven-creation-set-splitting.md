@@ -4,8 +4,9 @@
 [131](131-demand-driven-constant-splitting.md),
 [133](133-split-a-container-on-its-element-type.md),
 [134](134-remove-the-frontend-forced-split-opt-in.md),
-[146](146-remove-all-arbitrary-splitting.md) and
-[151](151-split-an-entryset-on-a-constant-argument-on-demand.md) are steps
+[146](146-remove-all-arbitrary-splitting.md),
+[151](151-split-an-entryset-on-a-constant-argument-on-demand.md) and
+[152](152-FA-backtrack-the-demand-to-the-merged-creation-set.md) are steps
 or constraints inside it; none of them carries a competing plan. If one
 seems to, this file wins and the other should be corrected.
 
@@ -30,15 +31,19 @@ measured that moves the number, and it takes `ess` DOWN rather than up.
    per sym, needing no evidence. (Why mint-time reuse keying is a dead
    frame: 128, "Where reuse fits".)
 2. **Demand-driven separation** — give the precision back only where
-   something observed a distinction and could not proceed.
+   something observed a distinction and could not proceed. And the demand
+   is observed where the union is USED, which is almost never where the
+   merge happened — so step 2 is incomplete without
+   [152](152-FA-backtrack-the-demand-to-the-merged-creation-set.md),
+   which walks the demand back to the CreationSet that actually merged.
 3. **A ledger** so a re-derived separation re-attaches to the contour it
    first made instead of minting a fresh one. Matters MORE the coarser you
    start (`ledger_find_cs`/`ledger_add_cs`,
    `find_or_make_filtered_entry_set`).
 
-## Where it stands — measured 2026-09-12, not inherited
+## Where it stands — SUPERSEDED, see the 2026-09-15 line below
 
-| | default | `PYC_CSDCPA1=2` |
+| | old default | `PYC_CSDCPA1=2` |
 | --- | --- | --- |
 | suite | **318 / 0** | 315 / **3** |
 | corpus compile failures | **2** (othello3, rdb) | **7** |
@@ -46,10 +51,38 @@ measured that moves the number, and it takes `ess` DOWN rather than up.
 | container CS / shapes | 2768 / 627 = **4.41** | 2138 / 629 = **3.40** |
 | `pratio` | 2.98 | **2.31** |
 
-**−23% container CreationSets, and FEWER warning programs than the
-default.** This is much closer than the record suggested: the bill was 16
-suite failures and ~20 corpus failures when this plan was written, and it
-is now 3 and 7.
+*(Measured 2026-09-12, when the flip was opt-in. Kept because the −23%
+container-CreationSet result is what justified pursuing it.)*
+
+### Measured 2026-09-15 — the bill is THREE, and the suite is clean
+
+The flip is the default, and so are
+[152](152-FA-backtrack-the-demand-to-the-merged-creation-set.md)'s backtrack
+and [154](154-FA-a-container-has-two-content-channels.md)'s two-channel
+content fix. The "seven programs" bill below was paid by
+[153](153-FA-positional-record-slots-lose-identity-and-reads.md) and 154, not
+by the steps this plan predicted:
+
+| | pre-flip default | **today's default** |
+| --- | --- | --- |
+| suite | 318 / 0 | **317 / 0** |
+| corpus compile failures | 2 (othello3, rdb) | **3** (othello3, rdb, sudoku4) |
+| total corpus warnings | — | **1364** (from 1973 at the flip alone, −31%) |
+| container CS / shapes | 2768 / 627 = 4.41 | **2051 / 614 = 3.34** |
+| `pratio` | 2.98 | **2.26** |
+
+**−26% container CreationSets against the pre-flip default, with one more
+compile failure instead of five more.** `bh` and `sudoku3` went from failing
+to compiling AND matching CPython; `chull`, `plcfrs` and `sudoku5` compile;
+`linalg` 108 → 33 warnings. The suite is 318 → 317 only because one test was
+added and one `known_issue` was retired
+(`arity1_literal_shares_contour` flipped to PASS — it pinned exactly the
+merged arity-1 literal 154 fixed).
+
+`sudoku4` is the one remaining regression, and it is understood:
+[146](146-remove-all-arbitrary-splitting.md) E's "1 group: every creation
+point on the same assign sets" decline. `PYC_ESBLOCK=1` fixes it and costs
+`softrender` instead, so the count stays 3 — measured in 146.
 
 ## The remaining bill, attributed
 
@@ -67,11 +100,14 @@ flag-only failures are two groups:**
 | group | programs | first error | owner |
 | --- | --- | --- | --- |
 | element/slot union with no representation | plcfrs, sudoku3, sudoku5 | `'x' has mixed basic types: (…)`, two of them naming `tuple` | [146](146-remove-all-arbitrary-splitting.md) E |
-| layout / blind cast | chull, sudoku4 | `object layout: 'Edge' is blind-cast to 'Vertex' … member width differs` | [135](135-empty-sibling-contour-wins-the-clone-merge.md) |
+| layout / blind cast | chull, sudoku4 | `object layout: 'Edge' is blind-cast to 'Vertex' … member width differs` | **not 135** — see below |
 
 So **two mechanisms stand between here and the flip**, not a long list.
 
 ### Corrected 2026-09-12: it is SEVEN programs, not five
+
+*(Historical. Paid down to ONE — `sudoku4` — by 2026-09-15; see the table
+above.)*
 
 The table above was measured with a **compile** sweep at the flag arm. The
 flip is now staged on branch `stage-csdcpa1-default` and swept in **check**
@@ -115,9 +151,29 @@ receivers.
 Clears plcfrs, sudoku3, sudoku5, and unblocks `PYC_ESBLOCK`, which clears
 `listcomp_element_separation`.
 
-**2. 135 — the empty sibling contour wins the clone merge.** Clears chull
-and sudoku4. Layout is a REPRESENTATION property, so this is legitimate
-territory, not provenance.
+**2. The layout pair — and `chull` is NOT a flip regression.**
+
+Re-measured 2026-09-14: `chull`'s promoted-field layout is **byte-identical
+at the default and under the flip** — same cross-class promotion, same
+conflicting slots (`Edge.onhull → 22`, `Vertex.newface → 22`). The layout
+defect is pre-existing and latent on main, which is why chull compiles there
+and then SEGFAULTS (`run 139`). The flip only creates a union receiver that
+makes the latent conflict reachable, so ifa/123's contract catches at
+compile time what main corrupts at runtime.
+
+So this row is not a cost of the flip; it is a pre-existing bug the flip
+exposes. It was attributed to
+[135](135-empty-sibling-contour-wins-the-clone-merge.md) and that is wrong —
+`Edge` and `Vertex` are unrelated classes, so neither the prototype route
+nor the empty-sibling clone merge applies. The real mechanism is
+[issues/121](../../issues/closed/121-sibling-subclass-field-layout.md)'s,
+incompletely fixed: `sorted_unknown_vars` name-sorts each promotion BATCH,
+which does not align classes whose batches differ across `reanalyze` passes,
+nor classes whose pre-promotion `has` counts already differ (15 vs 16 here).
+Evidence and the layout dump are in 135.
+
+`sudoku4`, `kanoodle`, `path_tracing` and `pygmy` were attributed on the
+same evidence at the same time — **re-verify before trusting them.**
 
 **3. 133's separator question.** Arity is currently the ONLY working
 separator for list literals, and it is doing all the work alone. The

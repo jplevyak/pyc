@@ -8,6 +8,26 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__71364627` | 2026-09-15 | programs=77 compile_fail=3 run_fail=36 stdout_differs=24 with_warnings=35 cs/shapes=2051/614=3.34 pratio=2.26 n=76 |
+| `check__PYC_ESBLOCK_1__87cc8d60` | 2026-09-15 | programs=77 compile_fail=3 run_fail=35 stdout_differs=25 with_warnings=34 cs/shapes=2073/613=3.38 pratio=2.29 n=76 |
+| `check__default__6256be72+4737e9ab` | 2026-09-15 | programs=77 compile_fail=3 run_fail=35 stdout_differs=25 with_warnings=35 cs/shapes=2051/614=3.34 pratio=2.26 n=76 |
+| `check__PYC_CSBACKTRACK_1_PYC_CSCONTENT_1__9bc91dba+db09442c` | 2026-09-15 | programs=77 compile_fail=3 run_fail=35 stdout_differs=25 with_warnings=35 cs/shapes=2051/614=3.34 pratio=2.26 n=76 |
+| `check__default__9bc91dba+db09442c` | 2026-09-15 | programs=77 compile_fail=8 run_fail=32 stdout_differs=24 with_warnings=32 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `check__PYC_CSCONTENT_1__9bc91dba+db09442c` | 2026-09-15 | programs=77 compile_fail=5 run_fail=35 stdout_differs=24 with_warnings=35 cs/shapes=1987/613=3.24 pratio=2.20 n=76 |
+| `check__default__a4b00f2c+f291f78c` | 2026-09-15 | programs=77 compile_fail=8 run_fail=32 stdout_differs=24 with_warnings=32 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `check__PYC_CSBACKTRACK_1__a4b00f2c+62e20b2f` | 2026-09-15 | programs=77 compile_fail=6 run_fail=35 stdout_differs=23 with_warnings=33 cs/shapes=2196/624=3.52 pratio=2.39 n=76 |
+| `check__default__a4b00f2c+1cc44e8a` | 2026-09-15 | programs=77 compile_fail=8 run_fail=32 stdout_differs=24 with_warnings=32 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `check__default__eae659d0+abdf2b26` | 2026-09-14 | programs=77 compile_fail=7 run_fail=33 stdout_differs=24 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `check__PYC_CSBACKTRACK_1__53719b06+76b5905a` | 2026-09-14 | programs=77 compile_fail=5 run_fail=36 stdout_differs=23 with_warnings=34 cs/shapes=2196/624=3.52 pratio=2.39 n=76 |
+| `check__default__53719b06+76b5905a` | 2026-09-14 | programs=77 compile_fail=7 run_fail=33 stdout_differs=24 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `check__PYC_CSBACKTRACK_1__53719b06+eef5407d` | 2026-09-14 | programs=77 compile_fail=7 run_fail=34 stdout_differs=23 with_warnings=33 cs/shapes=2130/626=3.40 pratio=2.31 n=76 |
+| `check__default__53719b06+f20ea8ee` | 2026-09-14 | programs=77 compile_fail=7 run_fail=33 stdout_differs=24 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `compile__PYC_CSKEYSETS_1__04a17bf0+df693813` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2267/617=3.67 pratio=2.52 n=76 |
+| `compile__IFA_DBG_RECVCARD_1__30713208+77498125` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `compile__IFA_DBG_ELEMCONF_1__bac03605+2221ce95` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `compile__IFA_DBG_ELEMCONF_1__bac03605+a2a6cafe` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `compile__PYC_PROMOTELATE_1__5dbfb6f2+3488e405` | 2026-09-14 | programs=77 compile_fail=8 run_fail=0 stdout_differs=0 with_warnings=29 cs/shapes=2169/640=3.39 pratio=2.33 n=75 |
+| `check__default__e9c75656+824cf606` | 2026-09-12 | programs=77 compile_fail=7 run_fail=33 stdout_differs=24 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
 | `check__default__de1f14dc+1f4254e8` | 2026-09-12 | programs=77 compile_fail=2 run_fail=34 stdout_differs=27 with_warnings=36 cs/shapes=2768/627=4.41 pratio=2.98 n=76 |
 | `compile__default__de1f14dc+1f4254e8` | 2026-09-12 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 with_warnings=36 cs/shapes=2768/627=4.41 pratio=2.98 n=76 |
 | `compile__PYC_CSDCPA1_2__576b4b75` | 2026-09-12 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
