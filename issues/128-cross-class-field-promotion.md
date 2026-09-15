@@ -795,6 +795,68 @@ containers the demand still names two — the one the Vertex reaches and
 everything else — and a partition of 2 is what must be applied, never 20.
 The tail is the reason that rule is mandatory rather than stylistic.
 
+## Route 4 is NOT idle — it splits, and the question is its KEY
+
+The step was: for each SEPARABLE-UNRELATED confluence, find a reaching list
+with `defs > 1` and put the demand there — plus the cheaper question, why
+route 4 has not already partitioned `cs=1112` (`defs=9`, default-on, inside
+the cap). Answered, and it relocates the problem again.
+
+**At pass 0, start-merged puts EVERY `[]` in the program in one
+CreationSet.** `IFA_DBG_CSDEFSPLIT`:
+
+```
+[csdefsplit] p=0 cs=1112 sym=list DEMAND-ADDED defs=20
+  | def in=__init__ | in=___init___ | in=CleanEdges | in=__main__ | in=__add__
+  | in=__pyc_delslice__ | in=ReadVertices | in=InitEdges | in=enumerate
+  | in=CleanFaces | in=__str__ ...
+  elem= bool int64 str None float64 Vector tuple Vertex Face Edge
+[csdefsplit] p=0 ENTER candidates=37 (confluence=33 demand=4)
+```
+
+Twenty creation points, the whole universe as the element — which is exactly
+what `PYC_CSDCPA1=2` promises. **And route 4 sees it and acts:**
+
+```
+[csdefsplit] p=0 cs=1112 def av=4927 -> cs=1740 (group 1/2 sig=1)
+```
+
+`av=4927` is `Hull.__init__`'s `self.edges = []` — the very creation point
+that ends up as `cs=1848`. So the chain is `1112 -> 1740 -> ... -> 1848`:
+route 4 partitions progressively, two groups per pass, and by convergence
+`cs=1112` is down to `defs=9` with a pure `Vertex` element.
+
+**So the mechanism is not missing and not declining. It is working.** Three
+of my earlier conclusions were looking for a stage that does not run; it
+runs, at pass 0, on the right object.
+
+### What is actually wrong: the GROUPING KEY, not the mechanism
+
+Route 4 coalesces to exactly TWO groups per pass (ifa/144's rule, correctly
+applied), so separating 20 creation points takes many passes — and the end
+state still has a `Vertex` in `Hull.edges`' element. That means the
+progressive 2-way grouping **converged on a partition that keeps
+`Hull.edges`' list together with a Vertex source.**
+
+The key it groups by is the assign-set / content signature. If at the moment
+of grouping `Hull.edges`' list and a vertex-holding list have the same
+signature, they stay together, and once the element has both they are
+indistinguishable by content forever — the lag
+[133](../ifa/issues/133-split-a-container-on-its-element-type.md) names as
+*"the demand is unobservable at the moment of the merge, and the merge is
+unrecoverable at the moment the demand appears."*
+
+**So the next question is the key, and it is a narrow one:** at the pass
+where `av=4927` is grouped, what signature does it share with the Vertex
+source, and is there a property available at that moment that separates
+them? That is answerable from the `sig=` values route 4 already prints, and
+it needs no new mechanism.
+
+*Superseded framing, kept so it is not re-derived:* the `defs > 1` test below
+is not the discriminator either — `cs=1112` has `defs=20` at p=0 and IS
+partitioned; `defs` tells you whether route 4 CAN act, not whether it acts
+correctly.
+
 ## The closure achieves NOTHING — retracted before building it
 
 Asked what the closure would achieve, and the answer is nothing. Recorded
