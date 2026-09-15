@@ -425,6 +425,32 @@ and removing it makes the corpus WORSE. 146's own diagnostic settles it —
 an arbitrary lever is **non-monotone**; a lever whose removal costs contours
 is earning its keep. Apply the diagnostic, not just the definition.
 
+**The fifth attempt worked, and its lesson generalizes**
+([ifa/152](ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md),
+which fixes `chull`). All four failures above, and the "find the root"
+walk, were hunting the place where the two classes MEET — a write, a
+channel, a writer contour, a call site. **That place did not exist.** The
+union was created by a CreationSet that nine unrelated creation points
+SHARE, one of which (`Edge.__init__`'s `self.endpts = []`, filled by
+`extend`) supplied the Vertex while another (`InitEdges`' `newedges = []`,
+never written) carried the contour out into `Hull.edges`. No single write
+ever put two classes in one place; two separate writes put them in one
+*contour*.
+
+Two rules follow, and they are the ones to reach for first next time:
+
+- **The confluence is a CONTOUR, not a program point.** Ask *which
+  contour do several creation points share, and does one of them supply the
+  offending type* — not *where do the types meet*.
+- **The demand is observed where the union is USED, which is almost never
+  where the merge happened.** The merged contour is upstream and usually
+  looks perfectly fine from where it sits — `cs=1112`'s element was
+  `{Vertex}`, one class, representable — so no demand test nominates it,
+  while every contour that DOES carry the union has one creation point and
+  nothing to partition. **Backtracking is therefore not optional**; a
+  demand evaluated only at the point of observation cannot reach the
+  merge.
+
 **The discipline that goes with the rule:**
 
 - **Locate before acting.** `IFA_DBG_ELEMCONF` (which channels hold two

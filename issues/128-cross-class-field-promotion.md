@@ -11,9 +11,55 @@
 > and "fixing" a key that looked arbitrary (+129 CreationSets, fixes nothing).
 > Each is measured below. Read them before proposing a fifth.
 
-**Status:** open, root-caused as far as the evidence goes; one gap named
-below. Filed 2026-09-14 while asking why `chull`'s `{Vertex, Edge}` union
-forms.
+**Status:** the union question is **ANSWERED and fixed** (2026-09-14) —
+see "The fifth attempt WORKS" immediately below. The cross-class promotion
+defect this file is titled for is still open: 152 stops the union that made
+it reachable, not the promotion itself. Filed 2026-09-14 while asking why
+`chull`'s `{Vertex, Edge}` union forms.
+
+## The fifth attempt WORKS — the merge is a shared CONTOUR, not a shared write
+
+Filed as
+[ifa/152](../ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
+`PYC_CSBACKTRACK=1`: `chull` compiles with **0 errors and 0 warnings**, and
+every list element channel holds `Vertex` or `Edge`, never both.
+
+**Why the first four attempts all missed it.** Every one of them, and the
+superseded "find the SOURCE confluence" step below, was looking for the
+place where the two classes MEET — a write, a channel, a writer contour, a
+call site. That place does not exist. The walk in that section is correct
+and its stop condition fires exactly as written: every level's writers are
+disjoint, its `defs` is 1, and its receiver is correct.
+
+The union is not created by any single write. It is created by a
+**CreationSet that several unrelated creation points share**:
+
+```
+CSVARS cs=1112 sym=list vars=0 defs=9 arity=0 elem= Vertex
+  DEF es=658/138 fun=InitEdges      <- newedges = []
+  DEF es=695/696 fun=__init__       <- Edge.__init__: self.endpts = []
+  DEF es=11/12/41 fun=___init___    <- list.___init___'s own []
+  DEF es=198      fun=__pyc_delslice__
+```
+
+`self.endpts.extend(endpts)` fills that contour with `Vertex`; `InitEdges`
+returns the *same contour* as `newedges`, unwritten, in its `fold is not
+None` branch; `self.edges.extend(f1.InitEdges(f0))` carries the Vertex into
+`Hull.edges`. No write ever puts a Vertex and an Edge in one place — two
+separate writes put them into one *contour*.
+
+**So the right question was not "where do the classes meet" but "which
+contour do several creation points share, and does one of them supply the
+offending type".** That question is answerable by the same backward walk,
+and on `chull` it returns exactly one CreationSet from all five demands.
+
+**And the reason the ladder could not ask it**: `cs=1112`'s element is
+`{Vertex}` — one class, perfectly representable. It raises no demand, so
+`cs_elem_irrepresentable` never nominates it and it is not a route-4
+candidate at all, while the five CreationSets that DO carry the union each
+have `defs=1` and decline "single creation point" on all 50 passes. The
+demand is observed where the union is USED; the merge is upstream and
+looks fine from where it sits. That gap is what 152 closes.
 
 **Numbering note:** `issues/` and `ifa/issues/` are separate trees; this is
 `issues/128`, unrelated to `ifa/issues/128`.
@@ -1050,6 +1096,13 @@ transitively to the channel where the two classes FIRST meet. Concretely:
 1 AND its receiver is correct — the shape found at every level here — then
 the union is not created by any single write and the model is wrong. Say so
 rather than walking further.
+
+> **The stop condition fired, and the model WAS wrong** (2026-09-14). There
+> is no channel where the two classes first meet. The union is created by a
+> CreationSet that several creation points share, one of which supplies
+> `Vertex` — a question about CONTOURS, not about writes. See "The fifth
+> attempt WORKS" at the top of this file and
+> [ifa/152](../ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
 
 This is also the cheapest remaining step: it is a transitive closure over
 `e->backward` using data the census already collects, with no splitter

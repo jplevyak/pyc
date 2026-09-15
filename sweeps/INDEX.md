@@ -8,6 +8,10 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_CSBACKTRACK_1__53719b06+76b5905a` | 2026-09-14 | programs=77 compile_fail=5 run_fail=36 stdout_differs=23 with_warnings=34 cs/shapes=2196/624=3.52 pratio=2.39 n=76 |
+| `check__default__53719b06+76b5905a` | 2026-09-14 | programs=77 compile_fail=7 run_fail=33 stdout_differs=24 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `check__PYC_CSBACKTRACK_1__53719b06+eef5407d` | 2026-09-14 | programs=77 compile_fail=7 run_fail=34 stdout_differs=23 with_warnings=33 cs/shapes=2130/626=3.40 pratio=2.31 n=76 |
+| `check__default__53719b06+f20ea8ee` | 2026-09-14 | programs=77 compile_fail=7 run_fail=33 stdout_differs=24 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
 | `compile__PYC_CSKEYSETS_1__04a17bf0+df693813` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2267/617=3.67 pratio=2.52 n=76 |
 | `compile__IFA_DBG_RECVCARD_1__30713208+77498125` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
 | `compile__IFA_DBG_ELEMCONF_1__bac03605+2221ce95` | 2026-09-14 | programs=77 compile_fail=7 run_fail=0 stdout_differs=0 with_warnings=33 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
