@@ -795,7 +795,62 @@ containers the demand still names two — the one the Vertex reaches and
 everything else — and a partition of 2 is what must be applied, never 20.
 The tail is the reason that rule is mandatory rather than stylistic.
 
-## Route 4 is NOT idle — it splits, and the question is its KEY
+## The key answered: one assign set, one bit — real defect, NOT the cause
+
+The question was: at the pass where `av=4927` is grouped, what signature does
+it share with the Vertex source, and is anything available that separates
+them? Answered with a new `KEY` line on route 4.
+
+**The signature is one bit per ASSIGN SET** — `sig[i] += on ? '1' : '0'` over
+`g->keys`, where `on` is "is this def on a path contributing to set k". So:
+
+```
+p=0 cs=1112 KEY sets=1 defs=20 groups=2 informative=1
+p=1 cs=1112 KEY sets=1 defs=7  groups=2 informative=1
+p=1 cs=1740 KEY sets=1 defs=13 groups=1 informative=1
+p=2 cs=1740 KEY sets=6 defs=13 groups=6 informative=1
+```
+
+At p=0 there is **ONE** assign set, so the signature is a single bit and the
+partition it names is *path membership*, not element type. `av=4927`
+(`Hull.edges`) and every Vertex writer share `sig=1` because they are all on
+the one set's path. **Nothing in the content key distinguishes them, because
+at that point there is no content to distinguish** — `sets=6` first appears
+at p=2.
+
+`informative` is also mis-defined: it is set when ANY def is on a path, not
+when the key DISTINGUISHES anything, so a one-bit key reports
+`informative=1`.
+
+### And requiring two sets does not fix it
+
+Tried it (`PYC_CSKEYSETS`, since removed): require `keys.n >= 2` before the
+content key is used. **It works as intended** — p=0 and p=1 then report
+`groups=1 informative=0` and stop partitioning — **and `chull` still fails
+identically.** `Hull.edges` ends with `Vertex Edge Edge Edge Edge` and the
+same blind cast; only the CreationSet ids change (1839/1881 instead of
+1848/1887).
+
+So the uninformative early key is a **real defect worth its own fix** — route
+4 partitioning 20 defs on a key that carries no content information is
+splitting before the demand is observable, the opposite of the rule — but it
+is **not** what puts the Vertex in `Hull.edges`. That pollution is stable
+across the change.
+
+### What that leaves
+
+The Vertex reaches `Hull.edges` through `self.edges.extend(f0.InitEdges())`
+with `InitEdges()`'s returned list analysed as holding Vertices. That is a
+RETURN-VALUE question, not a route-4 grouping question, and it is the one
+thread not yet pulled. It also matches `linalg`, whose 30 fused confluences
+have no separable element source — a return/field origin rather than an
+element one.
+
+*Superseded framing, kept so it is not re-derived:* the section below
+concluded "the problem is the grouping key". The key IS defective, and it is
+not the cause.
+
+## Route 4 is NOT idle — it splits, and the question was its KEY
 
 The step was: for each SEPARABLE-UNRELATED confluence, find a reaching list
 with `defs > 1` and put the demand there — plus the cheaper question, why
