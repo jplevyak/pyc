@@ -183,11 +183,17 @@ class list:
     # a method body resolves to the module, not to a sibling method).
     return self.__add__(l)
   def __mul__(self, n):
+    # ifa/154: the argument list is (declared_type, value) PAIRS. A stray
+    # unpaired `")"` used to trail this one -- introduced with the body in
+    # 04a85584 and referenced by nothing. c_call_codegen steps `i += 2` from
+    # rvals[5], so it landed on a TYPE offset and was never emitted, but FA
+    # still saw a `str` argument here and it reached the result list's
+    # ELEMENT channel. That is where `bh`'s {Body, str} came from.
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
                           "_CG_list_mult",
                           list, self,
                           int, n,
-                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self), ")")
+                          int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self))
   def __rmul__(self, n):
     # `n * self` (n an int): list repetition is commutative, so reuse
     # __mul__ (issue 025 R1 "missing sequence ops").

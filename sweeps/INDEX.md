@@ -8,6 +8,9 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_CSBACKTRACK_1_PYC_CSCONTENT_1__9bc91dba+db09442c` | 2026-09-15 | programs=77 compile_fail=3 run_fail=35 stdout_differs=25 with_warnings=35 cs/shapes=2051/614=3.34 pratio=2.26 n=76 |
+| `check__default__9bc91dba+db09442c` | 2026-09-15 | programs=77 compile_fail=8 run_fail=32 stdout_differs=24 with_warnings=32 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
+| `check__PYC_CSCONTENT_1__9bc91dba+db09442c` | 2026-09-15 | programs=77 compile_fail=5 run_fail=35 stdout_differs=24 with_warnings=35 cs/shapes=1987/613=3.24 pratio=2.20 n=76 |
 | `check__default__a4b00f2c+f291f78c` | 2026-09-15 | programs=77 compile_fail=8 run_fail=32 stdout_differs=24 with_warnings=32 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
 | `check__PYC_CSBACKTRACK_1__a4b00f2c+62e20b2f` | 2026-09-15 | programs=77 compile_fail=6 run_fail=35 stdout_differs=23 with_warnings=33 cs/shapes=2196/624=3.52 pratio=2.39 n=76 |
 | `check__default__a4b00f2c+1cc44e8a` | 2026-09-15 | programs=77 compile_fail=8 run_fail=32 stdout_differs=24 with_warnings=32 cs/shapes=2138/629=3.40 pratio=2.31 n=76 |
