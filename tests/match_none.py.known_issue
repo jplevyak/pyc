@@ -1,0 +1,1 @@
+ifa/158 -- every type violation is now fatal (2026-09-17). `match` against a None pattern leaves a subject use untyped; previously a warning, the program ran and printed correctly. Flips to PASS when match subjects are narrowed per case (issues/023 family).

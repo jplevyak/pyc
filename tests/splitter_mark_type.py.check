@@ -1,4 +1,4 @@
-splitter_mark_type.py:55:245: warning: illegal call argument type expression illegal: B 
+splitter_mark_type.py:55:245: error: illegal call argument type expression illegal: B 
             return self.aas[-1].ay()
                                     ^
   called from splitter_mark_type.py:60

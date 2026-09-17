@@ -1,96 +1,96 @@
-match_seq.py:3:26: warning: illegal call argument type expression illegal: int64 
+match_seq.py:3:26: error: illegal call argument type expression illegal: int64 
             case [[a, b], c]:
                              ^
   called from match_seq.py:27
-match_seq.py:3:26: warning: illegal call argument type expression illegal: int64 
+match_seq.py:3:26: error: illegal call argument type expression illegal: int64 
             case [[a, b], c]:
                              ^
   called from match_seq.py:21
-match_seq.py:3:26: warning: illegal call argument type expression illegal: int64 
+match_seq.py:3:26: error: illegal call argument type expression illegal: int64 
             case [[a, b], c]:
                              ^
   called from match_seq.py:22
   called from match_seq.py:23
   called from match_seq.py:24
-match_seq.py:3:26: warning: expression has no type
+match_seq.py:3:26: error: expression has no type
             case [[a, b], c]:
                              ^
   called from match_seq.py:27
-match_seq.py:3:26: warning: expression has no type
+match_seq.py:3:26: error: expression has no type
             case [[a, b], c]:
                              ^
   called from match_seq.py:21
-match_seq.py:3:26: warning: expression has no type
+match_seq.py:3:26: error: expression has no type
             case [[a, b], c]:
                              ^
   called from match_seq.py:22
   called from match_seq.py:23
   called from match_seq.py:24
-match_seq.py:5:62: warning: illegal call argument type expression illegal: int64 
+match_seq.py:5:62: error: illegal call argument type expression illegal: int64 
             case (1, x):
                         ^
   called from match_seq.py:27
-match_seq.py:5:62: warning: expression has no type
+match_seq.py:5:62: error: expression has no type
             case (1, x):
                         ^
   called from match_seq.py:27
-match_seq.py:7:99: warning: illegal call argument type expression illegal: int64 
+match_seq.py:7:99: error: illegal call argument type expression illegal: int64 
             case [1 | 2, y]:
                             ^
   called from match_seq.py:27
-match_seq.py:7:99: warning: expression has no type
+match_seq.py:7:99: error: expression has no type
             case [1 | 2, y]:
                             ^
   called from match_seq.py:27
-match_seq.py:9:142: warning: unresolved call '__gt__'
+match_seq.py:9:142: error: unresolved call '__gt__'
             case [a, b] if a > b:
                                  ^
   called from match_seq.py:20
-match_seq.py:9:131: warning: illegal call argument type expression illegal: int64 
+match_seq.py:9:131: error: illegal call argument type expression illegal: int64 
             case [a, b] if a > b:
                                  ^
   called from match_seq.py:27
-match_seq.py:9:142: warning: illegal call argument type 'a' illegal: list 
+match_seq.py:9:142: error: illegal call argument type 'a' illegal: list 
             case [a, b] if a > b:
                                  ^
   called from match_seq.py:20
-match_seq.py:9:142: warning: illegal call argument type 'b' illegal: int64 
+match_seq.py:9:142: error: illegal call argument type 'b' illegal: int64 
             case [a, b] if a > b:
                                  ^
   called from match_seq.py:20
-match_seq.py:9:131: warning: expression has no type
+match_seq.py:9:131: error: expression has no type
             case [a, b] if a > b:
                                  ^
   called from match_seq.py:27
-match_seq.py:9:131: warning: expression has no type
+match_seq.py:9:131: error: expression has no type
             case [a, b] if a > b:
                                  ^
   called from match_seq.py:20
-match_seq.py:9:142: warning: expression has no type
+match_seq.py:9:142: error: expression has no type
             case [a, b] if a > b:
                                  ^
   called from match_seq.py:20
-match_seq.py:11:175: warning: illegal call argument type expression illegal: int64 
+match_seq.py:11:175: error: illegal call argument type expression illegal: int64 
             case [a, b]:
                         ^
   called from match_seq.py:27
-match_seq.py:11:175: warning: expression has no type
+match_seq.py:11:175: error: expression has no type
             case [a, b]:
                         ^
   called from match_seq.py:27
-match_seq.py:13:203: warning: illegal call argument type expression illegal: int64 
+match_seq.py:13:203: error: illegal call argument type expression illegal: int64 
             case [a, b, c]:
                            ^
   called from match_seq.py:27
-match_seq.py:13:203: warning: expression has no type
+match_seq.py:13:203: error: expression has no type
             case [a, b, c]:
                            ^
   called from match_seq.py:27
-match_seq.py:15:237: warning: illegal call argument type expression illegal: int64 
+match_seq.py:15:237: error: illegal call argument type expression illegal: int64 
             case []:
                     ^
   called from match_seq.py:27
-match_seq.py:15:237: warning: expression has no type
+match_seq.py:15:237: error: expression has no type
             case []:
                     ^
   called from match_seq.py:27

@@ -1,8 +1,8 @@
-match_none.py:44:359: warning: illegal call argument type expression illegal: int64 
+match_none.py:44:359: error: illegal call argument type expression illegal: int64 
             case [a, b]:
                         ^
   called from match_none.py:51
-match_none.py:44:359: warning: expression has no type
+match_none.py:44:359: error: expression has no type
             case [a, b]:
                         ^
   called from match_none.py:51

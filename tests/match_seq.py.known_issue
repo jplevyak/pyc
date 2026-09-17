@@ -1,0 +1,1 @@
+ifa/158 -- every type violation is now fatal (2026-09-17). Sequence patterns (`case [[a, b], c]`) leave the destructured elements untyped, reported as `illegal call argument type expression illegal: int64`. Previously warnings with correct output. Flips to PASS when sequence-pattern destructuring narrows per case.

@@ -1,0 +1,1 @@
+ifa/158 -- every type violation is now fatal (2026-09-17). An empty container's element channel leaves a use untyped, which was a warning and is now an error. Flips to PASS when the empty-literal element is inferred from its uses rather than left bottom (ifa/142's family).

@@ -1,0 +1,1 @@
+ifa/158 -- every type violation is now fatal (2026-09-17). This fixture pins splitter behaviour and carries a type violation that was previously a warning. Flips to PASS when the splitter separates the contour the violation is on.
