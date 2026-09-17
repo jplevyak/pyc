@@ -1,0 +1,17 @@
+empty_list_compare_via_dict.py:7:46: error: expression has no type
+        return p == []
+                      ^
+  called from __pyc__.py:1400
+empty_list_compare_via_dict.py:7:46: error: unresolved call '__ne__'
+        return p == []
+                      ^
+  called from empty_list_compare_via_dict.py:7
+empty_list_compare_via_dict.py:7:46: error: illegal call argument type expression illegal: float64 
+        return p == []
+                      ^
+  called from empty_list_compare_via_dict.py:7
+empty_list_compare_via_dict.py:7:46: error: expression has no type
+        return p == []
+                      ^
+  called from empty_list_compare_via_dict.py:7
+fail: program does not type
