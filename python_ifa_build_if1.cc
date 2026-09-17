@@ -3261,8 +3261,27 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       ctx.loop_depth--;
       if (n->children.n > 3 && n->children[3]->kind == PY_else_clause)
         build_if1_suite_pyda(n->children[3]->children[0], &orelse, ctx);
-      if1_loop(if1, &ast->code, ast->label[0], ast->label[1], tmp, 0, cond, next, body, ast);
-      if1_gen(if1, &ast->code, orelse);
+      // issues/159: a loop's `else` runs ONLY if the loop finished without
+      // `break`. `if1_loop` uses one label for both the normal exit and the
+      // break target (`if1_if_label_false(brk)` then `if1_label(brk)`), so
+      // appending `orelse` after it put the else on the BREAK path too.
+      //
+      // Measured: `for e in xs: d = e.d; break` / `else: raise AssertionError`
+      // then `return d` -- CPython prints the value, pyc's binary printed
+      // "Unhandled exception". It surfaced as `expression has no type` on
+      // everything after the loop, because the unconditional raise made that
+      // code unreachable. This is `dijkstra`'s idiom and all 6 of its errors.
+      //
+      // Give the loop its own exit label, emit `orelse` there, and place the
+      // BREAK label after it, so break jumps past the else.
+      if (orelse) {
+        Label *lexit = if1_alloc_label(if1);
+        if1_loop(if1, &ast->code, ast->label[0], lexit, tmp, 0, cond, next, body, ast);
+        if1_gen(if1, &ast->code, orelse);
+        if1_label(if1, &ast->code, ast, ast->label[1]);
+      } else {
+        if1_loop(if1, &ast->code, ast->label[0], ast->label[1], tmp, 0, cond, next, body, ast);
+      }
       return 0;
     }
 
@@ -3284,8 +3303,27 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       ctx.loop_depth--;
       if (n->children.n > 2 && n->children[2]->kind == PY_else_clause)
         build_if1_suite_pyda(n->children[2]->children[0], &orelse, ctx);
-      if1_loop(if1, &ast->code, ast->label[0], ast->label[1], cond_bool, 0, cond_code, 0, body, ast);
-      if1_gen(if1, &ast->code, orelse);
+      // issues/159: a loop's `else` runs ONLY if the loop finished without
+      // `break`. `if1_loop` uses one label for both the normal exit and the
+      // break target (`if1_if_label_false(brk)` then `if1_label(brk)`), so
+      // appending `orelse` after it put the else on the BREAK path too.
+      //
+      // Measured: `for e in xs: d = e.d; break` / `else: raise AssertionError`
+      // then `return d` -- CPython prints the value, pyc's binary printed
+      // "Unhandled exception". It surfaced as `expression has no type` on
+      // everything after the loop, because the unconditional raise made that
+      // code unreachable. This is `dijkstra`'s idiom and all 6 of its errors.
+      //
+      // Give the loop its own exit label, emit `orelse` there, and place the
+      // BREAK label after it, so break jumps past the else.
+      if (orelse) {
+        Label *lexit = if1_alloc_label(if1);
+        if1_loop(if1, &ast->code, ast->label[0], lexit, cond_bool, 0, cond_code, 0, body, ast);
+        if1_gen(if1, &ast->code, orelse);
+        if1_label(if1, &ast->code, ast, ast->label[1]);
+      } else {
+        if1_loop(if1, &ast->code, ast->label[0], ast->label[1], cond_bool, 0, cond_code, 0, body, ast);
+      }
       return 0;
     }
 
