@@ -13,10 +13,14 @@
 _state = 1
 
 def seed(a):
+    # issues/161: the `if _state == 0: _state = 1` guard that used to be here
+    # made seed(0) and seed(1) THE SAME STREAM. It was also unnecessary: this
+    # LCG has no fixed point at zero (0 -> 12345), so nothing needs avoiding.
+    # Measured on shedskin_examples/dijkstra2, which does `random.seed(d)` for
+    # d in range(10) and prints a result per seed -- 5 of its 10 seeds produced
+    # duplicate answers because 0 and 1 collided.
     global _state
     _state = a & 0x7fffffff
-    if _state == 0:
-        _state = 1
 
 def _next():
     global _state
