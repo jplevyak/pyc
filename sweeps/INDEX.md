@@ -8,6 +8,9 @@ Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
 | key | date | result |
 |---|---|---|
+| `check__default__73f44aa4+9c9c6ccb` | 2026-09-17 | programs=77 compile_fail=35 run_fail=12 stdout_differs=8 unverifiable=3 with_warnings=1 cs/shapes=2118/625=3.39 pratio=2.27 n=76 |
+| `check__default__73f44aa4+5c9b1d25` | 2026-09-17 | programs=77 compile_fail=35 run_fail=12 stdout_differs=20 unverifiable=0 with_warnings=1 cs/shapes=2118/625=3.39 pratio=2.27 n=76 |
+| `check__default__73f44aa4+b2b7978d` | 2026-09-17 | programs=77 compile_fail=35 run_fail=12 stdout_differs=19 unverifiable=0 with_warnings=1 cs/shapes=2118/625=3.39 pratio=2.27 n=76 |
 | `check__default__dc5e44b7+e38f52ae` | 2026-09-17 | programs=77 compile_fail=35 run_fail=12 stdout_differs=19 with_warnings=1 cs/shapes=2054/616=3.33 pratio=2.26 n=76 |
 | `check__default__6d60b767+a37a811a` | 2026-09-17 | programs=77 compile_fail=36 run_fail=11 stdout_differs=19 with_warnings=1 cs/shapes=2054/616=3.33 pratio=2.26 n=76 |
 | `check__default__728acdb7+c6fc888f` | 2026-09-17 | programs=77 compile_fail=37 run_fail=11 stdout_differs=18 with_warnings=1 cs/shapes=2051/614=3.34 pratio=2.26 n=76 |

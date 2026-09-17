@@ -120,6 +120,7 @@ if [ "${1:-}" = "--worker" ]; then
       if [ "$NOCPYCACHE" = 0 ] && [ -f "$CPYCACHE/$name.rc" ]; then
         cp "$CPYCACHE/$name.rc" "$LOGS/$name.prc"
         [ -f "$CPYCACHE/$name.out" ] && cp "$CPYCACHE/$name.out" "$LOGS/$name.cpy.out"
+        [ -f "$CPYCACHE/$name.out2" ] && cp "$CPYCACHE/$name.out2" "$LOGS/$name.cpy2.out"
         echo 0 > "$LOGS/$name.pwall"
         echo hit > "$LOGS/$name.pcache"
         exit 0
@@ -127,12 +128,21 @@ if [ "${1:-}" = "--worker" ]; then
       t0=$(date +%s)
       timeout "$RT" python3 "$name.py" > "$LOGS/$name.cpy.out" 2> "$LOGS/$name.cpy.err"
       prc=$?
+      # issues/163: run CPython a SECOND time to find which lines the program
+      # itself varies on. A line that differs between two CPython runs is
+      # nondeterministic BY MEASUREMENT -- an elapsed-time print, a PID, a
+      # clock -- and comparing pyc against it says nothing. This needs no
+      # pattern for "TIME", which would be matching by name and would also
+      # wrongly excuse `3.11.0 (pyc)`, a version string pyc genuinely prints
+      # differently and should be held to.
+      timeout "$RT" python3 "$name.py" > "$LOGS/$name.cpy2.out" 2>/dev/null
       echo $prc > "$LOGS/$name.prc"
       echo $(( $(date +%s) - t0 )) > "$LOGS/$name.pwall"
       echo miss > "$LOGS/$name.pcache"
       mkdir -p "$CPYCACHE"
       echo $prc > "$CPYCACHE/$name.rc"
       cp "$LOGS/$name.cpy.out" "$CPYCACHE/$name.out"
+      cp "$LOGS/$name.cpy2.out" "$CPYCACHE/$name.out2" 2>/dev/null
       ;;
   esac
   exit 0
@@ -237,6 +247,15 @@ mkdir -p "$SWEEPS"
 # would report a stale answer as current.
 CONTENT=$( { sha1sum "$ROOT/pyc" 2>/dev/null || echo nopyc
              cat "$ROOT"/__pyc__/*.py 2>/dev/null | sha1sum
+             cat "$ROOT"/pyc_lib/*.py 2>/dev/null | sha1sum
+             # issues/163: THIS SCRIPT is part of what is measured. It decides
+             # what counts as a match, so changing the verdict logic must
+             # invalidate the cache -- otherwise a re-run silently replays old
+             # rows through new arithmetic and reports a number that was never
+             # measured. Caught when the three-way stdout verdict landed and
+             # the sweep returned `unverifiable=0` from a cached TSV that had
+             # no such column.
+             sha1sum "$0" 2>/dev/null || echo noscript
              find "$ROOT/shedskin_examples" -name '*.py' -print0 2>/dev/null \
                | sort -z | xargs -0 -r cat | sha1sum
              printf '%s|%s|%s\n' "${ENVS:-}" "${TMO:-}" "$MODE"
@@ -253,23 +272,29 @@ summarize() {
         if ($3 != "-" && $3 != "0") warned++
         if ($4 != "-" && $4 != "0") { rfail++; rf = rf " " $1 }
         if ($6 == "NO") { diff++; df = df " " $1 }
+        if ($6 == "none") { nocmp++; nc = nc " " $1 }
       }
       # ifa/issues/129 step 1: the demand ratio, corpus-wide. Absent from
       # TSVs written before the columns existed, hence the numeric guard.
       if ($9 ~ /^[0-9]+$/) { nd++; cs += $9; sh += $10; ps += $11 }
     }
     END {
-      printf "programs=%d compile_fail=%d run_fail=%d stdout_differs=%d with_warnings=%d",
-             n, cfail, rfail, diff, warned
+      printf "programs=%d compile_fail=%d run_fail=%d stdout_differs=%d unverifiable=%d with_warnings=%d",
+             n, cfail, rfail, diff, nocmp, warned
       if (nd && sh) printf " cs/shapes=%d/%d=%.2f pratio=%.2f n=%d", cs, sh, cs/sh, ps ? cs/ps : 0, nd
       printf "\n"
       if (cfail) printf "  compile-fail:%s\n", cf
       if (rfail) printf "  run-fail:%s\n", rf
       if (diff)  printf "  stdout-differs:%s\n", df
+      if (nocmp) printf "  unverifiable (no deterministic output):%s\n", nc
     }' "$f"
 }
 
-if [ "$FORCE" = 0 ]; then
+# issues/163: `-C` asks for CPython to be re-measured, so it must also bypass
+# the TSV cache -- otherwise the sweep short-circuits on a cached row and the
+# forced re-runs never happen. Caught when the stdout variance probe needed a
+# second CPython run and kept finding none: `-C` was being answered from cache.
+if [ "$FORCE" = 0 ] && [ "$NOCPYCACHE" = 0 ]; then
   HIT=""
   if [ -f "$OUT" ] && grep -q '^DONE' "$OUT"; then
     HIT=$OUT
@@ -440,7 +465,43 @@ for name in "${PROGS[@]}"; do
   prc=$(cat "$LOGS/$name.prc" 2>/dev/null || echo 1)
   same="-"
   if [ "$rrc" = 0 ] && [ "$prc" = 0 ]; then
-    if cmp -s "$LOGS/$name.pyc.out" "$LOGS/$name.cpy.out"; then same=yes; else same=NO; fi
+    if cmp -s "$LOGS/$name.pyc.out" "$LOGS/$name.cpy.out"; then
+      same=yes
+    else
+      # issues/163: drop the line NUMBERS that CPython itself varies on
+      # between two runs, then compare what is left. Three outcomes, not two:
+      #   yes   -- comparable output exists and matches
+      #   NO    -- comparable output exists and differs
+      #   none  -- NOTHING comparable remains, so this program's stdout
+      #            verifies nothing. sudoku5 is the case that forced this:
+      #            its entire output is one `TIME %.2f` line, so a plain
+      #            filter would have scored empty-vs-empty as a MATCH and
+      #            claimed a verification that never happened.
+      if [ -s "$LOGS/$name.cpy2.out" ] && ! cmp -s "$LOGS/$name.cpy.out" "$LOGS/$name.cpy2.out"; then
+        # `%df,%dld;` -> a sed DELETE range per varying hunk ("3,4d;"), joined
+        # into one script. (It emitted `c` instead of `d` at first, which sed
+        # rejected, so nothing was ever filtered and the whole probe read as a
+        # no-op -- the outputs were right and the edit script was not.)
+        vary=$(diff --unchanged-group-format='' --old-group-format='%df,%dld;' \
+                    --new-group-format='' --changed-group-format='%df,%dld;' \
+                    "$LOGS/$name.cpy.out" "$LOGS/$name.cpy2.out" 2>/dev/null)
+        if [ -n "$vary" ]; then
+          sed -e "$vary" "$LOGS/$name.cpy.out" > "$LOGS/$name.cpy.cmp" 2>/dev/null || cp "$LOGS/$name.cpy.out" "$LOGS/$name.cpy.cmp"
+          sed -e "$vary" "$LOGS/$name.pyc.out" > "$LOGS/$name.pyc.cmp" 2>/dev/null || cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
+        else
+          cp "$LOGS/$name.cpy.out" "$LOGS/$name.cpy.cmp"; cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
+        fi
+        if [ ! -s "$LOGS/$name.cpy.cmp" ] && [ ! -s "$LOGS/$name.pyc.cmp" ]; then
+          same=none
+        elif cmp -s "$LOGS/$name.pyc.cmp" "$LOGS/$name.cpy.cmp"; then
+          same=yes
+        else
+          same=NO
+        fi
+      else
+        same=NO
+      fi
+    fi
   fi
   printf '%s\t0\t%s\t%s\t%s\t%s\t%s\n' "$name" "$warns" "$rrc" "$prc" "$same" "$dem" >> "$OUT"
 done
