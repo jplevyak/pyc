@@ -1,0 +1,5 @@
+nil_only_arg_rejected.py:8:17: error: illegal primitive argument type 'x' illegal: __pyc_None_type__ 
+        return "" + None
+                    ^
+  called from nil_only_arg_rejected.py:8
+fail: program does not type
