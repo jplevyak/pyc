@@ -206,7 +206,18 @@ class list:
     lself = __pyc_clone_constants__(len(self))
     if lself != ll:
       return False
-    for i in range(lself):
+    # ifa/160: iterate the OTHER operand's length, not our own. Past the guard
+    # above the two are equal, so this is the same loop -- but `ll` is the one
+    # that FOLDS when the other operand is an empty literal (`x == []`), and a
+    # `range()` over a folded 0 makes the body dead, so `l[i]` is never analysed
+    # on a container that has no element to give.
+    #
+    # With `range(lself)` the bound came from SELF, which does not fold, so the
+    # body stayed live and indexed an arity-0 CreationSet: `l[i]` is bottom,
+    # `!=` on it cannot resolve, and `x == []` reported four errors -- all of
+    # dijkstra2's. Measured: the identical function with the bound switched
+    # goes from 5 errors to 0.
+    for i in range(ll):
       if l[i] != self[i]:
         return False
     return True
