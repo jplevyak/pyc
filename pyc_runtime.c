@@ -262,11 +262,54 @@ void *_CG_list_getslice(void *v, int64 size, int64 l_in, int64 h_in,
   return x;
 }
 
+/* issues/166: the step, which this used to have no parameter for -- see
+ * _CG_list_setslice_internal in pyc_c_runtime.h for the full rationale and
+ * the CPython semantics. Kept in sync with it deliberately, the way every
+ * other helper in this file mirrors its inline twin. */
 void *_CG_list_setslice(void *l1, int64 size, int64 l_in, int64 h_in,
-                         void *l2) {
-  int l = (int)l_in, h = (int)h_in;
+                         int64 st_in, void *l2) {
+  /* `st` (step), not `s`: the contiguous path below already uses `s` for a
+   * byte count. */
+  int l = (int)l_in, h = (int)h_in, st = (int)st_in;
   unsigned int len1 = _PYC_list_len(l1);
   unsigned int len2 = _PYC_list_len(l2);
+  if (!st) st = 1;
+  if (st != 1) {
+    int ilen1 = (int)len1, n;
+    if (l == INT32_MIN) {
+      l = st < 0 ? ilen1 - 1 : 0;
+    } else if (l < 0) {
+      l += ilen1;
+      if (l < 0) l = st < 0 ? -1 : 0;
+    } else if (l >= ilen1) {
+      l = st < 0 ? ilen1 - 1 : ilen1;
+    }
+    if (h == INT32_MAX) {
+      h = st < 0 ? -1 : ilen1;
+    } else if (h < 0) {
+      h += ilen1;
+      if (h < 0) h = st < 0 ? -1 : 0;
+    } else if (h >= ilen1) {
+      h = st < 0 ? ilen1 - 1 : ilen1;
+    }
+    if (st > 0)
+      n = l < h ? (h - l + st - 1) / st : 0;
+    else
+      n = l > h ? (l - h + (-st) - 1) / (-st) : 0;
+    if (n < 0) n = 0;
+    if (n != (int)len2) {
+      assert(!"runtime error: attempt to assign a sequence of the wrong size to an extended slice");
+      return l1;
+    }
+    {
+      char *dst = (char *)_CG_LIST_HDR_PTR(l1);
+      char *src = (char *)_CG_LIST_HDR_PTR(l2);
+      int i;
+      for (i = 0; i < n; i++)
+        memcpy(dst + (size_t)(l + i * st) * (size_t)size, src + (size_t)i * (size_t)size, (size_t)size);
+    }
+    return l1;
+  }
   if (l > (int)len1) l = (int)len1;
   if (l < 0) { l = (int)len1 + l; if (l < 0) l = 0; }
   if (h > (int)len1) h = (int)len1;

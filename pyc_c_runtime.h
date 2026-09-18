@@ -1413,7 +1413,73 @@ static inline _CG_list _CG_list_getslice_internal(_CG_list v, uint32 size, int32
   return x;
 }
 
-static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int32 l, int32 h, _CG_list l2) {
+// issues/166: an EXTENDED slice store -- `a[i:j:k] = v` with k != 1.
+//
+// `__pyc_setslice__` has always been handed the step by the frontend and
+// always dropped it on the floor, and this function had no parameter to
+// receive it, so every strided store was executed as the CONTIGUOUS
+// splice `a[i:i+len(v)] = v`. `a[3::4] = [0]*5` on a 20-element list
+// replaced elements 3..7 and TRUNCATED the list to 8, silently, exit 0.
+// That is `sieve`'s wrong answer: its Sieve of Eratostenes is built on
+// `sieve[bottom::si] = [0] * n`, so the whole algorithm collapsed and it
+// printed `nprimes: 4` for CPython's 664579.
+//
+// The read side was already right (`_CG_list_getslice_internal` mirrors
+// CPython's PySlice_GetIndicesEx, negative steps included); this is the
+// store side catching up, and it reuses that normalisation exactly so the
+// two cannot drift.
+//
+// CPython semantics, and the reason the two branches differ: a CONTIGUOUS
+// slice store may resize the list (`a[1:3] = [9]` shortens it), but an
+// EXTENDED one may not -- the value length must equal the slice length,
+// or it is `ValueError: attempt to assign sequence of size N to extended
+// slice of size M`. So the k == 1 path keeps the splice-and-resize code
+// below verbatim, and the strided path stores in place.
+static inline _CG_list _CG_list_setslice_strided(_CG_list l1, uint32 size, int32 l, int32 h, int32 s,
+                                                 _CG_list l2) {
+  int32 len1 = (int32)_CG_prim_len(0, l1), len2 = (int32)_CG_prim_len(0, l2);
+  // Identical to _CG_list_getslice_internal's normalisation.
+  if (l == INT32_MIN) {
+    l = s < 0 ? len1 - 1 : 0;
+  } else if (l < 0) {
+    l += len1;
+    if (l < 0) l = s < 0 ? -1 : 0;
+  } else if (l >= len1) {
+    l = s < 0 ? len1 - 1 : len1;
+  }
+  if (h == INT32_MAX) {
+    h = s < 0 ? -1 : len1;
+  } else if (h < 0) {
+    h += len1;
+    if (h < 0) h = s < 0 ? -1 : 0;
+  } else if (h >= len1) {
+    h = s < 0 ? len1 - 1 : len1;
+  }
+  int32 n;
+  if (s > 0)
+    n = l < h ? (h - l + s - 1) / s : 0;
+  else
+    n = l > h ? (l - h + (-s) - 1) / (-s) : 0;
+  if (n < 0) n = 0;
+  // CPython raises ValueError here. pyc has no exception path out of a
+  // runtime helper, so this takes cg.cc's `assert(!"runtime error: ...")`
+  // convention -- loud, rather than the silent corruption it replaces.
+  if (n != len2) {
+    assert(!"runtime error: attempt to assign a sequence of the wrong size to an extended slice");
+    return l1;
+  }
+  char *dst = (char *)_CG_list_ptr(l1);
+  char *src = (char *)_CG_list_ptr(l2);
+  for (int32 i = 0; i < n; i++) memcpy(dst + (size_t)(l + i * s) * size, src + (size_t)i * size, size);
+  return l1;
+}
+
+// `st` (step), not `s`: the contiguous path below already uses `s` for a
+// byte count.
+static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int32 l, int32 h, int32 st,
+                                                 _CG_list l2) {
+  if (!st) st = 1;
+  if (st != 1) return _CG_list_setslice_strided(l1, size, l, h, st, l2);
   // SIGNED. These used to be uint32, which made `l > len1` promote a
   // negative bound to a huge unsigned value: the omitted-lower sentinel
   // INT_MIN read as 2147483648, so `del x[:]` clamped l to len1 instead
@@ -1478,8 +1544,8 @@ inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
 #define _CG_list_mult(_l1, _l, _s) (_CG_list_mult_internal(_CG_to_list(_l1), _l, _s))
 #define _CG_list_getslice(_l, _s, _lower, _upper, _step) \
   (_CG_list_getslice_internal(_CG_to_list(_l), _s, _lower, _upper, _step))
-#define _CG_list_setslice(_l1, _s, _lower, _upper, _l2) \
-  (_CG_list_setslice_internal(_l1, _s, _lower, _upper, _CG_to_list(_l2)))
+#define _CG_list_setslice(_l1, _s, _lower, _upper, _step, _l2) \
+  (_CG_list_setslice_internal(_l1, _s, _lower, _upper, _step, _CG_to_list(_l2)))
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c) GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_vector(_c, _n) (void *)GC_MALLOC(sizeof(_c *) * _n)

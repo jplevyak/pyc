@@ -52,12 +52,18 @@ class list:
                           int, j,
                           int, s)
   def __pyc_setslice__(self, i, j, s, v):
+    # issues/166: `s` was accepted and then DROPPED -- the C call passed
+    # only (i, j, v), so every strided store `a[i:j:k] = v` executed as the
+    # contiguous splice `a[i:i+len(v)] = v`, silently truncating the list.
+    # That was sieve's `nprimes: 4`. __pyc_getslice__ above has always
+    # passed its step; this is the store side catching up.
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, v),
                           "_CG_list_setslice",
                           list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
                           int, j,
+                          int, s,
                           list, v)
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
@@ -70,12 +76,21 @@ class list:
     # CreationSet per sym that literal shares a contour with every user
     # `[]`, so anything a user put in an empty list leaked into every
     # list that had an element deleted.
+    # issues/166: a step of 1, NOT `s`. `del a[i:j]` lowers to this, and a
+    # contiguous delete is a splice-and-resize, which is what the runtime's
+    # k == 1 path does. `del a[i:j:k]` with k != 1 is a different operation
+    # (remove the selected elements and shrink), which CPython supports and
+    # this lowering cannot express -- it arrives indistinguishable from
+    # `a[i:j:k] = []`. Passing `s` here would turn it into an extended-slice
+    # store with a length mismatch, i.e. a runtime error. No corpus program
+    # uses a strided del; see issues/166 for the remaining half.
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
                           "_CG_list_setslice",
                           list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
                           int, j,
+                          int, 1,
                           list, [])
   def __delitem__(self, key):
     return self.__pyc_delslice__(key, key + 1, 1)
