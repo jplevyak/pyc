@@ -30,6 +30,7 @@
 extern char *_CG_string_alloc(size_t s);
 extern char *_CG_String(const void *x);
 extern char *_CG_format_string(char *str, ...);
+extern const char *_CG_widen_int_convs(const char *fmt);
 extern char *_CG_str_from_int(int64 x);
 extern char *_CG_str_from_float(double d);
 extern double _CG_str_to_float64(char *s);

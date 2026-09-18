@@ -603,14 +603,63 @@ inline char *_CG_readdir_name(int64 h) {
   return _CG_String(e->d_name);
 }
 
+// issues/165: Python's `%d` is C's `int` conversion -- 32 bits -- but
+// every integer pyc pushes into this vararg list is widened to int64 (see
+// format_string_codegen in python_ifa_main.cc and the matching emitter in
+// cg_emit_llvm.cc). Handing the Python format string to vsnprintf
+// unchanged therefore read 32 bits of a 64-bit argument:
+//
+//   "%d" % 199999990000000   printed  542894464
+//
+// which is exactly 199999990000000 mod 2**32, silently, with `print(n)`
+// and `"%s" % n` both correct. Insert the `ll` length modifier into every
+// integer conversion so the conversion matches the argument it reads.
+//
+// Done here rather than in the two backends' emitters because this is the
+// one place both of them meet, and because it also covers a format string
+// that is NOT a compile-time constant, which neither emitter can parse.
+// `%c` is deliberately left alone: C's `%c` takes an `int`, and the
+// emitters cast that argument to `(int)` for exactly this reason.
+//
+// Returns `fmt` itself when there is nothing to rewrite, so the common
+// case allocates nothing.
+inline const char *_CG_widen_int_convs(const char *fmt) {
+  int n = 0;
+  for (const char *p = fmt; *p; p++)
+    if (p[0] == '%') {
+      if (p[1] == '%') { p++; continue; }
+      n++;
+    }
+  if (!n) return fmt;
+  /* worst case: every '%' introduces an integer conversion (+2 chars) */
+  char *out = (char *)GC_MALLOC_ATOMIC(strlen(fmt) + 2 * (size_t)n + 1);
+  char *o = out;
+  for (const char *p = fmt; *p;) {
+    if (*p != '%') { *o++ = *p++; continue; }
+    *o++ = *p++;            /* the '%' */
+    if (*p == '%') { *o++ = *p++; continue; }
+    /* flags, width, precision -- copied through unchanged */
+    while (*p && (strchr("-+ #0", *p) || (*p >= '0' && *p <= '9') || *p == '.')) *o++ = *p++;
+    /* drop any length modifier the format already carries, so a
+       hand-written "%ld" does not become "%lldd" */
+    while (*p && strchr("hlLqjzt", *p)) p++;
+    if (*p && strchr("diouxX", *p)) { *o++ = 'l'; *o++ = 'l'; }
+    if (*p) *o++ = *p++;
+  }
+  *o = 0;
+  return out;
+}
+
 inline char *_CG_format_string(char *str, ...) {
+  const char *fmt = _CG_widen_int_convs(str);
   int l = _CG_string_len(str) + 24;
   char *s = 0;
   va_list ap;
   while (1) {
     va_start(ap, str);
     s = _CG_string_alloc(l);
-    int ll = vsnprintf(s, l, str, ap);
+    int ll = vsnprintf(s, l, fmt, ap);
+    va_end(ap);
     if (ll < l - 1) {
       _CG_string_set_len(s, ll);
       break;

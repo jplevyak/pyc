@@ -207,14 +207,47 @@ static void collect_format_convs(cchar *fmt, Vec<char> &convs) {
   }
 }
 
+// issues/165: a Python `%d` is rewritten to `%lld` by
+// _CG_widen_int_convs (pyc_c_runtime.h), because the value it reads is
+// int64 -- so the emitter's job is to make sure it REALLY is. That was
+// only half true before: an int-typed argument was passed at its own
+// width, which for `_CG_bool` (uint8) or `_CG_int` (32-bit) is narrower
+// than the conversion now reads.
+//
+// `%c` is the exception: C's `%c` consumes an `int`, and the rewrite
+// leaves it alone, so cast to `(int)` and not `(int64)`.
+//
+// The pre-existing issues/040 case -- a float reaching an integer
+// conversion, or an int reaching a float one -- is the same fix and is
+// kept: on x86-64 SysV the two land in different register classes, so a
+// mismatch is not a truncation but garbage.
+static bool fmt_arg_is_numeric(Sym *t) {
+  if (!t) return false;
+  return t->num_kind == IF1_NUM_KIND_INT || t->num_kind == IF1_NUM_KIND_UINT ||
+         t->num_kind == IF1_NUM_KIND_FLOAT || t == sym_bool;
+}
+
+// Emit the cast that makes `t` match `conv`. conv == 0 means the format
+// string is not a compile-time constant, so the conversion is unknown:
+// widen an integer to int64 anyway (that is what the rewrite will read)
+// and leave a float alone, since nothing can be inferred for it.
+static void format_string_emit_cast(FILE *fp, Sym *t, char conv) {
+  if (!fmt_arg_is_numeric(t)) return;
+  bool is_float = t->num_kind == IF1_NUM_KIND_FLOAT;
+  if (!conv) {
+    if (!is_float) fputs("(int64)", fp);
+  } else if (strchr("diouxX", conv)) {
+    fputs("(int64)", fp);
+  } else if (conv == 'c') {
+    fputs("(int)", fp);
+  } else if (strchr("feEgGF", conv) && !is_float) {
+    fputs("(double)", fp);
+  }
+}
+
 static void format_string_emit_arg(FILE *fp, Var *av, char conv) {
   fputs(", ", fp);
-  if (av->type) {
-    if (strchr("diouxXc", conv) && av->type->num_kind == IF1_NUM_KIND_FLOAT)
-      fputs("(int64)", fp);
-    else if (strchr("feEgGF", conv) && (av->type->num_kind == IF1_NUM_KIND_INT || av->type->num_kind == IF1_NUM_KIND_UINT))
-      fputs("(double)", fp);
-  }
+  format_string_emit_cast(fp, av->type, conv);
   fputs(av->cg_string, fp);
 }
 
@@ -227,24 +260,14 @@ static void format_string_codegen(FILE *fp, PNode *n, Fun *f) {
   if (fmt) collect_format_convs(fmt, convs);
   if (v->type->type_kind == Type_RECORD) {
     for (int i = 0; i < v->type->has.n; i++) {
-      if (i < convs.n && v->type->has[i]->type) {
-        char conv = convs[i];
-        Sym *field_type = v->type->has[i]->type;
-        fputs(", ", fp);
-        if (strchr("diouxXc", conv) && field_type->num_kind == IF1_NUM_KIND_FLOAT)
-          fputs("(int64)", fp);
-        else if (strchr("feEgGF", conv) && (field_type->num_kind == IF1_NUM_KIND_INT || field_type->num_kind == IF1_NUM_KIND_UINT))
-          fputs("(double)", fp);
-        fprintf(fp, "%s->e%d", v->cg_string, i);
-      } else {
-        fprintf(fp, ", %s->e%d", v->cg_string, i);
-      }
+      fputs(", ", fp);
+      format_string_emit_cast(fp, v->type->has[i]->type, i < convs.n ? convs[i] : 0);
+      fprintf(fp, "%s->e%d", v->cg_string, i);
     }
   } else if (convs.n == 1) {
     format_string_emit_arg(fp, v, convs[0]);
   } else {
-    fputs(", ", fp);
-    fputs(n->rvals[3]->cg_string, fp);
+    format_string_emit_arg(fp, v, 0);
   }
   fputs(");\n", fp);
 }
