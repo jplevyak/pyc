@@ -162,15 +162,40 @@ sweeps/cpython-cache/
 # legitimate .ppm/.png/.zip INPUT data that must stay tracked.
 # `git add -A shedskin_examples` swept these into a commit once; that is
 # what this prevents.
+#
+# Listing a path here does NOT untrack a file that is already committed --
+# the ac_encode entries below sat inert for exactly that reason until the
+# files were `git rm --cached`-ed. Adding a name here is half the job.
+# Every entry below was verified write-only in the corpus source before
+# being untracked (the input it is derived from -- hq2x/randam.ppm,
+# tonyjpegdecoder/tiger1.jpg -- stays tracked).
 shedskin_examples/ac_encode/tmp.zip
 shedskin_examples/ac_encode/tmp2
 shedskin_examples/block/tmp.zip
 shedskin_examples/block/tmp2
+shedskin_examples/chaos/py.ppm
+shedskin_examples/hq2x/randam2.ppm
 shedskin_examples/lz2/tmp.zip
 shedskin_examples/lz2/tmp2
+shedskin_examples/mandelbrot2/m-0.7 0i_3.2_256.bmp
+shedskin_examples/mao/mao.ppm
 shedskin_examples/minilight/cornellbox.txt.ppm
 shedskin_examples/minpng/minpng.png
+shedskin_examples/oliva2/oliva.pgm
 shedskin_examples/path_tracing/pt.ppm
+shedskin_examples/pygmy/pygmy.ppm
+shedskin_examples/tonyjpegdecoder/tiger1.bmp
+shedskin_examples/yopyra/scene.txt.ppm
+
+# oliva2 writes oliva.pgm into the CWD, so a run from the corpus root (not
+# the program's own directory) leaves a stray copy one level up.
+shedskin_examples/oliva.pgm
+
+# IFA's debug log directory: ifa/analysis/ifalog.h defaults log_dir to
+# "./log", so `log/log.s` + `log/save/` land in whatever CWD IFA ran in --
+# for a corpus program, its own directory. The /log/ and ifa/log/ rules
+# above are anchored and do not reach these.
+shedskin_examples/*/log/
 
 # pygmy writes its output into the CWD, so a run from the repo root
 # leaves this at top level.
