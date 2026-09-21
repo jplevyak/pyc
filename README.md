@@ -133,9 +133,23 @@ PYTHONPATH=/my/libs pyc myprogram.py
 ## Running the tests
 
 ```sh
-make test          # run all functional tests (expects 2 known failures: t18, t30)
-make test_dparse   # run DParser parse-only validation on all test files
+make test          # THE GATE: everything CI runs, in CI's order, both backends
 ```
+
+`make test` chains four groups, each of which also runs on its own:
+
+```sh
+make test-core       # unit + ir + e2e (see tests/README.md for the
+                     # expected-fail and .known_issue conventions)
+make test-ifa-llvm   # ifa V-language LLVM smoke (= make -C ifa test_llvm)
+make test_dparse     # DParser parse-only validation on all test files
+make test_links      # every relative Markdown link resolves (needs no build)
+```
+
+`test-core` runs the end-to-end suite twice, once per backend — the C
+backend, then `PYC_FLAGS=-b` for LLVM. Note that this directory's
+`make test_llvm` is that pyc LLVM e2e, *not* the ifa V-language smoke
+of the same name; `make test-ifa-llvm` is the unambiguous spelling.
 
 ## Examples
 

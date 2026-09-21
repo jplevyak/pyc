@@ -139,8 +139,8 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime
 # Targets ---------------------------------------------------------------------
 
 .PHONY: all defaulttarget install deinstall clean realclean clean-tests \
-        test test-e2e test-unit test-ir test-dparse test_dparse \
-        test-links test_links \
+        test test-core test-e2e test-unit test-ir test-dparse test_dparse \
+        test-links test_links test_llvm test-ifa-llvm test_ifa_llvm \
         $(IFALIB) pullifa pushifa diffifa
 
 all: defaulttarget
@@ -210,16 +210,34 @@ deinstall:
 
 # Tests -----------------------------------------------------------------------
 #
-# `make test`         — everything (unit + ir + e2e). Fails on first category that fails.
+# `make test`         — THE GATE: everything CI runs, in CI's order. Both
+#                       backends. Fails on the first category that fails.
+# `make test-core`    — unit + ir + e2e only (what `make test` was before
+#                       2026-09-20). Still covers both backends, via test-e2e.
 # `make test-unit`    — IFA unit tests via the UnitTest framework (`ifa --test`).
 # `make test-ir`      — IF1-level golden-file phase tests (`ifa-test`).
-# `make test-e2e`     — end-to-end pyc tests (parse, compile, execute, CPython diff).
+# `make test-e2e`     — end-to-end pyc tests (parse, compile, execute, CPython
+#                       diff), run TWICE: C backend, then LLVM backend.
+# `make test-ifa-llvm`— the ifa V-language LLVM smoke, i.e. `make -C ifa
+#                       test_llvm`. NOT the same thing as this directory's
+#                       `test_llvm`, which is the pyc LLVM e2e; the two
+#                       Makefiles have long disagreed on that name.
 # `make test-dparse`  — parse-only validation of every tests/*.py.
+# `make test-links`   — every relative Markdown link resolves. Needs no build.
 # `make clean-tests`  — remove tests/build/ and any in-tree leftovers.
+#
+# `test` mirrors .github/workflows/ci.yml step for step so a green local run
+# means a green CI run. CI's own LLVM-backend pyc e2e is a separate step only
+# because it applies an LLVM_BASELINE_PASS floor instead of a hard pass/fail;
+# test-e2e below runs the same thing strictly, so `test` does not repeat it.
+# Touched a header? `make clean` first — header deps are incomplete and stale
+# objects produce failures that read like real bugs.
 #
 # See tests/README.md and ifa/testing/TEST_RUNNER.md for adding / debugging tests.
 
-test: test-unit test-ir test-e2e
+test: test-core test-ifa-llvm test-dparse test-links
+
+test-core: test-unit test-ir test-e2e
 
 test-e2e: $(PYC) libpyc_runtime.a
 	@echo "--- Testing C Backend ---"
@@ -229,6 +247,9 @@ test-e2e: $(PYC) libpyc_runtime.a
 
 test_llvm: pyc
 	PYC_FLAGS=-b ./test_pyc.py
+
+test-ifa-llvm test_ifa_llvm:
+	$(MAKE) -C $(IFA_DIR) test_llvm
 
 
 

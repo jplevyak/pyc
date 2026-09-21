@@ -122,36 +122,56 @@ when to file vs. fix-now.
 
 ## Change acceptance — run what CI runs, before committing
 
-CI (`.github/workflows/ci.yml`) gates every push to `main`. A change
-is not done until these six pass locally, in this order. They take
-roughly four minutes together (step 6 is instant and needs no build).
+CI (`.github/workflows/ci.yml`) gates every push to `main`, and **one
+command runs all of it**, in CI's order, on both backends. It takes
+roughly four minutes.
 
 ```sh
-make                          # 1. builds pyc + ifa (CI sets USE_LLVM=1)
-make test                     # 2. ifa --test, then test-ir, then test-e2e
-make -C ifa test_llvm         # 3. V-language LLVM backend smoke
-PYC_FLAGS=-b ./test_pyc.py    # 4. LLVM-backend pyc e2e
-make test_dparse              # 5. grammar validation
-make test_links               # 6. every doc link resolves (no build)
+make test
 ```
 
-**`make test` is the one that gets skipped, and it is the one that
-matters.** It chains three gates and `set -e`s out of the first
-failure, so a red `test-ir` means `test-e2e` NEVER RAN and its summary
-is absent rather than failing — easy to read as "fine". Two habits
-follow:
+**Changed 2026-09-20.** `make test` used to be only unit + ir + e2e, and
+the other four gates were four more commands you had to remember. They
+are now prerequisites of `test`, which expands to:
 
-- Running `./test_pyc.py` alone is NOT the gate. It is only step 2's
-  last third. `make test` is what CI runs.
+```
+test-core        unit + ir + e2e        ifa --test; ifa test-ir;
+                                        ./test_pyc.py; PYC_FLAGS=-b ./test_pyc.py
+test-ifa-llvm    V-language LLVM smoke  make -C ifa test_llvm
+test-dparse      grammar validation
+test-links       every doc link resolves (instant, needs no build)
+```
+
+`make test-core` is the old `make test` if you want the compiler gates
+without the doc and grammar checks. Each leaf target still runs alone.
+The build is a prerequisite, so a bare `make` first is optional (though
+`USE_LLVM=1` never was — `Makefile:87` sets it unconditionally).
+
+**Two name traps in this tree.** `make test_llvm` is the *pyc* LLVM e2e
+(`PYC_FLAGS=-b ./test_pyc.py`), while `make -C ifa test_llvm` is the
+*V-language* smoke — different tests, same name, two Makefiles. The root
+alias for the second is `make test-ifa-llvm`. And `make test` does not
+re-run the pyc LLVM e2e separately, because `test-e2e` already runs it;
+CI splits it into its own step only to apply an `LLVM_BASELINE_PASS`
+floor instead of a hard pass/fail.
+
+**`make test` is the one that gets skipped, and it is the one that
+matters.** It chains its gates and `set -e`s out of the first failure,
+so a red `test-ir` means `test-e2e` NEVER RAN and its summary is absent
+rather than failing — easy to read as "fine". Two habits follow:
+
+- Running `./test_pyc.py` alone is NOT the gate. It is one of the four
+  things `test-core` does, which is itself one of four things `test`
+  does. `make test` is what CI runs.
 - `test-ir` covers **16 phases**, and `./ifa-test --phase <name>` prints
   a per-phase summary. Reading the tail of `make test-ir` shows you the
   LAST phase only. Check every phase's `failed:` line, or just trust
   `make test`'s exit code, which is the point of running it.
 
 Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed with
-2 known (below); `test_pyc.py` 0 failed on both backends; step 4 well
-above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml when
-a change lifts the count).
+2 known (below); `test_pyc.py` 0 failed on both backends, the LLVM one
+well above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml
+when a change lifts the count).
 
 **Touched a header? `make clean` first, before you trust any of it.**
 Header dependencies are incomplete, so `make` alone happily links stale
