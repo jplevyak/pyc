@@ -159,7 +159,6 @@ class set:
 # kicks in) invalid generated C. python_ifa_build_if1.cc's
 # build_builtin_call_pyda dispatches set(iterable) here directly,
 # mirroring the list(iterable)/str(x) 1-arg intercepts.
-def __pyc_set_from_iterable__(other):
-  s = set()
+def __pyc_set_from_iterable__(s, other):
   s.update(other)
   return s

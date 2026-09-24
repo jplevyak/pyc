@@ -1,2 +1,2 @@
 STAGES: TYPE_CONFL SETTER SETTER_OF_SETTER
-CALLS: direct=58 dynamic=2
+CALLS: direct=59 dynamic=0

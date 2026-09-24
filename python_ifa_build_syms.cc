@@ -1036,6 +1036,11 @@ static void build_comprehension_body_syms(PyDAST *n, PycCompiler &ctx) {
   int last = n->children.n - 1;
   build_syms_pyda(n->children[last], ctx);                              // for-chain: bind targets
   for (int i = 0; i < last; i++) build_syms_pyda(n->children[i], ctx);  // then element exprs
+  form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
+    if (!MARKED(x->value) && !x->value->sym->is_fun) {
+      x->value->sym->is_local = 1;
+      x->value->sym->nesting_depth = LOCALLY_NESTED;
+    }
 }
 
 static void build_import_syms_name_pyda(PyDAST *n, PycCompiler &ctx) {
@@ -2570,6 +2575,7 @@ static void synthesize_default_iop(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym 
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size, bool derive_compare) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
+  if (getenv("PYC_DBG_CLASS")) fprintf(stderr, "gen_class_pyda: cls=%p name=%s\n", cls, cls->name ? cls->name : "(null)");
   bool is_record = cls->type_kind == Type_RECORD && cls != sym_object;
   Code *body = 0;
   // issues/023: __match_args__ for positional class patterns
@@ -3045,11 +3051,16 @@ void call_method(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...) {
   }
 }
 
-void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast) {
+void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast, bool is_bool) {
   ast->rval = new_sym(ast);
   if1_gen(if1, &ast->code, ifcond->code);
-  Sym *t = new_sym(ast);
-  call_method(&ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
+  Sym *t;
+  if (is_bool) {
+    t = ifcond->rval;
+  } else {
+    t = new_sym(ast);
+    call_method(&ast->code, ast, ifcond->rval, sym___pyc_to_bool__, t, 0);
+  }
   if1_if(if1, &ast->code, 0, t, ifif->code, ifif->rval, ifelse ? ifelse->code : 0, ifelse ? ifelse->rval : 0, ast->rval,
          ast);
 }

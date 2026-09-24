@@ -1,0 +1,649 @@
+**IFA is a SIMULTANEOUS data and control flow analysis based on abstract interpretation against a type-value lattice.** It starts with the MINIMUM function contours (EntrySets) and data contours (CreationSets) and proceeds in passes, splitting them to increase precision — by types, by setters, and so on.
+
+**A contour is NEVER split because a surrounding contour was split. Splitting is only ever on demand.** The primary purpose of IFA is that demand splitting, especially of data contours, which IFA calls Creation Sets.
+
+**ALL DEMAND IS EVALUATED AT QUIESCENCE. All of it.** A demand is a property of the CONVERGED types — "this AVar holds a union that something cannot proceed on" — so it is asked once the types have reached a fixed point, and re-asked every pass. Never on the transient event of a union forming. [ifa/157](ifa/issues/157-FA-all-demand-must-be-evaluated-at-quiescence.md) is the standing issue, and its first measurement is the warning to read before acting on this rule: the types ARE already converged when every split stage runs, so *when* was never the defect people assumed — and asking the level question instead of the edge one, on its own, buys nothing.
+
+# Document Index
+
+## Project-wide
+
+- [PIPELINE.md](PIPELINE.md) — Top-level compilation flow: phase-by-phase map from `pyc <file.py>` through parse → IF1 → flow analysis → clone → optimise → codegen. The "where do I start?" doc.
+- [PYTHON_FRONTEND.md](PYTHON_FRONTEND.md) — pyc Python frontend: `pyc.cc`, `python_parse.cc` + `python.g`, `python_ifa_*` two-pass lowering (`build_syms` → `build_if1`), scope sentinels, builtin module loading, language extensions, gotchas.
+- [RUNTIME.md](RUNTIME.md) — pyc runtime layer: `pyc_c_runtime.h` (`_CG_*` types/macros, string layout, allocation, GC), `__pyc__/*.py` (Python builtin module), `pyc_compat.py` (CPython shim), recipes for adding new runtime support.
+- [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) — Plan for filling out the rest of the documentation set, with checkboxes.
+
+## IFA library
+
+**IFA is a simultaneous data and control flow analysis based on abstract
+interpretation against a type-value lattice.** It starts with the minimum
+function contours (EntrySets) and data contours (CreationSets) and
+proceeds in passes, splitting them to increase precision — by types, by
+setters, and so on. **A contour is never split because a surrounding
+contour was split; splitting is only ever on demand.** The primary purpose
+of IFA is that demand splitting, especially of data contours, which IFA
+calls Creation Sets.
+
+**And all demand is evaluated at QUIESCENCE** — on converged types, never
+on the transient event of a union forming.
+[ifa/157](ifa/issues/157-FA-all-demand-must-be-evaluated-at-quiescence.md)
+is the standing issue. Read its first measurement before acting on the rule:
+`analyze_to_convergence` drains every worklist BEFORE the split stages run,
+so the types they read are already at a fixed point on every pass. The
+`!analyze_again` gate that `fa.cc` calls quiescence throughout is not one —
+it tests whether a higher-priority stage acted, and it is why
+`PER_CS_RECEIVER` and `CSM_ELEMENT_CS` fire ZERO times on every program
+measured. The starvation is a cascade, not a convergence problem, and a
+level-triggered detector was built, measured against it, and deleted.
+
+That is the yardstick for any change in `ifa/analysis/`. A contour —
+function (EntrySet) or data (CreationSet) — exists because something
+observed a distinction that required it, not because the surrounding
+structure happened to split. Splitting driven by structure rather than
+by demand is a defect, however well it converges.
+
+**This keeps getting forgotten, so name the places it is violated today.**
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md) is the umbrella
+issue tracking the audit to completion, with the two-question test, the
+non-monotone diagnostic that identifies such a lever, and the running list
+of what has been removed and what is left. One remains in the analysis
+proper — structural splitting wearing the analysis's clothes:
+
+- `creation_point` mints one CreationSet per *(allocation site ×
+  contour)*, so CS identity is decided by structure before any demand test
+  runs. Nothing asked for those contours.
+
+**The rule holds on one side and not the other, and the asymmetry is
+measurable.** EntrySets DO start minimal — one per function — and split on
+demand; a two-call program splits `f` into exactly the two contours its
+argument types ask for. CreationSets did not: `creation_point` memoizes on
+`v->cs_map` where `v` is an AVar — a *(variable × contour)* pair — so it
+yields one CreationSet per *(allocation site × contour)* and never asks
+whether two could be the same. That is structural, and true by construction
+rather than by measurement.
+
+**`PYC_CSDCPA1=2` — start merged, one CreationSet per sym — is now the
+DEFAULT**, which is that premise implemented. `PYC_CSDCPA1=0` restores the
+old maximal start. What it costs and what is still owed for it is
+[ifa/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md).
+
+*(`PYC_CSSPLIT=1` used to be named here as a second violation — a
+CreationSet following an EntrySet split by construction. It was REMOVED
+2026-09-08, ifa/146 A.)*
+
+The correct dependency is the inverse: an EntrySet is split **so that** a
+CreationSet split becomes possible, when a demand test has asked for one.
+An ES split is a means to separate creation points, never a reason to
+create data contours.
+
+pyc does not currently meet this. `creation_point` memoizes on the AVar,
+so it mints one CreationSet per *(allocation site × contour)* and never
+asks whether two could be the same; measured on chess, 95 list CSs stand
+for 6 distinct element types, and every one of the five reuse routes is
+inert at the default. See
+[ifa/issues/128](ifa/issues/128-cs-identity-over-discriminates-vs-element-type.md)
+for the root cause and
+[ifa/issues/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md)
+for the plan and every measurement.
+
+**Corrected 2026-09-05:** 128 used to say a merge cannot be unlearned
+because the analysis is monotone, and that 128 and 111 were therefore one
+change. Both are wrong. `analyze_to_convergence` resets *before* every
+pass, so derived types are already re-derived from bottom; what persists
+is the DECISION, `av->cs_map`. Taking a decision back works — measured
+twice, by a re-join that reverses 36 of them corpus-wide with every
+verdict unchanged, and by `PYC_CSDCPA1` (start merged, one CreationSet
+per sym), which gives **−32% container CreationSets** with `ess` going
+DOWN. ifa/111 is a performance lever for the extra passes, not a
+precondition. What was actually missing were the separation mechanisms:
+[132](ifa/issues/132-arity-is-representation-not-provenance.md) (landed)
+and [133](ifa/issues/133-split-a-container-on-its-element-type.md) (open),
+plus [134](ifa/issues/134-remove-the-frontend-forced-split-opt-in.md) for
+the frontend annotations that still force splits by hand.
+
+See [ifa/INDEX.md](ifa/INDEX.md) for the full per-subsystem index
+(ARCHITECTURE, IR, IFA, CLONE, DISPATCH, PRIMITIVES, CFG_SSU,
+OPTIMIZE, CODEGEN_C, CODEGEN_LLVM, CAST, FRONTEND, COMMON).
+
+## Issue tracking
+
+Deferred work worth a trail lives in two parallel directories:
+
+- [issues/](issues/) — pyc frontend / project-wide concerns
+  (Python lowering, grammar, builtin module, runtime, harness).
+- [ifa/issues/](ifa/issues/) — ifa library concerns (FA,
+  codegen, ifa-level IR).
+
+Both use numbered markdown files (`NNN-short-slug.md`); each
+documents symptom, root cause, proposed fix, verification plan,
+and what fixing it would unblock. See
+[ifa/issues/README.md](ifa/issues/README.md) for conventions and
+when to file vs. fix-now.
+
+## Change acceptance — run what CI runs, before committing
+
+CI (`.github/workflows/ci.yml`) gates every push to `main`, and **one
+command runs all of it**, in CI's order, on both backends. It takes
+roughly four minutes.
+
+```sh
+make test
+```
+
+**Changed 2026-09-20.** `make test` used to be only unit + ir + e2e, and
+the other four gates were four more commands you had to remember. They
+are now prerequisites of `test`, which expands to:
+
+```
+test-core        unit + ir + e2e        ifa --test; ifa test-ir;
+                                        ./test_pyc.py; PYC_FLAGS=-b ./test_pyc.py
+test-ifa-llvm    V-language LLVM smoke  make -C ifa test_llvm
+test-dparse      grammar validation
+test-links       every doc link resolves (instant, needs no build)
+```
+
+`make test-core` is the old `make test` if you want the compiler gates
+without the doc and grammar checks. Each leaf target still runs alone.
+The build is a prerequisite, so a bare `make` first is optional (though
+`USE_LLVM=1` never was — `Makefile:87` sets it unconditionally).
+
+**Two name traps in this tree.** `make test_llvm` is the *pyc* LLVM e2e
+(`PYC_FLAGS=-b ./test_pyc.py`), while `make -C ifa test_llvm` is the
+*V-language* smoke — different tests, same name, two Makefiles. The root
+alias for the second is `make test-ifa-llvm`. And `make test` does not
+re-run the pyc LLVM e2e separately, because `test-e2e` already runs it;
+CI splits it into its own step only to apply an `LLVM_BASELINE_PASS`
+floor instead of a hard pass/fail.
+
+**`make test` is the one that gets skipped, and it is the one that
+matters.** It chains its gates and `set -e`s out of the first failure,
+so a red `test-ir` means `test-e2e` NEVER RAN and its summary is absent
+rather than failing — easy to read as "fine". Two habits follow:
+
+- Running `./test_pyc.py` alone is NOT the gate. It is one of the four
+  things `test-core` does, which is itself one of four things `test`
+  does. `make test` is what CI runs.
+- `test-ir` covers **16 phases**, and `./ifa-test --phase <name>` prints
+  a per-phase summary. Reading the tail of `make test-ir` shows you the
+  LAST phase only. Check every phase's `failed:` line, or just trust
+  `make test`'s exit code, which is the point of running it.
+
+Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed with
+2 known (below); `test_pyc.py` 0 failed on both backends, the LLVM one
+well above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml
+when a change lifts the count).
+
+**Touched a header? `make clean` first, before you trust any of it.**
+Header dependencies are incomplete, so `make` alone happily links stale
+objects against a changed layout. The resulting failure looks like a
+real bug and is not: adding a bit to `Sym` produced `fail: no instance
+for type 'int'` and a bogus `Primitives::find` assertion, and inserting
+a `virtual` into `IFACallbacks` (which renumbers the vtable) segfaulted
+`ifa-test --phase codegen-c` with no output at all. Each time the fix
+was `make clean && make`, and each time the crash first read as a
+regression worth debugging. Anything that changes a struct layout, a
+bitfield, an enum's numbering, or a vtable needs the clean build.
+
+### Goldens: re-bless only what the change is ABOUT
+
+`ifa-test --rebless` rewrites `.expected` files wholesale. Before using
+it, diff the old goldens against the new output and confirm every
+changed line belongs to your change. Two real cases from this repo:
+
+- All 22 `codegen-c` goldens went stale for ten days because
+  `93a771e3` added `_CG_set_argv(argc, argv)` to the emitted `main()`
+  and nobody re-blessed. Correct behaviour, stale fixture: re-bless.
+- `mark_distance_skew` / `mark_setter_skew` (ifa/issues/007) differ by
+  `ess=3` vs `ess=4` — a splitter stage that stopped firing. The golden
+  is the RIGHT answer: re-blessing would bake the regression in and
+  silently retire the coverage. These carry
+  `<fixture>.<phase>.known_issue` instead, which reports `KNOWN`,
+  does not fail the run, and flips to `PASS` by itself when the stage
+  works again. `--rebless` refuses to touch a fixture that has one.
+
+Same rule as `tests/<name>.py.known_issue` for the pyc suite — see
+[issues/README.md](issues/README.md). Prefer it over baking in wrong
+output whenever you intend to fix the bug.
+
+### CI's environment is not yours
+
+CI pins clang/LLVM **20** on ubuntu-24.04 (the unversioned packages
+resolve to 18, whose coroutine ABI breaks the async tests) and exports
+`USE_LLVM=1` job-wide. A local box on a different LLVM can pass all
+five steps and still surface a version-specific failure there — the
+C-backend goldens are text and version-independent, but anything
+touching coroutines or emitted IR is not.
+
+## Be aggressive. A conservative fallback needs hard proof, not a failing test
+
+When the better solution hits a problem, ROOT CAUSE THE PROBLEM. Do not
+retreat to a weaker rule that makes the symptom go away. A conservative
+fallback is only acceptable with hard proof that the better solution is
+not achievable — and "I tried it and N tests failed" is not that proof,
+it is the start of the investigation.
+
+The failure mode to avoid, from this repo: slot elision (`ifa/issues/123`)
+measured 93-98% of method slots as never read. `tests/deepcopy_objects`
+then failed with `'T' is blind-cast to 'T' ... member width differs`,
+because two CLONES of one class disagreed on a slot. The response was to
+require every clone of a class to agree before eliding — which passed the
+suite and collapsed the win from ~425 slots to 5-28. That is a retreat
+dressed as a fix: the real question, never asked, is WHY clones of one
+class have divergent member types, and whether the blind cast between
+them is legitimate at all.
+
+Symptoms of the retreat: the numbers get much worse and the change still
+"passes"; the new rule is described as "conservative" or "safe"; the
+underlying disagreement is worked around rather than explained.
+
+Do this instead: name the mechanism producing the conflict, decide
+whether it is itself a bug, and fix that. If the aggressive version is
+genuinely unreachable, say what specifically makes it so.
+
+## The goal: CPython semantics, not shedskin's
+
+**Author's directive, 2026-09-08.** pyc compiles **well-formed CPython
+programs with the SAME SEMANTICS**, for the subset of those programs that
+can be made monotonic (statically typeable without boxing). That is the
+contract. **Matching shedskin is not a goal** — shedskin is a reference for
+MECHANISM (its ifa ladder, its template monomorphization, its
+diagnostics), never for behaviour.
+
+This distinction has teeth, because shedskin deviates from CPython where it
+suits it and pyc has copied a deviation at least once by mistaking it for a
+technique:
+
+- `math.floor` returns `__ss_float` in shedskin
+  (`shedskin/lib/math/__init__.hpp:36`) and `int` in CPython 3. pyc matches
+  CPython (`pyc_lib/math.py:32`). shedskin's clean typing of `bh` is bought
+  by that deviation, not by better analysis — see
+  [ifa/144](ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md).
+- pyc's own automatic numeric coercion widens an `int` member to `float`,
+  so it prints `1.0` where CPython prints `1`. Landing an *inserted
+  conversion* to fix a contour problem would buy shedskin's answer, not
+  CPython's, and is therefore not the fix it looks like.
+
+**The test to apply:** if a change makes pyc agree with shedskin and
+disagree with CPython, it is wrong however good the contours look. Where
+the two conflict, CPython wins.
+
+**Corollary — an automatic coercion is a PERMISSIVE-only device.** It
+trades semantics for representability, so it belongs behind
+`fruntime_errors`, and `--strict` must error on anything that would
+otherwise require boxing. See
+[ifa/145](ifa/issues/145-numeric-coercion-is-not-gated-on-permissive-mode.md).
+
+## Boxing is never the answer for a corpus program
+
+**Author's directive.** No `shedskin_examples` program requires boxing.
+shedskin compiles the whole corpus without a boxed representation, so
+every one of those programs is statically typeable as written. **Never
+propose boxing, or "this needs a representation for {scalar, container}",
+as the explanation or the fix for a corpus failure.**
+
+When a corpus program produces `has mixed basic types`, `a variable
+holding {str, list} has no representation`, or a `BOXING` violation, the
+union is a **pyc inference deficiency**, not a property of the program.
+Something merged two things the program keeps apart — a contour that
+should have split, a false constraint in `__pyc__`, an element channel
+polluted by an unrelated creation point. Find that, and name the
+mechanism.
+
+The tempting sentence to avoid is *"this is a known representation gap
+(issues/018) that boxing would solve and the project has decided
+against."* It reads as analysis and is an excuse: it treats a merge pyc
+invented as a fact about the source. issues/018 is CLOSED and closed by
+REFUSING — its five container shapes pass, and the refusals it kept are
+for genuinely branch-merged scalars in hand-written tests, not for corpus
+programs.
+
+The corpus is the evidence: 77 programs shedskin compiles without boxing.
+If pyc needs boxing for one of them, pyc is wrong. See
+[shedskin comparison](issues/025-shedskin-examples-coverage.md) and
+[018](issues/closed/018-dict-mixed-key-types-boxing-failure.md).
+
+**Qualified 2026-09-08 — the premise has one measured counterexample.**
+"shedskin compiles all 77, therefore all 77 are statically typeable AS
+WRITTEN" does not follow, because shedskin's answer is not always CPython's.
+`bh` is the case:
+
+```python
+xp = Vec3()            # __init__ writes self.d0 = 0.0   (float)
+xp[0] = floor(...)     # writes an int into THE SAME object
+```
+
+One object holding `float` then `int` over its lifetime. That is TEMPORAL,
+not per-object, so no contour split can separate it — demand splitting is
+not the missing mechanism here. The only three answers are boxing, a
+semantic deviation, or a cast in the source. shedskin takes the deviation
+(its `floor` returns a double); pyc currently takes a different deviation
+(auto-coercion to float, printing `1.0` for CPython's `1`).
+
+So the directive stands as a rule about pyc's INFERENCE — a `mixed basic
+types` union that pyc invented is still pyc's bug — but it is not a proof
+that every corpus program is typeable with CPython semantics. When a
+program genuinely holds two basic types in one slot over time, saying so is
+the honest answer, and the fix is in the program, not in a coercion that
+changes what it prints.
+
+## Provenance is never the answer
+
+**Author's directive.** Contour identity — EntrySet or CreationSet — may
+key on **types and CreationSet partitioning only**. Where a value came
+from is never a legitimate component of it, and "record where it came
+from so we can separate it later" is never the design.
+
+Provenance is anything that answers *where did this come from* rather than
+*what is this*: the allocation site (`v->var->id`), the lexical display,
+mark distance, recursion depth, which module or file a creation point is
+in, a per-write tag naming the container a value passed through. All of it
+is out.
+
+The rule has paid for itself every time it has been applied here:
+
+- The lexical display was removed from every compatibility check
+  (ifa/100) — contour counts fell 40-80% corpus-wide.
+- Mark-based splitting was retired (`PYC_NOMARK` defaults to 1) — mark
+  distance is depth-from-a-generating-AVar, so no type tuple can name what
+  it separates. Guard trips 18 → 10, −55% analysis time, −12.3% contours.
+- The per-site key `v<id>|` in `cselem_shape_key` fragments contour
+  identity 2.53× (ifa/129), and it is exactly provenance.
+- ifa/128's whole complaint is that CS identity is *(allocation site ×
+  contour)* — a product with provenance on one side.
+
+The test to apply, from ifa/129: **does the rule encode what the deduced
+types ARE, or where the value CAME FROM?** The first is identity; the
+second is not. A third category exists and is legitimate — what the target
+language can REPRESENT (arity, member width, `None` in a union) — and that
+belongs behind `IFACallbacks`, not in the key and not in provenance. See
+[132](ifa/issues/132-arity-is-representation-not-provenance.md), whose
+title is that distinction.
+
+**Corollary: a merge you cannot undo is not a reason to record provenance.**
+It is a reason to split coarser and let the analysis re-derive. Every pass
+already re-derives from bottom (`analyze_to_convergence` resets *before*
+each pass), so wholesale splitting by creation point costs precision, not
+correctness, and shedskin's ladder tries the finer routes first for
+exactly that reason. Attribution is the tempting shortcut and it is the
+wrong one — recorded in
+[133](ifa/issues/133-split-a-container-on-its-element-type.md), where
+"record provenance on element writes" was a live option until this rule
+retired it.
+
+Provenance is for diagnostics and for talking to humans, like names. It is
+not identity.
+
+**Refinement (author, 2026-09-06): the rule is about the REASON to split,
+not the MECHANISM that expresses it.**
+
+A split needs two separate things: a *reason* — some demand, an observed
+distinction — and a *way to name the parts*. The rule forbids provenance
+as the REASON. It does not forbid using a provenance-shaped handle to
+express a partition that demand has already justified and that nothing in
+the types can name.
+
+Concretely: an irrepresentable element union is a demand. If the types of
+the contributors are identical at every formal, the analysis has no
+type-shaped way to say *which* contributor is which — but the call site
+does. Using it there is a mechanism, not a reason.
+
+The test to apply:
+
+- **Would this split happen if the demand were absent?** If yes, the
+  provenance is driving it and it is forbidden. A split that fires
+  wherever call sites differ is 1-CFA by the back door.
+- **Does the demand alone decide WHETHER to split, with the handle only
+  deciding WHICH parts?** Then it is a mechanism, and it is allowed.
+
+**And the test is only as good as your willingness to ask what the demand
+IS** (author, 2026-09-08, on `PYC_CPA`). A FACT about the program is not a
+demand. "This formal's type is a union", "this CreationSet has several
+creation points", "these two values came from different places" — all
+facts. **A demand is something OBSERVING a distinction and being unable to
+proceed**: a type violation, an irrepresentable union, a dispatch that
+cannot resolve. Reading a fact as a demand is how an arbitrary splitter
+passes the test, and it has happened twice in this repo — see
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s E and its
+note on the refinement.
+
+So `creation_point` keying on `(allocation site x contour)` is still
+wrong — the site is the reason there, and it splits with no demand at all.
+Splitting an EntrySet per caller *because* a container it allocates has an
+irrepresentable element, and only then, is not.
+
+**And keep three things apart** (author, 2026-09-06;
+[136](ifa/issues/136-creation-point-identity-is-es-x-call-site.md)):
+
+| | decided by |
+| --- | --- |
+| **assignment** — which CreationSet a value flows into | types |
+| **identity** — which creation point this is | ES × call site |
+| **compatibility** — may two creation points share a CS | demand |
+
+Identity may be as fine as it likes; that is not a split. Call-site
+difference makes two creation points DISTINGUISHABLE, so a demanded
+partition has something to partition — it must never by itself make them
+*incompatible*. Turning a finer identity directly into more contours is
+the same error as splitting on structure, wearing different clothes.
+
+## Find the confluence, backtrack the demand, split. Always.
+
+**Author's directive, 2026-09-14.** When an imprecision shows up, there is one
+method: **find the confluence where the values actually meet, backtrack the
+demand to it, and split there.** Not at the symptom, not at the first union
+you find, not by suppressing something downstream.
+
+**And the contours are realizable — that is settled, not hoped.** shedskin
+compiles the same programs and emits them: `list<Vertex *>` and
+`list<Face *>` as distinct types, every class carrying exactly its own
+fields, one `Hull` with a precisely-typed `edges`. So "these cannot be
+separated" is never the answer. The contour exists; the work is making pyc
+reach it.
+
+**The failure mode is acting anywhere but the confluence**, and
+[issues/128](issues/128-cross-class-field-promotion.md) is a worked record of
+doing it wrong four times in one investigation. Each attempt was locally
+plausible and each was measured dead:
+
+| acted on | why it failed |
+| --- | --- |
+| the field write (`e.newface = None`) | the receiver is a loop local — 162 demands recorded, **0** actionable |
+| dropping the write instead of splitting | fixes `chull`, breaks `richards`, whose union is real |
+| a transitive closure to find the "root" | its own criterion terminates on its first node — it would report where it started |
+| "fixing" a key that looked arbitrary | costs **+129 CreationSets** and fixes nothing |
+
+The last one is the sharpest warning: a one-bit grouping key with no content
+information *looks* like arbitrary splitting by
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s first question,
+and removing it makes the corpus WORSE. 146's own diagnostic settles it —
+an arbitrary lever is **non-monotone**; a lever whose removal costs contours
+is earning its keep. Apply the diagnostic, not just the definition.
+
+**The fifth attempt worked, and its lesson generalizes**
+([ifa/152](ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md),
+which fixes `chull`). All four failures above, and the "find the root"
+walk, were hunting the place where the two classes MEET — a write, a
+channel, a writer contour, a call site. **That place did not exist.** The
+union was created by a CreationSet that nine unrelated creation points
+SHARE, one of which (`Edge.__init__`'s `self.endpts = []`, filled by
+`extend`) supplied the Vertex while another (`InitEdges`' `newedges = []`,
+never written) carried the contour out into `Hull.edges`. No single write
+ever put two classes in one place; two separate writes put them in one
+*contour*.
+
+Two rules follow, and they are the ones to reach for first next time:
+
+- **The confluence is a CONTOUR, not a program point.** Ask *which
+  contour do several creation points share, and does one of them supply the
+  offending type* — not *where do the types meet*.
+- **The demand is observed where the union is USED, which is almost never
+  where the merge happened.** The merged contour is upstream and usually
+  looks perfectly fine from where it sits — `cs=1112`'s element was
+  `{Vertex}`, one class, representable — so no demand test nominates it,
+  while every contour that DOES carry the union has one creation point and
+  nothing to partition. **Backtracking is therefore not optional**; a
+  demand evaluated only at the point of observation cannot reach the
+  merge.
+
+**The discipline that goes with the rule:**
+
+- **Locate before acting.** `IFA_DBG_ELEMCONF` (which channels hold two
+  classes, and whether their writers are separable), `IFA_DBG_CSVARS` /
+  `ELEMWRITER` (who writes into an element), `IFA_DBG_FUNES` (a contour's
+  formals and in-edges per call), `IFA_DBG_CSDEFSPLIT`'s `KEY` line (how many
+  assign sets the partition is built from). The confluence is findable; find
+  it.
+- **Classify the confluence before splitting it.** Classes sharing a
+  user-defined ancestor are legitimate polymorphism and must be HOISTED, not
+  split — shedskin's `virtualvars`. `richards`' four `Task` subclasses are
+  that case, and splitting them is what broke it. Only a union of *unrelated*
+  classes is a precision failure.
+- **Every step gets a stop condition, written before the measurement.** Say
+  what result would mean the model is wrong, and when you hit it, stop and say
+  so rather than walking one level further.
+- **A negative result is the deliverable when it is one.** Four of this
+  session's steps ended in "this is not it", each with the measurement that
+  proved it, and that is what stops the next person repeating them.
+
+## Never analyse or decide by NAME
+
+pyc has a precise call graph and a real class hierarchy. Any analysis or
+codegen decision must be derived from those, never from matching
+identifier strings.
+
+This is not style. Name matching has produced wrong answers here
+repeatedly, in both directions:
+
+- "is this member a method slot?" asked as *does some function share
+  this name* counts every DATA field whose name coincides with a
+  function, and misses a method whose name does not.
+- "is this slot read?" asked as *does any `P_prim_period` selector match
+  this name* counted every `x.f()` as a slot read — but a call the call
+  graph resolves to one target is emitted as a DIRECT call and touches
+  no slot. That measurement read 65% → 59-85% → 0% → 41-54% across four
+  name-based formulations, all wrong, before the structural one
+  (`ifa/issues/123`) gave 93-98%.
+- a name-global set says a member read on ANY class is read on EVERY
+  class; a per-name set still diverges per-INDEX, because sibling classes
+  hold the same name at different slots.
+
+Use instead: `Fun::calls` and the resolved candidate sets for the call
+graph; `Sym::specializes` / `Sym::has` and CreationSet identity for the
+hierarchy; and where codegen already computes the answer
+(`poly_dispatch_classtag_targets`, `resolve_union_receiver`,
+`get_target_fun_core`), CALL IT rather than restating what it does — a
+reimplementation drifts, and the drift is silent.
+
+Names are for diagnostics and for talking to humans. They are not
+evidence.
+
+## Corpus sweeps — check the cache before running one
+
+A `shedskin_examples` sweep gets re-run across sessions because nothing
+recorded that it had been done, or what tree it was done against.
+`./corpus_sweep.sh` fixes that: results are cached under `sweeps/`, keyed
+on the WORKING TREE — HEAD's short hash, plus a digest of the uncommitted
+diff when the tree is dirty — so a repeat on an unchanged tree returns
+instantly, and a result from a different tree is never mistaken for a
+current one.
+
+```sh
+./corpus_sweep.sh -l                      # what has already been measured
+./corpus_sweep.sh -m compile              # pyc exit status only       (~5 min)
+./corpus_sweep.sh -m run                  # + the binary's exit status (~11 min)
+./corpus_sweep.sh -m check                # + warnings, CPython rc,
+                                          #   and stdout vs CPython    (~11 min)
+./corpus_sweep.sh -m compile -e "PYC_CSELEM=3"
+./corpus_sweep.sh -m check -R             # + confirm run timeouts alone
+```
+
+**It runs parallel (2026-08-31): `-j` compiles at `nproc`, `-J` runs and
+CPython at `nproc/4`, and CPython results are cached in
+`sweeps/cpython-cache/` (gitignored) across sweeps.** `check` went 40 →
+11 minutes, validated at 76-of-77 programs byte-identical to the serial
+script on one tree and one binary; the 77th is `score4`, which straddles
+the 120 s cap and flips on repeats of a single build. The remaining floor
+is `othello3`, which takes 317 s **on its own** to fail to compile.
+
+Two things follow from the cache. CPython's answer changes only when the
+corpus does, so the key is the corpus tree hash + uncommitted `**/*.py` +
+the python3 version — pass `-C` to force a re-run (a few programs, e.g.
+`oliva2`, read a file their own run rewrites). And a timeout is the one
+verdict a parallel pass can fabricate, so `rc=124` is always re-taken
+ALONE for CPython (`hq2x` needs 116 s of the 120 s cap and WAS being
+fabricated) and under `-R` for the pyc binaries (measured: 0 of 72).
+
+**The cache is keyed twice.** The `tree` key names a sweep for a human
+(which commit?) and deliberately ignores what a sweep itself writes — its
+own `sweeps/*.tsv` and `INDEX.md` row, and every corpus output file the
+binaries rewrite (`chaos/py.ppm`, `tonyjpegdecoder/tiger1.bmp`, …).
+Without that, finishing a sweep changed the key it had just recorded, so
+**the cache could never hit**. The `# content` key answers the other
+question — is the thing under test the same? — over the `pyc` binary,
+`__pyc__/*.py`, every corpus `*.py`, `-e`, the mode and both timeouts. It
+exists because the tree key necessarily changes when you COMMIT, which
+orphaned the measurement the commit was landing. Lookup tries the
+filename, then the content digest. A corpus `.py` edit invalidates both.
+
+**The corpus itself is edited only under a written policy** —
+[shedskin_examples/PYC_CHANGES.md](shedskin_examples/PYC_CHANGES.md) states it and
+tables every change from upstream. An edit must be a verified CPython
+no-op, must say what the code already meant, must beat any flag that would
+do instead, and must carry its reason as a comment at the edit. Editing a
+corpus `.py` invalidates the sweep cache, which is intended.
+
+**Run `-l` before starting a sweep**, and record the result of any new one
+in the issue it was measured for. `sweeps/*.tsv` is text and IS committed
+— it is a record of what has been measured, not a build artifact.
+
+`compile` is not enough evidence for most changes. A binary that builds
+and then segfaults is invisible to it and to the test harness alike
+(ifa/issues/102), and `check` is the only mode that catches a program
+that compiles with **no warnings at all** and still prints the wrong
+answer.
+
+**The key is the SOURCE TREE; what runs is the BINARY.** A sweep filed
+under a tree it never measured is the worst kind of bad data, because it
+looks like evidence. Any path that changes sources without rebuilding —
+`git stash` / `git stash pop`, `git checkout <commit> -- <file>`, a failed
+compile leaving the previous binary in place — produces exactly that. This
+happened on 2026-09-07: a `stash pop` followed by a sweep with no rebuild
+measured the PREVIOUS commit's compiler, disagreed with a correctly-built
+arm, and the disagreement was written up as "the analysis is
+layout-sensitive" before being traced back to the stale binary. The tell
+was ignored: the two arms differed by 1286 CreationSets on one program,
+which is far too large for a layout perturbation and was proof of a code
+difference all along. `corpus_sweep.sh` now refuses to start when a source
+is newer than `./pyc` (exit 2, `-f` overrides) — but `make` before every
+sweep regardless.
+
+Three ways to get a sweep that looks real and is not:
+
+- **Never run two sweeps concurrently.** More so now that one sweep uses
+  the whole machine. They contend and produce spurious `rc=124` timeouts
+  — a "regression" in one arm of an A/B that vanishes when the program is
+  re-run alone. One such reading survived into a comparison in this repo
+  before being caught. Within a single sweep this is now handled: see the
+  confirmation rule above.
+- **Never `make` while a sweep is running.** Relinking `pyc` mid-sweep
+  makes in-flight invocations die with `Permission denied`, which the
+  sweep records as a compile failure.
+
+`shedskin_sweep.sh` (parallel, compile-only, buckets failures by their
+first diagnostic) is still the right tool for *triaging* what is broken;
+`corpus_sweep.sh` is for *comparing two trees* and for the run/output
+status. `ifa/issues/runstatus.sh` predates both.
+
+## Do not check in build artifacts
+
+Never `git add` compiled binaries, object files, generated IR, or
+debug-info bundles — this repo has needed cleanup for exactly this
+before (compiled test binaries, `.dSYM` bundles, and generated
+`.ll` files had accumulated under `tests/` and `ifa/tests/`).
+`.gitignore` uses a pattern-based rule (`tests/*` / `ifa/tests/*`
+plus extension negations) rather than a per-file whitelist, so new
+tests should never need a matching `.gitignore` edit to stay
+untracked — if a new build output isn't being ignored, fix the
+pattern instead of adding the file. Same rule for `ifa/ifa`,
+`ifa/ifa-test`, and any other Makefile-produced binary: these are
+rebuilt by `make` and must never be committed.

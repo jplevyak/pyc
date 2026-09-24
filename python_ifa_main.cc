@@ -2,6 +2,8 @@
 #include "python_ifa_int.h"
 #include "python_parse.h"
 
+#include "codegen/codegen_common.h"
+
 #ifdef USE_LLVM
 #include "codegen/llvm.h"
 #endif
@@ -258,7 +260,8 @@ static void format_string_codegen(FILE *fp, PNode *n, Fun *f) {
   cchar *fmt = n->rvals[2]->sym->constant;
   Vec<char> convs;
   if (fmt) collect_format_convs(fmt, convs);
-  if (v->type->type_kind == Type_RECORD) {
+  bool is_tuple = v->type && v->type->type_kind == Type_RECORD && !cg_has_classtag(v->type);
+  if (is_tuple) {
     for (int i = 0; i < v->type->has.n; i++) {
       fputs(", ", fp);
       format_string_emit_cast(fp, v->type->has[i]->type, i < convs.n ? convs[i] : 0);

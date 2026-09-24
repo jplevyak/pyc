@@ -730,6 +730,59 @@ static void build_fstring_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   ast->rval = result ? result : make_string("");
 }
 
+static Sym *emit_make_dict(PycCompiler &ctx, PycAST *ast, Code **code, Sym *dict_cls_sym) {
+  Sym *dict_inst = new_sym(ast);
+  Sym *proto = dict_cls_sym->self;
+  if (getenv("PYC_DBG_DICT"))
+    fprintf(stderr, "EMIT_MAKE_DICT: ast=%p dict_cls_sym=%p (%s) proto=%p\n",
+            ast, dict_cls_sym, dict_cls_sym ? dict_cls_sym->name : "?", proto);
+  if1_send(if1, code, 3, 1, sym_primitive, sym_clone, proto, dict_inst)->ast = ast;
+
+  Sym *keys_inst = new_sym(ast);
+  Code *k_send = if1_send1(if1, code, ast);
+  if1_add_send_arg(if1, k_send, sym_primitive);
+  if1_add_send_arg(if1, k_send, sym_make);
+  if1_add_send_arg(if1, k_send, sym_list);
+  if1_add_send_result(if1, k_send, keys_inst);
+  if1_send(if1, code, 5, 1, sym_operator, dict_inst, sym_setter, if1_make_symbol(if1, "_keys"), keys_inst, new_sym(ast))->ast = ast;
+
+  Sym *vals_inst = new_sym(ast);
+  Code *v_send = if1_send1(if1, code, ast);
+  if1_add_send_arg(if1, v_send, sym_primitive);
+  if1_add_send_arg(if1, v_send, sym_make);
+  if1_add_send_arg(if1, v_send, sym_list);
+  if1_add_send_result(if1, v_send, vals_inst);
+  if1_send(if1, code, 5, 1, sym_operator, dict_inst, sym_setter, if1_make_symbol(if1, "_vals"), vals_inst, new_sym(ast))->ast = ast;
+
+  Immediate imm;
+  imm.v_int64 = 0;
+  Sym *zero_sym = if1_const(if1, sym_int64, "0", &imm);
+  if1_send(if1, code, 5, 1, sym_operator, dict_inst, sym_setter, if1_make_symbol(if1, "_len"), zero_sym, new_sym(ast))->ast = ast;
+
+  return dict_inst;
+}
+
+static Sym *emit_make_set(PycCompiler &ctx, PycAST *ast, Code **code, Sym *set_cls_sym) {
+  Sym *set_inst = new_sym(ast);
+  Sym *proto = set_cls_sym->self;
+  if1_send(if1, code, 3, 1, sym_primitive, sym_clone, proto, set_inst)->ast = ast;
+
+  Sym *items_inst = new_sym(ast);
+  Code *i_send = if1_send1(if1, code, ast);
+  if1_add_send_arg(if1, i_send, sym_primitive);
+  if1_add_send_arg(if1, i_send, sym_make);
+  if1_add_send_arg(if1, i_send, sym_list);
+  if1_add_send_result(if1, i_send, items_inst);
+  if1_send(if1, code, 5, 1, sym_operator, set_inst, sym_setter, if1_make_symbol(if1, "_items"), items_inst, new_sym(ast))->ast = ast;
+
+  Immediate imm;
+  imm.v_int64 = 0;
+  Sym *zero_sym = if1_const(if1, sym_int64, "0", &imm);
+  if1_send(if1, code, 5, 1, sym_operator, set_inst, sym_setter, if1_make_symbol(if1, "_len"), zero_sym, new_sym(ast))->ast = ast;
+
+  return set_inst;
+}
+
 // Check for and handle builtin function calls (super, __pyc_symbol__, etc.)
 static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAST *ast, PycCompiler &ctx) {
   Sym *f = atom_ast->sym;
@@ -920,49 +973,52 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
     return 1;
   }
-  // issues/025 "has no type" bucket: set(iterable) -- same shape as
-  // str(x)/list(iterable) above: `set` (__pyc__/08_set.py) has no
-  // __init__ that accepts a value to build from (only the zero-arg
-  // form, which the generic Type_RECORD constructor lowering already
-  // handles fine), so a 1-arg call fell through to that path and
-  // silently dropped its argument. Unlike str/list, there's no single
-  // method already defined on the ARGUMENT to dispatch to (set
-  // construction needs a fresh instance to populate) -- dispatch to
-  // __pyc_set_from_iterable__ (08_set.py), a plain builtin function
-  // (not a class method), the same way PY_assert_stmt calls
-  // __pyc_assert_fail__.
-  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "set")) {
+
+
+  if (f && f->name && !strcmp(f->name, "set")) {
     PycSymbol *set_cls = make_PycSymbol(ctx, "set", PYC_USE);
     if (set_cls && f == set_cls->sym) {
-      PycAST *a0 = getAST(pos_args[0], ctx);
-      PycSymbol *from_iter_fn = make_PycSymbol(ctx, "__pyc_set_from_iterable__", PYC_USE);
-      if (!from_iter_fn) fail("'__pyc_set_from_iterable__' not found (is __pyc__/08_set.py loaded?)");
-      ast->rval = new_sym(ast);
-      Code *send = if1_send1(if1, &ast->code, ast);
-      if1_add_send_arg(if1, send, from_iter_fn->sym);
-      if1_add_send_arg(if1, send, a0->rval);
-      if1_add_send_result(if1, send, ast->rval);
-      return 1;
+      if (pos_args.n == 0) {
+        ast->rval = emit_make_set(ctx, ast, &ast->code, set_cls->sym);
+        return 1;
+      }
+      if (pos_args.n == 1) {
+        PycAST *a0 = getAST(pos_args[0], ctx);
+        PycSymbol *from_iter_fn = make_PycSymbol(ctx, "__pyc_set_from_iterable__", PYC_USE);
+        if (!from_iter_fn) fail("'__pyc_set_from_iterable__' not found (is __pyc__/08_set.py loaded?)");
+        Sym *set_inst = emit_make_set(ctx, ast, &ast->code, set_cls->sym);
+        ast->rval = set_inst;
+        Code *send = if1_send1(if1, &ast->code, ast);
+        if1_add_send_arg(if1, send, from_iter_fn->sym);
+        if1_add_send_arg(if1, send, set_inst);
+        if1_add_send_arg(if1, send, a0->rval);
+        Sym *ret = new_sym(ast);
+        if1_add_send_result(if1, send, ret);
+        return 1;
+      }
     }
   }
-  // issues/025 "has no type" bucket: dict(iterable_of_pairs) -- same
-  // shape as set(iterable) just above: `dict` (__pyc__/07_dict.py)
-  // has no __init__ that accepts a value to build from. Dispatches
-  // to __pyc_dict_from_iterable__ (07_dict.py), a plain builtin
-  // function, not dict.update() -- update()'s `other` is itself a
-  // dict, not an iterable of (key, value) tuples.
-  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "dict")) {
+  if (f && f->name && !strcmp(f->name, "dict")) {
     PycSymbol *dict_cls = make_PycSymbol(ctx, "dict", PYC_USE);
     if (dict_cls && f == dict_cls->sym) {
-      PycAST *a0 = getAST(pos_args[0], ctx);
-      PycSymbol *from_iter_fn = make_PycSymbol(ctx, "__pyc_dict_from_iterable__", PYC_USE);
-      if (!from_iter_fn) fail("'__pyc_dict_from_iterable__' not found (is __pyc__/07_dict.py loaded?)");
-      ast->rval = new_sym(ast);
-      Code *send = if1_send1(if1, &ast->code, ast);
-      if1_add_send_arg(if1, send, from_iter_fn->sym);
-      if1_add_send_arg(if1, send, a0->rval);
-      if1_add_send_result(if1, send, ast->rval);
-      return 1;
+      if (pos_args.n == 0) {
+        ast->rval = emit_make_dict(ctx, ast, &ast->code, dict_cls->sym);
+        return 1;
+      }
+      if (pos_args.n == 1) {
+        PycAST *a0 = getAST(pos_args[0], ctx);
+        PycSymbol *from_iter_fn = make_PycSymbol(ctx, "__pyc_dict_from_iterable__", PYC_USE);
+        if (!from_iter_fn) fail("'__pyc_dict_from_iterable__' not found (is __pyc__/07_dict.py loaded?)");
+        Sym *dict_inst = emit_make_dict(ctx, ast, &ast->code, dict_cls->sym);
+        ast->rval = dict_inst;
+        Code *send = if1_send1(if1, &ast->code, ast);
+        if1_add_send_arg(if1, send, from_iter_fn->sym);
+        if1_add_send_arg(if1, send, dict_inst);
+        if1_add_send_arg(if1, send, a0->rval);
+        Sym *ret = new_sym(ast);
+        if1_add_send_result(if1, send, ret);
+        return 1;
+      }
     }
   }
   // issues/022: zero-arg builtin-type constructor calls (int(), float(),
@@ -1231,6 +1287,35 @@ static void call_method_v(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, Vec<
   for (Sym *v : args.values()) if1_add_send_arg(if1, send, v ? v : sym_nil);
 }
 
+static bool in_boolean_context(PyDAST *nn) {
+  for (PyDAST *p = nn->parent; p; nn = p, p = p->parent) {
+    if ((p->kind == PY_if_stmt || p->kind == PY_while_stmt || p->kind == PY_elif_clause ||
+         p->kind == PY_list_if || p->kind == PY_comp_if || p->kind == PY_assert_stmt) &&
+        p->children.n && p->children[0] == nn)
+      return true;
+    if (p->kind == PY_case_guard && p->children.n && p->children.last() == nn)
+      return true;
+    if (p->kind == PY_ternary && p->children.n >= 2 && p->children[1] == nn)
+      return true;
+    if (p->kind == PY_bool_not) return true;
+    if (p->kind == PY_bool_and || p->kind == PY_bool_or) continue;
+    return false;
+  }
+  return false;
+}
+
+static bool is_boolean_expr(PyDAST *n) {
+  if (!n) return false;
+  if (n->kind == PY_bool_not || n->kind == PY_compare) return true;
+  if (n->kind == PY_bool_and || n->kind == PY_bool_or) {
+    return in_boolean_context(n);
+  }
+  if (n->kind == PY_name && n->str_val) {
+    if (!strcmp(n->str_val, "True") || !strcmp(n->str_val, "False")) return true;
+  }
+  return false;
+}
+
 // Build list/set/dict comprehension for pyda path. `elts` holds the
 // expression(s) produced each iteration: one (the element) for list/set
 // comprehensions, two (key, value) for dict comprehensions. `accum_method`
@@ -1255,7 +1340,6 @@ static void build_list_comp_inner_pyda(PyDAST *iter_node, Vec<PyDAST *> &elts, P
     }
     Sym *new_val = new_sym(ast);
     call_method_v(code, ast, ast->rval, accum_method, new_val, args);
-    if1_move(if1, code, new_val, ast->rval, ast);
     return;
   }
   if (iter_node->kind == PY_list_for || iter_node->kind == PY_comp_for) {
@@ -1269,8 +1353,13 @@ static void build_list_comp_inner_pyda(PyDAST *iter_node, Vec<PyDAST *> &elts, P
     // __pyc_to_bool__ call) -- without it a non-bool truthy test (e.g.
     // `if line` where line is a str) is fed straight to if1_if_goto,
     // which requires a real bool.
-    Sym *test_bool = new_sym(ast);
-    call_method(code, ast, test_ast->rval, sym___pyc_to_bool__, test_bool, 0);
+    Sym *test_bool;
+    if (is_boolean_expr(iter_node->children[0])) {
+      test_bool = test_ast->rval;
+    } else {
+      test_bool = new_sym(ast);
+      call_method(code, ast, test_ast->rval, sym___pyc_to_bool__, test_bool, 0);
+    }
     Label *short_circuit = if1_alloc_label(if1);
     Code *ifcode = if1_if_goto(if1, code, test_bool, ast);
     if1_if_label_false(if1, ifcode, short_circuit);
@@ -1367,10 +1456,15 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     PyDAST *elif_suite = child->children[1];
     build_if1_pyda(elif_cond, ctx);
     PycAST *elif_cond_ast = getAST(elif_cond, ctx);
-    Sym *elif_t = new_sym(elif_ast);
     Code *elif_chain = 0;
     if1_gen(if1, &elif_chain, elif_cond_ast->code);
-    call_method(&elif_chain, elif_ast, elif_cond_ast->rval, sym___pyc_to_bool__, elif_t, 0);
+    Sym *elif_t;
+    if (is_boolean_expr(elif_cond)) {
+      elif_t = elif_cond_ast->rval;
+    } else {
+      elif_t = new_sym(elif_ast);
+      call_method(&elif_chain, elif_ast, elif_cond_ast->rval, sym___pyc_to_bool__, elif_t, 0);
+    }
     Code *elif_then = 0;
     build_if1_suite_pyda(elif_suite, &elif_then, ctx);
     if1_if(if1, &elif_chain, 0, elif_t, elif_then, 0, chain, 0, 0, elif_ast);
@@ -1382,8 +1476,13 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   build_if1_pyda(cond, ctx);
   PycAST *cond_ast = getAST(cond, ctx);
   if1_gen(if1, &ast->code, cond_ast->code);
-  Sym *t = new_sym(ast);
-  call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, t, 0);
+  Sym *t;
+  if (is_boolean_expr(cond)) {
+    t = cond_ast->rval;
+  } else {
+    t = new_sym(ast);
+    call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, t, 0);
+  }
   Code *then_code = 0;
   build_if1_suite_pyda(suite, &then_code, ctx);
   if1_if(if1, &ast->code, 0, t, then_code, 0, chain, 0, 0, ast);
@@ -1424,8 +1523,13 @@ static Sym *eval_case_guard(PyDAST *guard, Code **code, PycAST *case_ast, PycCom
   build_if1_pyda(cond, ctx);
   PycAST *cond_ast = getAST(cond, ctx);
   if1_gen(if1, code, cond_ast->code);
-  Sym *guard_bool = new_sym(case_ast);
-  call_method(code, case_ast, cond_ast->rval, sym___pyc_to_bool__, guard_bool, 0);
+  Sym *guard_bool;
+  if (is_boolean_expr(cond)) {
+    guard_bool = cond_ast->rval;
+  } else {
+    guard_bool = new_sym(case_ast);
+    call_method(code, case_ast, cond_ast->rval, sym___pyc_to_bool__, guard_bool, 0);
+  }
   return guard_bool;
 }
 
@@ -3293,10 +3397,15 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // __pyc_to_bool__ call) -- without it a non-bool condition value (e.g.
       // the int literal in `while (1):`) is fed straight to if1_if_goto,
       // which requires a real bool.
-      Sym *cond_bool = new_sym(ast);
       Code *cond_code = 0;
       if1_gen(if1, &cond_code, t->code);
-      call_method(&cond_code, ast, t->rval, sym___pyc_to_bool__, cond_bool, 0);
+      Sym *cond_bool;
+      if (is_boolean_expr(n->children[0])) {
+        cond_bool = t->rval;
+      } else {
+        cond_bool = new_sym(ast);
+        call_method(&cond_code, ast, t->rval, sym___pyc_to_bool__, cond_bool, 0);
+      }
       Code *body = 0, *orelse = 0;
       ctx.loop_depth++;
       build_if1_suite_pyda(n->children[1], &body, ctx);
@@ -3451,50 +3560,31 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // partial-application closure) and needlessly polymorphic.
       // genetic2's get_random_node/crossover guards were the
       // motivating case (pyc issues/025).
-      auto in_boolean_context = [](PyDAST *nn) {
-        for (PyDAST *p = nn->parent; p; nn = p, p = p->parent) {
-          // PY_list_if/PY_comp_if (a comprehension's `if <test>` filter
-          // clause) share the same "children[0] is the condition" shape
-          // as PY_if_stmt/PY_while_stmt/PY_elif_clause (see
-          // build_list_comp_inner_pyda's own comment: "children =
-          // [test, list_iter?]") and are exactly as boolean-context as
-          // those -- the filter's operand VALUE is never observed, only
-          // its truthiness. Missing this case meant `if A and B:` inside
-          // a comprehension still built the value-preserving union this
-          // whole optimization exists to avoid, hitting the identical
-          // "mismatched field sizes" closure-layout crash this comment
-          // block already describes (found via
-          // shedskin_examples/yopyra/yopyra.py's `if l.strip() and
-          // l.strip()[0] != "#"` filter, str | bool).
-          if ((p->kind == PY_if_stmt || p->kind == PY_while_stmt || p->kind == PY_elif_clause ||
-               p->kind == PY_list_if || p->kind == PY_comp_if) &&
-              p->children.n && p->children[0] == nn)
-            return true;
-          if (p->kind == PY_bool_not) return true;
-          if (p->kind == PY_bool_and || p->kind == PY_bool_or) continue;  // keep walking up
-          return false;
-        }
-        return false;
-      };
       bool bool_ctx = in_boolean_context(n);
       ast->label[0] = if1_alloc_label(if1);
       ast->rval = new_sym(ast);
+      Label *short_circuit_label = bool_ctx ? if1_alloc_label(if1) : nullptr;
+      Label *end_label = ast->label[0];
       for (int i = 0; i < nc - 1; i++) {
         build_if1_pyda(n->children[i], ctx);
         PycAST *v = getAST(n->children[i], ctx);
         if1_gen(if1, &ast->code, v->code);
-        Sym *t = new_sym(ast);
-        call_method(&ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
-        if (bool_ctx)
-          if1_move(if1, &ast->code, t, ast->rval);
-        else
+        Sym *t;
+        if (is_boolean_expr(n->children[i])) {
+          t = v->rval;
+        } else {
+          t = new_sym(ast);
+          call_method(&ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
+        }
+        if (!bool_ctx)
           if1_move(if1, &ast->code, v->rval, ast->rval);
         Code *ifcode = if1_if_goto(if1, &ast->code, t, ast);
+        Label *target = bool_ctx ? short_circuit_label : end_label;
         if (is_and) {
-          if1_if_label_false(if1, ifcode, ast->label[0]);
+          if1_if_label_false(if1, ifcode, target);
           if1_if_label_true(if1, ifcode, if1_label(if1, &ast->code, ast));
         } else {
-          if1_if_label_true(if1, ifcode, ast->label[0]);
+          if1_if_label_true(if1, ifcode, target);
           if1_if_label_false(if1, ifcode, if1_label(if1, &ast->code, ast));
         }
       }
@@ -3502,13 +3592,21 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       PycAST *v = getAST(n->children[nc - 1], ctx);
       if1_gen(if1, &ast->code, v->code);
       if (bool_ctx) {
-        Sym *t = new_sym(ast);
-        call_method(&ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
+        Sym *t;
+        if (is_boolean_expr(n->children[nc - 1])) {
+          t = v->rval;
+        } else {
+          t = new_sym(ast);
+          call_method(&ast->code, ast, v->rval, sym___pyc_to_bool__, t, 0);
+        }
         if1_move(if1, &ast->code, t, ast->rval, ast);
+        if1_goto(if1, &ast->code, end_label);
+        if1_label(if1, &ast->code, ast, short_circuit_label);
+        if1_move(if1, &ast->code, is_and ? sym_false : sym_true, ast->rval, ast);
       } else {
         if1_move(if1, &ast->code, v->rval, ast->rval, ast);
       }
-      if1_label(if1, &ast->code, ast, ast->label[0]);
+      if1_label(if1, &ast->code, ast, end_label);
       return 0;
     }
 
@@ -4286,7 +4384,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       build_if1_pyda(n->children[0], ctx);  // body
       build_if1_pyda(n->children[1], ctx);  // cond
       build_if1_pyda(n->children[2], ctx);  // orelse
-      gen_ifexpr(getAST(n->children[1], ctx), getAST(n->children[0], ctx), getAST(n->children[2], ctx), ast);
+      gen_ifexpr(getAST(n->children[1], ctx), getAST(n->children[0], ctx), getAST(n->children[2], ctx), ast,
+                 is_boolean_expr(n->children[1]));
       return 0;
     }
 
@@ -4632,8 +4731,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       build_if1_pyda(n->children[0], ctx);
       PycAST *cond_ast = getAST(n->children[0], ctx);
       if1_gen(if1, &ast->code, cond_ast->code);
-      Sym *cond_bool = new_sym(ast);
-      call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, cond_bool, 0);
+      Sym *cond_bool;
+      if (is_boolean_expr(n->children[0])) {
+        cond_bool = cond_ast->rval;
+      } else {
+        cond_bool = new_sym(ast);
+        call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, cond_bool, 0);
+      }
       Label *cont_label = if1_alloc_label(if1);
       Code *ifcode = if1_if_goto(if1, &ast->code, cond_bool, ast);
       if1_if_label_true(if1, ifcode, cont_label);
@@ -4702,13 +4806,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       bool is_comp = n->children.n == 3 && n->children[2]->kind == PY_comp_for;
       if (!is_comp && n->children.n % 2 == 1)
         fail("error line %d: dict literal unpacking ('**expr' inside '{...}') is not yet supported", ctx.lineno);
-      // Create dict instance by calling dict() constructor
+      // Create dict instance directly at call site
       if (!ast->sym) fail("error line %d, 'dict' type not found (is __pyc__/07_dict.py loaded?)", n->line);
-      Code *ctor = if1_send1(if1, &ast->code, ast);
-      if1_add_send_arg(if1, ctor, ast->sym);  // dict class sym (set by build_syms_pyda)
-      Sym *dict_inst = new_sym(ast);
+      Sym *dict_inst = emit_make_dict(ctx, ast, &ast->code, ast->sym);
       ast->rval = dict_inst;
-      if1_add_send_result(if1, ctor, dict_inst);
       if (is_comp) {
         // Dict comprehension: {key: value for target in iter [if cond]}.
         // build_syms_pyda gave this its own scope (matching
@@ -4745,11 +4846,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // scope, matching PY_listcomp; reenter it here the same way
       // PY_listcomp does via reenter_scope_pyda.
       if (!ast->sym) fail("error line %d, 'set' type not found (is __pyc__/08_set.py loaded?)", n->line);
-      Code *ctor = if1_send1(if1, &ast->code, ast);
-      if1_add_send_arg(if1, ctor, ast->sym);  // set class sym (set by build_syms_pyda)
-      Sym *set_inst = new_sym(ast);
+      Sym *set_inst = emit_make_set(ctx, ast, &ast->code, ast->sym);
       ast->rval = set_inst;
-      if1_add_send_result(if1, ctor, set_inst);
       if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
         reenter_scope_pyda(n, ctx);
         Vec<PyDAST *> elts;

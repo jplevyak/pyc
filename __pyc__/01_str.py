@@ -326,3 +326,39 @@ class str:
         return False
       i += 1
     return True
+  def splitlines(self):
+    r = []
+    n = len(self)
+    i = 0
+    start = 0
+    while i < n:
+      if self[i] == "\n" or self[i] == "\r":
+        end = i
+        if self[i] == "\r" and i + 1 < n and self[i + 1] == "\n":
+          i += 1
+        i += 1
+        r.append(self.__pyc_substr__(start, end))
+        start = i
+      else:
+        i += 1
+    if start < n:
+      r.append(self.__pyc_substr__(start, n))
+    return r
+  def rjust(self, width, fillchar=" "):
+    pad = width - len(self)
+    if pad <= 0:
+      return self
+    return (fillchar * pad) + self
+  def ljust(self, width, fillchar=" "):
+    pad = width - len(self)
+    if pad <= 0:
+      return self
+    return self + (fillchar * pad)
+  def center(self, width, fillchar=" "):
+    pad = width - len(self)
+    if pad <= 0:
+      return self
+    left = pad // 2
+    right = pad - left
+    return (fillchar * left) + self + (fillchar * right)
+

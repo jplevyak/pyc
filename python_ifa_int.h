@@ -270,7 +270,7 @@ int build_syms(PycModule *x, PycCompiler &ctx);
 void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name = 0);
 Sym *make_string(cchar *s, int len = -1);
 Sym *make_bytes(cchar *s, int len = -1);
-void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast);
+void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast, bool is_bool = false);
 void call_method(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...);
 Sym *make_symbol(cchar *name);
 // pyda path (from python_ifa_build_syms.cc):

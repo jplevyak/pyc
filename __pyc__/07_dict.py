@@ -151,6 +151,27 @@ class dict:
     self._vals = self._vals.append(value)
     self._len = self._len + 1
     return self
+  def __delitem__(self, key):
+    i = 0
+    while i < self._len:
+      if self._keys[i] == key:
+        self._keys.__delitem__(i)
+        self._vals.__delitem__(i)
+        self._len = self._len - 1
+        return None
+      i += 1
+    return None
+  def setdefault(self, key, default=None):
+    i = 0
+    while i < self._len:
+      if self._keys[i] == key:
+        return self._vals[i]
+      i += 1
+    self._keys = self._keys.append(key)
+    self._vals = self._vals.append(default)
+    self._len = self._len + 1
+    return default
+
   def get(self, key, default=None):
     i = 0
     while i < self._len:
@@ -245,8 +266,7 @@ class dict:
 # (shedskin's adatron.py). A new function, not a dict method, since
 # real Python's dict(iterable) form takes 2-tuples, not another
 # dict's `__iter__`-over-keys shape update() already relies on.
-def __pyc_dict_from_iterable__(pairs):
-  d = dict()
+def __pyc_dict_from_iterable__(d, pairs):
   for pair in pairs:
     d[pair[0]] = pair[1]
   return d

@@ -404,6 +404,7 @@ static bool promote_field_one(CreationSet *cs, Sym *field_sym, cchar *name) {
 // correctly marks CSs with different `vars.n` as
 // not_equiv so they get distinct struct types and clones.
 static bool promote_field(CreationSet *cs, cchar *name) {
+  if (!cs || !cs->sym || cs->sym->type_kind != Type_RECORD) return false;
   if (cs->var_map.get(name)) return false;
   Sym *field_sym = nullptr;
   for (Sym *h : cs->sym->has) {
