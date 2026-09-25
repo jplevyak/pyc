@@ -1,32 +1,20 @@
-# ifa/issues/074: minimal reproducer for the FA contour-growth bug -- the
-# one that leaves go, linalg and plcfrs non-convergent. 13 lines, and the
-# growth is dead linear: with the divergence guards off, ess climbs
-# 136 -> 193 -> 249 -> 305 -> 364 at passes 20/40/60/80/101 (+2.8 per
-# pass) and css tracks it (+3 per pass), for as long as it is allowed to
-# run. It only ever demands TYPE_CONFL and SETTER -- the
-# cascade-serialization signature the three corpus programs share.
+# ifa/issues/074: minimal reproducer for FA non-convergence, distilled from
+# linalg.py's determinant/Minor pair. The analysis never reaches a fixed
+# point: contours keep being added until the pass cap, and the final types
+# are wrong as well -- `M[0][0]` sees a `list` where only `float` belongs.
+# Recursion and the nested list are both needed: the flat-list and the
+# non-recursive versions converge. deepcopy is not -- copying the rows by
+# hand does not converge either.
 #
-# The trigger needs all THREE of deepcopy, recursion, and a NESTED
-# container. Remove any one and it converges:
+# The target: the program is monomorphic -- total: list[list[float]] ->
+# float and shrink: list[list[float]] -> list[list[float]] at every depth
+# -- so the contour count should be small and independent of recursion
+# depth.
 #
-#   deepcopy + recursion + nested (this)      NO  -- p102, growing
-#   manual element copy instead of deepcopy   yes -- p13
-#   deepcopy, no recursion                    yes -- p23
-#   deepcopy + recursion, flat list           yes -- p10
-#
-# The TARGET (ifa/issues/074): this program is monomorphic --
-# total: list[list[float]] -> float and shrink: list[list[float]] ->
-# list[list[float]] at every depth -- so the optimal contour count is
-# ~20 and INDEPENDENT of recursion depth. FA currently produces 236 and
-# climbing, with 189 distinct type keys, because list.__deepcopy__'s
-# `r = []` mints a fresh CreationSet per contour and each new CS gives
-# the caller a new type key. The defect is CreationSet identity, not
-# contour splitting.
-#
-# `.env` turns the guards off so the property under test is FA's own
-# fixed point rather than the stall guard's cutoff. The check file asserts
-# CONVERGED=1; today pyc prints CONVERGED=0, which is what .known_issue
-# records. Distilled from linalg.py's determinant/Minor pair.
+# `.env` turns the stall guards off, because a guard cutoff also reports
+# CONVERGED=0; the property under test is FA's own fixed point. `.check`
+# asserts CONVERGED=1 and `.exec.check` CPython's output, so the test flips
+# to PASS only when the analysis both converges and types the program.
 import copy
 
 

@@ -1,1 +1,1 @@
-ifa/issues/074 -- FA never reaches a fixed point: contours grow ~2.8/pass without bound (deepcopy + recursion + nested container)
+ifa/issues/074 -- FA never reaches a fixed point (runs to the pass cap) and mistypes M[0][0] as list (recursion + nested list)
