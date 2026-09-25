@@ -114,12 +114,28 @@ bool, and a mixed tuple through one computed format.
 Six CI gates green: 58/0 unit, 16 IR phases 0 failed with the 2 known,
 319 passed / 0 failed on both backends (318 before, +1 for the new test).
 
-### Not covered, and why it is not this issue
+### A NUMBER at a computed `%s` was a SEGFAULT, and is fixed here too
 
-A `%s` whose argument is an OBJECT still relies on the frontend
-pre-converting it through `__str__`, and that pre-conversion also needs a
-constant format to know which arguments meet `%s`. The tag mechanism
-cannot close that one: converting an object to its `str` means calling
-back into generated code, which a runtime helper cannot do. That is a
-different defect from this one — a missing conversion, not a wrong
-register class — and it wants its own issue if it ever bites.
+Probing the same hole turned up worse than the float-at-`%d` case this
+section was written for. With a constant format the frontend pre-converts
+every `%s` argument through `__str__`; without one it cannot, so a number
+reached `%s` raw and printf read it AS A POINTER:
+
+| | before | CPython |
+| --- | --- | --- |
+| `fmt % 42` where fmt is computed `"%s"` | **segfault** | `42` |
+| `fmt % 3.5` | **segfault** | `3.5` |
+| `fmt % P()` (an object) | garbage bytes | `P!` |
+
+Both crashes are fixed by the same tag: the runtime knows the argument is
+numeric, so it renders it and lets the `%s` spec's width and flags apply to
+the rendered text, which is what CPython does. `bool` needed its own tag
+`'b'` — it reads like an integer everywhere but `%s`, where CPython's
+`"%s" % True` is `"True"` and not `"1"`.
+
+The **object** case is not fixable here and is filed as
+[168](../168-object-at-a-computed-format-s-prints-garbage.md): `%s` on an
+object needs `__str__`, which is a method dispatch, and a C runtime helper
+cannot call back into generated code. A tag could say "object" and the
+runtime still could not act on it. The repair belongs in the frontend,
+where the call can be emitted.

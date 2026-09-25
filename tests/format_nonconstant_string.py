@@ -66,3 +66,26 @@ print(fmt(0) % True)
 def fmt2():
     return "%d %f %s"
 print(fmt2() % (3.9, 4, "x"))
+
+# A NUMBER meeting a computed `%s`. With a constant format the frontend
+# pre-converts the argument through __str__; it cannot do that without the
+# format, so the number arrived raw and `%s` read it AS A POINTER --
+# `"%s" % 42` through a computed format SEGFAULTED, compiling clean first.
+# The type tag says what it really is, so the runtime renders it.
+# (An OBJECT at a computed `%s` is still wrong; see issues/168.)
+def sfmt(k):
+    if k == 0:
+        return "%s"
+    if k == 1:
+        return "[%s]"
+    return "%8s|"
+
+print(sfmt(0) % 42)
+print(sfmt(0) % -7)
+print(sfmt(0) % 3.5)
+print(sfmt(0) % 2.0)
+print(sfmt(1) % "str")
+print(sfmt(2) % 42)
+print(sfmt(2) % "ab")
+print(sfmt(0) % 199999990000000)
+print(sfmt(0) % True)

@@ -685,6 +685,8 @@ inline char *_CG_fmt_grow(char *out, size_t *cap, size_t len, size_t need) {
   }
 }
 
+inline char *_CG_str_from_float(double d);  /* defined below; used by the %s path */
+
 inline char *_CG_format_string_tagged(char *str, const char *tags, ...) {
   size_t cap = _CG_string_len(str) + 64, len = 0;
   char *out = (char *)GC_MALLOC_ATOMIC(cap);
@@ -736,7 +738,29 @@ inline char *_CG_format_string_tagged(char *str, const char *tags, ...) {
         spec[si++] = conv; spec[si] = 0;
         m = snprintf(sbuf, sizeof(sbuf), spec, v);
       } else {
-        const char *v = (tag == 'f') ? "" : (const char *)va_arg(ap, void *);
+        /* A NUMBER meeting `%s`. CPython prints `str(x)` -- `"%s" % 42` is
+           "42" -- and with a constant format the frontend pre-converts the
+           argument through __str__ before it ever gets here. It cannot do
+           that without the format, so the number arrived raw and `%s` read
+           it AS A POINTER: `"%s" % 42` through a computed format
+           SEGFAULTED. The tag says what it really is, so render it here and
+           let the %s spec's width/flags apply to the rendered text, which
+           is what CPython does too.
+           An OBJECT at `%s` is still wrong -- see issues/168. Its tag is
+           's' like a string's, and telling them apart would not help: a
+           runtime helper cannot call back into __str__. */
+        const char *v;
+        char numbuf[64];
+        if (tag == 'b') {
+          v = va_arg(ap, int64) ? "True" : "False";
+        } else if (tag == 'i') {
+          snprintf(numbuf, sizeof(numbuf), "%lld", (long long)va_arg(ap, int64));
+          v = numbuf;
+        } else if (tag == 'f') {
+          v = _CG_str_from_float(va_arg(ap, double));
+        } else {
+          v = (const char *)va_arg(ap, void *);
+        }
         if (!v) v = "";
         spec[si++] = (conv == 's' || conv == 'p') ? conv : 's';
         spec[si] = 0;

@@ -260,6 +260,10 @@ static void format_string_emit_arg(FILE *fp, Var *av, char conv) {
 // for why the repair cannot happen at either end alone.
 static char format_string_tag(Sym *t) {
   if (!fmt_arg_is_numeric(t)) return 's';
+  // 'b' is 'i' everywhere except `%s`: CPython's `"%d" % True` is "1" but
+  // `"%s" % True` is "True". With a constant format the frontend's __str__
+  // pre-conversion carries that distinction; the tag has to carry it here.
+  if (t == sym_bool) return 'b';
   return t->num_kind == IF1_NUM_KIND_FLOAT ? 'f' : 'i';
 }
 
