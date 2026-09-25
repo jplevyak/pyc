@@ -1,0 +1,1 @@
+issues/170 -- a file object has no __enter__/__exit__, so 'with open(...) as f' does not compile; CPython prints hello
