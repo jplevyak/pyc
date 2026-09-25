@@ -1,18 +1,20 @@
 # 166 — strided slice assignment ignores the step and truncates the list
 
-**Status: FIXED** 2026-09-18 (`__pyc__/04_sequence.py`
+**Status: CLOSED** 2026-09-25 — both halves fixed. The extended slice
+STORE landed 2026-09-18 in `d6cf11c7` (`__pyc__/04_sequence.py`
 `__pyc_setslice__`, `pyc_c_runtime.h` `_CG_list_setslice_strided`,
-`pyc_runtime.c` `_CG_list_setslice`). Fixes `sieve`. Regression test
-`tests/strided_slice_assign.py`.
+`pyc_runtime.c` `_CG_list_setslice`); it fixes `sieve` and is pinned by
+`tests/strided_slice_assign.py`. The strided DELETE landed 2026-09-25 in
+`4c77050e`.
 
-**Both halves now fixed.** The strided `del` landed 2026-09-25
+**The `del` half.** It landed 2026-09-25
 (`emit_del_target` in `python_ifa_build_if1.cc`, `__pyc_delslice__` in
 `__pyc__/04_sequence.py`, `_CG_list_delslice` in `pyc_c_runtime.h` and
 `pyc_runtime.c`). Regression test `tests/strided_slice_del.py`.
 
-**Related:** [164](164-time-time-has-whole-second-resolution.md) (whose
+**Related:** [164](../164-time-time-has-whole-second-resolution.md) (whose
 measurement exposed this by un-masking `sieve`'s real diff),
-[163](163-stdout-check-counted-nondeterministic-lines.md) (the variance
+[163](../163-stdout-check-counted-nondeterministic-lines.md) (the variance
 filter that decides what a corpus stdout difference means).
 
 ## Symptom
@@ -53,12 +55,12 @@ return [2] + [el for el in sieve if el]
 so the strided store is the algorithm's core. pyc prints
 `nprimes: 4` where CPython prints `nprimes: 664579`, with **no warning
 and exit 0** — the program compiles clean and lies, which is the class
-[ifa/158](../ifa/issues/158-FA-every-type-violation-is-fatal.md) exists to
+[ifa/158](../../ifa/issues/158-FA-every-type-violation-is-fatal.md) exists to
 stop and cannot catch because nothing here fails to type.
 
 This was mis-attributed once, and the mistake is worth recording: `sieve`
 was listed among the corpus programs whose stdout difference was the
-whole-second `time.time()` of [164](164-time-time-has-whole-second-resolution.md).
+whole-second `time.time()` of [164](../164-time-time-has-whole-second-resolution.md).
 Its `time:` line WAS quantised and 164 did fix that — but the `nprimes`
 line was wrong the whole time and the timing line was the more eye-catching
 half of the diff. Reading a diff's first hunk is not reading the diff.
