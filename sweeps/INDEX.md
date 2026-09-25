@@ -28,6 +28,7 @@ timing-only difference scores `NO`. The real figure for that row is
 
 | key | date | result |
 |---|---|---|
+| `check__default__4c77050e` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=10 unverifiable=3 with_warnings=1 cs/shapes=2287/642=3.56 pratio=2.37 n=75 |
 | `check__default__a09df260` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=10 unverifiable=3 with_warnings=1 cs/shapes=2268/642=3.53 pratio=2.37 n=75 |
 | `check__default__e1ba7f10+bb6a70c3` | 2026-09-21 | programs=77 compile_fail=33 run_fail=14 stdout_differs=9 unverifiable=3 with_warnings=1 cs/shapes=2104/625=3.37 pratio=2.26 n=76 |
 | `check__default__2038b5c7+14838f72` | 2026-09-18 | programs=77 compile_fail=34 run_fail=13 stdout_differs=8 unverifiable=3 with_warnings=1 cs/shapes=2118/625=3.39 pratio=2.27 n=76 |
