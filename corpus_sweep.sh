@@ -121,6 +121,7 @@ if [ "${1:-}" = "--worker" ]; then
         cp "$CPYCACHE/$name.rc" "$LOGS/$name.prc"
         [ -f "$CPYCACHE/$name.out" ] && cp "$CPYCACHE/$name.out" "$LOGS/$name.cpy.out"
         [ -f "$CPYCACHE/$name.out2" ] && cp "$CPYCACHE/$name.out2" "$LOGS/$name.cpy2.out"
+        [ -f "$CPYCACHE/$name.out3" ] && cp "$CPYCACHE/$name.out3" "$LOGS/$name.cpy3.out"
         echo 0 > "$LOGS/$name.pwall"
         echo hit > "$LOGS/$name.pcache"
         exit 0
@@ -143,6 +144,20 @@ if [ "${1:-}" = "--worker" ]; then
       echo $prc > "$CPYCACHE/$name.rc"
       cp "$LOGS/$name.cpy.out" "$CPYCACHE/$name.out"
       cp "$LOGS/$name.cpy2.out" "$CPYCACHE/$name.out2" 2>/dev/null
+      ;;
+    cpy3)
+      # A THIRD variance sample, taken only for the programs whose stdout
+      # would otherwise be scored NO -- see confirm_stdout below. Cached
+      # beside the other two: a sample from an earlier sweep is as
+      # independent as one taken now, and the key already covers the
+      # corpus and the python3 version.
+      if [ "$NOCPYCACHE" = 0 ] && [ -f "$CPYCACHE/$name.out3" ]; then
+        cp "$CPYCACHE/$name.out3" "$LOGS/$name.cpy3.out"
+        exit 0
+      fi
+      timeout "$RT" python3 "$name.py" > "$LOGS/$name.cpy3.out" 2>/dev/null
+      mkdir -p "$CPYCACHE"
+      cp "$LOGS/$name.cpy3.out" "$CPYCACHE/$name.out3" 2>/dev/null
       ;;
   esac
   exit 0
@@ -390,6 +405,93 @@ echo "sweep $KEY: ${#PROGS[@]} programs, mode=$MODE, compile -j$JC, run -J$JR"
 # -J8: 72 binaries produced zero fabricated run timeouts, and CPython
 # produced exactly one -- `hq2x`, which needs 116 s of a 120 s cap and so
 # sits on the boundary no -J setting can move it off.
+# issues/163: the line NUMBERS that CPython itself varies on, as a sed
+# delete script, learned by diffing the first sample against every other.
+# All ranges are in the FIRST sample's numbering, so they concatenate.
+# More samples can only ADD varying lines, never remove one.
+vary_script() {  # vary_script BASE OTHER...
+  local base=$1 v="" f
+  shift
+  for f in "$@"; do
+    [ -s "$f" ] || continue
+    v="$v$(diff --unchanged-group-format='' --old-group-format='%df,%dld;' \
+                --new-group-format='' --changed-group-format='%df,%dld;' \
+                "$base" "$f" 2>/dev/null)"
+  done
+  printf '%s' "$v"
+}
+
+# issues/163: drop the lines CPython varies on, then compare what is left.
+# Three outcomes, not two:
+#   yes   -- comparable output exists and matches
+#   NO    -- comparable output exists and differs
+#   none  -- NOTHING comparable remains, so this program's stdout verifies
+#            nothing. sudoku5 forced this: its entire output is one
+#            `TIME %.2f` line, so a plain filter would have scored
+#            empty-vs-empty as a MATCH and claimed a verification that
+#            never happened.
+# Uses every sample present, so re-running it after taking another one is
+# what confirm_stdout does.
+stdout_verdict() {  # stdout_verdict NAME -> yes | NO | none
+  local name=$1 vary
+  vary=$(vary_script "$LOGS/$name.cpy.out" "$LOGS/$name.cpy2.out" "$LOGS/$name.cpy3.out")
+  if [ -n "$vary" ]; then
+    # `%df,%dld;` -> a sed DELETE range per varying hunk ("3,4d;"), joined
+    # into one script. (It emitted `c` instead of `d` at first, which sed
+    # rejected, so nothing was ever filtered and the whole probe read as a
+    # no-op -- the outputs were right and the edit script was not.)
+    sed -e "$vary" "$LOGS/$name.cpy.out" > "$LOGS/$name.cpy.cmp" 2>/dev/null || cp "$LOGS/$name.cpy.out" "$LOGS/$name.cpy.cmp"
+    sed -e "$vary" "$LOGS/$name.pyc.out" > "$LOGS/$name.pyc.cmp" 2>/dev/null || cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
+  else
+    cp "$LOGS/$name.cpy.out" "$LOGS/$name.cpy.cmp"; cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
+  fi
+  if [ ! -s "$LOGS/$name.cpy.cmp" ] && [ ! -s "$LOGS/$name.pyc.cmp" ]; then
+    echo none
+  elif cmp -s "$LOGS/$name.pyc.cmp" "$LOGS/$name.cpy.cmp"; then
+    echo yes
+  else
+    echo NO
+  fi
+}
+
+# `NO` is the stdout verdict a TWO-sample variance probe can FABRICATE,
+# so it is the one worth re-taking -- the same discipline `confirm` below
+# applies to `rc=124`.
+#
+# The probe learns which lines a program varies on by diffing two CPython
+# runs. Two samples of a continuous quantity can land on the same string:
+# `sudoku2` prints `TIME %.2f`, both runs rounded to `1.30`, the probe
+# learned nothing, and its timing line was then scored as a real
+# difference against pyc's `1.05` -- on a program whose other 5200 lines
+# were byte-identical. `sieve` was miscounted the same way, on `time:`.
+# Measured on 2026-09-25: that inflated `stdout_differs` from 8 to 10.
+#
+# A third sample cannot make a NO out of a yes -- more samples only add
+# varying lines -- so this is one-directional, and it costs a CPython run
+# only for the handful of programs a NO would be reported for.
+#
+# Deliberately NOT a pattern for "TIME": that would be matching by name,
+# and it would also wrongly excuse `3.11.0 (pyc)`, a version string pyc
+# genuinely prints differently and should be held to.
+confirm_stdout() {
+  local n=0 changed=0 before after
+  for name in "${RUNNABLE[@]}"; do
+    [ "$(cat "$LOGS/$name.rrc" 2>/dev/null || echo 1)" = 0 ] || continue
+    [ "$(cat "$LOGS/$name.prc" 2>/dev/null || echo 1)" = 0 ] || continue
+    cmp -s "$LOGS/$name.pyc.out" "$LOGS/$name.cpy.out" && continue
+    before=$(stdout_verdict "$name")
+    [ "$before" = NO ] || continue
+    n=$((n+1))
+    "$SELF" --worker cpy3 "$name"
+    after=$(stdout_verdict "$name")
+    if [ "$after" != NO ]; then
+      changed=$((changed+1)); echo "    CONFIRM $name stdout NO -> $after (third CPython sample)"
+    fi
+  done
+  [ "$n" -gt 0 ] && echo "  confirmed $n stdout NO verdict(s): $changed were two-sample variance"
+  return 0
+}
+
 confirm() {  # confirm PHASE RC_SUFFIX LABEL
   local phase=$1 suf=$2 label=$3 n=0 changed=0 after
   for name in "${RUNNABLE[@]}"; do
@@ -433,6 +535,9 @@ if [ "$MODE" = check ] && [ ${#RUNNABLE[@]} -gt 0 ]; then
   # of the stdout comparison entirely (`stdout_match` becomes `-`), and
   # the confirmed answer is cached, so this is paid once per corpus.
   confirm cpy prc cpy_rc
+  # Cheap: only the programs that would be reported as differing, and the
+  # third sample is cached with the other two.
+  confirm_stdout
 fi
 
 # ---- assemble ----------------------------------------------------------
@@ -468,39 +573,10 @@ for name in "${PROGS[@]}"; do
     if cmp -s "$LOGS/$name.pyc.out" "$LOGS/$name.cpy.out"; then
       same=yes
     else
-      # issues/163: drop the line NUMBERS that CPython itself varies on
-      # between two runs, then compare what is left. Three outcomes, not two:
-      #   yes   -- comparable output exists and matches
-      #   NO    -- comparable output exists and differs
-      #   none  -- NOTHING comparable remains, so this program's stdout
-      #            verifies nothing. sudoku5 is the case that forced this:
-      #            its entire output is one `TIME %.2f` line, so a plain
-      #            filter would have scored empty-vs-empty as a MATCH and
-      #            claimed a verification that never happened.
-      if [ -s "$LOGS/$name.cpy2.out" ] && ! cmp -s "$LOGS/$name.cpy.out" "$LOGS/$name.cpy2.out"; then
-        # `%df,%dld;` -> a sed DELETE range per varying hunk ("3,4d;"), joined
-        # into one script. (It emitted `c` instead of `d` at first, which sed
-        # rejected, so nothing was ever filtered and the whole probe read as a
-        # no-op -- the outputs were right and the edit script was not.)
-        vary=$(diff --unchanged-group-format='' --old-group-format='%df,%dld;' \
-                    --new-group-format='' --changed-group-format='%df,%dld;' \
-                    "$LOGS/$name.cpy.out" "$LOGS/$name.cpy2.out" 2>/dev/null)
-        if [ -n "$vary" ]; then
-          sed -e "$vary" "$LOGS/$name.cpy.out" > "$LOGS/$name.cpy.cmp" 2>/dev/null || cp "$LOGS/$name.cpy.out" "$LOGS/$name.cpy.cmp"
-          sed -e "$vary" "$LOGS/$name.pyc.out" > "$LOGS/$name.pyc.cmp" 2>/dev/null || cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
-        else
-          cp "$LOGS/$name.cpy.out" "$LOGS/$name.cpy.cmp"; cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
-        fi
-        if [ ! -s "$LOGS/$name.cpy.cmp" ] && [ ! -s "$LOGS/$name.pyc.cmp" ]; then
-          same=none
-        elif cmp -s "$LOGS/$name.pyc.cmp" "$LOGS/$name.cpy.cmp"; then
-          same=yes
-        else
-          same=NO
-        fi
-      else
-        same=NO
-      fi
+      # The verdict itself lives in stdout_verdict (above), because
+      # confirm_stdout has to compute it too -- once to find the programs
+      # worth a third variance sample, and again after taking one.
+      same=$(stdout_verdict "$name")
     fi
   fi
   printf '%s\t0\t%s\t%s\t%s\t%s\t%s\n' "$name" "$warns" "$rrc" "$prc" "$same" "$dem" >> "$OUT"
