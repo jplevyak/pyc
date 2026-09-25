@@ -1,19 +1,8 @@
-# ifa/issues/074: two list comprehensions over different element types.
-# The two `append` call edges carry distinct types, but pyc names contours
-# by tuples of type SETS, so once {A,B} forms at append's value formal it
-# is a fixed point -- every edge carries {A,B}, so etype == stype and
-# TYPE_CONFLUENCE has nothing to split. Only MARK_TYPE could break the
-# symmetry (via provenance), which is why disabling it costs precision
-# here. The equivalent explicit for/append loops separate fine.
-#
-# Runs correctly either way; this guards the answer, not the analysis.
-#
-# The warning this used to record is GONE as of ifa/issues/050 stage 1:
-# `h` is a module-level cell, and resolving its load to the store that
-# dominates it (IFACallbacks::provably_constant_load) keeps `aas`' element
-# type at A, so the "illegal call argument type 'a' illegal: B" line no
-# longer appears. The contour-naming limitation above is unchanged --
-# what changed is that this program no longer reaches it.
+# Two structurally identical list comprehensions over lists of different
+# element types. Both accumulators start as one merged `list` CreationSet,
+# so both `append`s share one EntrySet whose value formal is {A, B}; that
+# contour must be split (PYC_ESBLOCK) before the CreationSet can be. The
+# check: `aas`' element stays A, so `a.ay()` types with no violation.
 class A:
     def __init__(self):
         self.dead = False
