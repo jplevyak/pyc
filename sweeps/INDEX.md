@@ -6,8 +6,29 @@ uncommitted diff when the sweep ran on a dirty tree.
 
 Check this file before starting a sweep — see CLAUDE.md, "Corpus sweeps".
 
+**Two rows below need a caveat read with them.**
+
+`check__default__e1ba7f10+bb6a70c3` (2026-09-21) was committed as the
+evidence for `983ac5a4` (2026-09-24) and **does not describe that tree**.
+It was measured three days earlier, against a binary that still had the
+comprehension accumulator move `983ac5a4` removed. Two rows are inverted
+against the commit it shipped with: it records `plcfrs compile_rc=1` where
+that tree compiles it, and `sudoku2 compile_rc=0 stdout=NO` where that
+tree fails to compile it. Both match a move-restored build exactly. The
+sweep-measures-the-BINARY trap, in the form CLAUDE.md warns about.
+
+`check__default__a09df260` scores `sudoku2` and `sieve` as
+`stdout_differs`, and **neither differs in anything but a wall-clock
+line** (`TIME 1.05` vs `TIME 1.30`; `time: 0.50` vs `time: 0.88` —
+`nprimes` is correct). issues/163's variance filter only learns which
+lines vary when the TWO CPython runs differ, so when both produce the
+same timing string — or the second is served from the CPython cache — a
+timing-only difference scores `NO`. The real figure for that row is
+`stdout_differs=8`.
+
 | key | date | result |
 |---|---|---|
+| `check__default__a09df260` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=10 unverifiable=3 with_warnings=1 cs/shapes=2268/642=3.53 pratio=2.37 n=75 |
 | `check__default__e1ba7f10+bb6a70c3` | 2026-09-21 | programs=77 compile_fail=33 run_fail=14 stdout_differs=9 unverifiable=3 with_warnings=1 cs/shapes=2104/625=3.37 pratio=2.26 n=76 |
 | `check__default__2038b5c7+14838f72` | 2026-09-18 | programs=77 compile_fail=34 run_fail=13 stdout_differs=8 unverifiable=3 with_warnings=1 cs/shapes=2118/625=3.39 pratio=2.27 n=76 |
 | `check__default__503b90db+36847e75` | 2026-09-18 | programs=77 compile_fail=34 run_fail=13 stdout_differs=8 unverifiable=3 with_warnings=1 cs/shapes=2118/625=3.39 pratio=2.27 n=76 |
