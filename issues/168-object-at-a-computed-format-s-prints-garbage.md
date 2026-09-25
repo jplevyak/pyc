@@ -31,7 +31,7 @@ print("%s" % P())       # CPython: P!   -- and pyc gets this one right
 | `fmt(0) % P()` — computed format | `P!` | `\xef\xbf\xbd1o\xef\xbf\xbd\xef\xbf\xbdZ` |
 
 **Compiles clean, exit 0, wrong output** — the class
-[ifa/158](../ifa/issues/158-FA-every-type-violation-is-fatal.md) exists to
+[ifa/158](../ifa/issues/closed/158-FA-every-type-violation-is-fatal.md) exists to
 stop and cannot catch, because nothing here fails to type. The bytes are
 the object's own memory read as a NUL-terminated C string, so the output
 is whatever happens to follow the struct; it changes between runs.
