@@ -1304,13 +1304,54 @@ static bool in_boolean_context(PyDAST *nn) {
   return false;
 }
 
+// Is this expression's VALUE already a real bool, so the
+// `__pyc_to_bool__` coercion at a branch is redundant? Only answer yes
+// when the LOWERING below provably yields one for any operand -- a
+// wrong yes feeds a non-bool straight to `if1_if_goto`, which requires
+// a real bool, and the program stops typing.
+//
+// `PY_compare` is NOT such a case in general, though it reads like one.
+// CPython lets `__eq__`/`__lt__`/`__contains__` return anything, and
+// `if a == b:` then truth-tests whatever came back -- a class whose
+// `__eq__` returns `self.v - o.v` is legal, and pyc used to compile it
+// and print CPython's answer. Claiming every comparison is boolean
+// rejected it with "illegal primitive argument type expression
+// illegal: int64". So only the ops whose lowering in `PY_compare`
+// below bypasses the user's method entirely qualify:
+//
+//   - `is` / `is not`         -> prim_is (+ `__not__`), never a method
+//   - `== None` / `!= None`   -> prim_isinstance against nil_type
+//
+// Everything else -- ordering, `==`/`!=` between two objects, `in` /
+// `not in` (a `__contains__` dispatch), and any CHAINED comparison,
+// whose result is the last link's raw value -- keeps its coercion.
+static bool compare_is_provably_bool(PyDAST *n) {
+  if (n->children.n != 3) return false;  // chained: result is the last link's value
+  PyDAST *op = n->children[1];
+  if (!op) return false;
+  if (op->op == PY_CMP_IS || op->op == PY_CMP_IS_NOT) return true;
+  if (op->op == PY_CMP_EQ || op->op == PY_CMP_NE) {
+    // The None-literal lowering only fires when exactly one side is None.
+    auto is_none = [](PyDAST *c) { return c && c->kind == PY_name && c->str_val && !strcmp(c->str_val, "None"); };
+    bool l = is_none(n->children[0]), r = is_none(n->children[2]);
+    return l != r;
+  }
+  return false;
+}
+
 static bool is_boolean_expr(PyDAST *n) {
   if (!n) return false;
-  if (n->kind == PY_bool_not || n->kind == PY_compare) return true;
+  if (n->kind == PY_bool_not) return true;  // lowers to __not__, always bool
+  if (n->kind == PY_compare) return compare_is_provably_bool(n);
   if (n->kind == PY_bool_and || n->kind == PY_bool_or) {
+    // In boolean context the and/or lowering itself produces a bool:
+    // every operand it keeps goes through this same predicate or through
+    // __pyc_to_bool__, and each short-circuit arm moves sym_true/false.
     return in_boolean_context(n);
   }
   if (n->kind == PY_name && n->str_val) {
+    // True/False are keywords in Python 3, so no user binding can shadow
+    // them -- this is matching the language, not analysing by name.
     if (!strcmp(n->str_val, "True") || !strcmp(n->str_val, "False")) return true;
   }
   return false;
@@ -1340,6 +1381,28 @@ static void build_list_comp_inner_pyda(PyDAST *iter_node, Vec<PyDAST *> &elts, P
     }
     Sym *new_val = new_sym(ast);
     call_method_v(code, ast, ast->rval, accum_method, new_val, args);
+    // Feed the accumulator method's RESULT back into the accumulator.
+    //
+    // At runtime this is a no-op: `_CG_list_resize_internal` always
+    // `return l1` after rewriting l1's header in place, and `set.add` /
+    // `dict.__setitem__` both `return self`. Its whole job is to be a
+    // DURABLE flow edge for the analysis (ifa notes on snapshot-vs-edge
+    // constraints) -- `append`'s own `merge_in(self, self)` only reaches
+    // the result through `flow_vars`, which is not enough on the final
+    // pass.
+    //
+    // Removing it was tried and reverted. It severs one of the two paths
+    // by which a MERGED element channel reaches an accumulator (the
+    // return; the other is the element write through the shared receiver
+    // CS), so it silenced `plcfrs`' Terminal-in-chart union -- but that
+    // is the symptom, not the confluence. The confluence is that every
+    // comprehension accumulator shares ONE `list.append` EntrySet (see
+    // fa.cc's csdefsplit "1 group: every creation point on the same
+    // assign sets" note), and the fix for that is to SPLIT it, which is
+    // what `PYC_ESBLOCK` does. Without this edge `sudoku2` loses the
+    // constraint that keeps its `__starttime` field from surfacing as a
+    // temporal {int64, float64}, and stops compiling.
+    if1_move(if1, code, new_val, ast->rval, ast);
     return;
   }
   if (iter_node->kind == PY_list_for || iter_node->kind == PY_comp_for) {
