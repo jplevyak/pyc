@@ -76,22 +76,23 @@ class list:
     # CreationSet per sym that literal shares a contour with every user
     # `[]`, so anything a user put in an empty list leaked into every
     # list that had an element deleted.
-    # issues/166: a step of 1, NOT `s`. `del a[i:j]` lowers to this, and a
-    # contiguous delete is a splice-and-resize, which is what the runtime's
-    # k == 1 path does. `del a[i:j:k]` with k != 1 is a different operation
-    # (remove the selected elements and shrink), which CPython supports and
-    # this lowering cannot express -- it arrives indistinguishable from
-    # `a[i:j:k] = []`. Passing `s` here would turn it into an extended-slice
-    # store with a length mismatch, i.e. a runtime error. No corpus program
-    # uses a strided del; see issues/166 for the remaining half.
+    # issues/166: the real step `s`, and a dedicated runtime entry point.
+    # This used to pin the step to 1 and call _CG_list_setslice with an
+    # empty list, because `del o[i:j]` lowered to `o[i:j] = []` and a
+    # strided delete arrived indistinguishable from a strided store --
+    # passing `s` would have made it an extended-slice store with a length
+    # mismatch, i.e. a runtime error, so contiguous deletes were kept
+    # working at the cost of `del a[i:j:k]` deleting contiguously.
+    # emit_del_target now routes `del` straight here instead, so the step
+    # survives, and _CG_list_delslice implements CPython's actual
+    # semantics: REMOVE the selected elements and shrink.
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),
-                          "_CG_list_setslice",
+                          "_CG_list_delslice",
                           list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,
                           int, j,
-                          int, 1,
-                          list, [])
+                          int, s)
   def __delitem__(self, key):
     return self.__pyc_delslice__(key, key + 1, 1)
   def remove(self, item):

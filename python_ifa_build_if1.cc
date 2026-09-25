@@ -2668,10 +2668,19 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
 //
 // Lowered the way the equivalent assignment already is:
 //
-//     del o[i]     ->  o.__delitem__(i)
-//     del o[i:j]   ->  o[i:j] = []      (__pyc_setslice__ with an empty
-//                      value, which is how list.__delitem__ is itself
-//                      written in __pyc__/04_sequence.py)
+//     del o[i]       ->  o.__delitem__(i)
+//     del o[i:j:k]   ->  o.__pyc_delslice__(i, j, k)
+//
+// issues/166: the slice form used to lower to `o[i:j] = []` -- a
+// __pyc_setslice__ with an empty value, mirroring how list.__delitem__
+// was itself written. That cannot express a strided delete. CPython
+// REMOVES the selected elements and shrinks the list, where the
+// equivalent store `o[::2] = []` is a ValueError, so the two arrive at
+// the runtime indistinguishable and __pyc_delslice__ had to pin its step
+// to 1 to keep contiguous deletes working. Going straight to
+// __pyc_delslice__, which takes no value argument, lets the real step
+// through -- and retires the empty literal, whose element channel
+// asserted (falsely) that `[]`'s element type flows into the receiver.
 //
 // `del name` and `del o.attr` stay no-ops. Neither has an effect a
 // compiled program can observe without a runtime binding model, and
@@ -2684,28 +2693,21 @@ static void emit_del_target(PyDAST *tgt, PycAST *ast, PycCompiler &ctx) {
     return;
   }
   bool saved = ctx.building_assign_target;
+  bool saved_del = ctx.building_del_target;
   ctx.building_assign_target = true;
+  ctx.building_del_target = true;
   build_if1_pyda(tgt, ctx);
   ctx.building_assign_target = saved;
+  ctx.building_del_target = saved_del;
   PycAST *a = getAST(tgt, ctx);
   if (!a->is_object_index) {
     if1_gen(if1, &ast->code, a->code);
     return;
   }
   if (a->is_slice) {
-    // The empty list must be DEFINED before the __pyc_setslice__ send it
-    // feeds, and that send is already inside a->code -- so build it
-    // first, then gen the target, then append it as the value argument.
-    // Same order the assignment path uses (build value, build target,
-    // if1_add_send_arg).
-    Code *mk = if1_send1(if1, &ast->code, ast);
-    if1_add_send_arg(if1, mk, sym_primitive);
-    if1_add_send_arg(if1, mk, sym_make);
-    if1_add_send_arg(if1, mk, sym_list);
-    Sym *empty = new_sym(ast);
-    if1_add_send_result(if1, mk, empty);
+    // The __pyc_delslice__ send is already complete inside a->code --
+    // it takes (i, j, k) and no value -- so there is nothing to append.
     if1_gen(if1, &ast->code, a->code);
-    if1_add_send_arg(if1, find_send(a->code), empty);
   } else {
     if1_gen(if1, &ast->code, a->code);
     call_method(&ast->code, ast, a->rval, make_symbol("__delitem__"), new_sym(ast), 1, a->sym);
@@ -4219,7 +4221,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             ast->is_slice = 1;
             bool store = (n->ctx == PY_STORE && i == n->children.n - 1);
             if (!has_step) s = int64_constant(1);
-            if (store)
+            // issues/166: a slice `del` is built with the STORE shape but
+            // is NOT a store -- `del o[i:j:k]` removes the selected
+            // elements and shrinks, where `o[i:j:k] = []` is a length
+            // mismatch. Route it to __pyc_delslice__, which takes no value
+            // argument, so the step survives all the way to the runtime.
+            if (store && ctx.building_del_target)
+              call_method(&ast->code, ast, cur_val, sym___pyc_delslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
+            else if (store)
               call_method(&ast->code, ast, cur_val, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
             else
               call_method(&ast->code, ast, cur_val, sym___pyc_getslice__, (ast->rval = new_sym(ast)), 3, l, u, s);

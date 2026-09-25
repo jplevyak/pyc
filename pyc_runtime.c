@@ -147,6 +147,7 @@ void *_CG_to_list_runtime(void *struct_ptr,
 #undef _CG_list_mult
 #undef _CG_list_getslice
 #undef _CG_list_setslice
+#undef _CG_list_delslice
 
 static inline unsigned int _PYC_list_len(void *l) {
   return l ? _CG_LIST_HDR_LEN(l) : 0;
@@ -332,6 +333,83 @@ void *_CG_list_setslice(void *l1, int64 size, int64 l_in, int64 h_in,
   }
   int sh = (int)len1 - h;
   if (sh > 0) memcpy(p, ((char *)p1) + (size_t)h * sz, (size_t)sh * sz);
+  return l1;
+}
+
+/* issues/166: `del a[i:j:k]` -- the LLVM twin of
+ * _CG_list_delslice_internal in pyc_c_runtime.h; see that function for
+ * the CPython semantics and why a strided DELETE is a different
+ * operation from the extended STORE above (it removes the selected
+ * elements and shrinks; an extended store may not resize at all).
+ * Kept in sync with it deliberately, the way every other helper in this
+ * file mirrors its inline twin. */
+void *_CG_list_delslice(void *l1, int64 size, int64 l_in, int64 h_in, int64 st_in) {
+  int l = (int)l_in, h = (int)h_in, st = (int)st_in;
+  int len1 = (int)_PYC_list_len(l1);
+  size_t sz = (size_t)size;
+  int n, start, step, w, k, next, r;
+  char *p;
+  if (!st) st = 1;
+  if (st == 1) {
+    /* Contiguous: the ordinary splice with nothing inserted. Same clamp
+     * order as _CG_list_setslice's k == 1 path, deliberately -- the
+     * strided path below uses _CG_list_getslice's normalisation instead. */
+    void *p1;
+    void *x;
+    int s_del, s_keep, sh;
+    if (l > len1) l = len1;
+    if (l < 0) { l = len1 + l; if (l < 0) l = 0; }
+    if (h > len1) h = len1;
+    if (h < 0) { h = len1 + h; if (h < 0) h = 0; }
+    if (l > h) h = l;
+    s_del = h - l;
+    s_keep = len1 - s_del;
+    p1 = _CG_LIST_HDR_PTR(l1);
+    x = GC_MALLOC(sz * (size_t)s_keep);
+    _CG_LIST_HDR_LEN(l1) = (unsigned int)s_keep;
+    _CG_LIST_HDR_TOTAL(l1) = (unsigned int)s_keep;
+    _CG_LIST_HDR_PTR(l1) = x;
+    p = (char *)x;
+    if (l) { memcpy(p, p1, (size_t)l * sz); p += (size_t)l * sz; }
+    sh = len1 - h;
+    if (sh > 0) memcpy(p, ((char *)p1) + (size_t)h * sz, (size_t)sh * sz);
+    return l1;
+  }
+  /* Identical to _CG_list_getslice's normalisation. */
+  if (l == INT32_MIN) {
+    l = st < 0 ? len1 - 1 : 0;
+  } else if (l < 0) {
+    l += len1;
+    if (l < 0) l = st < 0 ? -1 : 0;
+  } else if (l >= len1) {
+    l = st < 0 ? len1 - 1 : len1;
+  }
+  if (h == INT32_MAX) {
+    h = st < 0 ? -1 : len1;
+  } else if (h < 0) {
+    h += len1;
+    if (h < 0) h = st < 0 ? -1 : 0;
+  } else if (h >= len1) {
+    h = st < 0 ? len1 - 1 : len1;
+  }
+  if (st > 0)
+    n = l < h ? (h - l + st - 1) / st : 0;
+  else
+    n = l > h ? (l - h + (-st) - 1) / (-st) : 0;
+  if (n <= 0) return l1;
+  /* A negative step selects the same SET of indices as its positive
+   * mirror, and deletion does not care about order -- walk ascending. */
+  start = st > 0 ? l : l + (n - 1) * st;
+  step = st > 0 ? st : -st;
+  p = (char *)_CG_LIST_HDR_PTR(l1);
+  w = 0; k = 0; next = start;
+  for (r = 0; r < len1; r++) {
+    if (k < n && r == next) { k++; next = start + k * step; continue; }
+    if (w != r) memcpy(p + (size_t)w * sz, p + (size_t)r * sz, sz);
+    w++;
+  }
+  /* Length shrinks; capacity deliberately does not. */
+  _CG_LIST_HDR_LEN(l1) = (unsigned int)w;
   return l1;
 }
 

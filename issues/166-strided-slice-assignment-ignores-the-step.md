@@ -5,7 +5,10 @@
 `pyc_runtime.c` `_CG_list_setslice`). Fixes `sieve`. Regression test
 `tests/strided_slice_assign.py`.
 
-**One half remains open** — a strided `del` — see "Still open" below.
+**Both halves now fixed.** The strided `del` landed 2026-09-25
+(`emit_del_target` in `python_ifa_build_if1.cc`, `__pyc_delslice__` in
+`__pyc__/04_sequence.py`, `_CG_list_delslice` in `pyc_c_runtime.h` and
+`pyc_runtime.c`). Regression test `tests/strided_slice_del.py`.
 
 **Related:** [164](164-time-time-has-whole-second-resolution.md) (whose
 measurement exposed this by un-masking `sieve`'s real diff),
@@ -112,22 +115,59 @@ writes, and `sieve`'s Eratosthenes reduced to 30 and 1000.
 Six CI gates green, suite 316 passed / 0 failed / 26 known on both
 backends.
 
-## Still open — a strided `del`
+## Fixed 2026-09-25 — the strided `del`
 
 `del a[i:j:k]` with `k != 1` is a **different operation** from an extended
 slice store: CPython removes the selected elements and shrinks the list,
-where `a[::2] = []` is a `ValueError`. pyc's lowering cannot tell them
-apart — `emit_del_target` lowers `del o[i:j]` to `o[i:j] = []`, so a
-strided delete arrives at the runtime indistinguishable from a strided
-store of an empty list.
+where `a[::2] = []` is a `ValueError`. pyc's lowering could not tell them
+apart — `emit_del_target` lowered `del o[i:j]` to `o[i:j] = []`, so a
+strided delete arrived at the runtime indistinguishable from a strided
+store of an empty list, and `__pyc_delslice__` had to pass a step of
+**1** to keep contiguous deletes working. A strided `del` therefore
+deleted CONTIGUOUSLY, silently and with exit 0.
 
-`__pyc_delslice__` therefore passes a step of **1**, preserving today's
-contiguous-delete behaviour exactly. A strided `del` is consequently still
-wrong (it deletes contiguously), and no corpus program uses one — grep
-finds zero `del ...[...::...]` across all 77.
+Fixed in the direction this section already proposed — route `del`
+through `__pyc_delslice__` rather than reconstructing it as a store:
 
-Fixing it means routing `emit_del_target` through `__pyc_delslice__`
-(which already exists and carries the right ifa/133 element-channel
-constraint — a SELF-merge, not `merge_in(self, v)` — so the reroute would
-also retire the latent element-channel bug its own comment describes) and
-giving the runtime a `_CG_list_delslice` with the strided form.
+- **Frontend.** `PycCompiler::building_del_target` (new) tells the one
+  place it matters that a target is being built for a `del` rather than an
+  assignment. Both are built with `building_assign_target` set, because a
+  slice `del` needs the STORE shape of a subscript — but it is not a
+  store. With the flag set, the subscript builder emits
+  `__pyc_delslice__(i, j, k)`, which takes no value argument, so the step
+  survives to the runtime. `emit_del_target`'s slice branch no longer
+  synthesises the empty list at all.
+- **This also retires the latent element-channel bug** `__pyc_delslice__`'s
+  own comment describes. The empty literal asserted that `[]`'s element
+  type flows into the receiver — false on its own terms, and under one
+  CreationSet per sym that literal shares a contour with every user `[]`,
+  so anything a user put in an empty list leaked into every list that had
+  an element deleted. There is no literal any more.
+- **Runtime.** `_CG_list_delslice_internal`, and its hand-mirrored LLVM
+  twin in `pyc_runtime.c`. `k == 1` is the ordinary splice with nothing
+  inserted; `k != 1` normalises with `_CG_list_getslice_internal`'s
+  clamp (so read, write and delete cannot drift) and compacts in one
+  ascending pass. A negative step selects the same SET of indices as its
+  positive mirror and deletion does not care about order, so the negative
+  case folds into the same loop rather than needing its own. Length
+  shrinks; CAPACITY deliberately does not, matching
+  `_CG_list_resize_internal`'s amortised-growth contract.
+- **`_CG_list_splice_internal`** was factored out of
+  `_CG_list_setslice_internal`'s `k == 1` body so the contiguous delete
+  and the contiguous store share it verbatim, rather than the delete
+  carrying a second copy that could drift. `_CG_list_setslice_internal` is
+  now a two-line dispatcher over the strided and contiguous helpers.
+
+### Measured
+
+`tests/strided_slice_del.py`, 15 cases byte-identical to CPython on
+**both** backends: the three positive-step forms, two negative steps
+(`d[::-2]`, `e[8:2:-2]`), explicit step 1 and no step (both contiguous,
+both resize), `del h[:]`, a step larger than the list, an empty selection,
+`del m[2]` and `remove()` (both through `__delitem__`, which routes here),
+a strided delete over a list of `str` (pointer-sized elements, not int),
+and a delete followed by an `append` to pin the retained capacity.
+
+Six CI gates green: 58/0 unit, 16 IR phases 0 failed with the 2 known,
+**318 passed / 0 failed** on C and on LLVM (317 before, +1 for the new
+test), dparse and doc links clean.

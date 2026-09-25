@@ -83,6 +83,13 @@ class PycCompiler : public PycCallbacks {
   // shape used as a genuine, unsupported list/tuple-literal-unpacking
   // VALUE) -- this flag lets that check tell the two contexts apart.
   bool building_assign_target = false;
+  // issues/166: a `del` target is built with building_assign_target set,
+  // because it needs the STORE shape of a subscript -- but a slice `del`
+  // is not a store. This tells the two apart at the one place it matters,
+  // so `del o[i:j:k]` emits __pyc_delslice__ rather than a __pyc_setslice__
+  // of an empty list (which cannot express a strided delete: CPython
+  // REMOVES the selected elements, where `o[::2] = []` is a ValueError).
+  bool building_del_target = false;
   void *node;
   PycModule *mod, *package;
   Vec<PycModule *> *modules;

@@ -1474,12 +1474,16 @@ static inline _CG_list _CG_list_setslice_strided(_CG_list l1, uint32 size, int32
   return l1;
 }
 
-// `st` (step), not `s`: the contiguous path below already uses `s` for a
-// byte count.
-static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int32 l, int32 h, int32 st,
-                                                 _CG_list l2) {
-  if (!st) st = 1;
-  if (st != 1) return _CG_list_setslice_strided(l1, size, l, h, st, l2);
+// The CONTIGUOUS splice: replace `[l, h)` with `len2` elements read from
+// `src`, resizing the list. `src` may be null when `len2` is 0, which is
+// how a contiguous DELETE is expressed (issues/166) -- factored out of
+// _CG_list_setslice_internal rather than copied into
+// _CG_list_delslice_internal so the two cannot drift, the same reason the
+// strided paths share _CG_list_getslice_internal's normalisation.
+//
+// `s` is a byte count here, not a step; the callers use `st` for the step.
+static inline _CG_list _CG_list_splice_internal(_CG_list l1, uint32 size, int32 l, int32 h, const void *src,
+                                                int32 len2) {
   // SIGNED. These used to be uint32, which made `l > len1` promote a
   // negative bound to a huge unsigned value: the omitted-lower sentinel
   // INT_MIN read as 2147483648, so `del x[:]` clamped l to len1 instead
@@ -1488,7 +1492,7 @@ static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int3
   // `del` was lowered at all, nothing reached here.) A negative bound is
   // the whole point of the two `if (... < 0)` branches just below, so
   // the comparison feeding them has to be signed too.
-  int32 len1 = (int32)_CG_prim_len(0, l1), len2 = (int32)_CG_prim_len(0, l2);
+  int32 len1 = (int32)_CG_prim_len(0, l1);
   if (l > len1) l = len1;
   if (l < 0) {
     l = len1 + l;
@@ -1514,7 +1518,7 @@ static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int3
     p += l * size;
   }
   if (len2) {
-    memcpy(p, _CG_list_ptr(l2), len2 * size);
+    memcpy(p, src, (size_t)len2 * size);
     p += len2 * size;
   }
   int sh = len1 - h;
@@ -1522,6 +1526,73 @@ static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int3
     memcpy(p, ((char *)p1) + h * size, sh * size);
     p += sh * size;
   }
+  return l1;
+}
+
+// `st` (step), not `s`: the splice above uses `s` for a byte count.
+static inline _CG_list _CG_list_setslice_internal(_CG_list l1, uint32 size, int32 l, int32 h, int32 st,
+                                                 _CG_list l2) {
+  if (!st) st = 1;
+  if (st != 1) return _CG_list_setslice_strided(l1, size, l, h, st, l2);
+  return _CG_list_splice_internal(l1, size, l, h, _CG_list_ptr(l2), (int32)_CG_prim_len(0, l2));
+}
+
+// issues/166: `del a[i:j:k]`. A DIFFERENT operation from the extended
+// store `a[i:j:k] = v` next door, which is why it needed its own entry
+// point: CPython REMOVES the selected elements and shrinks the list,
+// where an extended store may not resize at all and raises ValueError on
+// a length mismatch. Lowered here as `__pyc_delslice__`, so the frontend
+// no longer has to pin the step to 1 to keep `del a[i:j]` working.
+//
+// k == 1 is the ordinary contiguous splice with nothing inserted, so it
+// goes through the shared helper and behaves exactly as before.
+static inline _CG_list _CG_list_delslice_internal(_CG_list l1, uint32 size, int32 l, int32 h, int32 st) {
+  if (!st) st = 1;
+  if (st == 1) return _CG_list_splice_internal(l1, size, l, h, 0, 0);
+  int32 len1 = (int32)_CG_prim_len(0, l1);
+  // Identical to _CG_list_getslice_internal's normalisation.
+  if (l == INT32_MIN) {
+    l = st < 0 ? len1 - 1 : 0;
+  } else if (l < 0) {
+    l += len1;
+    if (l < 0) l = st < 0 ? -1 : 0;
+  } else if (l >= len1) {
+    l = st < 0 ? len1 - 1 : len1;
+  }
+  if (h == INT32_MAX) {
+    h = st < 0 ? -1 : len1;
+  } else if (h < 0) {
+    h += len1;
+    if (h < 0) h = st < 0 ? -1 : 0;
+  } else if (h >= len1) {
+    h = st < 0 ? len1 - 1 : len1;
+  }
+  int32 n;
+  if (st > 0)
+    n = l < h ? (h - l + st - 1) / st : 0;
+  else
+    n = l > h ? (l - h + (-st) - 1) / (-st) : 0;
+  if (n <= 0) return l1;
+  // A negative step selects the SAME SET of indices as its positive
+  // mirror, just visited in the other order, and deletion does not care
+  // about order -- so walk ascending and the compaction below is one pass.
+  int32 start = st > 0 ? l : l + (n - 1) * st;
+  int32 step = st > 0 ? st : -st;
+  char *p = (char *)_CG_list_ptr(l1);
+  int32 w = 0, k = 0, next = start;
+  for (int32 r = 0; r < len1; r++) {
+    if (k < n && r == next) {
+      k++;
+      next = start + k * step;
+      continue;
+    }
+    if (w != r) memcpy(p + (size_t)w * size, p + (size_t)r * size, size);
+    w++;
+  }
+  // Length shrinks; CAPACITY (total_len) deliberately does not, matching
+  // _CG_list_resize_internal's amortised-growth contract -- the buffer
+  // stays as big as it was and the next append reuses it.
+  _CG_list_len(l1) = w;
   return l1;
 }
 
@@ -1546,6 +1617,8 @@ inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
   (_CG_list_getslice_internal(_CG_to_list(_l), _s, _lower, _upper, _step))
 #define _CG_list_setslice(_l1, _s, _lower, _upper, _step, _l2) \
   (_CG_list_setslice_internal(_l1, _s, _lower, _upper, _step, _CG_to_list(_l2)))
+#define _CG_list_delslice(_l1, _s, _lower, _upper, _step) \
+  (_CG_list_delslice_internal(_l1, _s, _lower, _upper, _step))
 #define _CG_prim_coerce(_t, _v) ((_t)_v)
 #define _CG_prim_closure(_c) (_c) GC_MALLOC(sizeof(*((_c)0)))
 #define _CG_prim_vector(_c, _n) (void *)GC_MALLOC(sizeof(_c *) * _n)
