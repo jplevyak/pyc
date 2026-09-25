@@ -253,14 +253,52 @@ static void format_string_emit_arg(FILE *fp, Var *av, char conv) {
   fputs(av->cg_string, fp);
 }
 
+// issues/165: one tag per argument for the non-constant-format path --
+// 'i' integer (passed as int64), 'f' float (passed as double), 's'
+// anything else (passed as a pointer). The runtime pairs these with the
+// conversions it finds; see _CG_format_string_tagged in pyc_c_runtime.h
+// for why the repair cannot happen at either end alone.
+static char format_string_tag(Sym *t) {
+  if (!fmt_arg_is_numeric(t)) return 's';
+  return t->num_kind == IF1_NUM_KIND_FLOAT ? 'f' : 'i';
+}
+
 static void format_string_codegen(FILE *fp, PNode *n, Fun *f) {
-  fputs("_CG_format_string(", fp);
-  fputs(n->rvals[2]->cg_string, fp);
   Var *v = n->rvals[3];
   cchar *fmt = n->rvals[2]->sym->constant;
   Vec<char> convs;
   if (fmt) collect_format_convs(fmt, convs);
   bool is_tuple = v->type && v->type->type_kind == Type_RECORD && !cg_has_classtag(v->type);
+  // issues/165: with a NON-constant format there are no conversions to
+  // match arguments against, so the casts below cannot be chosen -- an
+  // integer got widened and a float was left as a double, which then met
+  // `%d` in the wrong register class. Hand the argument TYPES to the
+  // runtime instead and let it pair them with the format it can see.
+  if (!fmt) {
+    fputs("_CG_format_string_tagged(", fp);
+    fputs(n->rvals[2]->cg_string, fp);
+    fputs(", \"", fp);
+    if (is_tuple)
+      for (int i = 0; i < v->type->has.n; i++) fputc(format_string_tag(v->type->has[i]->type), fp);
+    else
+      fputc(format_string_tag(v->type), fp);
+    fputs("\"", fp);
+    if (is_tuple) {
+      for (int i = 0; i < v->type->has.n; i++) {
+        fputs(", ", fp);
+        if (format_string_tag(v->type->has[i]->type) == 'i') fputs("(int64)", fp);
+        fprintf(fp, "%s->e%d", v->cg_string, i);
+      }
+    } else {
+      fputs(", ", fp);
+      if (format_string_tag(v->type) == 'i') fputs("(int64)", fp);
+      fputs(v->cg_string, fp);
+    }
+    fputs(");\n", fp);
+    return;
+  }
+  fputs("_CG_format_string(", fp);
+  fputs(n->rvals[2]->cg_string, fp);
   if (is_tuple) {
     for (int i = 0; i < v->type->has.n; i++) {
       fputs(", ", fp);

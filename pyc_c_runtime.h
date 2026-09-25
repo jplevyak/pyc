@@ -650,6 +650,113 @@ inline const char *_CG_widen_int_convs(const char *fmt) {
   return out;
 }
 
+// issues/165 (the half left open): a format string that is NOT a
+// compile-time constant.
+//
+// The emitters cast each argument to what its conversion needs -- but only
+// when they can PARSE the format to know which conversion that is. With a
+// non-constant format they cannot, so `conv` is 0 for every argument and
+// `format_string_emit_cast` widens an integer to int64 and leaves a float
+// alone. A double then meets `%d`, which on x86-64 SysV reads an integer
+// register while the value sits in an xmm one: `"%d" % 3.7` through a
+// computed format printed `25637`, and a different number next run.
+//
+// The emitter cannot know the conversion, and the runtime cannot know the
+// argument's type -- so the emitter passes the TYPES and the runtime,
+// which already walks the format for _CG_widen_int_convs, pairs them up.
+// `tags` has one character per argument: 'i' integer (passed as int64),
+// 'f' float (passed as double), 's' anything else (passed as a pointer).
+//
+// This formats one conversion at a time instead of handing the whole
+// format to vsnprintf, because the mismatch cannot be repaired by
+// rewriting the format alone: CPython's `"%d" % 3.7` is `3`, a TRUNCATION,
+// and no printf conversion truncates a double. The value has to be read as
+// a double and converted, which is what the constant path's `(int64)` cast
+// does and what this does per argument.
+//
+// The CONSTANT path is untouched and still goes through _CG_format_string.
+inline char *_CG_fmt_grow(char *out, size_t *cap, size_t len, size_t need) {
+  if (len + need + 1 <= *cap) return out;
+  while (len + need + 1 > *cap) *cap *= 2;
+  {
+    char *nb = (char *)GC_MALLOC_ATOMIC(*cap);
+    memcpy(nb, out, len);
+    return nb;
+  }
+}
+
+inline char *_CG_format_string_tagged(char *str, const char *tags, ...) {
+  size_t cap = _CG_string_len(str) + 64, len = 0;
+  char *out = (char *)GC_MALLOC_ATOMIC(cap);
+  const char *p = str;
+  int ti = 0;
+  va_list ap;
+  va_start(ap, tags);
+  while (*p) {
+    if (*p != '%') {
+      out = _CG_fmt_grow(out, &cap, len, 1);
+      out[len++] = *p++;
+      continue;
+    }
+    {
+      char spec[64];
+      int si = 0;
+      char conv, tag;
+      char sbuf[512];
+      char *big = 0;
+      int m;
+      spec[si++] = *p++;                       /* the '%' */
+      if (*p == '%') {
+        out = _CG_fmt_grow(out, &cap, len, 1);
+        out[len++] = '%';
+        p++;
+        continue;
+      }
+      /* flags, width, precision -- copied through unchanged */
+      while (*p && si < 56 && (strchr("-+ #0", *p) || (*p >= '0' && *p <= '9') || *p == '.')) spec[si++] = *p++;
+      /* a length modifier the source wrote is dropped; we supply our own */
+      while (*p && strchr("hlLqjzt", *p)) p++;
+      if (!*p) break;
+      conv = *p++;
+      tag = tags && tags[ti] ? tags[ti] : 's';
+      ti++;
+      if (strchr("diouxX", conv)) {
+        long long v = (tag == 'f') ? (long long)va_arg(ap, double) : (long long)va_arg(ap, int64);
+        spec[si++] = 'l'; spec[si++] = 'l'; spec[si++] = conv; spec[si] = 0;
+        m = snprintf(sbuf, sizeof(sbuf), spec, v);
+        if (m >= (int)sizeof(sbuf)) { big = (char *)GC_MALLOC_ATOMIC((size_t)m + 1); snprintf(big, (size_t)m + 1, spec, v); }
+      } else if (strchr("feEgGFaA", conv)) {
+        double v = (tag == 'f') ? va_arg(ap, double) : (double)va_arg(ap, int64);
+        spec[si++] = conv; spec[si] = 0;
+        m = snprintf(sbuf, sizeof(sbuf), spec, v);
+        if (m >= (int)sizeof(sbuf)) { big = (char *)GC_MALLOC_ATOMIC((size_t)m + 1); snprintf(big, (size_t)m + 1, spec, v); }
+      } else if (conv == 'c') {
+        /* C's %c consumes an int, so this one NARROWS where the others widen */
+        int v = (tag == 'f') ? (int)va_arg(ap, double) : (int)va_arg(ap, int64);
+        spec[si++] = conv; spec[si] = 0;
+        m = snprintf(sbuf, sizeof(sbuf), spec, v);
+      } else {
+        const char *v = (tag == 'f') ? "" : (const char *)va_arg(ap, void *);
+        if (!v) v = "";
+        spec[si++] = (conv == 's' || conv == 'p') ? conv : 's';
+        spec[si] = 0;
+        m = snprintf(sbuf, sizeof(sbuf), spec, v);
+        if (m >= (int)sizeof(sbuf)) { big = (char *)GC_MALLOC_ATOMIC((size_t)m + 1); snprintf(big, (size_t)m + 1, spec, v); }
+      }
+      if (m < 0) m = 0;
+      out = _CG_fmt_grow(out, &cap, len, (size_t)m);
+      memcpy(out + len, big ? big : sbuf, (size_t)m);
+      len += (size_t)m;
+    }
+  }
+  va_end(ap);
+  {
+    char *s = _CG_string_alloc(len);
+    memcpy(s, out, len);
+    return s;
+  }
+}
+
 inline char *_CG_format_string(char *str, ...) {
   const char *fmt = _CG_widen_int_convs(str);
   int l = _CG_string_len(str) + 24;

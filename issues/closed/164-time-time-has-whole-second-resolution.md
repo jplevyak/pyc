@@ -2,7 +2,7 @@
 
 **Status: FIXED** 2026-09-18 (`pyc_lib/time.py`).
 
-**Related:** [165](../165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (found
+**Related:** [165](165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (found
 in the same measurement), [163](163-stdout-check-counted-nondeterministic-lines.md)
 (the sweep's variance filter, which was hiding some of this).
 
