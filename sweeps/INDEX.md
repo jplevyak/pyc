@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__89a52795+df0e1c35` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=6 unverifiable=5 with_warnings=1 cs/shapes=2287/642=3.56 pratio=2.37 n=75 |
+| `check__default__5caf8dc2` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=6 unverifiable=5 with_warnings=1 cs/shapes=2287/642=3.56 pratio=2.37 n=75 |
 | `check__default__6c54e1fd` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=6 unverifiable=5 with_warnings=1 cs/shapes=2287/642=3.56 pratio=2.37 n=75 |
 | `check__default__4c77050e` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=10 unverifiable=3 with_warnings=1 cs/shapes=2287/642=3.56 pratio=2.37 n=75 |
 | `check__default__a09df260` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=10 unverifiable=3 with_warnings=1 cs/shapes=2268/642=3.53 pratio=2.37 n=75 |

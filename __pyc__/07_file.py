@@ -36,6 +36,13 @@ class __pyc_file__:
     return None
   def __iter__(self):
     return __file_iter__(self)
+  # issues/170: a file is its own context manager. __exit__ closes it and
+  # returns False, so an exception raised in the `with` body propagates.
+  def __enter__(self):
+    return self
+  def __exit__(self, typ, value, tb):
+    self.close()
+    return False
 
 # Line iterator. The for-loop protocol checks __pyc_more__ before each
 # __next__, so the next line is read eagerly and buffered one ahead.
@@ -99,6 +106,13 @@ class __pyc_binfile__:
     return None
   def __iter__(self):
     return __binfile_iter__(self)
+  # issues/170: a file is its own context manager. __exit__ closes it and
+  # returns False, so an exception raised in the `with` body propagates.
+  def __enter__(self):
+    return self
+  def __exit__(self, typ, value, tb):
+    self.close()
+    return False
 
 class __binfile_iter__:
   thefile = None

@@ -93,10 +93,10 @@ to minimise.
   local aborts the analysis (`unique_AVar: Assertion 'es' failed`): the
   method's contour has no display slot for the enclosing function.
   `tests/local_class_reads_enclosing_local.py`.
-- [170](170-file-object-is-not-a-context-manager.md) — `with open(...) as
-  f` does not compile: `__pyc_file__` and `__pyc_binfile__` have no
-  `__enter__`/`__exit__`, and the diagnostic does not name them.
-  `tests/with_open_file.py`.
+- [170](closed/170-file-object-is-not-a-context-manager.md) **(closed)** —
+  `with open(...) as f` did not compile: the file classes had no
+  `__enter__`/`__exit__`. Fixed 2026-09-25, and a missing member now
+  reports `unresolved member 'm' of class 'C'`.
 
 - [035-list-element-cast-salvage-guard-and-set-item-union.md](035-list-element-cast-salvage-guard-and-set-item-union.md)
   — **substantially fixed 2026-08-16.** `n * [0]` then `x[i] += 1.5` used
