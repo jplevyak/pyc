@@ -270,15 +270,23 @@ test-ir:
 test-links test_links:
 	@python3 check_doc_links.py
 
+# pyc's parser must agree with CPython's on every test: accept what
+# `ast.parse` accepts and reject what it rejects (issues/106 -- pyc used to
+# accept an `if:` with no body, which CPython rejects).
 test-dparse test_dparse: $(PYC)
 	@echo "--- DParser parse validation ---"; \
+	rejects=$$(printf '%s\n' 'import ast, sys' 'for f in sys.argv[1:]:' \
+	  '  try: ast.parse(open(f, "rb").read(), f)' '  except SyntaxError: print(f)' \
+	  | python3 - tests/*.py) || { echo "CPython parse oracle failed"; exit 1; }; \
 	failed=0; \
 	for f in tests/*.py; do \
-	  if ./$(PYC) --dparse-only "$$f" 2>/dev/null; then \
-	    echo "$$f OK"; \
+	  want=0; case " $$(echo $$rejects) " in *" $$f "*) want=1;; esac; \
+	  if ./$(PYC) --dparse-only "$$f" >/dev/null 2>&1; then got=0; else got=1; fi; \
+	  if [ $$got -eq $$want ]; then \
+	    if [ $$want -eq 0 ]; then echo "$$f OK"; else echo "$$f OK (rejected, as CPython does)"; fi; \
 	  else \
 	    ./$(PYC) --dparse-only "$$f" 2>&1 | head -3; \
-	    echo "$$f FAILED"; \
+	    if [ $$want -eq 0 ]; then echo "$$f FAILED"; else echo "$$f FAILED (accepted; CPython rejects it)"; fi; \
 	    failed=$$((failed + 1)); \
 	  fi; \
 	done; \

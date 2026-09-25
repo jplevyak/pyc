@@ -1,1 +1,3 @@
-dparse: parse error in 'empty_if_body_accepted.py' near line 3
+empty_if_body_accepted.py:14: syntax error after '
+'
+dparse: parse error in 'empty_if_body_accepted.py' near line 14

@@ -18,6 +18,8 @@ extern D_Symbol d_symbols_python[];
   void python_whitespace(struct D_Parser *p, d_loc_t *loc, void **p_globals);
   int py_node_indent(struct D_Parser *p, const char *s);
   int py_next_indent(struct D_Parser *p);
+  int py_header_indent(struct D_Parser *p, const char *s);
+  int py_suite_deeper(struct D_Parser *p, const char *hdr, D_ParseNode *suite);
   int dparser_python_user_size = sizeof(D_ParseNode_User);
   int dparser_python_globals_size = sizeof(D_ParseNode_Globals);
 
@@ -69,7 +71,9 @@ decorators: decorator+ {
 decorated: decorators (classdef | funcdef) {
   $$.ast = new_pyast_collect(PY_decorated, &$n);
 };
-funcdef: 'def' NAME parameters ('->' test)? ':' suite {
+funcdef: 'def' NAME parameters ('->' test)? ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n5)) return -1;
+] {
   $$.ast = new_pyast(PY_funcdef, &$n, $1.ast, $2.ast, $5.ast);
 };
 parameters: LP varargslist? RP {
@@ -229,7 +233,10 @@ async_stmt: async_funcdef | async_for_stmt | async_with_stmt;
 async_funcdef: 'async' funcdef { $$.ast = $1.ast; $$.ast->is_async = 1; };
 async_for_stmt: 'async' for_stmt { $$.ast = $1.ast; $$.ast->is_async = 1; };
 async_with_stmt: 'async' with_stmt { $$.ast = $1.ast; $$.ast->is_async = 1; };
-match_stmt: MATCH_KW test ':' NL INDENT case_block+ DEDENT {
+match_stmt: MATCH_KW test ':' NL INDENT case_block+ DEDENT [
+  if (py_node_indent(${parser}, d_get_child(&$n5, 0)->start_loc.s) <= py_header_indent(${parser}, $n0.start_loc.s))
+    return -1;
+] {
   $$.ast = new_pyast_collect(PY_match_stmt, &$n);
 };
 
@@ -237,21 +244,31 @@ case_guard: 'if' test {
   $$.ast = new_pyast_collect(PY_case_guard, &$n);
 };
 
-case_block: CASE_KW test case_guard? ':' suite {
+case_block: CASE_KW test case_guard? ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n4)) return -1;
+] {
   $$.ast = new_pyast_collect(PY_case_block, &$n);
 };
 
 /* Named clause sub-rules for cleaner AST */
-elif_clause: 'elif' test ':' suite {
+elif_clause: 'elif' test ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n3)) return -1;
+] {
   $$.ast = new_pyast_collect(PY_elif_clause, &$n);
 };
-else_clause: 'else' ':' suite {
+else_clause: 'else' ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n2)) return -1;
+] {
   $$.ast = new_pyast_collect(PY_else_clause, &$n);
 };
-except_handler: except_clause ':' suite {
+except_handler: except_clause ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n2)) return -1;
+] {
   $$.ast = new_pyast_collect(PY_except_handler, &$n);
 };
-finally_clause: 'finally' ':' suite {
+finally_clause: 'finally' ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n2)) return -1;
+] {
   $$.ast = new_pyast_collect(PY_finally_clause, &$n);
 };
 
@@ -261,6 +278,7 @@ if_stmt: 'if' test ':' suite elif_clause* else_clause? [
      outer-level elif/else across a DEDENT to the innermost `if` (a
      nested if as the last statement of an arm silently swallows the
      rest of the chain). */
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n3)) return -1;
   int if_ind = py_node_indent(${parser}, $n0.start_loc.s);
   for (int i_ = 0; i_ < d_get_number_of_children(&$n4); i_++)
     if (py_node_indent(${parser}, d_get_child(&$n4, i_)->start_loc.s) != if_ind) return -1;
@@ -270,6 +288,7 @@ if_stmt: 'if' test ':' suite elif_clause* else_clause? [
   $$.ast = new_pyast_collect(PY_if_stmt, &$n);
 };
 while_stmt: 'while' test ':' suite else_clause? [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n3)) return -1;
   int w_ind = py_node_indent(${parser}, $n0.start_loc.s);
   if (d_get_number_of_children(&$n4) &&
       py_node_indent(${parser}, d_get_child(&$n4, 0)->start_loc.s) != w_ind) return -1;
@@ -277,6 +296,7 @@ while_stmt: 'while' test ':' suite else_clause? [
   $$.ast = new_pyast_collect(PY_while_stmt, &$n);
 };
 for_stmt: 'for' exprlist 'in' testlist ':' suite else_clause? [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n5)) return -1;
   int f_ind = py_node_indent(${parser}, $n0.start_loc.s);
   if (d_get_number_of_children(&$n6) &&
       py_node_indent(${parser}, d_get_child(&$n6, 0)->start_loc.s) != f_ind) return -1;
@@ -287,10 +307,14 @@ try_stmt: ('try' ':' suite
            ((except_handler)+
             else_clause?
             finally_clause? |
-            finally_clause)) {
+            finally_clause)) [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, d_get_child(&$n0, 2))) return -1;
+] {
   $$.ast = new_pyast_collect(PY_try_stmt, &$n);
 };
-with_stmt: 'with' with_item (',' with_item)*  ':' suite {
+with_stmt: 'with' with_item (',' with_item)*  ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n4)) return -1;
+] {
   $$.ast = new_pyast_collect(PY_with_stmt, &$n);
 };
 with_item: test ('as' expr)? {
@@ -506,7 +530,9 @@ dictorsetmaker:
   ;
 dict_rest_arg: '**' NAME { $$.ast = new_pyast(PY_dstar_arg, &$n, $1.ast); };
 
-classdef: 'class' NAME (LP testlist? RP)? ':' suite {
+classdef: 'class' NAME (LP testlist? RP)? ':' suite [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n4)) return -1;
+] {
   $$.ast = new_pyast_collect(PY_classdef, &$n);
 };
 
@@ -696,6 +722,31 @@ Ldone:;
       x++;
     }
     return i;
+  }
+
+  /* The indent of the line a compound statement's header starts on. `s`
+     is its keyword, which begins a line except after `async`. -1 if
+     unknown. */
+  int py_header_indent(struct D_Parser *p, const char *s) {
+    int i = py_node_indent(p, s);
+    if (i >= 0 || !s) return i;
+    const char *x = s - 1;
+    while (*x == ' ' || *x == '\t') x--;
+    if (!strncmp(x - 4, "async", 5)) return py_node_indent(p, x - 4);
+    return -1;
+  }
+
+  /* issues/106: an indented suite must be indented DEEPER than its
+     header. INDENT alone cannot tell: it only asks whether the indent
+     stack's top exceeds the entry below it, which inside any block is
+     already true of the enclosing block's own push -- so `if x:` followed
+     by a line at the SAME column parsed as an `if` with that line as its
+     body. A one-line suite (`if x: pass`) has no indent to check. */
+  int py_suite_deeper(struct D_Parser *p, const char *hdr, D_ParseNode *suite) {
+    if (d_get_number_of_children(suite) != 4) return 1;
+    int h = py_header_indent(p, hdr);
+    if (h < 0) return 1;
+    return py_node_indent(p, d_get_child(suite, 2)->start_loc.s) > h;
   }
 
   int py_next_indent(struct D_Parser *p) {

@@ -1,16 +1,11 @@
-# issues/106: pyc silently accepts an `if:` with NO BODY inside a
-# function. CPython raises
+# issues/106: an `if:` with no indented body inside a function must be a
+# parse error, as it is at module level. CPython raises
 #   IndentationError: expected an indented block after 'if' statement
-# pyc parses it, drops the `if` entirely, and prints 2.
+# pyc used to accept it, drop the `if`, and print 2.
 #
-# Found while delta-reducing shedskin_examples/plcfrs (ifa/issues/105):
-# the reduction produced a 93-line "repro" that CPython rejects outright,
-# because the oracle only checked for the target error and pyc's parser
-# happily accepted the malformed intermediate. Any delta reduction of
-# Python for pyc must therefore validate candidates with ast.parse.
-#
-# Note the same shape at MODULE level IS rejected ("dparse: parse error"),
-# so this is specific to a suite inside an indented block.
+# The reported line is end of file, not the `if`: the check that rejects
+# it is a speculative action on the enclosing compound statement, which
+# DParser runs only when it reduces that statement.
 def f(a):
     if a == 1:
     b = 2
