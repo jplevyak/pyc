@@ -41,7 +41,7 @@ CPython:    1.0
 ```
 
 **A miscompile shipping as three warnings.** It was found within minutes of
-[ifa/158](../ifa/issues/158-FA-every-type-violation-is-fatal.md) making
+[ifa/158](../../ifa/issues/closed/158-FA-every-type-violation-is-fatal.md) making
 violations fatal, which is the case for that change.
 
 ## The fix

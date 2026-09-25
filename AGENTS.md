@@ -460,7 +460,7 @@ an arbitrary lever is **non-monotone**; a lever whose removal costs contours
 is earning its keep. Apply the diagnostic, not just the definition.
 
 **The fifth attempt worked, and its lesson generalizes**
-([ifa/152](ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md),
+([ifa/152](ifa/issues/closed/152-FA-backtrack-the-demand-to-the-merged-creation-set.md),
 which fixes `chull`). All four failures above, and the "find the root"
 walk, were hunting the place where the two classes MEET — a write, a
 channel, a writer contour, a call site. **That place did not exist.** The

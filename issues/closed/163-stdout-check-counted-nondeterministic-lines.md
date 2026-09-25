@@ -1,6 +1,29 @@
 # issues/163 — the corpus stdout check counted nondeterministic lines
 
-**Status:** fixed 2026-09-17.
+**Status:** CLOSED 2026-09-25. Fixed in two parts: the filter landed
+2026-09-17, and a second defect in it was found and fixed 2026-09-25 in
+`6c54e1fd` (below).
+
+**The 2026-09-17 fix was incomplete, and the way it failed is the same
+trap this file is about.** The filter learns which lines a program varies
+on by diffing TWO CPython runs — and two samples of a continuous quantity
+can land on the same string. When they do, the filter learns nothing and
+the timing line it exists to drop is scored as a real difference.
+Measured on `check__default__a09df260`: `sudoku2` printed `TIME 1.30` on
+both CPython runs, so its one timing line was counted against pyc's
+`1.05` on a program whose other 5200 lines are byte-identical. `sieve` was
+miscounted the same way on `time:`, with `nprimes` correct.
+
+`confirm_stdout` now takes a THIRD sample, but only for the programs a
+`NO` would otherwise be reported for — the same "re-take the one verdict a
+parallel pass can fabricate" discipline `corpus_sweep.sh` already applied
+to `rc=124`. More samples can only ADD varying lines, so it turns a NO
+into a yes/none and never the reverse. It found two cases beyond the two
+above: `pystone` (all eleven lines are `benchmarks at N pystones/second`)
+and `tictactoe` (its entire output is one `TIME` line) are `none`, not
+`NO`. Corpus-wide, `stdout_differs` 10 → 6 and `unverifiable` 3 → 5:
+**4 of 10 NO verdicts were sampling artifacts.**
+
 
 ## The question
 

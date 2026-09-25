@@ -3,7 +3,7 @@
 **Status: FIXED** 2026-09-18 (`pyc_c_runtime.h` `_CG_widen_int_convs`,
 `python_ifa_main.cc` `format_string_emit_cast`, `ifa/codegen/cg_emit_llvm.cc`).
 
-**Related:** [164](164-time-time-has-whole-second-resolution.md) (found in
+**Related:** [164](closed/164-time-time-has-whole-second-resolution.md) (found in
 the same measurement), [040](closed/040-percent-format-float-arg-int-specifier-garbage.md)
 (the float/int half of this, fixed earlier the same way).
 
@@ -21,7 +21,7 @@ print("%s" % n)   # 199999990000000
 correct, which is what let it go unnoticed.
 
 Found while benchmarking a loop whose sum was printed with `%d` — the
-elapsed time was wrong ([164](164-time-time-has-whole-second-resolution.md))
+elapsed time was wrong ([164](closed/164-time-time-has-whole-second-resolution.md))
 *and* so was the sum.
 
 ## Root cause

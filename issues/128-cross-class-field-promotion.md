@@ -20,7 +20,7 @@ it reachable, not the promotion itself. Filed 2026-09-14 while asking why
 ## The fifth attempt WORKS — the merge is a shared CONTOUR, not a shared write
 
 Filed as
-[ifa/152](../ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
+[ifa/152](../ifa/issues/closed/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
 `PYC_CSBACKTRACK=1`: `chull` compiles with **0 errors and 0 warnings**, and
 every list element channel holds `Vertex` or `Edge`, never both.
 
@@ -1102,7 +1102,7 @@ rather than walking further.
 > CreationSet that several creation points share, one of which supplies
 > `Vertex` — a question about CONTOURS, not about writes. See "The fifth
 > attempt WORKS" at the top of this file and
-> [ifa/152](../ifa/issues/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
+> [ifa/152](../ifa/issues/closed/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
 
 This is also the cheapest remaining step: it is a transitive closure over
 `e->backward` using data the census already collects, with no splitter
