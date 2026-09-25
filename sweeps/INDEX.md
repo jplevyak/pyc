@@ -17,17 +17,37 @@ that tree compiles it, and `sudoku2 compile_rc=0 stdout=NO` where that
 tree fails to compile it. Both match a move-restored build exactly. The
 sweep-measures-the-BINARY trap, in the form CLAUDE.md warns about.
 
-`check__default__a09df260` scores `sudoku2` and `sieve` as
-`stdout_differs`, and **neither differs in anything but a wall-clock
-line** (`TIME 1.05` vs `TIME 1.30`; `time: 0.50` vs `time: 0.88` —
-`nprimes` is correct). issues/163's variance filter only learns which
-lines vary when the TWO CPython runs differ, so when both produce the
-same timing string — or the second is served from the CPython cache — a
-timing-only difference scores `NO`. The real figure for that row is
-`stdout_differs=8`.
+**Every `stdout_differs` before `check__default__6c54e1fd` (2026-09-25)
+is inflated**, `check__default__a09df260` and `check__default__4c77050e`
+among them. issues/163's variance filter learned which lines a program
+varies on by diffing TWO CPython runs, and two samples of a continuous
+quantity can land on the same string — the filter then learns nothing and
+a timing line is scored as a real difference. `confirm_stdout` now takes
+a THIRD sample for exactly the programs a `NO` would be reported for.
+
+Measured across the two runs that bracket the fix, on an otherwise
+identical tree: **`stdout_differs` 10 → 6, `unverifiable` 3 → 5**, i.e.
+**4 of 10 `NO` verdicts were sampling artifacts.**
+
+| program | was | is | why |
+| --- | --- | --- | --- |
+| `sudoku2` | NO | **yes** | one `TIME %.2f` line; the other 5200 are byte-identical |
+| `sieve` | NO | **yes** | `time:` lines only — `nprimes` was always correct |
+| `pystone` | NO | **none** | all 11 lines are `benchmarks at N pystones/second` |
+| `tictactoe` | NO | **none** | its entire output is one `TIME` line (the `sudoku5` case) |
+
+`plcfrs` stays `NO` and is the control: its difference is
+`usage: ./plcfrs` vs `usage: plcfrs.py`, i.e. `sys.argv[0]`, which is
+deterministic and no amount of sampling excuses.
+
+*(An earlier version of this note blamed the CPython cache for serving
+the second run. It does not — the cache stores and restores both runs, so
+a hit still carries two independent samples. The defect was the sample
+COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__6c54e1fd` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=6 unverifiable=5 with_warnings=1 cs/shapes=2287/642=3.56 pratio=2.37 n=75 |
 | `check__default__4c77050e` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=10 unverifiable=3 with_warnings=1 cs/shapes=2287/642=3.56 pratio=2.37 n=75 |
 | `check__default__a09df260` | 2026-09-25 | programs=77 compile_fail=32 run_fail=13 stdout_differs=10 unverifiable=3 with_warnings=1 cs/shapes=2268/642=3.53 pratio=2.37 n=75 |
 | `check__default__e1ba7f10+bb6a70c3` | 2026-09-21 | programs=77 compile_fail=33 run_fail=14 stdout_differs=9 unverifiable=3 with_warnings=1 cs/shapes=2104/625=3.37 pratio=2.26 n=76 |
