@@ -7,6 +7,9 @@
 #include <stdarg.h>
 #include <string.h>
 #include <math.h>
+#ifdef __cplusplus
+#include <type_traits>
+#endif
 #include <time.h>
 
 #include "gc.h"
@@ -1792,16 +1795,25 @@ inline void *_CG_prim_copy_any(void *p) {
 // same operator: overloaded so int % int stays exact integer
 // arithmetic (no float round-trip) while float operands use fmod,
 // then both apply the standard truncated-to-floored adjustment.
+//
+// One template rather than an (int64, int64) / (double, double) overload
+// pair: a bare C literal (`20000 % 2`) is `int`, which converts equally
+// well to both, and the call was ambiguous. That only surfaces once `%` on
+// two literals stops folding in FA -- which it does since ifa/151 stopped
+// cloning int arithmetic per constant -- so any integral pair is integer
+// arithmetic and anything else is floating.
 #ifdef __cplusplus
-static inline int64 _CG_mod_impl(int64 a, int64 b) {
-  int64 r = a % b;
-  if (r != 0 && ((r < 0) != (b < 0))) r += b;
-  return r;
-}
-static inline double _CG_mod_impl(double a, double b) {
-  double r = fmod(a, b);
-  if (r != 0.0 && ((r < 0.0) != (b < 0.0))) r += b;
-  return r;
+template <class A, class B>
+static inline auto _CG_mod_impl(A a, B b) {
+  if constexpr (std::is_integral_v<A> && std::is_integral_v<B>) {
+    int64 r = (int64)a % (int64)b;
+    if (r != 0 && ((r < 0) != ((int64)b < 0))) r += (int64)b;
+    return r;
+  } else {
+    double r = fmod((double)a, (double)b);
+    if (r != 0.0 && ((r < 0.0) != ((double)b < 0.0))) r += (double)b;
+    return r;
+  }
 }
 #define _CG_prim_mod(_a, _op, _b) (_CG_mod_impl((_a), (_b)))
 #else

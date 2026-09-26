@@ -5,9 +5,9 @@ class int:
 #  def __add__(self, x):
 #    return x.__radd__(self)
   def __add__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("+"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __sub__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("-"), x)
   def __mul__(self, x):
     # n * [x] / n * (x,) / n * "s" / n * b"s": int has no primitive
     # multiply against a sequence, so reflect to the sequence's
@@ -22,7 +22,7 @@ class int:
       return x.__rmul__(self)
     if isinstance(x, bytes):
       return x.__rmul__(self)
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("*"), x)
   def __truediv__(self, x):
     # Python 3 true division: int / anything yields a float. Coerce
     # BOTH operands so the `/` prim performs float division -- the
@@ -32,60 +32,60 @@ class int:
     # in pyc_lib/random.py). float() of a float is identity.
     # (issue 025: made mandelbrot's `y/40 - 0.5` produce real
     # coordinates instead of 0/-1.)
-    return __pyc_operator__(float(__pyc_clone_constants__(self)), __pyc_symbol__("/"), float(__pyc_clone_constants__(x)))
+    return __pyc_operator__(float(self), __pyc_symbol__("/"), float(x))
   def __mod__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("%"), x)
   def __pow__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("**"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __lshift__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<<"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
   def __rshift__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">>"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
   def __or__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("|"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("|"), x)
   def __xor__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("^"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("^"), x)
   def __and__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("&"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __floordiv__(self, x):
     # Python floors; C `/` truncates toward zero, so a bare prim gave
     # -7 // 3 == -2 instead of -3. `%` is already Python-correct (floored),
     # and `self - (self % x)` is therefore an exact multiple of x -- so the
     # division below is exact and truncation and flooring agree.
     return __pyc_operator__(
-        __pyc_clone_constants__(self) - (__pyc_clone_constants__(self) % __pyc_clone_constants__(x)),
-        __pyc_symbol__("/"), __pyc_clone_constants__(x))
+        self - (self % x),
+        __pyc_symbol__("/"), x)
   def __iadd__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("+"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __isub__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("-"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("-"), x)
   def __imul__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("*"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("*"), x)
   def __itruediv__(self, x):
     # /= is true division too (see __truediv__).
-    return __pyc_operator__(float(__pyc_clone_constants__(self)), __pyc_symbol__("/"), float(__pyc_clone_constants__(x)))
+    return __pyc_operator__(float(self), __pyc_symbol__("/"), float(x))
   def __imod__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("%"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("%"), x)
   def __ipow__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("**"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __ilshift__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<<"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("<<"), x)
   def __irshift__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">>"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__(">>"), x)
   def __ior__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("|"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("|"), x)
   def __ixor__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("^"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("^"), x)
   def __iand__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("&"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __ifloordiv__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("/"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("/"), x)
   def __invert__(self):
-    return __pyc_operator__(__pyc_symbol__("~"), __pyc_clone_constants__(self))
+    return __pyc_operator__(__pyc_symbol__("~"), self)
   def __pos__(self):
-    return __pyc_operator__(__pyc_symbol__("+"), __pyc_clone_constants__(self))
+    return __pyc_operator__(__pyc_symbol__("+"), self)
   def __neg__(self):
-    return __pyc_operator__(__pyc_symbol__("-"), __pyc_clone_constants__(self))
+    return __pyc_operator__(__pyc_symbol__("-"), self)
   def __not__(self):
     return __pyc_operator__(__pyc_symbol__("!"), __pyc_clone_constants__(self))
   def __eq__(self, x):
@@ -115,7 +115,7 @@ class int:
     # pyc_c_runtime.h for the C backend, libpyc_runtime.a for the
     # LLVM backend (Phase D.3.5).
     return __pyc_c_call__(str, "_CG_str_from_int",
-                          int, __pyc_clone_constants__(self))
+                          int, self)
   def __pyc_to_bool__(self):
     return __pyc_clone_constants__(self) != 0
   def __format__(self, spec):
@@ -123,7 +123,7 @@ class int:
     # `{x:spec}` / `format(x, spec)`). _CG_format_int_spec parses
     # `spec` and does the actual formatting/padding in C.
     return __pyc_c_call__(str, "_CG_format_int_spec",
-                          int, __pyc_clone_constants__(self), str, spec)
+                          int, self, str, spec)
 
 class float:
   def __add__(self, x):
