@@ -12,7 +12,7 @@ class bytearray:
     if key < 0:
       key = key + self.length
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
-                             __pyc_clone_constants__(key),
+                             key,
                              __pyc_primitive__(__pyc_symbol__("coerce"), __pyc_char__, value))
   def __len__(self):
     return self.length

@@ -87,23 +87,23 @@ class int:
   def __neg__(self):
     return __pyc_operator__(__pyc_symbol__("-"), self)
   def __not__(self):
-    return __pyc_operator__(__pyc_symbol__("!"), __pyc_clone_constants__(self))
+    return __pyc_operator__(__pyc_symbol__("!"), self)
   def __eq__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("=="), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("=="), x)
   def __ne__(self, x):
     return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("!="), __pyc_clone_constants__(x))
   def __lt__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("<"), x)
   def __le__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("<="), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__("<="), x)
   def __gt__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">"), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__(">"), x)
   def __ge__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__(">="), __pyc_clone_constants__(x))
+    return __pyc_operator__(self, __pyc_symbol__(">="), x)
   def __hash__(self):
     return self
   def __bool__(self):
-     return __pyc_clone_constants__(self) != 0
+     return self != 0
   def __null__(self):
      return False
   def __str__(self):
@@ -117,7 +117,7 @@ class int:
     return __pyc_c_call__(str, "_CG_str_from_int",
                           int, self)
   def __pyc_to_bool__(self):
-    return __pyc_clone_constants__(self) != 0
+    return self != 0
   def __format__(self, spec):
     # issues/006: PEP 3101 format-spec mini-language (f-string
     # `{x:spec}` / `format(x, spec)`). _CG_format_int_spec parses

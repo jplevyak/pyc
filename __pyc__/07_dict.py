@@ -25,7 +25,7 @@ class __dict_iter__:
     # tried first and made this WORSE -- that fix's premise doesn't
     # hold here, since this union is a genuine cross-instance one, not
     # a same-instance class-body-vs-__init__ artifact).
-    self._keys = __pyc_clone_constants__(keys)
+    self._keys = keys
     self._len = n
     self._pos = 0
   def __pyc_more__(self):
@@ -72,8 +72,8 @@ class __dict_items_iter__:
     # ifa/issues/045: same lever, same rationale as __dict_iter__'s
     # own __init__ above (this class is shared across every dict's
     # .items() call the same way).
-    self._keys = __pyc_clone_constants__(keys)
-    self._vals = __pyc_clone_constants__(vals)
+    self._keys = keys
+    self._vals = vals
     self._len = n
     self._pos = 0
   def __pyc_more__(self):

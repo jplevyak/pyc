@@ -169,10 +169,10 @@ def __byte_hex2(x):
   return __hex(x)
 
 def isinstance(obj, ci):
-  return __pyc_primitive__(__pyc_symbol__("isinstance"), obj, __pyc_clone_constants__(ci))
+  return __pyc_primitive__(__pyc_symbol__("isinstance"), obj, ci)
 
 def issubclass(c1, c2):
-  return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, __pyc_clone_constants__(c2))
+  return __pyc_primitive__(__pyc_symbol__("issubclass"), c1, c2)
 
 def id(x):
   # Identity as int64: the address for heap objects, the value bits

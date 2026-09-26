@@ -42,7 +42,7 @@ class list:
   def __len__(self):
     return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __getitem__(self, key):
-    return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
+    return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __pyc_getslice__(self, i, j, s):
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
                           "_CG_list_getslice",
@@ -67,7 +67,7 @@ class list:
                           list, v)
   def __setitem__(self, key, value):
     return __pyc_primitive__(__pyc_symbol__("set_index_object"), self,
-                             __pyc_clone_constants__(key), value)
+                             key, value)
   def __pyc_delslice__(self, i, j, s):
     # ifa/133: deletion cannot ADD an element type, so the constraint
     # must be a SELF-merge (as append uses), not merge_in(self, v).
@@ -218,8 +218,8 @@ class list:
     pass
 #  @must_specialize("l:list")
   def __eq__(self, l):
-    ll = __pyc_clone_constants__(len(l))
-    lself = __pyc_clone_constants__(len(self))
+    ll = len(l)
+    lself = len(self)
     if lself != ll:
       return False
     # ifa/160: iterate the OTHER operand's length, not our own. Past the guard
@@ -453,11 +453,11 @@ class tuple:
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, __pyc_clone_constants__(key))
   def __setitem__(self, key, value):
-    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, __pyc_clone_constants__(key), value)
+    return __pyc_primitive__(__pyc_symbol__("set_index_object"), self, key, value)
   def __iter__(self):
     return __tuple_iter__(self)
   def __len__(self):
-    return __pyc_clone_constants__(__pyc_primitive__(__pyc_symbol__("len"), self))
+    return __pyc_primitive__(__pyc_symbol__("len"), self)
   def __contains__(self, item):
     # `x in (a, b, c)` (collatz's `rest9 in (2, 4, 5, 8)`). INDEX loop,
     # not `for x in self`: sharing one __tuple_iter__ CS across

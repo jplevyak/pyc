@@ -18,7 +18,7 @@ class __set_iter__:
     # puts this class on the clone_methods_per_cs track
     # (gen_class_pyda): each creating contour gets its OWN iterator
     # CS, and __pyc_more__/__next__ split per receiver CS too.
-    self._items = __pyc_clone_constants__(items)
+    self._items = items
     self._len = n
     self._pos = 0
   def __pyc_more__(self):

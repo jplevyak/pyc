@@ -4,9 +4,9 @@ class str:
   def __iadd__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __str__(self):
-    return __pyc_clone_constants__(self)
+    return self
   def __repr__(self):
-    return "'" + __pyc_clone_constants__(self) + "'"
+    return "'" + self + "'"
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __pyc_getslice__(self, i, j, s):
