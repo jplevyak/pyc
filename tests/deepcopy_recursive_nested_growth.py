@@ -2,9 +2,15 @@
 # linalg.py's determinant/Minor pair. The analysis never reaches a fixed
 # point: contours keep being added until the pass cap, and the final types
 # are wrong as well -- `M[0][0]` sees a `list` where only `float` belongs.
-# Recursion and the nested list are both needed: the flat-list and the
-# non-recursive versions converge. deepcopy is not -- copying the rows by
-# hand does not converge either.
+# For the NON-CONVERGENCE, recursion and the nested list are both needed:
+# the flat-list and the non-recursive versions converge. deepcopy is not --
+# copying the rows by hand does not converge either.
+#
+# The MISTYPING is a separate defect, ifa/issues/168, and needs neither
+# recursion here nor a loop: `M = copy.deepcopy(M); print(M[0][0])` fails
+# the same way. decide_entry_set_split's recursive-edge overlap gate keeps
+# list.__deepcopy__ in one contour, so outer and inner copies share a
+# CreationSet whose element is {float, list}.
 #
 # The target: the program is monomorphic -- total: list[list[float]] ->
 # float and shrink: list[list[float]] -> list[list[float]] at every depth
