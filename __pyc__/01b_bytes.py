@@ -27,10 +27,39 @@ class bytes:
   def __str__(self):
     return self.__repr__()
   def __repr__(self):
-    # ASCII passthrough only (v1): non-printable bytes are not
-    # \x-escaped the way CPython's repr does. Known, documented gap --
-    # add real escaping if a corpus program's output depends on it.
-    return "b'" + self.decode() + "'"
+    # CPython's bytes repr: printable ASCII as-is; \t \n \r and the
+    # backslash escaped; everything else as \xNN (lowercase hex). The
+    # quote is ' unless the value contains ' and no ", and whichever quote
+    # is used is escaped inside. (Was an ASCII passthrough that printed
+    # raw control bytes.)
+    q = "'"
+    has_sq = False
+    has_dq = False
+    for c in self:
+      if c == 39:
+        has_sq = True
+      elif c == 34:
+        has_dq = True
+    if has_sq and not has_dq:
+      q = '"'
+    digits = "0123456789abcdef"
+    r = "b" + q
+    for c in self:
+      if c == 92:
+        r += "\\\\"
+      elif c == 9:
+        r += "\\t"
+      elif c == 10:
+        r += "\\n"
+      elif c == 13:
+        r += "\\r"
+      elif chr(c) == q:
+        r += "\\" + q
+      elif c >= 32 and c < 127:
+        r += chr(c)
+      else:
+        r += "\\x" + digits[c >> 4] + digits[c & 15]
+    return r + q
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __pyc_getslice__(self, i, j, s):

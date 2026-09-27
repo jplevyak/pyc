@@ -190,7 +190,15 @@ static void finalize_function(Fun *f) {
   }
 }
 
-void PycCompiler::finalize_functions() { for (auto fun : pdb->funs.values()) finalize_function(fun); }
+void PycCompiler::finalize_functions() {
+  for (auto fun : pdb->funs.values()) {
+    // ROADMAP 6.1: a def with `*args` (its LAST formal; `**kwargs` after it
+    // is not supported) takes any number of surplus positionals. The
+    // matcher accepts them for an is_varargs Fun and builds a rest_wrapper.
+    if (fun && fun->sym && fun->sym->has.n && star_formals.set_in(fun->sym->has.last())) fun->is_varargs = 1;
+    finalize_function(fun);
+  }
+}
 
 Sym *new_fun(PycAST *ast, Sym *fun) {
   if (!fun)
@@ -266,6 +274,54 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
     }
     pos.inc();
   }
+  if1_move(if1, &body, ret, fn->ret, ast);
+  if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  if1_closure(if1, fn, body, as.n, as.v);
+  install_new_fun(fn);
+  fn->fun->wraps = f;
+  return fn->fun;
+}
+
+// ROADMAP 6.1: `*args`. A call of `def f(a, b, *args)` with `nactuals`
+// top-level positional actuals (position 1 is the callee itself, as in
+// every wrapper here) is routed by the matcher (pattern.cc Matcher::build)
+// to this wrapper, which takes exactly those actuals, packs the ones from
+// the rest position on into a tuple, and calls `f` with the fixed ones plus
+// that tuple. The tuple's sym is marked `is_rest`: the matcher binds a call
+// whose rest-position actual is such a tuple directly, so this wrapper's own
+// call does not wrap again -- while a user passing an ordinary tuple (or a
+// `*args` formal) in that position is still wrapped, as CPython packs it.
+Fun *PycCompiler::rest_wrapper(Fun *f, int nactuals) {
+  PycAST *ast = (PycAST *)f->ast;
+  int nrest = f->sym->has.n;  // 1-based position of the rest formal
+  if (nactuals < nrest - 1) return nullptr;
+  Sym *fn = new_fun(ast);
+  fn->nesting_depth = f->sym->nesting_depth;
+  fn->clone_methods_per_cs = f->sym->clone_methods_per_cs;
+  Vec<Sym *> as;
+  for (int i = 0; i < nactuals; i++) {
+    Sym *a = new_sym(ast);
+    if (i < nrest - 1) {
+      Sym *orig = f->sym->has[i];
+      a->clone_for_constants = orig->clone_for_constants;
+      a->name = orig->name;
+    }
+    as.add(a);
+  }
+  Code *body = 0;
+  Sym *tup = new_sym(ast);
+  tup->is_rest = 1;
+  Code *mk = if1_send1(if1, &body, ast);
+  if1_add_send_arg(if1, mk, sym_primitive);
+  if1_add_send_arg(if1, mk, sym_make);
+  if1_add_send_arg(if1, mk, sym_tuple);
+  for (int i = nrest - 1; i < nactuals; i++) if1_add_send_arg(if1, mk, as[i]);
+  if1_add_send_result(if1, mk, tup);
+  Sym *ret = new_sym(ast);
+  Code *send = if1_send(if1, &body, 0, 1, ret);
+  send->ast = ast;
+  for (int i = 0; i < nrest - 1; i++) if1_add_send_arg(if1, send, as[i]);
+  if1_add_send_arg(if1, send, tup);
   if1_move(if1, &body, ret, fn->ret, ast);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   if1_closure(if1, fn, body, as.n, as.v);

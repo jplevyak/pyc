@@ -80,7 +80,7 @@ result, which are unrelated to this issue.
 `with` inside a method, and an exception raised in the body. That the
 data written just before the raise reads back shows `__exit__` closed
 (and flushed) the file on the exception path. Printing the bytes directly
-would hit [051](../051-bytes-repr-does-not-escape.md), so the test
+would hit [051](051-bytes-repr-does-not-escape.md), so the test
 compares them.
 
 ## Verification plan (original)

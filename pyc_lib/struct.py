@@ -1,36 +1,125 @@
-# ifa/issues/041: assessed for a real implementation (2026-08-11),
-# deferred -- not because the format-string parsing/bit-packing logic
-# is hard (it isn't: corpus usage only needs B/H/I with </> endianness
-# plus x padding-skip, ordinary integer arithmetic, no floats/doubles),
-# but because it's blocked on two things that are compiler/runtime
-# feature gaps, not library-shim work:
-#   1. `*args` in a function definition is parsed but not compiled
-#      (ROADMAP.md "Phase 6.1"; confirmed with a minimal repro this
-#      session -- any call through a *args-taking function currently
-#      fails with "matching function not found"). struct.pack(fmt, a,
-#      b, c, ...)'s real signature needs this.
-#   2. Building a `bytes` value from a computed sequence of integer
-#      byte values (e.g. `bytes(a_bytearray)` or `bytes([65, 66])`)
-#      doesn't resolve at all ("expression has no type") -- confirmed
-#      with a minimal repro. pyc's `bytearray` is also a fixed-size
-#      @vector type (no .append()), not the growable buffer CPython's
-#      struct.pack builds up internally, so even a *args-free rewrite
-#      still needs this conversion to exist.
-# Revisit once either lands; the parsing/packing logic itself is
-# straightforward pure-Python work at that point.
+# struct: pack / unpack / unpack_from / calcsize for the INTEGER formats.
+#
+# Was a no-op stub (pack returned b"", unpack returned ()) -- issues/041.
+# Its two blockers are gone: `bytes(list_of_ints)` works, and `*args` in a
+# definition does (ROADMAP 6.1, pattern.cc's rest_wrapper).
+#
+# Supported: byte order `@ = < > !` (native is little-endian, as on every
+# platform pyc targets), repeat counts, `x` padding, and the integer codes
+# b B h H i I l L q Q. Anything else -- floats (e/f/d), `s`/`p` strings,
+# `?` -- is not implemented and fails loudly rather than packing garbage.
 
-def pack(fmt, *args):
-    # CPython's struct.pack always returns bytes, never str; matching
-    # that type contract (even though the stub doesn't actually pack
-    # anything) keeps callers that concat the result with other bytes
-    # values type-consistent.
-    return b""
+def _size(c):
+    if c == "b" or c == "B" or c == "x":
+        return 1
+    if c == "h" or c == "H":
+        return 2
+    if c == "i" or c == "I" or c == "l" or c == "L":
+        return 4
+    if c == "q" or c == "Q":
+        return 8
+    raise ValueError("struct: unsupported format character '" + c + "'")
 
-def unpack(fmt, string):
-    return ()
+def _signed(c):
+    return c == "b" or c == "h" or c == "i" or c == "l" or c == "q"
 
-def unpack_from(fmt, string, offset=0):
-    return ()
+def _little(fmt):
+    # '@' and '=' are native order; pyc's targets are little-endian.
+    if len(fmt) and fmt[0] == ">":
+        return False
+    if len(fmt) and fmt[0] == "!":
+        return False
+    return True
+
+def _start(fmt):
+    if len(fmt) and (fmt[0] == "<" or fmt[0] == ">" or fmt[0] == "!" or fmt[0] == "=" or fmt[0] == "@"):
+        return 1
+    return 0
 
 def calcsize(fmt):
-    return 0
+    n = 0
+    count = 0
+    i = _start(fmt)
+    while i < len(fmt):
+        c = fmt[i]
+        i += 1
+        if c >= "0" and c <= "9":
+            count = count * 10 + (ord(c) - 48)
+            continue
+        if count == 0:
+            count = 1
+        n += count * _size(c)
+        count = 0
+    return n
+
+def _byte(v):
+    return __pyc_c_call__(bytes, "_CG_byte_from_int", int, v)
+
+def pack(fmt, *args):
+    # Built by concatenating one-byte bytes, not `bytes(list)`: the list's
+    # conversion (list.__pyc_tobytes__) keeps internal str lists, and on the
+    # start-merged list contour those merged with this int list, breaking
+    # shedskin_examples/sha. Pack results are a few bytes long.
+    little = _little(fmt)
+    out = b""
+    ai = 0
+    count = 0
+    i = _start(fmt)
+    while i < len(fmt):
+        c = fmt[i]
+        i += 1
+        if c >= "0" and c <= "9":
+            count = count * 10 + (ord(c) - 48)
+            continue
+        if count == 0:
+            count = 1
+        size = _size(c)
+        for _ in range(count):
+            if c == "x":
+                out = out + _byte(0)
+                continue
+            v = int(args[ai])
+            ai += 1
+            for k in range(size):
+                if little:
+                    shift = 8 * k
+                else:
+                    shift = 8 * (size - 1 - k)
+                out = out + _byte(v >> shift)
+        count = 0
+    return out
+
+def unpack_from(fmt, buffer, offset=0):
+    little = _little(fmt)
+    vals = []
+    pos = offset
+    count = 0
+    i = _start(fmt)
+    while i < len(fmt):
+        c = fmt[i]
+        i += 1
+        if c >= "0" and c <= "9":
+            count = count * 10 + (ord(c) - 48)
+            continue
+        if count == 0:
+            count = 1
+        size = _size(c)
+        for _ in range(count):
+            if c == "x":
+                pos += 1
+                continue
+            v = 0
+            for k in range(size):
+                if little:
+                    v = v | (buffer[pos + k] << (8 * k))
+                else:
+                    v = (v << 8) | buffer[pos + k]
+            if _signed(c) and size < 8 and v >= (1 << (8 * size - 1)):
+                v = v - (1 << (8 * size))
+            vals.append(v)
+            pos += size
+        count = 0
+    return tuple(vals)
+
+def unpack(fmt, buffer):
+    return unpack_from(fmt, buffer, 0)

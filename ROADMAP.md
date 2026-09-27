@@ -45,7 +45,7 @@ These features conflict with static whole-program typing and will **not** be imp
 | with / as | parsed — not compiled |
 | yield / generators | parsed — not compiled |
 | assert | parsed — not compiled |
-| *args / **kwargs (definitions) | parsed — not compiled |
+| *args / **kwargs (definitions) | `*args` compiled (2026-09-27, Phase 6.1); `**kwargs` parsed — not compiled |
 | Keyword arguments at call sites | partial |
 | f-strings | not in grammar |
 | Type annotations | not in grammar |
@@ -525,7 +525,27 @@ print(set([1, 2, 2, 3]))        # {1, 2, 3}  (requires Phase 1.2)
 
 ## Milestone 6 — Variable Argument Functions
 
-### Phase 6.1 — *args in function definitions (~2 h)
+### Phase 6.1 — *args in function definitions (~2 h) — DONE 2026-09-27
+
+**How it landed.** Not at the call site: the callee is generally not known
+statically. The frontend records each `*args` formal
+(`PycCompiler::star_formals`), `finalize_functions` marks its Fun
+`is_varargs`, and the matcher (`ifa/if1/pattern.cc`) treats such a Fun as
+covered when every FIXED formal has an actual, accepts any number of
+surplus positionals, and in `Matcher::build` routes the call through
+`PycCompiler::rest_wrapper`: a generated function taking exactly the
+call's actuals, which packs the surplus into a tuple (its sym marked
+`Sym::is_rest`) and calls the original. A call whose rest-position actual
+is such a tuple binds directly, so the wrapper's own call is not wrapped
+again, while a user passing an ordinary tuple there still gets `(t,)`.
+Variadic METHODS needed one more piece: dispatch by selector goes through
+per-position tables with no entry past a function's last formal, so the
+variadic functions are offered as function values too. Pinned by
+`tests/star_args.py`; `pyc_lib/struct.py` is now real on top of it.
+
+Not supported: keyword arguments to a `*args` function, `*args` after a
+defaulted parameter, and call-site `f(*seq)` unpacking.
+
 
 **Goal:** Functions collect extra positional arguments into a tuple.
 

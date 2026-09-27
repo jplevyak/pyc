@@ -598,12 +598,31 @@ static void scan_max_tuple_arity(PyDAST *n, int &mx) {
   for (PyDAST *c : n->children) scan_max_tuple_arity(c, mx);
 }
 
+// ROADMAP 6.1: a `*args` parameter holds a tuple no literal in the source
+// spells -- its arity is a CALL's surplus argument count. When the program
+// defines any `*args` function, a call's argument count bounds the tuples
+// it can create, so the unroll must cover the largest call too; otherwise
+// `f(1, "two", 3.0)` printed its 3-tuple through the runtime-index tail and
+// mixed its slot types. Programs without `*args` are unaffected.
+static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args) {
+  if (!n) return;
+  if (n->kind == PY_star_arg) has_star = true;
+  if (n->kind == PY_arglist && n->children.n > max_call_args) max_call_args = n->children.n;
+  for (PyDAST *c : n->children) scan_star_args(c, has_star, max_call_args);
+}
+
 // min_arity: a floor for the unroll count. The REPL can't pre-scan future
 // interactive input, so it passes a generous floor; the batch path passes 0
 // and gets the exact program max.
 void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   int max_arity = min_arity;
   for (PycModule *m : mods) scan_max_tuple_arity(m->pymod, max_arity);
+  {
+    bool has_star = false;
+    int max_call_args = 0;
+    for (PycModule *m : mods) scan_star_args(m->pymod, has_star, max_call_args);
+    if (has_star && max_call_args > max_arity) max_arity = max_call_args;
+  }
   // Generate the two methods at exactly max_arity, wrapped in a throwaway
   // class so the parser yields funcdef nodes (which we move onto `tuple`).
   char *buf = nullptr;

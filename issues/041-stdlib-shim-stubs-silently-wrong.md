@@ -327,3 +327,23 @@ With those fixed, minpng's remaining errors all come from `struct.pack`
 returning the stub's `b""` through a `*args` signature that binds wrong.
 It will not type until Phase 6.1 lands and `struct.pack` is implemented on
 top of it.
+
+## `struct` implemented (2026-09-27)
+
+With `*args` compiled (ROADMAP 6.1), `pyc_lib/struct.py` is a real
+implementation: `pack`, `unpack`, `unpack_from` and `calcsize` for the
+integer codes (`x b B h H i I l L q Q`), byte order `@ = < > !`, and repeat
+counts. Unsupported codes (floats, `s`/`p`, `?`) raise instead of packing
+garbage. `tests/struct_pack_unpack.py` matches CPython on both backends.
+`unpack` returns `tuple(values)`, which is a list in pyc
+([issues/110](110-tuple-from-iterable-returns-a-list.md)); destructuring
+and indexing are unaffected.
+
+**minpng still does not type, for a narrower reason.** It calls
+`struct.pack('<BHH', bool(last), n, 0xffff ^ n)`, so the rest tuple is
+`(bool, int, int)`, and `pack` indexes it with a runtime index. A record
+whose slots are a 1-byte bool and 8-byte ints, read at a runtime index,
+has no representation, and the index violation says so. Widening the
+element to `int` would pack correctly but print `(1, ...)` for `True`,
+a CPython deviation, so it is not done here. That is the remaining
+question for minpng.

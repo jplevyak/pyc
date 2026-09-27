@@ -50,6 +50,8 @@ extern void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v);
 extern char *_CG_strcat(const char *a, const char *b);
 extern char *_CG_string_join(const char *sep, _CG_list parts);
 extern char *_CG_char_from_string(void *s, int i);
+extern int64 _CG_int_from_string(void *s, int i);
+extern char *_CG_byte_from_int(int64 v);
 extern int32 _CG_norm_idx(int32 idx, int32 len);
 extern char *_CG_string_getslice(const char *s, int32 l, int32 h, int32 step);
 extern void *_CG_prim_tuple_list_internal(unsigned int s, unsigned int n);
@@ -180,17 +182,34 @@ void *_CG_list_add(void *l1, void *l2, int64 size1, int64 size2) {
   return x;
 }
 
+// Mirrors pyc_c_runtime.h's _CG_list_resize_internal (issues/044), which
+// this LLVM-backend copy had drifted from twice:
+//   - it reallocated to EXACTLY new_len on every call, so list.append was
+//     O(n) and building a list O(n^2) -- shedskin_examples/sha's LLVM
+//     binary spent minutes in the collector growing a 143k-element list
+//     one slot at a time, where the C backend (amortized) takes 17 s;
+//   - it copied `s1` elements even when SHRINKING, writing past the end of
+//     the new buffer -- the bug the header fixed with `y * size1`.
 void *_CG_list_resize(void *l1, int64 size1, int64 new_len) {
   unsigned int s1 = _PYC_list_len(l1);
+  unsigned int cap = l1 ? _CG_LIST_HDR_TOTAL(l1) : 0;
   size_t sz = (size_t)size1;
-  void *x = new_len ? GC_MALLOC(sz * (size_t)new_len) : (void *)0;
+  if (new_len && (unsigned int)new_len <= cap && _CG_LIST_HDR_PTR(l1)) {
+    // Already big enough: move the length, zero anything newly exposed.
+    if ((unsigned int)new_len > s1)
+      memset(((char *)_CG_LIST_HDR_PTR(l1)) + (size_t)s1 * sz, 0, (size_t)((unsigned int)new_len - s1) * sz);
+    _CG_LIST_HDR_LEN(l1) = (unsigned int)new_len;
+    return l1;
+  }
+  unsigned int newcap = cap < 4 ? 4 : cap * 2;
+  if (newcap < (unsigned int)new_len) newcap = (unsigned int)new_len;
+  void *x = new_len ? GC_MALLOC(sz * (size_t)newcap) : (void *)0;
   unsigned int y = s1 < (unsigned int)new_len ? s1 : (unsigned int)new_len;
-  if (y && x) memcpy(x, _CG_LIST_HDR_PTR(l1), (size_t)s1 * sz);
+  if (y && x) memcpy(x, _CG_LIST_HDR_PTR(l1), (size_t)y * sz);
   if (x && (unsigned int)new_len > s1)
-    memset(((char *)x) + (size_t)s1 * sz, 0,
-           (size_t)((unsigned int)new_len - s1) * sz);
+    memset(((char *)x) + (size_t)s1 * sz, 0, (size_t)((unsigned int)new_len - s1) * sz);
   _CG_LIST_HDR_LEN(l1) = (unsigned int)new_len;
-  _CG_LIST_HDR_TOTAL(l1) = (unsigned int)new_len;
+  _CG_LIST_HDR_TOTAL(l1) = new_len ? newcap : 0;
   _CG_LIST_HDR_PTR(l1) = x;
   return l1;
 }

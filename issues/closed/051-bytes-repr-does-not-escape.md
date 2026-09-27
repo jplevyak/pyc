@@ -1,7 +1,7 @@
 # 051 — `repr(bytes)` does not escape non-printable bytes
 
-**Status:** open, 2026-08-15. Found while pinning the semantics of
-`bytes(list)` for [050](050-pyc-string-builders-are-quadratic.md). Repro
+**Status:** CLOSED 2026-09-27 -- `bytes.__repr__` now escapes as CPython does; see "Fixed" at the end. Opened 2026-08-15. Found while pinning the semantics of
+`bytes(list)` for [050](../050-pyc-string-builders-are-quadratic.md). Repro
 landed as `tests/bytes_repr_escapes.py` with a `.known_issue` tag.
 
 ## Symptom
@@ -45,7 +45,7 @@ until you know to look for this.
 
 ## 2026-09-03: `repr(str)` has it too, not just `repr(bytes)`
 
-Found alongside [124](124-crlf-source-not-newline-normalized.md). The
+Found alongside [124](../124-crlf-source-not-newline-normalized.md). The
 title says `bytes`, but plain `str` is identical:
 
 ```python
@@ -66,3 +66,17 @@ currently pins only the `bytes` half.
 Worth noting it is invisible in most corpus programs because `repr` of a
 control-character-bearing string is rare, but it makes `repr` unusable
 for the thing it exists for: an unambiguous rendering.
+
+## Fixed (2026-09-27)
+
+`bytes.__repr__` (`__pyc__/01b_bytes.py`) now follows CPython: printable
+ASCII as-is; `\t` `\n` `\r` and the backslash escaped; everything else as
+`\xNN` in lowercase; and `"` as the quote when the value contains `'` and
+no `"`. `tests/bytes_repr_escapes.py` passes on both backends and its
+`.known_issue` is removed.
+
+Found alongside it, and fixed: the C backend emitted a non-printable byte
+in a string/bytes constant as `\xNN`, and a C hex escape consumes EVERY
+following hex digit, so `b'\x12\x34'` became `"\x124"` ("hex escape
+sequence out of range"; a silent wrong byte whenever the value fits).
+`escape_string` (ifa/common/misc.cc) now emits three-digit octal.

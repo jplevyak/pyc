@@ -154,6 +154,10 @@ class PycCompiler : public PycCallbacks {
   // the raw handle: `for x in count(n - 1)` looped over an int
   // (shedskin_examples/sudoku5's recursive `solve`).
   Map<Sym *, Sym *> gen_def_wrapper;
+  // The `*args` formal of every def that has one (ROADMAP 6.1).
+  // finalize_function marks its Fun `is_varargs`; the matcher then routes
+  // each call through rest_wrapper.
+  Vec<Sym *> star_formals;
 
   // issue 011 (exception handling, option C):
   Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)
@@ -177,6 +181,7 @@ class PycCompiler : public PycCallbacks {
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
+  Fun *rest_wrapper(Fun *, int nactuals);
   Fun *order_wrapper(Fun *, Map<MPosition *, MPosition *> &substitutions);
   bool reanalyze(Vec<ATypeViolation *> &type_violations);
   bool c_codegen_pre_file(FILE *);

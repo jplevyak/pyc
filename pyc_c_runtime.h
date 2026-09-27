@@ -1254,6 +1254,16 @@ inline char *_CG_char_from_string(void *s, int i) {
 // registration, ifa/if1/ast.cc), but CPython's `bytes[i]` yields a plain
 // int, not a length-1 bytes object -- so no allocation here, unlike the
 // str case (cheaper too).
+// A one-byte `bytes` from an int (low 8 bits). struct.pack builds its
+// result from these instead of `bytes(list)`, whose conversion's internal
+// str lists merged with the int list on the start-merged list contour and
+// broke shedskin_examples/sha.
+inline char *_CG_byte_from_int(int64 v) {
+  char *x = _CG_string_alloc(1);
+  x[0] = (char)(v & 255);
+  return x;
+}
+
 inline int64 _CG_int_from_string(void *s, int i) { return (int64)(unsigned char)((char *)s)[i]; }
 
 // `str`/`bytes` share one C representation (both are `_CG_string`-shaped
@@ -1807,7 +1817,13 @@ inline void *_CG_prim_copy_any(void *p) {
 #define _CG_prim_add(_a, _op, _b) ((_a) + (_b))
 #define _CG_prim_subtract(_a, _op, _b) ((_a) - (_b))
 #define _CG_prim_rsh(_a, _op, _b) ((_a) >> (_b))
-#define _CG_prim_lsh(_a, _op, _b) ((_a) << (_b))
+// Widen the left operand: when it is a C literal (`7 << 40`, emitted as
+// `(7) << (40)`) it is a 32-bit `int`, so the shift is undefined past bit
+// 31 -- it printed -3 on one run and 104249815179696 on the next, where
+// Python gives 7696581394432. Shifts are the one integer operator FA does
+// not constant-fold, so they are the one that reached C with literal
+// operands. Python ints are int64 here.
+#define _CG_prim_lsh(_a, _op, _b) (((int64)(_a)) << (_b))
 #define _CG_prim_mult(_a, _op, _b) ((_a) * (_b))
 // found while porting issues/041's colorsys shim: raw C `%` is invalid
 // for floating operands (needs fmod), AND -- separately, pre-existing,

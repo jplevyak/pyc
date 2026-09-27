@@ -119,7 +119,7 @@ to minimise.
   (tonyjpegdecoder completes 20 iterations, BMP byte-identical to
   CPython). `join`, `lower`, `upper`, `replace` and `str.__mul__` are
   still quadratic. `tests/bytes_from_list.py` pins the semantics.
-- [051-bytes-repr-does-not-escape.md](051-bytes-repr-does-not-escape.md)
+- [051-bytes-repr-does-not-escape.md](closed/051-bytes-repr-does-not-escape.md) (CLOSED 2026-09-27)
   — `repr(bytes)` emits raw bytes instead of `\xNN`, so output containing
   binary data diverges from CPython (and diffs report "Binary files
   differ"). `tests/bytes_repr_escapes.py`.

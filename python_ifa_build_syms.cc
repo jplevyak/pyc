@@ -1001,6 +1001,7 @@ void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCo
     if (c->kind == PY_star_arg || c->kind == PY_dstar_arg) {
       Sym *s = getAST(c->children[0], ctx)->sym;
       if (s) has.add(s);
+      if (s && c->kind == PY_star_arg) ctx.star_formals.set_add(s);
     } else if (c->kind == PY_arg_default) {
       Sym *s = getAST(c->children[0], ctx)->sym;
       if (s) has.add(s);
