@@ -297,3 +297,33 @@ signature additionally needs `*args` in a function definition, which
 a minimal repro: any call through a `*args`-taking function currently
 fails with "matching function not found" at runtime). Revisit both
 once either lands.
+
+## `struct` re-assessed for minpng (2026-09-27): one blocker left, `*args`
+
+`shedskin_examples/minpng` fails to type, and working through it gives the
+current state of `struct`'s two blockers:
+
+- **`bytes([...])` from computed ints: RESOLVED.** `bytes([65, 66])`
+  compiles and runs (`tests/bytes_join.py` builds pieces this way).
+- **`*args` in a definition: STILL OPEN, and it binds silently wrong.**
+  `def f(fmt, *args): return len(args)` called as `f(">I", 5)` gives
+  `args` the type `int64`: the first surplus argument, not a tuple of the
+  surplus. The frontend never sets `Sym::is_rest` on a `*args` formal, so
+  FA's rest-tuple support (`make_rest_tuple`, used by destructuring) never
+  applies to calls. This is ROADMAP Phase 6.1, and `struct.pack`'s real
+  signature needs it.
+
+minpng hit two other gaps first, both fixed with this note. `bytes` had
+no `join`. When it was added, a list whose only reader is a
+`__pyc_c_call__` helper had its element stores removed by dead-code
+elimination, which cannot see a C helper read the contents, so the join
+produced empty pieces. `dead.cc` now keeps an opaque primitive's argument
+contents live. The diagnostic that hid what was going on also printed a
+constant's class as `'<anonymous>'`: `b"".join` said "unresolved member
+'join' of class '<anonymous>'", and `len(args)` said the same thing about
+`int64`. It now names the class.
+
+With those fixed, minpng's remaining errors all come from `struct.pack`
+returning the stub's `b""` through a `*args` signature that binds wrong.
+It will not type until Phase 6.1 lands and `struct.pack` is implemented on
+top of it.

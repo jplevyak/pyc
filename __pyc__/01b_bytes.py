@@ -69,6 +69,14 @@ class bytes:
     return __pyc_c_call__(bool, "_CG_str_gt", bytes, self, bytes, x)
   def __ge__(self, x):
     return __pyc_c_call__(bool, "_CG_str_ge", bytes, self, bytes, x)
+  def join(self, seq):
+    # minpng's `b''.join(img)`: bytes had no join at all (the member was
+    # unresolved). Collect first -- `seq` may be a generator -- then join
+    # in one allocation (_CG_string_join).
+    parts = []
+    for x in seq:
+      parts.append(x)
+    return __pyc_c_call__(bytes, "_CG_string_join", bytes, self, list, parts)
   def decode(self, encoding="utf-8"):
     # ASCII/latin-1-safe byte-for-byte reinterpretation of the same
     # underlying buffer as str -- not real codec-aware decoding (no

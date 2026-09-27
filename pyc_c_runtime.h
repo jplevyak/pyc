@@ -1426,6 +1426,29 @@ typedef struct _CG_list_struct {
 #define _CG_ptr_to_list(_l) ((_CG_list)(((char *)(_l)) + SIZEOF_LIST_HEADER))
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
 
+// `sep.join(parts)` for str and bytes, in ONE allocation: `parts` is a
+// list of strings/bytes (pointer elements). The __pyc__ join used to
+// concatenate pairwise, O(n^2) in the result length; minpng joins 1.9
+// million 3-byte pieces.
+inline char *_CG_string_join(const char *sep, _CG_list parts) {
+  uint32 n = parts ? _CG_list_len(parts) : 0;
+  // Elements live at the header's `ptr`, which moves when the list grows.
+  char **d = n ? (char **)_CG_list_ptr(parts) : 0;
+  size_t ls = _CG_string_len(sep), tot = 0;
+  for (uint32 i = 0; i < n; i++) tot += _CG_string_len(d[i]);
+  if (n > 1) tot += ls * (n - 1);
+  char *x = _CG_string_alloc(tot);
+  char *o = x;
+  for (uint32 i = 0; i < n; i++) {
+    if (i && ls) { memcpy(o, sep, ls); o += ls; }
+    size_t l = _CG_string_len(d[i]);
+    memcpy(o, d[i], l);
+    o += l;
+  }
+  return x;
+}
+
+
 
 // issues/044: unlike _CG_list_resize_internal (backing list.append(),
 // which correctly mutates in place -- CPython's append() does too),
