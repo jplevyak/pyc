@@ -624,6 +624,18 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   // `n >= k` guards already rely on, which is what keeps the non-constant
   // `self[i]` out of a record contour where it would be invalid. For a
   // LIST-layout tuple `n` is a runtime value and the tail does the work.
+  //
+  // Every guard on `n` / `m` is the operator PRIMITIVE, inline, not
+  // `n >= k` (a call to int.__ge__). The fold has to happen in THIS
+  // contour, where `n` is already a constant per receiver arity. Through
+  // int.__ge__ it needed that callee split per constant, and since
+  // ifa/151 only a demand splits it: sudoku5 compares 2-tuples and
+  // 3-tuples, the shared __ge__ answered `bool` for both, every
+  // `self[2]` on a 2-tuple and the runtime tail went live, and the
+  // unions they produced kept TYPE_CONFLUENCE acting on all 50 passes,
+  // so CONST_DEMAND -- the rung that could have split __ge__ -- never
+  // ran (ifa/157's cascade). A fold is not a demand; don't make one
+  // depend on a split.
   fputs("class __pyc_tuple_cmp__:\n", f);
   fputs("  def __eq__(self, t):\n", f);
   // ifa/issues/090 repro 2: the operand may be None -- `move = None`
@@ -637,10 +649,10 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   // container stubs there inject None into element types program-wide.
   fputs("    if t is None: return False\n", f);
   fputs("    n = len(self)\n", f);
-  fputs("    if n != len(t): return False\n", f);
+  fputs("    if __pyc_operator__(n, __pyc_symbol__(\"!=\"), len(t)): return False\n", f);
   for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if n >= %d and not (self[%d] == t[%d]): return False\n", i + 1, i, i);
-  fprintf(f, "    if n > %d:\n", max_arity);
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and not (self[%d] == t[%d]): return False\n", i + 1, i, i);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
   fprintf(f, "      for i in range(%d, n):\n", max_arity);
   fputs("        if not (self[i] == t[i]): return False\n", f);
   fputs("    return True\n", f);
@@ -649,11 +661,11 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   fputs("    n = len(self)\n", f);
   fputs("    m = len(t)\n", f);
   for (int i = 0; i < max_arity; i++) {
-    fprintf(f, "    if n >= %d and m >= %d:\n", i + 1, i + 1);
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and __pyc_operator__(m, __pyc_symbol__(\">=\"), %d):\n", i + 1, i + 1);
     fprintf(f, "      if self[%d] < t[%d]: return True\n", i, i);
     fprintf(f, "      if t[%d] < self[%d]: return False\n", i, i);
   }
-  fprintf(f, "    if n > %d and m > %d:\n", max_arity, max_arity);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d) and __pyc_operator__(m, __pyc_symbol__(\">\"), %d):\n", max_arity, max_arity);
   fprintf(f, "      for i in range(%d, n):\n", max_arity);
   fputs("        if i >= m: return False\n", f);
   fputs("        if self[i] < t[i]: return True\n", f);
@@ -676,23 +688,23 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   fputs("    n = len(self)\n", f);
   fputs("    x = \"(\"\n", f);
   for (int i = 0; i < max_arity; i++) {
-    fprintf(f, "    if n >= %d:\n", i + 1);
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d):\n", i + 1);
     if (i) fputs("      x += \", \"\n", f);
     fprintf(f, "      x += self[%d].__repr__()\n", i);
   }
-  fprintf(f, "    if n > %d:\n", max_arity);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
   fprintf(f, "      for i in range(%d, n):\n", max_arity);
   fputs("        if i: x += \", \"\n", f);
   fputs("        x += self[i].__repr__()\n", f);
-  fputs("    if n == 1: x += \",\"\n", f);
+  fputs("    if __pyc_operator__(n, __pyc_symbol__(\"==\"), 1): x += \",\"\n", f);
   fputs("    x += \")\"\n", f);
   fputs("    return x\n", f);
   fputs("  def __hash__(self):\n", f);
   fputs("    h = 0\n", f);
   fputs("    n = len(self)\n", f);
   for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if n >= %d: h = h * 1000003 + self[%d].__hash__()\n", i + 1, i);
-  fprintf(f, "    if n > %d:\n", max_arity);
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d): h = h * 1000003 + self[%d].__hash__()\n", i + 1, i);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
   fprintf(f, "      for i in range(%d, n):\n", max_arity);
   fputs("        h = h * 1000003 + self[i].__hash__()\n", f);
   fputs("    return h\n", f);

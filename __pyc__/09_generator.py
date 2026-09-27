@@ -125,6 +125,15 @@ class __pyc_generator__:
       if self.__next__() == item:
         return True
     return False
+  def __pyc_tolist__(self):
+    # `list(gen())`. The list() intercept dispatches __pyc_tolist__
+    # directly on its argument, and this class does not inherit
+    # object's fallback (00_runtime.py), so `list(g(3))` was an
+    # unresolved member. Consumes, as CPython's list() does.
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   def send(self, value):
     self.has_next = __pyc_c_call__(bool, "_CG_generator_send", int, self.handle, int, value)
     self.primed = False

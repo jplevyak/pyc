@@ -161,6 +161,24 @@ class dict:
         return None
       i += 1
     return None
+  def pop(self, key):
+    # shedskin_examples/sudoku5 (`cols.append(X.pop(j))`) needed this; the
+    # class had none, so the call was unresolved. Removes and returns the
+    # value, raising KeyError on a missing key as CPython does -- the
+    # same contract str.index keeps with ValueError. The message is
+    # repr(key) because that is what CPython's str(KeyError(key)) prints,
+    # and pyc's BaseException.args is a str. The two-argument
+    # `pop(key, default)` form is not provided.
+    i = 0
+    while i < self._len:
+      if self._keys[i] == key:
+        v = self._vals[i]
+        self._keys.__delitem__(i)
+        self._vals.__delitem__(i)
+        self._len = self._len - 1
+        return v
+      i += 1
+    raise KeyError(repr(key))
   def setdefault(self, key, default=None):
     i = 0
     while i < self._len:

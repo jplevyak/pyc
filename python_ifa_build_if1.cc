@@ -2949,6 +2949,17 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         ast->sym->self = new_sym(ast);
         ast->sym->self->must_implement_and_specialize(closure_cls);
       }
+      // A plain-def generator's wrapper exists before its body is walked,
+      // so a recursive self-reference in the body can name it (see
+      // gen_def_wrapper). Same conditions as the branch below that builds
+      // it: a generator, not a method (those have gen_method_wrapper), not
+      // a capturing closure, and with a public name distinct from the body.
+      if (ast->sym->is_generator && !closure_cls && ast->rval && ast->rval != ast->sym &&
+          !ctx.gen_method_wrapper.get(ast->sym) && !ctx.gen_def_wrapper.get(ast->sym)) {
+        Sym *wrapper = new_fun(ast);
+        wrapper->nesting_depth = ast->sym->nesting_depth;
+        ctx.gen_def_wrapper.put(ast->sym, wrapper);
+      }
       // Process default exprs (pre-scope in build_syms)
       PyDAST *params = n->children[1];
       PyDAST *varargsl = (params->children.n > 0) ? params->children[0] : nullptr;
@@ -3011,8 +3022,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // further. See build_generator_wrapper for what it builds and
         // why. has[0] is the wrapper itself (the value-carried
         // convention): call sites read the variable and call the value.
-        Sym *wrapper = new_fun(ast);
-        wrapper->nesting_depth = ast->sym->nesting_depth;
+        Sym *wrapper = ctx.gen_def_wrapper.get(ast->sym);
+        if (!wrapper) {
+          wrapper = new_fun(ast);
+          wrapper->nesting_depth = ast->sym->nesting_depth;
+        }
         build_generator_wrapper(wrapper, ast->sym, wrapper, ast, ctx);
         if1_move(if1, &ast->code, wrapper, ast->rval, ast);
       } else if (!fd_is_method && ast->rval != ast->sym) {
@@ -4323,7 +4337,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // body is exactly `self` (fn->self, set before the body walk)
         // -- so a recursive `count(n-1)` becomes a call on self.
         Sym *ifn = ctx.def_internal_fn.get(ast->sym);
-        ast->rval = ifn->self ? ifn->self : ifn;
+        // A generator's internal Sym is its coroutine BODY, which returns the
+        // raw handle; a recursive call must get a generator object, i.e. go
+        // through the wrapper the public name is bound to (gen_def_wrapper).
+        Sym *gw = ifn->self ? nullptr : ctx.gen_def_wrapper.get(ifn);
+        ast->rval = ifn->self ? ifn->self : (gw ? gw : ifn);
       } else if (load && is_module_data_var(ast->sym)) {
         // ifa/issues/031 step 2: treat a module-level data variable
         // as a memory cell, not a register -- each *read* loads the

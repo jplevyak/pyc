@@ -68,17 +68,14 @@ class range:
     self.j = __pyc_clone_constants__(aj)
     self.s = __pyc_clone_constants__(ak)
     return self
-  def __pyc_more__(self):
-    if self.s >= 0:
-      return self.i < self.j
-    else:
-      return self.i > self.j
   def __iter__(this):
-    return this
-  def __next__(self):
-    x = self.i
-    self.i += self.s
-    return x
+    # A FRESH iterator, as CPython's range_iterator: a range is
+    # re-iterable. range used to be its own iterator (__iter__ returned
+    # `this` and __next__ advanced self.i), so a range iterated twice
+    # was empty the second time -- itertools.product(range(3),
+    # range(3)) walks B once per element of A and yielded 3 pairs, not
+    # 9, with no diagnostic (sudoku5).
+    return __range_iter__(this.i, this.j, this.s)
   def __len__(self):
     # issue 025 R1 "missing sequence ops": reversed(range(n)) needs
     # len()+__getitem__ on range (reversed() is index-based); range
@@ -111,12 +108,9 @@ class range:
     # ARITHMETIC, not a scan, for two independent reasons:
     #   1. It is what CPython does -- range.__contains__ is O(1) for an
     #      int, which is why `10**9 - 1 in range(10**9)` returns at once.
-    #   2. pyc's range IS its own iterator (__iter__ returns `this` and
-    #      __next__ mutates self.i), so a consuming loop would leave the
-    #      range exhausted. `r = range(10); x in r; for i in r:` would
-    #      silently iterate nothing. CPython's range is re-iterable; this
-    #      deviation is pre-existing, and a scan here would turn it into a
-    #      wrong answer instead of just a missing method.
+    #   2. It allocates nothing. (range used to be its own iterator, so
+    #      a scan here would also have exhausted it; __range_iter__ has
+    #      since fixed that.)
     #
     # The modulo is written over two NON-NEGATIVE operands rather than as
     # `(x - self.i) % self.s`, which for a negative step relies on Python's
@@ -133,9 +127,33 @@ class range:
     # list(range(...)) -- see the list() intercept in
     # python_ifa_build_if1.cc (issue 025).
     r = []
-    while self.__pyc_more__():
-      r.append(self.__next__())
+    it = self.__iter__()
+    while it.__pyc_more__():
+      r.append(it.__next__())
     return r
+
+class __range_iter__:
+  i = 0
+  j = 0
+  s = 1
+  def __init__(self, ai, aj, ak):
+    # Same annotation as range's ctor, for the same reason: the fold of
+    # `self.i < self.j` per constant (issue 040) happens HERE now, in
+    # the iterator, so its fields must carry range's constants through.
+    self.i = __pyc_clone_constants__(ai)
+    self.j = __pyc_clone_constants__(aj)
+    self.s = __pyc_clone_constants__(ak)
+  def __iter__(self):
+    return self
+  def __pyc_more__(self):
+    if self.s >= 0:
+      return self.i < self.j
+    else:
+      return self.i > self.j
+  def __next__(self):
+    x = self.i
+    self.i += self.s
+    return x
 
 def len(x):
   return x.__len__()

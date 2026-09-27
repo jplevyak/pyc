@@ -146,6 +146,15 @@ class PycCompiler : public PycCallbacks {
   // and needs no cross-pass handoff.
   Map<Sym *, Sym *> gen_method_wrapper;
 
+  // Per plain-def GENERATOR's coroutine-body Fun, its __pyc_generator__
+  // wrapper Fun -- created BEFORE the body is walked, so a recursive
+  // reference to the generator's own name inside its body (which
+  // def_internal_fn redirects to the internal Sym) can be pointed at the
+  // wrapper instead. The internal Sym is the coroutine body, which returns
+  // the raw handle: `for x in count(n - 1)` looped over an int
+  // (shedskin_examples/sudoku5's recursive `solve`).
+  Map<Sym *, Sym *> gen_def_wrapper;
+
   // issue 011 (exception handling, option C):
   Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)
   Vec<Sym *> handler_exc;      // innermost handler's saved exception temp (bare re-raise)
