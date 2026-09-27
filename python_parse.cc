@@ -32,16 +32,27 @@ static D_Parser *make_python_parser(const char *filename, const char *buf, int l
 // exactly this separator when it concatenates the builtin files; this
 // does the same for a single file.
 //
-// buf_read's allocation is len+2 with both trailing bytes NUL (terminator
-// + sentinel), so there is no room to write the newline in place -- copy.
-static char *ensure_trailing_newline(char *buf, int *len) {
-  if (*len > 0 && buf[*len - 1] == '\n') return buf;
-  char *copy = (char *)MALLOC(*len + 3);
+// A LEADING sentinel too. The grammar's indent actions (python.g's
+// py_node_indent / py_header_indent) find a token's column by scanning
+// BACKWARD from it over spaces and tabs to the previous '\n', with no lower
+// bound. For a token on the first line, `s - 1` is before the buffer, and
+// the scan reads whatever the allocator placed there -- if that happens to
+// be spaces or tabs it keeps going, into an unmapped page. That was an
+// intermittent pyc SIGSEGV (tonyjpegdecoder in two corpus sweeps, ~1 in 50
+// compiles under load), caught with a backtrace in
+// inject_tuple_methods -> dparse_python_buf_to_ast -> py_node_indent.
+// Every buffer handed to dparse now has a '\n' immediately before it, so
+// the scan always stops inside our own allocation. The returned pointer is
+// interior to the allocation, which the GC keeps alive.
+static char *prepare_parse_buffer(const char *buf, int *len) {
+  bool nl = *len > 0 && buf[*len - 1] == '\n';
+  char *mem = (char *)MALLOC(*len + 4);
+  mem[0] = '\n';
+  char *copy = mem + 1;
   memcpy(copy, buf, *len);
-  copy[*len] = '\n';
+  if (!nl) copy[(*len)++] = '\n';
+  copy[*len] = 0;
   copy[*len + 1] = 0;
-  copy[*len + 2] = 0;
-  (*len)++;
   return copy;
 }
 
@@ -58,7 +69,7 @@ int dparse_python_file(const char *filename) {
     fprintf(stderr, "dparse: unable to read '%s'\n", filename);
     return -1;
   }
-  buf = ensure_trailing_newline(buf, &len);
+  buf = prepare_parse_buffer(buf, &len);
   D_Parser *p = make_python_parser(filename, buf, len);
   D_ParseNode *pn = dparse(p, buf, len);
   int ok = pn && !p->syntax_errors;
@@ -71,7 +82,7 @@ int dparse_python_file(const char *filename) {
 
 
 static PyDAST *dparse_buf_to_ast_impl(const char *label, char *buf, int len) {
-  buf = ensure_trailing_newline(buf, &len);
+  buf = prepare_parse_buffer(buf, &len);
   D_Parser *p = make_python_parser(label, buf, len);
   dparse(p, buf, len);
   PythonGlobals *pg = (PythonGlobals *)p->initial_globals;
@@ -133,7 +144,10 @@ PyDAST *dparse_builtin_dir(const char *dirname) {
   }
   if (!total) return nullptr;
   // Allocate GC-managed buffer (must outlive the AST since nodes reference it)
-  char *buf = (char *)MALLOC(total + 2);
+  // +1 leading '\n' sentinel: see prepare_parse_buffer.
+  char *mem = (char *)MALLOC(total + 3);
+  mem[0] = '\n';
+  char *buf = mem + 1;
   int pos = 0;
   for (int i = 0; i < file_bufs.n; i++) {
     memcpy(buf + pos, file_bufs[i], file_lens[i]);
