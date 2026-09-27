@@ -131,35 +131,107 @@ class dict:
     self._keys = []
     self._vals = []
     self._len = 0
+    self._index = []
+    self._mask = 0
+  # issues/118: a hash index over insertion-ordered storage -- the same
+  # layout as `set` (__pyc__/08_set.py, which explains it): `_keys` /
+  # `_vals` in insertion order, `_index` slot -> position + 1, `_mask`
+  # 0 until the first insert. The probe is written out per method, never
+  # a helper taking `key` (RUNTIME.md): a `_slot(self, key)` helper
+  # merged every dict's key type into one contour and miscompiled
+  # shedskin_examples/loop (issues/118's write-up).
+  def __pyc_rehash__(self):
+    # In place, in the container's OWN `_index` list, never a fresh
+    # `[0] * cap`: that list would be created inside list.__mul__, one
+    # creation point shared with every `[x] * n` in the program (a user's
+    # `[0.0] * n` would make the index int|float), and a second list
+    # creation point per container that separates a populated dict from
+    # an empty one -- exposing the empty one's loop bodies, which FA
+    # cannot yet prove dead (ifa/072; `print({})` next to `print(d)`).
+    n = len(self._index)
+    cap = n
+    if cap < 8:
+      cap = 8
+    while cap < (self._len + 1) * 2 + 1:
+      cap = cap * 2
+    # Resized with the primitive list.append itself uses, whose result is
+    # typed as the receiver's own contour (merge_in). NOT via append():
+    # `self._keys`, `self._vals` and `self._index` are all appended to, so
+    # when their element types coincide (an int-keyed, int-valued dict)
+    # the three calls share one append contour, its return flows back
+    # into all three fields, every list reaches every field, and the
+    # partition that keeps them apart finds one group. And resize, like
+    # append, may REALLOCATE, so its result must be stored.
+    idx = self._index
+    if cap != n:
+      idx = __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), idx, idx),
+                           "_CG_list_resize",
+                           list, idx,
+                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), idx),
+                           int, cap)
+      self._index = idx
+    j = 0
+    while j < cap:
+      idx[j] = 0
+      j += 1
+    m = cap - 1
+    i = 0
+    while i < self._len:
+      h = self._keys[i].__hash__()
+      s = (h ^ (h >> 4) ^ (h >> 11)) & m
+      while idx[s]:
+        s = (s + 1) & m
+      i += 1
+      idx[s] = i
+    self._mask = m
   def __len__(self):
     return self._len
   def __getitem__(self, key):
-    i = 0
-    while i < self._len:
-      if self._keys[i] == key:
-        return self._vals[i]
-      i += 1
+    if self._mask:
+      h = key.__hash__()
+      m = self._mask
+      s = (h ^ (h >> 4) ^ (h >> 11)) & m
+      p = self._index[s]
+      while p:
+        if self._keys[p - 1] == key:
+          return self._vals[p - 1]
+        s = (s + 1) & m
+        p = self._index[s]
     return self._vals[0]
   def __setitem__(self, key, value):
-    i = 0
-    while i < self._len:
-      if self._keys[i] == key:
-        self._vals[i] = value
+    if (self._len + 1) * 2 > self._mask:
+      self.__pyc_rehash__()
+    h = key.__hash__()
+    m = self._mask
+    s = (h ^ (h >> 4) ^ (h >> 11)) & m
+    p = self._index[s]
+    while p:
+      if self._keys[p - 1] == key:
+        self._vals[p - 1] = value
         return self
-      i += 1
+      s = (s + 1) & m
+      p = self._index[s]
     self._keys = self._keys.append(key)
     self._vals = self._vals.append(value)
     self._len = self._len + 1
+    self._index[s] = self._len
     return self
   def __delitem__(self, key):
-    i = 0
-    while i < self._len:
-      if self._keys[i] == key:
-        self._keys.__delitem__(i)
-        self._vals.__delitem__(i)
+    if self._mask == 0:
+      return None
+    h = key.__hash__()
+    m = self._mask
+    s = (h ^ (h >> 4) ^ (h >> 11)) & m
+    p = self._index[s]
+    while p:
+      if self._keys[p - 1] == key:
+        self._keys.__delitem__(p - 1)
+        self._vals.__delitem__(p - 1)
         self._len = self._len - 1
+        self.__pyc_rehash__()
         return None
-      i += 1
+      s = (s + 1) & m
+      p = self._index[s]
     return None
   def pop(self, key):
     # shedskin_examples/sudoku5 (`cols.append(X.pop(j))`) needed this; the
@@ -169,33 +241,51 @@ class dict:
     # repr(key) because that is what CPython's str(KeyError(key)) prints,
     # and pyc's BaseException.args is a str. The two-argument
     # `pop(key, default)` form is not provided.
-    i = 0
-    while i < self._len:
-      if self._keys[i] == key:
-        v = self._vals[i]
-        self._keys.__delitem__(i)
-        self._vals.__delitem__(i)
-        self._len = self._len - 1
-        return v
-      i += 1
+    if self._mask:
+      h = key.__hash__()
+      m = self._mask
+      s = (h ^ (h >> 4) ^ (h >> 11)) & m
+      p = self._index[s]
+      while p:
+        if self._keys[p - 1] == key:
+          v = self._vals[p - 1]
+          self._keys.__delitem__(p - 1)
+          self._vals.__delitem__(p - 1)
+          self._len = self._len - 1
+          self.__pyc_rehash__()
+          return v
+        s = (s + 1) & m
+        p = self._index[s]
     raise KeyError(repr(key))
   def setdefault(self, key, default=None):
-    i = 0
-    while i < self._len:
-      if self._keys[i] == key:
-        return self._vals[i]
-      i += 1
+    if (self._len + 1) * 2 > self._mask:
+      self.__pyc_rehash__()
+    h = key.__hash__()
+    m = self._mask
+    s = (h ^ (h >> 4) ^ (h >> 11)) & m
+    p = self._index[s]
+    while p:
+      if self._keys[p - 1] == key:
+        return self._vals[p - 1]
+      s = (s + 1) & m
+      p = self._index[s]
     self._keys = self._keys.append(key)
     self._vals = self._vals.append(default)
     self._len = self._len + 1
+    self._index[s] = self._len
     return default
 
   def get(self, key, default=None):
-    i = 0
-    while i < self._len:
-      if self._keys[i] == key:
-        return self._vals[i]
-      i += 1
+    if self._mask:
+      h = key.__hash__()
+      m = self._mask
+      s = (h ^ (h >> 4) ^ (h >> 11)) & m
+      p = self._index[s]
+      while p:
+        if self._keys[p - 1] == key:
+          return self._vals[p - 1]
+        s = (s + 1) & m
+        p = self._index[s]
     return default
   def update(self, other):
     if other is None:
@@ -238,11 +328,17 @@ class dict:
   def items(self):
     return __dict_items_iter__(self._keys, self._vals, self._len)
   def __contains__(self, key):
-    i = 0
-    while i < self._len:
-      if self._keys[i] == key:
+    if self._mask == 0:
+      return False
+    h = key.__hash__()
+    m = self._mask
+    s = (h ^ (h >> 4) ^ (h >> 11)) & m
+    p = self._index[s]
+    while p:
+      if self._keys[p - 1] == key:
         return True
-      i += 1
+      s = (s + 1) & m
+      p = self._index[s]
     return False
   def __eq__(self, d):
     if self._len != len(d):

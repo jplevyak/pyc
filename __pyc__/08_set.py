@@ -28,37 +28,126 @@ class __set_iter__:
     return self._items[self._pos - 1]
 
 class set:
+  # issues/118: a hash index over insertion-ordered storage. `_items`
+  # holds the elements in insertion order (iteration, printing and
+  # pop() see that order, as before); `_index` is an open-addressed
+  # table, slot -> position + 1 (0 = empty), sized to a power of two and
+  # kept under half full; `_mask` is its size - 1, and 0 means no index
+  # has been built yet. The linear scan this replaces made every
+  # membership test O(n) and building a set O(n^2).
+  #
+  # The probe is written out in every method that takes an element,
+  # never factored into a helper taking one: a helper's parameter is one
+  # contour shared by every set in the program and merges their element
+  # types (RUNTIME.md, "Do not add a shared helper method to a builtin
+  # container class"). __pyc_rehash__ takes only self, so it merges
+  # nothing the other methods do not.
   def __init__(self):
     # issues/017: see dict.__init__'s comment in __pyc__/07_dict.py --
     # without this, a second set instance constructed after a first one
     # has already been mutated silently aliases the wrong data.
     self._items = []
     self._len = 0
+    self._index = []
+    self._mask = 0
+  def __pyc_rehash__(self):
+    # Rebuild the index for the current `_items`, sized for one more
+    # insert. Also the whole of deletion: removing an element shifts
+    # every later position, so the index is rebuilt rather than patched.
+    #
+    # In place, in the container's OWN `_index` list, never a fresh
+    # `[0] * cap`: that list would be created inside list.__mul__, one
+    # creation point shared with every `[x] * n` in the program (a user's
+    # `[0.0] * n` would make the index int|float), and a second list
+    # creation point per container that separates a populated dict from
+    # an empty one -- exposing the empty one's loop bodies, which FA
+    # cannot yet prove dead (ifa/072; `print({})` next to `print(d)`).
+    n = len(self._index)
+    cap = n
+    if cap < 8:
+      cap = 8
+    while cap < (self._len + 1) * 2 + 1:
+      cap = cap * 2
+    # Resized with the primitive list.append itself uses, whose result is
+    # typed as the receiver's own contour (merge_in). NOT via append():
+    # `self._keys`, `self._vals` and `self._index` are all appended to, so
+    # when their element types coincide (an int-keyed, int-valued dict)
+    # the three calls share one append contour, its return flows back
+    # into all three fields, every list reaches every field, and the
+    # partition that keeps them apart finds one group. And resize, like
+    # append, may REALLOCATE, so its result must be stored.
+    idx = self._index
+    if cap != n:
+      idx = __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), idx, idx),
+                           "_CG_list_resize",
+                           list, idx,
+                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), idx),
+                           int, cap)
+      self._index = idx
+    j = 0
+    while j < cap:
+      idx[j] = 0
+      j += 1
+    m = cap - 1
+    i = 0
+    while i < self._len:
+      h = self._items[i].__hash__()
+      s = (h ^ (h >> 4) ^ (h >> 11)) & m
+      while idx[s]:
+        s = (s + 1) & m
+      i += 1
+      idx[s] = i
+    self._mask = m
   def __len__(self):
     return self._len
   def __contains__(self, item):
-    i = 0
-    while i < self._len:
-      if self._items[i] == item:
+    if self._mask == 0:
+      return False
+    h = item.__hash__()
+    m = self._mask
+    s = (h ^ (h >> 4) ^ (h >> 11)) & m
+    p = self._index[s]
+    while p:
+      if self._items[p - 1] == item:
         return True
-      i += 1
+      s = (s + 1) & m
+      p = self._index[s]
     return False
   def add(self, item):
-    if not self.__contains__(item):
-      self._items = self._items.append(item)
-      self._len = self._len + 1
+    if (self._len + 1) * 2 > self._mask:
+      self.__pyc_rehash__()
+    h = item.__hash__()
+    m = self._mask
+    s = (h ^ (h >> 4) ^ (h >> 11)) & m
+    p = self._index[s]
+    while p:
+      if self._items[p - 1] == item:
+        return self
+      s = (s + 1) & m
+      p = self._index[s]
+    self._items = self._items.append(item)
+    self._len = self._len + 1
+    self._index[s] = self._len
     return self
   def discard(self, item):
-    i = 0
-    while i < self._len:
-      if self._items[i] == item:
-        j = i
-        while j < self._len - 1:
-          self._items[j] = self._items[j + 1]
-          j += 1
+    if self._mask == 0:
+      return self
+    h = item.__hash__()
+    m = self._mask
+    s = (h ^ (h >> 4) ^ (h >> 11)) & m
+    p = self._index[s]
+    while p:
+      if self._items[p - 1] == item:
+        # A real delete. The old shift-down left the last element
+        # duplicated past `_len`, so the next add() appended behind it
+        # and was lost: {1, 2, 3} -> discard(1) -> add(9) gave
+        # `9 in s` False.
+        self._items.__delitem__(p - 1)
         self._len = self._len - 1
+        self.__pyc_rehash__()
         return self
-      i += 1
+      s = (s + 1) & m
+      p = self._index[s]
     return self
   def remove(self, item):
     # Real Python raises KeyError if `item` isn't present; pyc has no
@@ -69,11 +158,15 @@ class set:
     return self.discard(item)
   def pop(self):
     item = self._items[0]
-    self.discard(item)
+    self._items.__delitem__(0)
+    self._len = self._len - 1
+    self.__pyc_rehash__()
     return item
   def clear(self):
     self._items = []
     self._len = 0
+    self._index = []
+    self._mask = 0
     return self
   def __iter__(self):
     return __set_iter__(self._items, self._len)

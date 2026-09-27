@@ -759,6 +759,16 @@ static Sym *emit_make_dict(PycCompiler &ctx, PycAST *ast, Code **code, Sym *dict
   Sym *zero_sym = if1_const(if1, sym_int64, "0", &imm);
   if1_send(if1, code, 5, 1, sym_operator, dict_inst, sym_setter, if1_make_symbol(if1, "_len"), zero_sym, new_sym(ast))->ast = ast;
 
+  // issues/118: the hash index, as dict.__init__ makes it.
+  Sym *index_inst = new_sym(ast);
+  Code *x_send = if1_send1(if1, code, ast);
+  if1_add_send_arg(if1, x_send, sym_primitive);
+  if1_add_send_arg(if1, x_send, sym_make);
+  if1_add_send_arg(if1, x_send, sym_list);
+  if1_add_send_result(if1, x_send, index_inst);
+  if1_send(if1, code, 5, 1, sym_operator, dict_inst, sym_setter, if1_make_symbol(if1, "_index"), index_inst, new_sym(ast))->ast = ast;
+  if1_send(if1, code, 5, 1, sym_operator, dict_inst, sym_setter, if1_make_symbol(if1, "_mask"), zero_sym, new_sym(ast))->ast = ast;
+
   return dict_inst;
 }
 
@@ -779,6 +789,17 @@ static Sym *emit_make_set(PycCompiler &ctx, PycAST *ast, Code **code, Sym *set_c
   imm.v_int64 = 0;
   Sym *zero_sym = if1_const(if1, sym_int64, "0", &imm);
   if1_send(if1, code, 5, 1, sym_operator, set_inst, sym_setter, if1_make_symbol(if1, "_len"), zero_sym, new_sym(ast))->ast = ast;
+
+  // issues/118: the hash index, as set.__init__ makes it -- empty, and
+  // `_mask` 0 meaning "not built yet".
+  Sym *index_inst = new_sym(ast);
+  Code *x_send = if1_send1(if1, code, ast);
+  if1_add_send_arg(if1, x_send, sym_primitive);
+  if1_add_send_arg(if1, x_send, sym_make);
+  if1_add_send_arg(if1, x_send, sym_list);
+  if1_add_send_result(if1, x_send, index_inst);
+  if1_send(if1, code, 5, 1, sym_operator, set_inst, sym_setter, if1_make_symbol(if1, "_index"), index_inst, new_sym(ast))->ast = ast;
+  if1_send(if1, code, 5, 1, sym_operator, set_inst, sym_setter, if1_make_symbol(if1, "_mask"), zero_sym, new_sym(ast))->ast = ast;
 
   return set_inst;
 }

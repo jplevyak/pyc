@@ -47,6 +47,9 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__752544ed+6e3a0c3d` | 2026-09-26 | programs=77 compile_fail=30 run_fail=15 stdout_differs=6 unverifiable=6 with_warnings=1 cs/shapes=2425/667=3.64 pratio=2.43 n=76 |
+| `check__default__752544ed+fc874656` | 2026-09-26 | programs=77 compile_fail=30 run_fail=15 stdout_differs=6 unverifiable=6 with_warnings=1 cs/shapes=2421/663=3.65 pratio=2.43 n=76 |
+| `check__default__752544ed+352cc259` | 2026-09-26 | programs=77 compile_fail=31 run_fail=14 stdout_differs=6 unverifiable=6 with_warnings=1 cs/shapes=2420/663=3.65 pratio=2.43 n=76 |
 | `check__default__3f1d6f2a+be00839a` | 2026-09-26 | programs=77 compile_fail=31 run_fail=15 stdout_differs=6 unverifiable=6 with_warnings=1 cs/shapes=2359/658=3.59 pratio=2.39 n=76 |
 | `check__default__5c7bdd94+a790d1bb` | 2026-09-26 | programs=77 compile_fail=32 run_fail=14 stdout_differs=6 unverifiable=5 with_warnings=1 cs/shapes=2271/639=3.55 pratio=2.38 n=75 |
 | `check__default__5c7bdd94+de0dc2e9` | 2026-09-26 | programs=77 compile_fail=32 run_fail=15 stdout_differs=6 unverifiable=5 with_warnings=1 cs/shapes=2422/639=3.79 pratio=2.53 n=75 |

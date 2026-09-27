@@ -1,6 +1,7 @@
 # 118 — `set` and `dict` are linear scans, so building one is O(n²)
 
-**Status:** open, filed 2026-08-28. Diagnosed and a fix prototyped, then
+**Status:** CLOSED 2026-09-26 -- both containers are hashed; see "Fixed" at the end.
+Filed 2026-08-28. Diagnosed and a fix prototyped, then
 **reverted** — the prototype is correct and fast but costs analysis
 precision, for a reason that is itself the interesting part.
 **Affects:** `__pyc__/08_set.py`, `__pyc__/07_dict.py`.
@@ -65,7 +66,7 @@ It works, and it is as fast as it should be:
 to call `element.__hash__()`. A linear scan only ever uses `==`, which
 pyc tolerates on a value whose type it does not know; a *dispatch* on
 that value is not tolerated. So an EMPTY container — whose element type
-the analysis has nothing to infer from (the [ifa/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)
+the analysis has nothing to infer from (the [ifa/072](../../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)
 family) — now reports `'item' has no type`:
 
 ```
@@ -90,7 +91,7 @@ alone reproduces the failure, so it is the dict, not the set, and not
 
 This is not a drive-by. Hashing needs a container's element type to be
 usable even when the container is empty, which is
-[ifa/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md),
+[ifa/072](../../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md),
 and it needs whatever makes the dict variant miscompile `loop` understood
 first. Either would be worth doing on its own; together they are the
 prerequisite for this.
@@ -107,7 +108,7 @@ description.
 - No new `has no type` warnings anywhere: `set_from_iterable` and
   `list_index_type_mismatch_salvage` stay clean, and `loop` stays at 0.
 - `minmax_3arg.py.check` needs re-blessing whenever `__pyc__` line
-  numbers shift ([issues/111](111-checks-embed-builtin-library-line-numbers.md)).
+  numbers shift ([issues/111](../111-checks-embed-builtin-library-line-numbers.md)).
 
 ## How shedskin handles it — and it renames this issue's blocker
 
@@ -345,7 +346,7 @@ exposed the missing slot.
 So this is not really a dict bug at all. It is a codegen bug --
 a polymorphic dispatch site whose method-slot table is incomplete for
 user-defined classes -- and it is closely related to
-[ifa/110](../ifa/issues/closed/110-override-duplicates-member-slot.md)'s
+[ifa/110](../../ifa/issues/closed/110-override-duplicates-member-slot.md)'s
 family of member-slot problems. Anything else that makes a user class
 reach a polymorphic `__eq__` will hit it without any hashing involved,
 which is worth a reproducer of its own.
@@ -367,8 +368,8 @@ key. So **no `==` receiver in the program is genuinely polymorphic over
 analysis: `dict._keys` is one `list` field on a class shared
 program-wide, so its element type collects from every dict (and, being a
 list, from the program's other lists too). That is
-[ifa/105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)
-and [issues/039](039-list-mul-shared-element-type-cross-contamination.md),
+[ifa/105](../../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)
+and [issues/039](../039-list-mul-shared-element-type-cross-contamination.md),
 the same shared-CreationSet degeneration as everywhere else.
 
 With precise contours `_slot`'s `==` would be monomorphic, codegen would
@@ -435,7 +436,7 @@ measurements of the same list CreationSets on `loop`
 So the union was not pre-existing and it was not `loop`'s: **the helper
 method created it.** `_slot(self, key)` is one more shared generic method
 on a class every program instantiates, and its `key` parameter merges
-every dict's key type into one contour — [ifa/105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)'s
+every dict's key type into one contour — [ifa/105](../../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)'s
 mechanism exactly, introduced by the very code that then tripped over it.
 
 **Inlining the probe fixes the miscompile.** The reduced `loop` now
@@ -544,7 +545,7 @@ for it yet.
 **Way A — do not create the shared helper (inline the probe). DONE, and
 it works.** Measured above: it removes the union and fixes the
 miscompile. The rule is now written up in
-[RUNTIME.md](../RUNTIME.md#do-not-add-a-shared-helper-method-to-a-builtin-container-class),
+[RUNTIME.md](../../RUNTIME.md#do-not-add-a-shared-helper-method-to-a-builtin-container-class),
 since it applies to any future edit of `dict`/`set`/`list`, not just to
 hashing.
 
@@ -623,7 +624,7 @@ answer -- and the bad slot write is gone. Five CI gates green,
 degenerate union that manufactures the bad receiver, fix 1 makes the
 dispatch correct even when a degenerate union exists. Neither is in the
 tree as a *hashed container*, because what still blocks that is
-[ifa/072](../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)
+[ifa/072](../../ifa/issues/072-FA-empty-container-notype-current-mechanism-and-plan.md)
 and only that.
 
 No standalone reproducer for fix 1 exists -- see the section above; a
@@ -632,3 +633,67 @@ takes the slot path. The regression risk is covered by the suite, which
 exercises the polymorphic-dispatch tests (`poly_dispatch_low/high`,
 `method_override_field_offset`, the issue-026 inheritance cases) that this
 code was built for.
+
+
+## Fixed (2026-09-26): the empty-container blocker is gone, and the hashed containers land
+
+Re-derived from the description above, with the probe written out in
+every method that takes a key (no `_slot`, per RUNTIME.md), `set` and
+`dict` are both hashed: insertion-ordered `_items` / `_keys` + `_vals`,
+plus `_index` (open-addressed, slot -> position + 1, kept under half
+full) and `_mask` (0 = not built yet). Deletion is a real
+`list.__delitem__` followed by a rebuild of the index.
+
+**The ifa/072 wall did not reappear.** `set([])`, `dict([])`, `print({})`
+and the six tests that warned under the prototype all compile clean. The
+analysis has moved on underneath: an empty container's loops no longer
+reach a hash dispatch on a bottom-typed element. Nothing here addressed
+it directly.
+
+**One design point was measured, not assumed: rebuild the index IN
+PLACE.** The first version built each new table as `idx = [0] * cap`.
+That list is created inside `list.__mul__`, which gives it a creation
+point shared with every `[x] * n` in the program, and a second list
+creation point per container. The second separated a populated dict from
+an empty literal one, and that exposed the empty one's `__str__` loop,
+which FA cannot prove dead (`i < self._len` over a loop-carried `i`, with
+`int.__lt__` one shared contour since ifa/151). `d = {"a": 1}; print(d);
+print({})` stopped compiling. Growing the container's own `_index` list
+in place keeps every allocation on the container's own creation points,
+and it compiles again.
+
+**Also fixed on the way: `set.discard` lost the next `add`.** The old
+delete shifted elements down without shrinking the list, leaving a stale
+copy past `_len`; the next `append` landed behind it and was invisible.
+`{1, 2, 3}` -> `discard(1)` -> `add(9)` gave `9 in s` False and
+`sorted(s) == [2, 3, 3]`. Pinned by `tests/set_hashed.py`.
+
+Measured:
+
+| | before | after |
+|---|---|---|
+| 20000 set adds + 20000 lookups | 6.00 s | 0.016 s |
+| 20000 dict stores + 20000 lookups | quadratic | 0.013 s |
+| `shedskin_examples/loop` (with `ulimit -s unlimited`) | > 300 s | **52 s**, `Found 76002 loops (including artificial root node)(3800100)` (CPython 64 s) |
+| `shedskin_examples/sudoku5` run | 47 s | 15 s |
+
+`loop` still needs the large stack: at the default 8 MB its ~16000-deep
+DFS segfaults (it calls `sys.setrecursionlimit(100000)`; CPython
+heap-allocates frames). That is the separate limitation recorded above,
+not this issue.
+
+**Found here, fixed separately:**
+[ifa/172](../../ifa/issues/closed/172-FA-two-dicts-with-different-key-types-stay-on-one-creation-set.md).
+At module scope, an int-keyed dict next to an object-keyed dict did not
+compile, with the linear dict as much as the hashed one. The setter walk
+that partitions CreationSets stopped at the folded global loads and never
+reached the allocation sites.
+
+Corpus `-m check` (`sweeps/check__default__752544ed+fc874656.tsv`, against
+`3f1d6f2a+be00839a`): compile failures 31 -> 30, and no verdict regresses.
+`pylife` goes from a run timeout to output byte-identical to CPython.
+`loop` goes from a timeout to the stack segfault above. `othello3` fails to
+compile quickly instead of timing out. `ac_encode` compiles again; that is
+[ifa/171](../../ifa/issues/171-FA-numeric-union-sustains-itself-through-a-shared-contour.md)'s
+layout sensitivity flipping back, not a fix. Its binary and CPython both
+hit the 120 s cap.

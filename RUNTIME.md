@@ -374,6 +374,33 @@ call site. If a helper is genuinely necessary, give it no parameters
 beyond `self` and plain scalars (`_rehash(self, want)` is fine — `want`
 is an `int` from the receiver's own state and merges nothing).
 
+### And do not allocate inside one, or route its fields through a shared method
+
+The same reasoning applies to what a container method CREATES and what
+it CALLS. `dict`/`set` are hashed (issues/118) and grow their `_index`
+table in `__pyc_rehash__`, and two plausible ways of writing that were
+each measured wrong:
+
+- **`idx = [0] * cap`.** That list is created inside `list.__mul__`, one
+  creation point shared with every `[x] * n` in the program. It is also a
+  second list creation point per container, which separated a populated
+  dict from an empty literal one and exposed the empty one's `__str__`
+  loop, which FA cannot prove dead: `print({})` next to `print(d)` stopped
+  compiling.
+- **`self._index = self._index.append(0)`.** `_keys`, `_vals` and
+  `_index` are all appended to. When their element types coincide (an
+  int-keyed, int-valued dict), the three calls share one `append` contour,
+  its return flows back into all three fields, and the partition that
+  keeps the three lists apart finds one group. The dict's `_keys`,
+  `_vals` and `_index` became one list contour.
+
+What works is to resize the container's own list with the primitive
+`append` itself uses (`_CG_list_resize`, typed by `merge_in(idx, idx)`),
+which keeps the result on the receiver's own contour and goes through no
+shared method. Store the result: resize, like `append`, may reallocate.
+Dropping `append`'s result instead passed the C backend and was wrong on
+LLVM.
+
 ## 5. The compat shim (`pyc_compat.py`)
 
 ```python
