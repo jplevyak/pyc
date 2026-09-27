@@ -18,7 +18,13 @@ def sinh(x): return __pyc_c_call__(float, "sinh", float, x)
 def cosh(x): return __pyc_c_call__(float, "cosh", float, x)
 def tanh(x): return __pyc_c_call__(float, "tanh", float, x)
 def exp(x): return __pyc_c_call__(float, "exp", float, x)
-def log(x): return __pyc_c_call__(float, "log", float, x)
+def log(x, base=None):
+    # CPython's optional base (mastermind2's `log(p, 2)`). log(x) and
+    # log(x, b) bind `base` to different types, so each call gets its own
+    # contour and `base is None` folds in both.
+    if base is None:
+        return __pyc_c_call__(float, "log", float, x)
+    return __pyc_c_call__(float, "log", float, x) / __pyc_c_call__(float, "log", float, base)
 def log10(x): return __pyc_c_call__(float, "log10", float, x)
 def log2(x): return __pyc_c_call__(float, "log2", float, x)
 def pow(x, y): return __pyc_c_call__(float, "pow", float, x, float, y)

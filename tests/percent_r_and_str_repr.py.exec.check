@@ -1,0 +1,6 @@
+a=1.50 [1, 2] x n=3
+'q'|5|[1]
+"it's"     7| 100% None
+'ab'    |[3]
+'abc' "it's" 'say "hi"' 'both \' and "' 'a\nb\tc\\d' ''
+['x', "y'z", '\x01'] ('t',) {'k': 'v'} 'héllo'

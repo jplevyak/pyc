@@ -1264,6 +1264,44 @@ inline char *_CG_byte_from_int(int64 v) {
   return x;
 }
 
+// CPython's str repr: quote with ' unless the text contains ' and no ";
+// escape the backslash, \n \r \t and the chosen quote; other control
+// bytes (< 0x20, 0x7f) as \xNN. Bytes >= 0x80 are UTF-8 sequences for
+// printable non-ASCII characters and pass through. str.__repr__ used to be
+// "'" + s + "'" with no escaping at all.
+inline char *_CG_str_repr(const char *s) {
+  size_t n = _CG_string_len(s);
+  int sq = 0, dq = 0;
+  for (size_t i = 0; i < n; i++) {
+    if (s[i] == '\'') sq = 1;
+    else if (s[i] == '"') dq = 1;
+  }
+  char q = (sq && !dq) ? '"' : '\'';
+  size_t m = 2;
+  for (size_t i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c == '\\' || c == '\n' || c == '\r' || c == '\t' || c == (unsigned char)q) m += 2;
+    else if (c < 0x20 || c == 0x7f) m += 4;
+    else m += 1;
+  }
+  char *x = _CG_string_alloc(m);
+  char *o = x;
+  static const char hex[] = "0123456789abcdef";
+  *o++ = q;
+  for (size_t i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c == '\\') { *o++ = '\\'; *o++ = '\\'; }
+    else if (c == '\n') { *o++ = '\\'; *o++ = 'n'; }
+    else if (c == '\r') { *o++ = '\\'; *o++ = 'r'; }
+    else if (c == '\t') { *o++ = '\\'; *o++ = 't'; }
+    else if (c == (unsigned char)q) { *o++ = '\\'; *o++ = q; }
+    else if (c < 0x20 || c == 0x7f) { *o++ = '\\'; *o++ = 'x'; *o++ = hex[c >> 4]; *o++ = hex[c & 15]; }
+    else *o++ = (char)c;
+  }
+  *o++ = q;
+  return x;
+}
+
 inline int64 _CG_int_from_string(void *s, int i) { return (int64)(unsigned char)((char *)s)[i]; }
 
 // `str`/`bytes` share one C representation (both are `_CG_string`-shaped

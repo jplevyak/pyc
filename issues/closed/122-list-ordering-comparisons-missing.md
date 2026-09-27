@@ -1,11 +1,11 @@
 # 122 — `list` has no ordering comparisons (`__lt__`/`__le__`/`__gt__`/`__ge__`)
 
-**Status:** open, filed 2026-08-31.
+**Status:** CLOSED 2026-09-27 -- list has lexicographic ordering; see "Fixed" at the end.
 **Affects:** `__pyc__/04_sequence.py` — `class list` (~line 41) defines
 `__eq__`/`__ne__` but none of the four ordering dunders. `str`, `bytes`,
 `int`/`float` and `tuple` all have them (`01_str.py`, `01b_bytes.py`,
 `02_numeric.py`, `04_sequence.py`'s tuple unroll); `list` is the gap.
-**Found:** surfaced by [ifa/issues/098](../ifa/issues/closed/098-FA-per-pass-reset-scoped-to-reachable-set.md)'s
+**Found:** surfaced by [ifa/issues/098](../../ifa/issues/closed/098-FA-per-pass-reset-scoped-to-reachable-set.md)'s
 second-defect fix, which stopped a total dispatch failure from being
 silently swallowed by `collect_argument_type_violations`. The missing
 methods had been there all along; nothing reported them.
@@ -44,7 +44,7 @@ pass in which dispatch succeeded, so a pass in which dispatch fails
 completely still took the `else` arm, found no analyzed edge to
 inspect, and reported nothing. Fixed 2026-08-31 by testing
 `EntrySet::out_edges` (which IS reset per pass) instead; see
-[ifa/issues/098](../ifa/issues/closed/098-FA-per-pass-reset-scoped-to-reachable-set.md),
+[ifa/issues/098](../../ifa/issues/closed/098-FA-per-pass-reset-scoped-to-reachable-set.md),
 "The second defect's fix".
 
 ## Proposed fix
@@ -88,3 +88,28 @@ elsewhere in this file:
 program that sorts or max/mins tuples whose tail is a list. It is also
 the honest half of ifa/098's remaining symptom: 098 made the failure
 visible, this makes it not fail.
+
+## Fixed (2026-09-27)
+
+`list.__lt__`/`__gt__`/`__le__`/`__ge__` (`__pyc__/04_sequence.py`),
+lexicographic as in CPython: the first unequal element decides, otherwise
+the shorter list is smaller. Each is written out rather than sharing a
+helper that takes the other list (RUNTIME.md). `tests/list_ordering.py`
+flips to PASS on both backends and its `.known_issue` is removed.
+`tests/list_ordering_lexicographic.py` adds empty lists, ties and `sorted`.
+
+It was the first of five defects between `shedskin_examples/mastermind2`
+and CPython's output, and it accounted for all 44 of its compile errors'
+root. The other four, fixed with it:
+- `math.log` had no base argument (`log(p, 2)`).
+- LLVM passed an `int` argument's bits to a C function declared to take a
+  double: `math.sqrt(4)` returned `2.2e-162`, silently. Numeric arguments
+  to `__pyc_c_call__` are now converted to their declared type.
+- `%r` in `%`-formatting reached `vsnprintf`, which printed it literally
+  and consumed no argument, shifting the rest; `str.__repr__` did no
+  escaping or quote selection.
+- `random.sample` did not follow CPython's algorithm, so a seeded run drew
+  a different sequence.
+
+mastermind2 now matches CPython on both backends (C 32 s, LLVM 6 s,
+CPython 33 s).

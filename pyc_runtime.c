@@ -52,6 +52,7 @@ extern char *_CG_string_join(const char *sep, _CG_list parts);
 extern char *_CG_char_from_string(void *s, int i);
 extern int64 _CG_int_from_string(void *s, int i);
 extern char *_CG_byte_from_int(int64 v);
+extern char *_CG_str_repr(const char *s);
 extern int32 _CG_norm_idx(int32 idx, int32 len);
 extern char *_CG_string_getslice(const char *s, int32 l, int32 h, int32 step);
 extern void *_CG_prim_tuple_list_internal(unsigned int s, unsigned int n);

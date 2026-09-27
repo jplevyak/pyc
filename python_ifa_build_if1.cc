@@ -3897,6 +3897,30 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           while (*p && (strchr("-+ #0", *p) || (*p >= '0' && *p <= '9') || *p == '.')) p++;
           if (*p) convs.add(*p);
         }
+        // `%r` / `%a`: C's vsnprintf has no such conversion -- it printed
+        // "%r" literally and consumed NO argument, shifting every later
+        // one (mastermind2's `'mean=%.2f %r  %s n=%d' % (...)` printed a
+        // pointer for n). Pre-convert those arguments with __repr__ like
+        // %s's __str__, and rewrite the spec to %s in the format constant.
+        Sym *fmt_sym = lv->rval;
+        bool has_repr = false;
+        for (char c : convs) if (c == 'r' || c == 'a') has_repr = true;
+        if (has_repr) {
+          cchar *f0 = lv->rval->constant;
+          int flen = lv->rval->imm.v_len > 0 ? lv->rval->imm.v_len : (int)strlen(f0);
+          char *nf = (char *)MALLOC(flen + 1);
+          int j = 0;
+          for (int i = 0; i < flen; i++) {
+            nf[j++] = f0[i];
+            if (f0[i] != '%' || i + 1 >= flen) continue;
+            if (f0[i + 1] == '%') { nf[j++] = f0[++i]; continue; }
+            while (i + 1 < flen && (strchr("-+ #0", f0[i + 1]) || (f0[i + 1] >= '0' && f0[i + 1] <= '9') || f0[i + 1] == '.'))
+              nf[j++] = f0[++i];
+            if (i + 1 < flen && (f0[i + 1] == 'r' || f0[i + 1] == 'a')) { nf[j++] = 's'; i++; }
+          }
+          nf[j] = 0;
+          fmt_sym = make_string(nf);
+        }
         if (convs.n && n->children[1]->kind == PY_tuple && n->children[1]->children.n == convs.n) {
           // Generate the ELEMENTS' code directly (the literal tuple's
           // own make send is never generated, so no dead het-tuple
@@ -3911,6 +3935,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               Sym *sv = new_sym(ast);
               call_method(&ast->code, ast, av, sym___str__, sv, 0);
               argv.add(sv);
+            } else if (convs[i] == 'r' || convs[i] == 'a') {
+              Sym *sv = new_sym(ast);
+              call_method(&ast->code, ast, av, make_symbol("__repr__"), sv, 0);
+              argv.add(sv);
             } else {
               argv.add(av);
             }
@@ -3923,16 +3951,17 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           Sym *targs = new_sym(ast);
           if1_add_send_result(if1, send, targs);
           ast->rval = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), lv->rval, targs, ast->rval)->ast = ast;
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, targs, ast->rval)->ast = ast;
           return 0;
         }
-        if (convs.n == 1 && convs[0] == 's' && n->children[1]->kind != PY_tuple) {
-          // Single non-tuple %s argument.
+        if (convs.n == 1 && (convs[0] == 's' || convs[0] == 'r' || convs[0] == 'a') &&
+            n->children[1]->kind != PY_tuple) {
+          // Single non-tuple %s / %r argument.
           if1_gen(if1, &ast->code, rv->code);
           Sym *sv = new_sym(ast);
-          call_method(&ast->code, ast, rv->rval, sym___str__, sv, 0);
+          call_method(&ast->code, ast, rv->rval, convs[0] == 's' ? sym___str__ : make_symbol("__repr__"), sv, 0);
           ast->rval = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), lv->rval, sv, ast->rval)->ast = ast;
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, sv, ast->rval)->ast = ast;
           return 0;
         }
       }

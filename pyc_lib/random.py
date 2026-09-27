@@ -203,19 +203,35 @@ def triangular(low=0.0, high=1.0, mode=None):
     return lo + (hi - lo) * (u * c) ** 0.5
 
 def sample(population, k):
-    # NOT stream-identical to CPython, which switches between a selection-set
-    # and a pool algorithm on a size heuristic. The draws below come from the
-    # same generator, so a seeded run is deterministic and reproducible, but
-    # the SEQUENCE differs from CPython's. Left as-is deliberately: matching it
-    # exactly needs CPython's setsize branch, and no corpus program depends on
-    # sample()'s order.
-    pool = []
-    for x in population:
-        pool.append(x)
-    n = len(pool)
+    # CPython's algorithm, so a seeded run draws the SAME sequence
+    # (shedskin_examples/mastermind2's strategies depend on it; the old
+    # pool-only version said no corpus program did). Pool-based for a small
+    # population, selection-set otherwise, on CPython's `setsize` heuristic.
+    # `4 ** ceil(log(3k, 4))` is computed exactly as the smallest power of 4
+    # >= 3k: a multiple of 3 is never a power of 4, so the float ceil cannot
+    # land on a boundary.
+    n = len(population)
     result = []
-    for i in range(k):
-        j = _randbelow(n - i)
-        result.append(pool[j])
-        pool[j] = pool[n - i - 1]
+    setsize = 21
+    if k > 5:
+        p4 = 1
+        while p4 < k * 3:
+            p4 = p4 * 4
+        setsize += p4
+    if n <= setsize:
+        pool = []
+        for x in population:
+            pool.append(x)
+        for i in range(k):
+            j = _randbelow(n - i)
+            result.append(pool[j])
+            pool[j] = pool[n - i - 1]
+    else:
+        selected = set()
+        for i in range(k):
+            j = _randbelow(n)
+            while j in selected:
+                j = _randbelow(n)
+            selected.add(j)
+            result.append(population[j])
     return result

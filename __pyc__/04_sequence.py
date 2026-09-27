@@ -239,6 +239,39 @@ class list:
     return True
   def __ne__(self, l):
     return not self.__eq__(l)
+  # Lexicographic ordering, as CPython defines it for lists: the first
+  # unequal element decides, otherwise the shorter list is smaller. list
+  # had only __eq__, so `[1, 2] < [1, 3]` did not type -- nor did a
+  # max()/min() over (score, list) tuples, which falls through to comparing
+  # the lists on a tied score (shedskin_examples/mastermind2, all 44 of its
+  # errors). Written out in each method rather than a shared helper taking
+  # `l` (RUNTIME.md).
+  def __lt__(self, l):
+    n = len(self)
+    m = len(l)
+    i = 0
+    while i < n and i < m:
+      if self[i] < l[i]:
+        return True
+      if l[i] < self[i]:
+        return False
+      i += 1
+    return n < m
+  def __gt__(self, l):
+    n = len(self)
+    m = len(l)
+    i = 0
+    while i < n and i < m:
+      if l[i] < self[i]:
+        return True
+      if self[i] < l[i]:
+        return False
+      i += 1
+    return n > m
+  def __le__(self, l):
+    return not self.__gt__(l)
+  def __ge__(self, l):
+    return not self.__lt__(l)
   def append(self, x):
     l = __pyc_primitive__(__pyc_symbol__("len"), self)
     tmp = __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge_in"), self, self),

@@ -6,7 +6,8 @@ class str:
   def __str__(self):
     return self
   def __repr__(self):
-    return "'" + self + "'"
+    # CPython's quoting and escaping (_CG_str_repr); was "'" + self + "'".
+    return __pyc_c_call__(str, "_CG_str_repr", str, self)
   def __getitem__(self, key):
     return __pyc_primitive__(__pyc_symbol__("index_object"), self, key)
   def __pyc_getslice__(self, i, j, s):
