@@ -188,10 +188,9 @@ class float:
   def __null__(self):
     return False
   def __str__(self):
-    # D.5: library implementation of float → str. _CG_str_from_float
-    # uses %.17g for round-trip precision, then appends ".0" for
-    # whole-number values so CPython's `str(0.0)` == "0.0" parity
-    # is preserved. Replaces emit_prim_to_string's float branch.
+    # D.5: library implementation of float -> str. _CG_str_from_float
+    # is CPython's repr: shortest round-trip digits, ".0" on whole
+    # numbers, scientific outside [1e-4, 1e16).
     return __pyc_c_call__(str, "_CG_str_from_float", float, self)
   def __pyc_to_bool__(self):
     return self != 0.0

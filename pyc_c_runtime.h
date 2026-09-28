@@ -819,30 +819,63 @@ inline char *_CG_str_from_int(int64 x) {
   return s;
 }
 
-// D.5: float → str with the Python ".0" suffix for whole numbers.
-// %.17g preserves round-trip precision but strips trailing zeros;
-// CPython's `str(0.0)` is "0.0" and `str(2.0)` is "2.0", so we
-// scan the formatted output and append ".0" if it has no decimal
-// point or exponent. Mirrors the existing C++-only overload
-// _CG_prim_primitive_to_string(double) in this header but with a
-// unique C-callable name so libpyc_runtime.a can export it.
-inline char *_CG_str_from_float(double d) {
-  char tmp[64];
-  int n = snprintf(tmp, sizeof(tmp), "%.17g", d);
-  if (n < 0) n = 0;
-  if ((size_t)n >= sizeof(tmp)) n = sizeof(tmp) - 1;
-  int has_dot_or_exp = 0;
-  for (int i = 0; i < n; i++) {
-    char c = tmp[i];
-    if (c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'i') {
-      has_dot_or_exp = 1;
-      break;
+// CPython's float repr (and str, which is the same since 3.2): the
+// SHORTEST decimal string that round-trips to the same double, written
+// fixed-point when the decimal exponent is in [-4, 16) and scientific
+// otherwise, with ".0" on a whole number and at least two exponent
+// digits. `%.17g` -- what this used to be -- round-trips too but is not
+// shortest: print(0.1) gave 0.10000000000000001. Writes into `out`
+// (>= 40 bytes) and returns the length.
+static inline int _CG_float_repr_buf(double d, char *out) {
+  if (isnan(d)) { strcpy(out, "nan"); return 3; }
+  if (isinf(d)) { strcpy(out, d < 0 ? "-inf" : "inf"); return d < 0 ? 4 : 3; }
+  if (d == 0) { strcpy(out, signbit(d) ? "-0.0" : "0.0"); return signbit(d) ? 4 : 3; }
+  char e[48];
+  for (int p = 1; p <= 17; p++) {
+    snprintf(e, sizeof(e), "%.*e", p - 1, d);
+    if (strtod(e, 0) == d) break;
+  }
+  // e is [-]D[.DDD]e[+-]XX
+  const char *q = e;
+  int n = 0;
+  if (*q == '-') { out[n++] = '-'; q++; }
+  char dig[24];
+  int nd = 0;
+  for (; *q && *q != 'e'; q++)
+    if (*q != '.') dig[nd++] = *q;
+  int x = atoi(q + 1);
+  while (nd > 1 && dig[nd - 1] == '0') nd--;
+  if (x >= -4 && x < 16) {
+    if (x >= 0) {
+      for (int i = 0; i <= x; i++) out[n++] = i < nd ? dig[i] : '0';
+      out[n++] = '.';
+      if (nd > x + 1)
+        for (int i = x + 1; i < nd; i++) out[n++] = dig[i];
+      else
+        out[n++] = '0';
+    } else {
+      out[n++] = '0';
+      out[n++] = '.';
+      for (int i = 0; i < -x - 1; i++) out[n++] = '0';
+      for (int i = 0; i < nd; i++) out[n++] = dig[i];
     }
+  } else {
+    out[n++] = dig[0];
+    if (nd > 1) {
+      out[n++] = '.';
+      for (int i = 1; i < nd; i++) out[n++] = dig[i];
+    }
+    n += snprintf(out + n, 8, "e%c%02d", x < 0 ? '-' : '+', x < 0 ? -x : x);
   }
-  if (!has_dot_or_exp && n + 2 < (int)sizeof(tmp)) {
-    tmp[n++] = '.';
-    tmp[n++] = '0';
-  }
+  out[n] = 0;
+  return n;
+}
+
+// D.5: float -> str. See _CG_float_repr_buf. A unique C-callable name so
+// libpyc_runtime.a can export it.
+inline char *_CG_str_from_float(double d) {
+  char tmp[48];
+  int n = _CG_float_repr_buf(d, tmp);
   char *s = _CG_string_alloc(n);
   memcpy(s, tmp, n);
   return s;
@@ -1394,23 +1427,7 @@ inline char *_CG_string_getslice(const char *s, int32 l, int32 h, int32 step) {
 }
 
 #ifdef __cplusplus
-static inline char *_CG_prim_primitive_to_string(double d) {
-  char s[100], *p = s;
-  snprintf(s, 100, "%.17g", d);
-  while (*p)
-    if (*p < '0' || *p > '9')
-      break;
-    else
-      p++;
-  if (!*p) {
-    *p++ = '.';
-    *p++ = '0';
-  } else
-    while (*p) p++;
-  char *r = _CG_string_alloc(p - s);
-  memcpy(r, s, p - s);
-  return r;
-}
+static inline char *_CG_prim_primitive_to_string(double d) { return _CG_str_from_float(d); }
 
 static inline char *_CG_prim_primitive_to_string(int32 i) {
   char s[100];

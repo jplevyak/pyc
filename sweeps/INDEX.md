@@ -47,6 +47,10 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__9dfbf0fc+4690daca` | 2026-09-27 | programs=77 compile_fail=26 run_fail=16 stdout_differs=4 unverifiable=6 with_warnings=2 cs/shapes=1931/639=3.02 pratio=2.05 n=75 |
+| `check__default__9dfbf0fc+71fbd58a` | 2026-09-27 | programs=77 compile_fail=28 run_fail=16 stdout_differs=5 unverifiable=5 with_warnings=2 cs/shapes=2020/653=3.09 pratio=2.08 n=75 |
+| `check__PYC_CSDEFREUSE_0__9dfbf0fc+71fbd58a` | 2026-09-27 | programs=77 compile_fail=26 run_fail=16 stdout_differs=6 unverifiable=6 with_warnings=2 cs/shapes=1952/645=3.03 pratio=2.06 n=75 |
+| `check__PYC_CSPARENTFIRST_0_PYC_CSDEFREUSE_0__9dfbf0fc+71fbd58a` | 2026-09-27 | programs=77 compile_fail=27 run_fail=15 stdout_differs=6 unverifiable=6 with_warnings=2 cs/shapes=2675/669=4.00 pratio=2.66 n=76 |
 | `check__default__3b8eb295+4beb38f7` | 2026-09-27 | programs=77 compile_fail=27 run_fail=15 stdout_differs=6 unverifiable=6 with_warnings=2 cs/shapes=2675/669=4.00 pratio=2.66 n=76 |
 | `check__default__1c07e76e+630c4ce5` | 2026-09-27 | programs=77 compile_fail=28 run_fail=14 stdout_differs=6 unverifiable=6 with_warnings=2 cs/shapes=2445/669=3.65 pratio=2.44 n=76 |
 | `check__default__1c07e76e+e644d637` | 2026-09-27 | programs=77 compile_fail=29 run_fail=15 stdout_differs=5 unverifiable=6 with_warnings=2 cs/shapes=2453/670=3.66 pratio=2.44 n=76 |

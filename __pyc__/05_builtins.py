@@ -219,8 +219,9 @@ def next(it):
 
 # ---- issue 025 "has no type" bucket: previously-missing builtins ----
 # Pure-Python implementations. Py3 returns lazy iterators from
-# zip/map/filter/enumerate/reversed; these return lists (shedskin-
-# style divergence) -- equivalent under iteration and list().
+# zip/map/filter/reversed; these return lists (shedskin-style divergence)
+# -- equivalent under iteration and list() unless the loop mutates the
+# sequence. enumerate is lazy (below) for exactly that reason.
 
 def zip(a, b):
   r = []
@@ -234,13 +235,40 @@ def zip(a, b):
     i = i + 1
   return r
 
-def enumerate(seq):
-  r = []
+# enumerate is LAZY, as in CPython: it wraps the sequence's own iterator,
+# so a loop body that mutates the sequence sees the mutation. The eager
+# list this used to build was not "equivalent under iteration": chull's
+# CleanVertices does `for i, v in enumerate(vs): ... del vs[i]`, which in
+# CPython skips the element after each deletion, and a snapshot visited
+# (and deleted) a different set of vertices. __pyc_clone_constants__ puts
+# it on the per-creating-contour track, like __list_iter__, so one
+# program's enumerates do not share a CS whose `it` unions every wrapped
+# iterator.
+class __enumerate_iter__:
+  it = None
   i = 0
-  for x in seq:
-    r.append((i, x))
-    i = i + 1
-  return r
+  def __init__(self, it):
+    self.it = __pyc_clone_constants__(it)
+    self.i = 0
+  def __iter__(self):
+    return self
+  def __pyc_more__(self):
+    return self.it.__pyc_more__()
+  def __next__(self):
+    x = self.it.__next__()
+    n = self.i
+    self.i = n + 1
+    return (n, x)
+  def __pyc_tolist__(self):
+    # list(enumerate(x)), and tuple()/sorted()/... through object's
+    # __pyc_seq_source__. Consumes, as CPython's list() does.
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
+
+def enumerate(seq):
+  return __enumerate_iter__(seq.__iter__())
 
 def sum(seq, start=0):
   # int seed + float elements resolves to float via the numeric
