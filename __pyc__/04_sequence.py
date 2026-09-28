@@ -364,43 +364,134 @@ class list:
       j -= 1
     return None
   def sort(self, key=None, reverse=False):
-    # Stable insertion sort (matches Python's stability guarantee;
-    # reverse=True flips the comparison rather than reversing after,
-    # which is what Python's stability under reverse means). The
-    # key-is-None branches keep each call contour monomorphic via
-    # nil narrowing (same pattern as min/max in 05_builtins.py) --
-    # `key(x)`'s type never unions with the element type. Issue 025:
-    # circle.py's `circles.sort(key=lambda c: c.offset())` was its
-    # first blocker.
-    # Comparisons use ONLY `<` (CPython's sort contract: elements
-    # need just __lt__ -- voronoi2's Site defines __lt__/__eq__ and
-    # nothing else, and pyc has no reflected-operator fallback).
+    # Stable in-place sort, O(n log^2 n): insertion-sorted blocks merged by
+    # SymMerge (Kim & Kutzner; the algorithm of Go's sort.Stable). It was a
+    # plain insertion sort, quadratic on the common "sorted prefix +
+    # appended batch" shape -- linalg's iterate_sort spent 2.8 s where
+    # CPython takes 7 ms. In place on purpose: a buffer list allocated here
+    # is one creation point shared by every element type sort is called on.
+    # Stability: an element moves past another only when it compares
+    # strictly before it, and reverse=True swaps the operands of `<` rather
+    # than reversing afterwards, which is what Python's stability under
+    # reverse means. The key-is-None split keeps each contour monomorphic
+    # (min/max in 05_builtins.py use the same pattern): `key(x)`'s type
+    # never unions with the element type. Comparisons use ONLY `<`
+    # (CPython's contract: voronoi2's Site defines only __lt__/__eq__).
     n = len(self)
-    i = 1
-    while i < n:
-      x = self[i]
-      j = i - 1
-      if key is None:
-        if reverse:
-          while j >= 0 and self[j] < x:
-            self[j + 1] = self[j]
-            j = j - 1
-        else:
-          while j >= 0 and x < self[j]:
-            self[j + 1] = self[j]
-            j = j - 1
-      else:
-        kx = key(x)
-        if reverse:
-          while j >= 0 and key(self[j]) < kx:
-            self[j + 1] = self[j]
-            j = j - 1
-        else:
-          while j >= 0 and kx < key(self[j]):
-            self[j + 1] = self[j]
-            j = j - 1
-      self[j + 1] = x
+    bs = 20
+    a = 0
+    while a < n:
+      b = a + bs
+      if b > n:
+        b = n
+      self.__pyc_isort__(a, b, key, reverse)
+      a = b
+    while bs < n:
+      a = 0
+      while a + bs < n:
+        b = a + 2 * bs
+        if b > n:
+          b = n
+        self.__pyc_symmerge__(a, a + bs, b, key, reverse)
+        a = b
+      bs = bs * 2
+    return None
+  def __pyc_before__(self, i, j, key, reverse):
+    # Does element i sort strictly before element j?
+    if key is None:
+      if reverse:
+        return self[j] < self[i]
+      return self[i] < self[j]
+    if reverse:
+      return key(self[j]) < key(self[i])
+    return key(self[i]) < key(self[j])
+  def __pyc_isort__(self, a, b, key, reverse):
+    i = a + 1
+    while i < b:
+      j = i
+      while j > a and self.__pyc_before__(j, j - 1, key, reverse):
+        t = self[j]
+        self[j] = self[j - 1]
+        self[j - 1] = t
+        j = j - 1
       i = i + 1
+    return None
+  def __pyc_swaprange__(self, a, b, n):
+    i = 0
+    while i < n:
+      t = self[a + i]
+      self[a + i] = self[b + i]
+      self[b + i] = t
+      i = i + 1
+    return None
+  def __pyc_rotate__(self, a, m, b):
+    # Swap the adjacent blocks [a, m) and [m, b).
+    i = m - a
+    j = b - m
+    while i != j:
+      if i > j:
+        self.__pyc_swaprange__(m - i, m, j)
+        i = i - j
+      else:
+        self.__pyc_swaprange__(m - i, m + j - i, i)
+        j = j - i
+    self.__pyc_swaprange__(m - i, m, i)
+    return None
+  def __pyc_symmerge__(self, a, m, b, key, reverse):
+    # Merge the sorted runs [a, m) and [m, b) in place, stably.
+    if m - a == 1:
+      i = m
+      j = b
+      while i < j:
+        h = (i + j) // 2
+        if self.__pyc_before__(h, a, key, reverse):
+          i = h + 1
+        else:
+          j = h
+      k = a
+      while k < i - 1:
+        t = self[k]
+        self[k] = self[k + 1]
+        self[k + 1] = t
+        k = k + 1
+      return None
+    if b - m == 1:
+      i = a
+      j = m
+      while i < j:
+        h = (i + j) // 2
+        if not self.__pyc_before__(m, h, key, reverse):
+          i = h + 1
+        else:
+          j = h
+      k = m
+      while k > i:
+        t = self[k]
+        self[k] = self[k - 1]
+        self[k - 1] = t
+        k = k - 1
+      return None
+    mid = (a + b) // 2
+    n = mid + m
+    start = a
+    r = m
+    if m > mid:
+      start = n - b
+      r = mid
+    p = n - 1
+    while start < r:
+      c = (start + r) // 2
+      if not self.__pyc_before__(p - c, c, key, reverse):
+        start = c + 1
+      else:
+        r = c
+    end = n - start
+    if start < m and m < end:
+      self.__pyc_rotate__(start, m, end)
+    if a < start and start < mid:
+      self.__pyc_symmerge__(a, start, mid, key, reverse)
+    if mid < end and end < b:
+      self.__pyc_symmerge__(mid, end, b, key, reverse)
     return None
   def __str__(self):
     x = "["
