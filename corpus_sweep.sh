@@ -112,7 +112,9 @@ if [ "${1:-}" = "--worker" ]; then
       ;;
     run)
       t0=$(date +%s)
-      timeout "$RT" "./$name" > "$LOGS/$name.pyc.out" 2> "$LOGS/$name.pyc.err"
+      # argv[0] as CPython sees it (`python3 NAME.py`), or a program that
+      # prints sys.argv[0] (plcfrs's usage line) differs for no reason.
+      timeout "$RT" bash -c 'exec -a "$0" "./$1"' "$name.py" "$name" > "$LOGS/$name.pyc.out" 2> "$LOGS/$name.pyc.err"
       echo $? > "$LOGS/$name.rrc"
       echo $(( $(date +%s) - t0 )) > "$LOGS/$name.rwall"
       ;;
