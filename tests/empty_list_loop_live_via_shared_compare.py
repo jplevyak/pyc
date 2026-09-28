@@ -1,6 +1,6 @@
-# ifa/175: iterating a never-written list is reported as untyped when the
-# loop's `position < len(...)` shares an int.__lt__ contour with an
-# unrelated comparison on a non-constant int. CPython prints "neg" and 1.
+# ifa/175 (fixed): iterating a never-written list must not be live just
+# because the loop test `position < len(...)` shares an int.__lt__ contour
+# with an unrelated non-constant comparison. CPython prints "neg" and 1.
 import sys
 def check(a):
     if a < 0:

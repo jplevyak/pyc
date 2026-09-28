@@ -20,7 +20,10 @@ class __list_iter__:
     # deepcopy over nested lists was the repro).
     self.thelist = __pyc_clone_constants__(l)
   def __pyc_more__(self):
-    return self.position < len(self.thelist)
+    # ifa/175: `!=` clones constants, so an empty container folds to False
+    # here even when `<` shares a contour with non-constant comparisons.
+    n = len(self.thelist)
+    return n != 0 and self.position < n
   def __next__(self):
     # issues/117: a BARE `it.__next__()` / `next(it)` outside a loop
     # must raise StopIteration past exhaustion, as CPython guarantees --
@@ -455,7 +458,10 @@ class __tuple_iter__:
   def __init__(self, t):
     self.thetuple = t
   def __pyc_more__(self):
-    return self.position < len(self.thetuple)
+    # ifa/175: `!=` clones constants, so an empty container folds to False
+    # here even when `<` shares a contour with non-constant comparisons.
+    n = len(self.thetuple)
+    return n != 0 and self.position < n
   def __next__(self):
     self.position += 1
     return self.thetuple.__getitem__(self.position-1)

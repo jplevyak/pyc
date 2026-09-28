@@ -1,1 +1,0 @@
-ifa/175 -- a loop over a never-written list stays live when int.__lt__'s contour is shared with a non-constant caller; the loop variable is bottom and fatal.
