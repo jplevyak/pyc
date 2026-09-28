@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__73f273b7+d585e8c2` | 2026-09-28 | programs=77 compile_fail=25 run_fail=16 stdout_differs=5 unverifiable=6 with_warnings=2 cs/shapes=2090/667=3.13 pratio=2.10 n=76 |
 | `check__PYC_CSOWNER_1__cf0961f3+678941ba` | 2026-09-28 | programs=77 compile_fail=25 run_fail=16 stdout_differs=5 unverifiable=6 with_warnings=2 cs/shapes=2090/667=3.13 pratio=2.10 n=76 |
 | `check__default__cf0961f3+678941ba` | 2026-09-28 | programs=77 compile_fail=26 run_fail=16 stdout_differs=4 unverifiable=6 with_warnings=2 cs/shapes=2060/666=3.09 pratio=2.09 n=76 |
 | `check__PYC_CSOWNER_1__0536d85c` | 2026-09-27 | programs=77 compile_fail=25 run_fail=16 stdout_differs=5 unverifiable=6 with_warnings=2 cs/shapes=2082/667=3.12 pratio=2.11 n=76 |
