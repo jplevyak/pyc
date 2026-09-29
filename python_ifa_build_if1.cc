@@ -4622,7 +4622,25 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // alone (its type isn't known pre-FA, and the raw-value case is
         // rare). Ordered before the Type_RECORD case; the two are
         // mutually exclusive.
+        //
+        // issues/171: this is an ACCOMMODATION -- CPython 3 raises
+        // TypeError here -- so it is permissive-only and announces
+        // itself. Under --strict the program is refused, naming the
+        // error; PYC_RAISE_STRING=0 refuses it in permissive mode too.
         if (exc && (exc->type == sym_string || exc->type == sym_bytes)) {
+          static int accept = -1;
+          if (accept < 0) {
+            cchar *v = getenv("PYC_RAISE_STRING");
+            accept = runtime_errors && (!v || atoi(v));
+          }
+          if (!accept)
+            fail("error line %d, raise of a %s value: exceptions must derive from BaseException (CPython 3 raises "
+                 "TypeError); pyc accepts this Python-2 idiom only in permissive mode (issues/171)",
+                 ctx.lineno, exc->type == sym_string ? "str" : "bytes");
+          fprintf(stderr,
+                  "warning line %d, raise of a %s value wrapped in Exception(...): a Python-2 idiom that CPython 3 "
+                  "rejects with TypeError (issues/171)\n",
+                  ctx.lineno, exc->type == sym_string ? "str" : "bytes");
           PycSymbol *ec = make_PycSymbol(ctx, "Exception", PYC_USE);
           if (!ec) fail("error line %d, builtin Exception not found", ctx.lineno);
           Code *send = if1_send1(if1, &ast->code, ast);

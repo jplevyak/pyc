@@ -1,0 +1,1 @@
+fail: error line 8, raise of a str value: exceptions must derive from BaseException (CPython 3 raises TypeError); pyc accepts this Python-2 idiom only in permissive mode (issues/171)

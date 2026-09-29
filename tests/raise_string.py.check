@@ -1,0 +1,2 @@
+warning line 10, raise of a str value wrapped in Exception(...): a Python-2 idiom that CPython 3 rejects with TypeError (issues/171)
+warning line 40, raise of a str value wrapped in Exception(...): a Python-2 idiom that CPython 3 rejects with TypeError (issues/171)

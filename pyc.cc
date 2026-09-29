@@ -58,13 +58,22 @@ static void license(ArgumentState *arg_state, char *arg_unused) {
 // errors into warnings + inserted runtime checks; ifa_no_implicit_none
 // (ifa/common/fail.h) controls whether a function whose fall-off path
 // would otherwise need an implicit None union instead gets a
-// shedskin-style typed default. The underlying ifa library itself
+// shedskin-style typed default -- an accommodation, so it is off in BOTH
+// modes and only PYC_NO_IMPLICIT_NONE (permissive only) turns it on
+// (issues/171). The underlying ifa library itself
 // defaults to strict (see ifa/if1/if1.cc); pyc's default is permissive
 // for Python ergonomics -- these flags make that choice explicit and
 // overridable in one step instead of two oddly-named ones.
+// issues/171: --strict is CPython semantics or a compile error, never an
+// accommodation. It used to turn ifa_no_implicit_none ON -- the
+// shedskin-style typed default for a function that falls off the end,
+// which returns e.g. False where CPython returns None. That is a semantic
+// deviation, so it is now a permissive-only opt-in (PYC_NO_IMPLICIT_NONE,
+// below) and strict keeps CPython's None, refusing a {T, None} union
+// that has no representation.
 static void strict_mode_arg(ArgumentState *arg_state, char *arg_unused) {
   runtime_errors = false;
-  ifa_no_implicit_none = 1;
+  ifa_no_implicit_none = 0;
 }
 
 static void permissive_mode_arg(ArgumentState *arg_state, char *arg_unused) {
@@ -341,7 +350,22 @@ int main(int argc, char *argv[]) {
   // by returning False where CPython returns None). The second is what
   // clears the {bool, None} BOXING refusal, and wanting it does not
   // imply wanting the first. PYC_NO_IMPLICIT_NONE sets it on its own.
-  if (cchar *v = getenv("PYC_NO_IMPLICIT_NONE")) ifa_no_implicit_none = atoi(v);
+  //
+  // issues/171: it is an ACCOMMODATION (a CPython deviation), so it is
+  // honoured only in permissive mode and announces itself. Under --strict
+  // the request is ignored with a warning rather than silently changing
+  // what the program returns.
+  if (cchar *v = getenv("PYC_NO_IMPLICIT_NONE")) {
+    int want = atoi(v);
+    if (want && !runtime_errors)
+      fprintf(stderr, "warning: PYC_NO_IMPLICIT_NONE is a permissive-only accommodation; ignored under --strict\n");
+    else
+      ifa_no_implicit_none = want;
+  }
+  if (ifa_no_implicit_none)
+    fprintf(stderr,
+            "warning: PYC_NO_IMPLICIT_NONE: a function with a value 'return' that falls off the end returns a "
+            "typed default, not None (a CPython deviation, issues/171)\n");
   if (mods.n > 1) {
     ast_to_if1(mods);
     compile(first_filename);
