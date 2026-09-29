@@ -1,0 +1,7 @@
+implicit_none_strict_refuses.py:11:33: error: expression has mixed basic types:( __pyc_None_type__ int64 ) 
+    print(f([0]))
+                 ^
+implicit_none_strict_refuses.py:12:46: error: expression has mixed basic types:( __pyc_None_type__ int64 ) 
+    print(f([1]))
+                 ^
+fail: program does not type

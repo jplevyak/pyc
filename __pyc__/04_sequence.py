@@ -37,7 +37,7 @@ class __list_iter__:
     # called first. Same contract as __pyc_iterator__.__next__ in
     # 00_runtime.py, which already documents it.
     if self.position >= len(self.thelist):
-      raise StopIteration(0)
+      raise StopIteration()
     self.position += 1
     return self.thelist.__getitem__(self.position-1)
 

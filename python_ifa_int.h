@@ -154,6 +154,13 @@ class PycCompiler : public PycCallbacks {
   // the raw handle: `for x in count(n - 1)` looped over an int
   // (shedskin_examples/sudoku5's recursive `solve`).
   Map<Sym *, Sym *> gen_def_wrapper;
+  // issues/171 #7: per wrapped generator's coroutine-body Fun, a hidden
+  // formal (has[1]) bound to its own __pyc_generator__ object. `return X`
+  // stores X in that object's `retval`, so the return value has its own
+  // channel -- typed per generator, never through the yield channel
+  // (fn->ret) or an int. Created before the body is walked, under exactly
+  // the conditions that build a wrapper to fill it.
+  Map<Sym *, Sym *> gen_retcell;
   // The `*args` formal of every def that has one (ROADMAP 6.1).
   // finalize_function marks its Fun `is_varargs`; the matcher then routes
   // each call through rest_wrapper.

@@ -1,0 +1,2 @@
+before
+Unhandled exception: unsupported operand type(s) for +: 'NoneType'

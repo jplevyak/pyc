@@ -48,6 +48,7 @@ extern char *_CG_string_mult(char *str, int64 n);
 extern char *_CG_string_identity(char *s);
 extern void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v);
 extern char *_CG_strcat(const char *a, const char *b);
+extern void _CG_none_receiver(const char *sel);  // ifa/issues/165
 extern char *_CG_string_join(const char *sep, _CG_list parts);
 extern char *_CG_char_from_string(void *s, int i);
 extern int64 _CG_int_from_string(void *s, int i);
@@ -780,17 +781,6 @@ long long _CG_generator_value(long long raw_handle) {
   _CG_generator_state *st = (_CG_generator_state *)(intptr_t)raw_handle;
   if (!st) return 0;
   return st->value;
-}
-
-/* issues/014: the generator's `return value` (StopIteration.value),
- * readable once the generator is exhausted (st->done) -- set by
- * cg_emit_llvm.cc's is_generator P_prim_reply epilogue.
- * __pyc_generator__.__next__()/.send() (09_generator.py) call this
- * exactly once, when advancing reports has_next == False. */
-long long _CG_generator_return_value(long long raw_handle) {
-  _CG_generator_state *st = (_CG_generator_state *)(intptr_t)raw_handle;
-  if (!st) return 0;
-  return st->retval;
 }
 
 /* issues/014: a coroutine body with no EXPLICIT `return X` anywhere

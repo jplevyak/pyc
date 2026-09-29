@@ -276,15 +276,10 @@ inline long long _CG_generator_value(long long raw_handle) {
   return (long long)(uintptr_t)h.promise().value;
 }
 
-// issues/014: the generator's `return value` (StopIteration.value),
-// readable once the generator is exhausted (h.done()) -- set by
-// co_return inside the coroutine body via promise_type::return_value
-// above. __pyc_generator__.__next__()/.send() (09_generator.py) call
-// this exactly once, when advancing reports has_next == False.
-inline long long _CG_generator_return_value(long long raw_handle) {
-  auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
-  return (long long)(uintptr_t)h.promise().retval;
-}
+// issues/171 #7: there is no _CG_generator_return_value any more. The
+// body stores its `return X` in its own __pyc_generator__ object
+// (09_generator.py's `retval`), typed per generator; the co_return value
+// is no longer read.
 
 // issues/014: a coroutine body with no EXPLICIT `return X` anywhere
 // (bare fall-through, or a bare `return`) still needs *some* int64
@@ -1268,7 +1263,54 @@ inline void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v) {
   return x;
 }
 
+// ifa/issues/165: a `{None, str}` union is a nullable pointer, and the
+// runtime's string helpers read NULL as the empty string
+// (`_CG_string_len(NULL) == 0`). That turned `None + "y"` into `"y"`, a
+// silent wrong answer where CPython raises TypeError. An operation CPython
+// rejects on None must say so. pyc has no catchable TypeError from the C
+// runtime yet, so this reports it the way an uncaught exception is
+// reported (`__pyc_unhandled_exception__`: stdout, exit 1). A `try` around
+// it does not catch it -- recorded in ifa/165.
+__attribute__((noreturn)) static inline void _CG_none_operand(const char *op, const char *other) {
+  fflush(stdout);
+  printf("Unhandled exception: unsupported operand type(s) for %s: %s\n", op, other);
+  fflush(stdout);
+  exit(1);
+}
+
+// ifa/issues/165: a method call whose receiver is None where None has no
+// such method (codegen emits the check; see nil_receiver_rval). Reports
+// CPython's message the way an uncaught exception is reported. `sel` is
+// the selector name.
+inline void _CG_none_receiver(const char *sel) {
+  static const char *const ops[][2] = {
+      {"__add__", "+"},   {"__sub__", "-"},   {"__mul__", "*"},      {"__truediv__", "/"},
+      {"__floordiv__", "//"}, {"__mod__", "%"}, {"__pow__", "** or pow()"}, {"__lt__", "<"},
+      {"__le__", "<="},   {"__gt__", ">"},    {"__ge__", ">="},      {"__and__", "&"},
+      {"__or__", "|"},    {"__xor__", "^"},   {"__lshift__", "<<"},  {"__rshift__", ">>"}};
+  fflush(stdout);
+  if (!sel) sel = "?";
+  for (unsigned i = 0; i < sizeof(ops) / sizeof(ops[0]); i++)
+    if (!strcmp(sel, ops[i][0])) {
+      printf("Unhandled exception: unsupported operand type(s) for %s: 'NoneType'\n", ops[i][1]);
+      fflush(stdout);
+      exit(1);
+    }
+  if (!strcmp(sel, "__getitem__") || !strcmp(sel, "__setitem__"))
+    printf("Unhandled exception: 'NoneType' object is not subscriptable\n");
+  else if (!strcmp(sel, "__len__"))
+    printf("Unhandled exception: object of type 'NoneType' has no len()\n");
+  else if (!strcmp(sel, "__iter__"))
+    printf("Unhandled exception: 'NoneType' object is not iterable\n");
+  else
+    printf("Unhandled exception: 'NoneType' object has no attribute '%s'\n", sel);
+  fflush(stdout);
+  exit(1);
+}
+
 inline char *_CG_strcat(const char *a, const char *b) {
+  if (!a) _CG_none_operand("+", "'NoneType' and 'str'");
+  if (!b) _CG_none_operand("+", "'str' and 'NoneType'");
   size_t la = _CG_string_len(a), lb = _CG_string_len(b);
   char *x = _CG_string_alloc(la + lb);
   memcpy(x, a, la);

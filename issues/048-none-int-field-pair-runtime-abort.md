@@ -18,19 +18,20 @@ inference bug (AGENTS.md), filed under ifa/.
 
 | union | fixture | today | exact representation? | verdict |
 | --- | --- | --- | --- | --- |
-| `{None, T*}` | `tests/nil_union_prealloc.py` | works: nullable pointer | yes | ✓ (the read-of-`None` check is ifa/165) |
+| `{None, T*}` | `tests/nil_union_prealloc.py` | works: nullable pointer; a `None` that does arrive raises CPython's `TypeError` (`tests/none_receiver_raises.py`) | yes | ✓ (ifa/165, 2026-09-28) |
 | `{int, float}` element | `tests/list_mul_heterogeneous_element.py` (`n*[0]`, then `x[i] += 1.5`) | permissive: widened, prints `[1.5, 0.0, 0.0]`; CPython `[1.5, 0, 0]` | no | accommodation (ifa/145 gating ✓). Needs the 171 warning. Strict refuses ✓ |
-| `{None, int}` fields | `tests/none_int_field_pair.py`, `none_int_field_zero.py` | **runtime abort** `matching function not found`, or refused | no: every int64 bit pattern is a valid int | ✗ must be refused at compile time in strict. Permissive: see below |
+| `{None, int}` fields | `tests/none_int_field_pair.py`, `none_int_field_zero.py` | **refused at compile time** in every mode (2026-09-28): a method dispatched on a `{None, scalar}` receiver is a BOXING violation in FA, `expression has mixed basic types: (__pyc_None_type__ int64)` | no: every int64 bit pattern is a valid int | ✓ strict. Permissive: see below |
 | `{None, float}` field | `tests/none_float_field.py` | refused at the store/load guard with a named warning | no | ✓ strict; permissive: see below |
 | `{bool, None}` return | `tests/bool_or_none_fallthrough.py` | refused (width) | **yes**: bool has spare codes | a representation, not an accommodation: [ifa/118](../ifa/issues/118-union-field-representation-and-polymorphic-field-offset.md) |
 | `{int, str}` branch merge | `tests/branch_merged_scalar_union.py` | refused | no | ✓ refused in every mode; no reasonable accommodation |
 
 ## What to build
 
-1. **No runtime abort for `{None, int}`.** Today the union survives to a
-   dispatch that cannot tell `0` from `None`, and aborts. It must be a
-   compile-time violation naming the field and the union, as
-   `{None, float}` already is. In strict that is the end state.
+1. ~~**No runtime abort for `{None, int}`.**~~ DONE 2026-09-28:
+   `collect_var_type_violations` (fa.cc) raises BOXING on the receiver of
+   any live `P_prim_period` whose type holds `None` and a scalar, except
+   for the truthiness selectors, where a null test is exact. It is the
+   end state for strict.
 2. **Permissive accommodation, behind a flag
    (`PYC_NIL_SCALAR_SENTINEL`):** represent `None` in a `{None, int}`
    slot as a reserved sentinel (`INT64_MIN`), and in `{None, float}` as a

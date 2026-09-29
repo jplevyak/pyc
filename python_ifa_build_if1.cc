@@ -969,15 +969,16 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     // ifa/issues/109 gave tuples an element sym.
     PycAST *a0 = getAST(pos_args[0], ctx);
     ast->rval = new_sym(ast);
-    // PYC_MAKESEQ=1 uses the new primitive (issues/110); default keeps
-    // the historical __pyc_tolist__ lowering. Referenced by NAME, like
+    // make_seq is the default (issues/110); PYC_MAKESEQ=0 restores the
+    // historical __pyc_tolist__ lowering, which returned a LIST -- a
+    // deviation from CPython in every mode. Referenced by NAME, like
     // isinstance/merge_in and the other non-builtin-symbol primitives --
     // builtin_symbols.h entries must be bound from the builtin AST,
     // which a pyc-only primitive is not.
     static int makeseq = -1;
     if (makeseq < 0) {
       const char *v = getenv("PYC_MAKESEQ");
-      makeseq = v ? atoi(v) : 0;
+      makeseq = v ? atoi(v) : 1;
     }
     if (makeseq) {
       // Feed make_seq the list __pyc_seq_source__ yields rather than the
@@ -2889,18 +2890,37 @@ static Sym *find_class_method_fn(Sym *cls, cchar *name) {
 // this would need to mirror). For a METHOD that includes `self`, which
 // is an ordinary positional formal and forwards like any other.
 static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, PycAST *ast, PycCompiler &ctx) {
-  Vec<Sym *> wrapper_formals;
-  for (int i = 1; i < body_fn->has.n; i++) wrapper_formals.add(new_sym(ast));
-  Code *wbody = 0;
-  Code *call_send = if1_send1(if1, &wbody, ast);
-  if1_add_send_arg(if1, call_send, body_fn);
-  for (Sym *wf : wrapper_formals.values()) if1_add_send_arg(if1, call_send, wf);
-  Sym *handle_result = new_sym(ast);
-  if1_add_send_result(if1, call_send, handle_result);
   int lvl = 0;
   PycSymbol *gen_cls_ps = find_PycSymbol(ctx, cannonicalize_string("__pyc_generator__"), &lvl);
   if (!gen_cls_ps || !gen_cls_ps->sym)
     fail("error line %d, internal: __pyc_generator__ not found (issues/014)", ctx.lineno);
+  // issues/171 #7: the generator object exists BEFORE the coroutine body
+  // is created, because the body receives it (its hidden `retcell`
+  // formal, gen_retcell) to store its return value in. Creating the
+  // coroutine runs none of the body, so nothing reads it early; the
+  // handle and the yield-type sample are bound once the body call has
+  // produced them (__pyc_bind__).
+  Sym *retcell = ctx.gen_retcell.get(body_fn);
+  if (!retcell) fail("error line %d, internal: generator has no return cell (issues/171)", ctx.lineno);
+  Code *wbody = 0;
+  Code *ctor_send = if1_send1(if1, &wbody, ast);
+  if1_add_send_arg(if1, ctor_send, gen_cls_ps->sym);
+  Sym *gen_inst = new_sym(ast);
+  if1_add_send_result(if1, ctor_send, gen_inst);
+  Vec<Sym *> wrapper_formals;
+  Code *call_send = if1_send1(if1, &wbody, ast);
+  if1_add_send_arg(if1, call_send, body_fn);
+  for (int i = 1; i < body_fn->has.n; i++) {
+    if (body_fn->has[i] == retcell) {
+      if1_add_send_arg(if1, call_send, gen_inst);
+      continue;
+    }
+    Sym *wf = new_sym(ast);
+    wrapper_formals.add(wf);
+    if1_add_send_arg(if1, call_send, wf);
+  }
+  Sym *handle_result = new_sym(ast);
+  if1_add_send_result(if1, call_send, handle_result);
   // issues/114: `handle_result` does two unrelated jobs. Its runtime
   // VALUE is the coroutine handle; its FA TYPE is the union of
   // everything the body yields (gen_yield_type_contribution moves each
@@ -2926,12 +2946,8 @@ static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, 
   if1_add_send_result(if1, hsend, opaque_handle);
   hsend->rvals.v[2]->is_fake = 1;
   hsend->rvals.v[4]->is_fake = 1;
-  Code *ctor_send = if1_send1(if1, &wbody, ast);
-  if1_add_send_arg(if1, ctor_send, gen_cls_ps->sym);
-  if1_add_send_arg(if1, ctor_send, opaque_handle);
-  if1_add_send_arg(if1, ctor_send, handle_result);
-  Sym *gen_inst = new_sym(ast);
-  if1_add_send_result(if1, ctor_send, gen_inst);
+  Sym *bind_result = new_sym(ast);
+  call_method(&wbody, ast, gen_inst, make_symbol("__pyc_bind__"), bind_result, 2, opaque_handle, handle_result);
   if1_move(if1, &wbody, gen_inst, wrapper->ret, ast);
   if1_send(if1, &wbody, 4, 0, sym_primitive, sym_reply, wrapper->cont, wrapper->ret)->ast = ast;
   Vec<Sym *> was;
@@ -2980,6 +2996,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         Sym *wrapper = new_fun(ast);
         wrapper->nesting_depth = ast->sym->nesting_depth;
         ctx.gen_def_wrapper.put(ast->sym, wrapper);
+      }
+      // issues/171 #7: the return-value cell, for exactly the generators
+      // that get a wrapper below (the method-wrapper and plain-def-wrapper
+      // branches after gen_fun_pyda) -- the wrapper is what fills it.
+      if (ast->sym->is_generator && !closure_cls && ast->rval && ast->rval != ast->sym) {
+        Sym *gmw = ctx.gen_method_wrapper.get(ast->sym);
+        bool is_meth = ast->rval->alias == ast->sym || (gmw && ast->rval->alias == gmw);
+        if (is_meth ? gmw != nullptr : true) ctx.gen_retcell.put(ast->sym, new_sym(ast));
       }
       // Process default exprs (pre-scope in build_syms)
       PyDAST *params = n->children[1];
@@ -3277,12 +3301,29 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_return_stmt: {
+      // issues/171 #7: a wrapped generator's return value goes into its
+      // own __pyc_generator__ object (gen_retcell), not into fn->ret --
+      // fn->ret is the YIELD channel, and sharing it made `yield 1;
+      // return "s"` an {int, str} that could not be typed, while the
+      // value itself was cast through an int (an address for a str).
+      Sym *retcell = ctx.fun()->is_generator ? ctx.gen_retcell.get(ctx.fun()) : nullptr;
       if (n->children.n > 0) {
         build_if1_pyda(n->children[0], ctx);
         PycAST *val = getAST(n->children[0], ctx);
         ctx.fun()->fun_returns_value = 1;
         if1_gen(if1, &ast->code, val->code);
-        if1_move(if1, &ast->code, val->rval, ctx.fun()->ret, ast);
+        if (retcell)
+          if1_send(if1, &ast->code, 5, 1, sym_operator, retcell, sym_setter, if1_make_symbol(if1, "retval"), val->rval,
+                   new_sym(ast))->ast = ast;
+        else
+          if1_move(if1, &ast->code, val->rval, ctx.fun()->ret, ast);
+      } else if (retcell) {
+        // A bare `return` is None. Redundant with the store at body entry
+        // when the generator never returns a value (gen_fun_pyda), but
+        // this statement cannot know that yet: a `return X` later in the
+        // body may still set fun_returns_value.
+        if1_send(if1, &ast->code, 5, 1, sym_operator, retcell, sym_setter, if1_make_symbol(if1, "retval"), sym_nil,
+                 new_sym(ast))->ast = ast;
       } else if (!ctx.fun()->is_generator)
         if1_move(if1, &ast->code, sym_nil, ctx.fun()->ret, ast);
       // issues/114: a bare `return` inside a GENERATOR contributes
@@ -3298,13 +3339,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // nil move for generators (goto_exc_target above), and as the two
       // `return self.nextval` sites in __pyc__/09_generator.py.
       //
-      // Cost: a bare return leaves the co_return value (and so
-      // StopIteration.value, read back through
-      // _CG_generator_return_value) undefined rather than 0 on that
-      // path. pyc already diverged there -- CPython reports None, pyc
-      // reported 0 -- and an explicit `return X` still carries its
-      // value normally. Trading a documented wrong-ish value in a
-      // corner for a hard abort on ordinary code.
+      // The return VALUE does not travel through fn->ret at all for a
+      // wrapped generator (issues/171 #7): see gen_retcell above.
       
       // Emit cleanups for all active with statements in this function
       for (int i = ctx.with_stack.n - 1; i >= 0; i--) {
@@ -5163,7 +5199,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *result = new_sym(ast);
       if1_label(if1, &ast->code, ast, Lmatch);
       if1_move(if1, &ast->code, sym_nil, exc_slot(ctx), ast);
-      Sym *retval = build_attribute_get(exc, "value", &ast->code, ast);
+      // issues/171 #7: the result is the SUB-GENERATOR's return value,
+      // asked of the sub-generator itself. Reading `exc.value` went through
+      // the global exception slot, where every StopIteration in the program
+      // meets -- the library iterators' value-less ones included -- so a
+      // generator returning an int met None there and could not be typed.
+      Sym *retval = new_sym(ast);
+      call_method(&ast->code, ast, sub, make_symbol("__pyc_return_value__"), retval, 0);
       if1_move(if1, &ast->code, retval, result, ast);
       if1_goto(if1, &ast->code, Ldone)->ast = ast;
 

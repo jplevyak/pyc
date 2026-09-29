@@ -1,11 +1,11 @@
 # issues/112: deep-copying a tuple TWICE (copy-of-copy) leaves `self[k]`
 # unresolved inside tuple.__deepcopy__.
 #
-# Only manifests once PYC_MAKESEQ / PYC_TUPLE_AS_LIST default on AND
-# `class tuple` has a __deepcopy__ -- i.e. it is what blocks the flip.
-# Passes at the current defaults, where tuple(iterable) still returns a
-# list and lists deep-copy correctly. Replacing `tuple([leaf])` with
-# `[leaf]` passes under the flip too, so it is tuple-specific.
+# It blocked the PYC_MAKESEQ flip: with `tuple(iterable)` a real tuple and
+# `class tuple` given a __deepcopy__, a copy of a copy left `self[k]`
+# unresolved. Both are the default now (2026-09-28) and it passes; the
+# generated __deepcopy__ constructs its result rather than copying and
+# overwriting (python_ifa_main.cc, inject_tuple_methods).
 #
 # Not tagged: it passes as shipped. It is here to pin the shape.
 import copy

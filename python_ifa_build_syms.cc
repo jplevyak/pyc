@@ -1964,6 +1964,18 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // the generator's own loop shape -- free to do, since this value is
   // never runtime-observed either way.
   Sym *default_ret;
+  // issues/171 #7: a generator with no `return <value>` anywhere can only
+  // ever report None, so store it at body ENTRY -- same value at runtime
+  // (nothing reads it before the body finishes), and unconditionally
+  // reachable, so an infinite generator (`while True: yield i`) still has
+  // a writer for the `retval` its __next__ reads after exhaustion. One
+  // that does return a value gets its stores at the returns and the
+  // fall-off end instead (below), so it is not given a None arm it never
+  // produces.
+  Sym *retcell = fn->is_generator ? ctx.gen_retcell.get(fn) : nullptr;
+  if (retcell && !fn->fun_returns_value)
+    if1_send(if1, &body, 5, 1, sym_operator, retcell, sym_setter, if1_make_symbol(if1, "retval"), sym_nil,
+             new_sym(ast))->ast = ast;
   if (fn->is_generator) {
     int lvl = 0;
     PycSymbol *int_cls_ps = find_PycSymbol(ctx, cannonicalize_string("int"), &lvl);
@@ -2081,6 +2093,13 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     // reaches the reply before the body has run; nil does that, and
     // `{None, T}` is representable where `{int, T}` is not.
     if1_move(if1, &body, sym_nil, fn->ret, ast);
+  // issues/171 #7: a generator that falls off the end returns None, as
+  // in CPython -- stored in its own return cell (see PY_return_stmt), on
+  // this path only, so a generator that always `return`s a value is not
+  // given a None arm it never produces.
+  if (retcell && fn->fun_returns_value)
+    if1_send(if1, &body, 5, 1, sym_operator, retcell, sym_setter, if1_make_symbol(if1, "retval"), sym_nil,
+             new_sym(ast))->ast = ast;
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   Vec<Sym *> as;
@@ -2123,10 +2142,14 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     // of the name-symbol dispatch placeholder methods use.
     as.add(fn);
   }
+  // issues/171 #7: the hidden return-cell formal goes first, so a `*args`
+  // formal stays last; build_generator_wrapper finds it by identity.
+  if (retcell) as.add(retcell);
   get_syms_args_pyda(ast, varargsl, as, ctx);
+  int self_i = retcell ? 2 : 1;
   if (!cls && is_method) {
-    if (as.n > 1) {
-      fn->self = as[1];
+    if (as.n > self_i) {
+      fn->self = as[self_i];
       fn->self->must_implement_and_specialize(in);
     }
   }

@@ -242,7 +242,7 @@ class __pyc_iterator__(object):
       self.__pyc_more__()
     self.__pyc_peek_primed__ = False
     if not self.__pyc_peek_has__:
-      raise StopIteration(0)
+      raise StopIteration()
     return self.__pyc_peek__
   def __contains__(self, item):
     # `x in it`. python_ifa_build_if1.cc lowers `in` to a direct

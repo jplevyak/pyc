@@ -727,6 +727,32 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   fprintf(f, "      for i in range(%d, n):\n", max_arity);
   fputs("        h = h * 1000003 + self[i].__hash__()\n", f);
   fputs("    return h\n", f);
+  // issues/110: an element-recursive __deepcopy__. The any-type fallback
+  // it replaces was a SHALLOW copy: `deepcopy((T(),))` shared the T with
+  // the original.
+  //
+  // The result is CONSTRUCTED, never copied and then overwritten. A
+  // copy-then-overwrite leaves every field typed as the union of the
+  // original element and its deep copy, and for an element that is itself
+  // a tuple those are two record CreationSets with no common C type
+  // (measured: `deepcopy(((T(), 1), 2))` emitted a `_CG_void` field and
+  // segfaulted). So: one literal per arity, unrolled like __str__ so each
+  // element keeps its own type -- on a RECORD tuple `n` is a constant and
+  // only its own arity's branch is live -- and, for a runtime-length tuple
+  // (list layout; `n` is not a constant), make_seq over the copied
+  // elements, the same construction tuple.__add__ uses.
+  fputs("  def __deepcopy__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    if __pyc_operator__(n, __pyc_symbol__(\"==\"), 0): return self\n", f);
+  for (int k = 1; k <= max_arity; k++) {
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\"==\"), %d): return (", k);
+    for (int i = 0; i < k; i++) fprintf(f, "%sself[%d].__deepcopy__()", i ? ", " : "", i);
+    fputs(k == 1 ? ",)\n" : ")\n", f);
+  }
+  fputs("    r = []\n", f);
+  fputs("    for i in range(n):\n", f);
+  fputs("      r.append(self[i].__deepcopy__())\n", f);
+  fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
   fclose(f);
   PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", buf, (int)sz);
   free(buf);

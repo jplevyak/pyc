@@ -148,6 +148,13 @@ def calculate_error(alphas, bias, kernel_table, label_table):
             error += 1
 
         return 1.0 * error / len(kernel_table)
+    # pyc (PYC_CHANGES.md): the `return` above sits inside the loop, so the
+    # function can fall off the end and implicitly return None, making its
+    # result {float, None}, which has no unboxed representation (issues/048).
+    # The loop always runs (kernel_table is never empty), so this line is
+    # never reached and CPython's output is unchanged; it states the float
+    # the function always returns.
+    return 0.0
 
 
 def main():

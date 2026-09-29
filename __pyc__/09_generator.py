@@ -35,10 +35,11 @@
 # peek used by PY_for_stmt) stays a plain boolean and never raises:
 # for-loops never call __next__ past what __pyc_more__ already
 # confirmed, so this doesn't affect them, only bare/repeated manual
-# __next__()/.send() calls run past exhaustion. `value` is int64 only
-# (0 for a bare/fall-through generator exit, matching pyc's existing
-# "smuggle through int64" compromise for yielded/sent values -- real
-# Python reports None there instead of 0).
+# __next__()/.send() calls run past exhaustion. `value` is the body's
+# own `return X` -- None for a bare `return` or falling off the end, as
+# in CPython (issues/171 #7): the body stores it in `self.retval`
+# itself, through a hidden formal the wrapper binds to this object
+# (build_generator_wrapper, python_ifa_build_if1.cc).
 #
 # issues/014 (yield from): `has_next == False` after advancing means
 # EITHER the generator body ran to completion OR it raised some OTHER
@@ -69,7 +70,13 @@ class __pyc_generator__:
   # value channel to int, so a generator yielding tuples handed back a
   # reinterpreted POINTER and `for x in gen(): print(x)` printed an
   # address. Its type comes from the c_calls below instead.
-  def __init__(self, handle, sample):
+  def __init__(self):
+    # issues/171 #7: nothing to do yet. The wrapper creates this object
+    # BEFORE the coroutine body, which receives it so `return X` can
+    # store X in `retval`; the handle and the value sample only exist
+    # once the body call returns, and arrive through __pyc_bind__.
+    pass
+  def __pyc_bind__(self, handle, sample):
     # Two arguments doing two jobs that used to be crammed into one
     # (issues/114). `handle` is the coroutine handle and nothing else:
     # a plain int, opaque to FA (the wrapper routes it through
@@ -85,6 +92,14 @@ class __pyc_generator__:
     self.nextval = sample
   def __iter__(self):
     return self
+  def __pyc_return_value__(self):
+    # issues/171 #7: this generator's own return value, written by its
+    # body into its own object (no int smuggling, typed per generator).
+    # `yield from` reads it here rather than as `StopIteration.value`
+    # through the global exception slot, which unions every
+    # StopIteration in the program (the library iterators' value-less
+    # ones included).
+    return self.retval
   def __pyc_advance__(self):
     self.has_next = __pyc_c_call__(bool, "_CG_generator_advance", int, self.handle)
     if self.has_next:
@@ -107,7 +122,7 @@ class __pyc_generator__:
         # pending -- but an int literal here unions int64 into the
         # channel's type by itself.
         return self.nextval
-      raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
+      raise StopIteration(self.__pyc_return_value__())
     return self.nextval
   def __contains__(self, item):
     # ifa/issues/090 / issues/025 item 4: `x in gen()`.
@@ -143,6 +158,6 @@ class __pyc_generator__:
         # pending -- but an int literal here unions int64 into the
         # channel's type by itself.
         return self.nextval
-      raise StopIteration(__pyc_c_call__(int, "_CG_generator_return_value", int, self.handle))
+      raise StopIteration(self.__pyc_return_value__())
     self.nextval = __pyc_c_call__(self.nextval, "_CG_generator_value", int, self.handle)
     return self.nextval
