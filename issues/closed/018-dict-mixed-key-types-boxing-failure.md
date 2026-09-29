@@ -403,7 +403,7 @@ Full measurements in [ifa/issues/101](../../ifa/issues/closed/101-FA-first-time-
 
 ## Precedent: naming the user-level problem (2026-08-18)
 
-[107](../107-undefined-names-warn-then-segfault.md) is the first instance of
+[107](107-undefined-names-warn-then-segfault.md) is the first instance of
 the "copy shedskin's diagnostics" half of this issue actually landing. An
 undefined name used to produce `'X' has no type` / `expression has no
 type` — analyser state — then compile with exit 0 and segfault. It now

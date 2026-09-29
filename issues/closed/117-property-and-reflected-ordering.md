@@ -1,5 +1,9 @@
 # 117 — `property` (read-only subset) and reflected ordering
 
+> **CLOSED 2026-09-28 (merged into 007).** The read-only `property(getter)` subset and reflected ordering landed. The general descriptor protocol (`@property`, setters, computed getters) is carried by [007](../007-decorators-not-applied.md), with the other decorator shapes.
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** partially implemented 2026-08-27. The read-only
 `NAME = property(GETTER)` subset, Python's reflected ordering fallback
 and `__list_iter__.__next__`'s StopIteration contract all work, and

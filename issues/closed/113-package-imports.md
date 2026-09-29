@@ -1,5 +1,9 @@
 # 113 — package imports
 
+> **CLOSED 2026-09-28 (implemented).** Packages, dotted names, relative imports and the missing-module diagnostic all landed (`bd78f917`, `3c7dda60`). Two unexercised gaps remain, with no program waiting on them: computed `__init__` re-exports (`__all__`, conditional imports) and a bare `from . import x`. File them if a program needs them.
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** implemented (`bd78f917`); follow-ups below
 **Area:** pyc frontend (module resolution, grammar)
 **Test:** `tests/import_package.py` + `tests/pyc_pkg/`

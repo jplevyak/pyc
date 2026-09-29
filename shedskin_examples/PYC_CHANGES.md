@@ -28,26 +28,68 @@ See CLAUDE.md, "The goal: CPython semantics, not shedskin's".
 
 ## The policy
 
+**Author's directive, 2026-09-28:** a corpus program that has an ACTUAL
+type error may be updated when the error cannot be reasonably
+accommodated, and **every accommodation pyc makes is non-strict only.**
+
+An *actual type error* is one that belongs to the program, not to pyc:
+
+- CPython 3 itself raises on it, e.g. `raise "message"` is a
+  `TypeError` (Python-2 idiom), or an operation on a value of the wrong
+  type;
+- or one slot genuinely holds two types that no unboxed representation
+  can carry, over the program's lifetime and not because pyc merged
+  anything. `bh`'s `Vec3`, holding `float` and then `floor(...)`'s `int`,
+  is the standing example.
+
+For such a program there are exactly two routes:
+
+1. **A pyc accommodation**, when a reasonable one exists: wrapping a
+   string exception, widening an `int` to `float`, a typed default for an
+   implicit `None`. Every accommodation is a Python-permissive feature,
+   so it must:
+   - be behind a NAMED flag (`PYC_...`), enabled by the permissive
+     default and **disabled by `--strict`**;
+   - report itself (a warning naming the deviation) whenever it changes
+     what the program would do under CPython;
+   - be listed in [issues/171](../issues/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
+   Under `--strict` the program is refused with a diagnostic that names
+   the type error.
+2. **A source edit**, when no reasonable accommodation exists, or when
+   the accommodation would change what a correct program prints. The edit
+   is the minimal change that removes the type error, written in terms of
+   what the program evidently means.
+
 An edit to a corpus program is allowed **only** when all of these hold:
 
-1. **It is semantically a no-op under CPython.** Not "close enough" —
-   verified, by running CPython on the file before and after and diffing
-   the output.
+1. **It is either a verified CPython no-op, or it removes an actual type
+   error.** For a no-op edit, run CPython on the file before and after and
+   diff the output. For a type-error edit, CPython output must be
+   identical on every path that does not reach the error, and the edit
+   must say what the erroneous path now does and why.
 2. **It says what the code already means.** The edit makes an existing
-   invariant explicit; it does not change an algorithm, a data structure,
-   or an interface.
-3. **No compiler flag would do instead without a semantic cost.** If a
-   global flag exists but changes what something MEANS program-wide, the
-   source fix is preferred — it is local and costs no divergence.
+   invariant explicit, or states the intent the erroneous code had. It
+   does not change an algorithm, a data structure, or an interface.
+3. **No accommodation would do instead without a semantic cost.** If a
+   flag exists but changes what something MEANS program-wide, the source
+   fix is preferred: it is local and costs no divergence.
 4. **The reason is a comment in the file**, at the edit, naming the pyc
-   issue and why it is a no-op. Someone reading the corpus must not have to
-   guess why it differs from upstream.
+   issue and saying whether it is a no-op or a type-error fix. Someone
+   reading the corpus must not have to guess why it differs from upstream.
 5. **It is recorded in the table below.**
 
-What is NOT allowed: editing around a pyc inference deficiency. If pyc
-invented a union the program does not have, that is pyc's bug — see
-CLAUDE.md's "Boxing is never the answer for a corpus program". The test is
-whether CPython itself would have to box the value.
+**What is NOT allowed: editing around a pyc inference deficiency.** If pyc
+invented a union the program does not have, that is pyc's bug; see
+AGENTS.md, "Boxing is never the answer for a corpus program". The test is
+whether CPython itself raises, or would have to box the value. If it
+would not, the program is correct and pyc must be fixed.
+
+**Candidates known today** (not yet edited; see issues/171):
+`chess/chess.py:92,128` and `minilight/ml/entry.py:77` use `raise "..."`.
+pyc accommodates this by wrapping the string in `Exception(...)`. Since
+2026-09-28 it does so only in permissive mode and with a warning; `--strict`
+refuses. Editing these sites to `raise Exception("...")` would make both
+programs compile under `--strict`.
 
 **Editing any corpus `.py` invalidates the sweep cache** (both the tree key
 and the content key), which is intended: results measured on the old source

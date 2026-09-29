@@ -1,5 +1,9 @@
 # 107 — an undefined name compiles (exit 0) and the binary segfaults
 
+> **CLOSED 2026-09-28 (merged into 103).** Undefined names now refuse the program in every position (ifa/158 made the violation fatal). What is left is the wording, which [103](../103-unknown-kwarg-silently-bound-positionally.md) now carries alongside the unknown-keyword case.
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status: open — mostly fixed 2026-08-18 (`c8d7da8d`), ONE shape
 remains.** An undefined name is now a compile error naming the symbol,
 with a non-zero exit — see "The fix" at the end — **except when the name
@@ -25,7 +29,7 @@ line previously read a flat "FIXED", which is how the gap survived — the
 the truth.
 
 **Originally filed** 2026-08-18 while delta-reducing `plcfrs` for
-[ifa/issues/105](../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md).
+[ifa/issues/105](../../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md).
 Repro: `tests/undefined_name_executed.py` (`.known_issue`).
 
 **Target: make undefined-name handling consistent with CPython** — a
@@ -76,7 +80,7 @@ produces a crashing binary.
    reducer deleted every class definition, left the call sites, and pyc
    kept accepting the result — so four successive reduction oracles
    produced "reproducers" that were really pyc inferring over garbage.
-   See [105](../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md)'s
+   See [105](../../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md)'s
    oracle table; `ifa/issues/repro/nameck.py` exists solely to work
    around this.
 3. **It can fabricate type degeneration.** An undefined name has *no*
@@ -98,7 +102,7 @@ Consistent with CPython, and taking advantage of pyc being static:
   an error is worth having, since it is almost always a bug.
 - **Never a segfault.** If codegen cannot emit a call whose target is
   unknown, that is the existing
-  [102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
+  [102](../../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
   problem (`cg.cc:2055` emits an abort stub rather than failing the
   build); an undefined name should not reach codegen at all.
 - **Say what is wrong.** `'X' has no type` and `expression has no type`
@@ -106,7 +110,7 @@ Consistent with CPython, and taking advantage of pyc being static:
   wording should name the undefined symbol, in CPython's terms.
 
 This is the same lesson recorded against shedskin's diagnostics in
-[018](closed/018-dict-mixed-key-types-boxing-failure.md): shedskin reports
+[018](018-dict-mixed-key-types-boxing-failure.md): shedskin reports
 `*WARNING* Variable 'x' has dynamic (sub)type: {float, list}` where pyc
 reports an internal `sizeof_element` assertion. Naming the user-level
 problem is the cheap, high-value half of these issues.
@@ -157,7 +161,7 @@ with exit code **1**.
    *skipping* the key child instead broke 283 tests, so it must still be
    walked.
 4. **`with … as X` never bound `X`** —
-   [108](closed/108-async-with-as-target-not-bound.md), which looked
+   [108](108-async-with-as-target-not-bound.md), which looked
    async-specific only because of defect 2. `PY_with_item` now marks its
    target `PY_STORE`. **Fixed and closed.**
 
@@ -173,7 +177,7 @@ with exit code **1**.
 
 All three referenced CPython builtins pyc does not implement, and all
 three were already in
-[102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)'s
+[102](../../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)'s
 crash list. Turning those into compile-time diagnostics is exactly 102's
 stated goal, so the three exit-code changes are an improvement, not a
 regression. Unimplemented builtins get their own wording — the user did

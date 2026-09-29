@@ -1,7 +1,11 @@
 # 042 — no support for package-directory imports (`pkg/__init__.py` + submodules)
 
+> **CLOSED 2026-09-28 (superseded).** Package-directory and dotted imports were implemented in [113](113-package-imports.md) (`bd78f917`). minilight, tarsalzp and quameon now fail on ordinary typing, not on imports.
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** open, filed 2026-08-08. Confirmed still real —
-[issues/025](025-shedskin-examples-coverage.md)'s TODO list item 15
+[issues/025](../025-shedskin-examples-coverage.md)'s TODO list item 15
 had already named this precisely ("the last structural import
 blocker") but it was never turned into its own issue file, despite
 the doc's own text saying "package/multi-file layouts... need

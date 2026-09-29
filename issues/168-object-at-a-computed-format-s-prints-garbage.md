@@ -1,6 +1,6 @@
 # 168 — an object at a computed `%s` prints raw memory
 
-**Status:** open, root-caused, reproducible on both backends. Found while
+**Status:** open, root-caused (re-verified 2026-09-28: still prints raw bytes), reproducible on both backends. Found while
 closing [165](closed/165-percent-d-truncates-a-64-bit-int-to-32-bits.md)'s
 non-constant-format half, which fixed every other argument type at a
 computed `%s` and left exactly this one.

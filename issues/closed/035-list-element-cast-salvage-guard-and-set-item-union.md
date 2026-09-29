@@ -1,5 +1,9 @@
 # 035 — `P_prim_set_index_object` casts the assigned value with no compatibility check; a genuine `set`-element type union remains open
 
+> **CLOSED 2026-09-28 (merged into 048).** The `P_prim_set_index_object` guard landed 2026-08-06. The open half, `n*[0]` then `x[i] += 1.5` (a genuine `{int, float}` element union), is carried by [048](../048-none-int-field-pair-runtime-abort.md) with the other genuine scalar unions, under [171](../171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s permissive-only rule.
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** partially fixed 2026-08-06. The fatal compile-error part
 (both branches of `P_prim_set_index_object`) is fixed and verified.
 `shedskin_examples/tictactoe/tictactoe.py` now compiles clean with
@@ -13,11 +17,11 @@ fixed" below.
 **Affects:** `ifa/codegen/cg.cc`'s `P_prim_set_index_object` (both
 the general list branch and the fixed-size tuple-list constant-index
 branch).
-**Related:** [056](../ifa/issues/closed/056-CGEN-degraded-index-type-raw-c-compile-error.md) —
+**Related:** [056](../../ifa/issues/closed/056-CGEN-degraded-index-type-raw-c-compile-error.md) —
 the established precedent and convention this issue extends to a new
 call site (the *value* being stored, not the index argument, which
 056 already covers at the same two call sites);
-[077](../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)/[034](closed/034-iadd-fallback-and-mixed-numeric-regression.md)
+[077](../../ifa/issues/closed/077-primitive-equality-codegen-missing-salvage-guard.md)/[034](034-iadd-fallback-and-mixed-numeric-regression.md)
 — the same "num_kind-based scalar/pointer tolerance" pattern, applied
 here for the third time at a fourth call site.
 
@@ -207,11 +211,11 @@ run it's `set(row)`'s construction inside `isvictory()`, well before
 is not the source, just the first victim in this program's
 particular execution order.
 
-This is the same class of gap [018](closed/018-dict-mixed-key-types-boxing-failure.md)
-/ [ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+This is the same class of gap [018](018-dict-mixed-key-types-boxing-failure.md)
+/ [ifa/030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 already track (no boxed/tagged representation for a genuinely
 heterogeneous scalar union) and the same *category* of finding as
-[ifa/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md)
+[ifa/071](../../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md)
 chess.py's dig (an unrelated site's union reaching into a shared
 structure) — but unlike 071, this one **does** reduce to a small,
 fully general, non-program-specific minimal repro; it isn't an
@@ -227,14 +231,14 @@ prefer a loud runtime assert over a silently wrong value.
 
 A first attempt removed `__set_iter__`/`__dict_iter__`/
 `__dict_items_iter__`'s class-body defaults, mirroring
-[076](../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md)'s
+[076](../../ifa/issues/closed/076-mutation-driven-receiver-divergence-not-cloned.md)'s
 exact `dict`/`set` fix — these three classes still had that exact
 shape, flagged at the time as "not surveyed" in
-[078](../ifa/issues/closed/078-class-body-default-plus-init-override-permanently-unions.md).
+[078](../../ifa/issues/closed/078-class-body-default-plus-init-override-permanently-unions.md).
 That **did** additionally fix `shedskin_examples/loop/loop.py` (FAIL
 → `COMPILED_C`) but did **not** fix `tictactoe.py`'s runtime crash,
 and **regressed `shedskin_examples/webserver/webserver.py`** (fixed
-by [032](closed/032-dict-view-membership-missing-contains.md),
+by [032](032-dict-view-membership-missing-contains.md),
 earlier this session) back to a hard `_CG_str_eq` compile error.
 Reverted at the time rather than ship a regression.
 
@@ -266,7 +270,7 @@ independent of `webserver.py` or even classes at all.
 problem — shared, program-wide iterator classes whose fields would
 otherwise union every caller's element type — via
 `__pyc_clone_constants__` on the constructor parameter
-([ifa/issues/045](../ifa/issues/closed/045-receiver-cs-method-cloning.md)):
+([ifa/issues/045](../../ifa/issues/closed/045-receiver-cs-method-cloning.md)):
 it puts the class on the `clone_methods_per_cs` track in
 `gen_class_pyda`, giving each *creating contour* its own iterator
 CreationSet, with methods split per receiver CS too. Applied the same
@@ -393,7 +397,7 @@ reader symmetric with the writer" instinct is not retried.
 
 ### Another confirmed instance, 2026-08-08: mixed-type tuple printing, and a new LLVM divergence
 
-[issues/025](025-shedskin-examples-coverage.md) separately
+[issues/025](../025-shedskin-examples-coverage.md) separately
 noted (2026-07-16) that `print()`/`str()` of a tuple with genuinely
 mixed element types — `(1, None)` — aborts at runtime
 ("matching function not found"), framed there as "distinct from the
@@ -417,7 +421,7 @@ clean on `-b` (exit 0), but prints `(, )` instead of `(1, None)` —
 the tuple's fields print as empty strings rather than triggering any
 guard. Matches the same "C backend fails loud, LLVM backend fails
 silent" divergence already documented for
-[061](../ifa/issues/closed/061-CGEN-multi-tuple-list-null-element-type.md)'s
+[061](../../ifa/issues/closed/061-CGEN-multi-tuple-list-null-element-type.md)'s
 list-of-tuples case — worth keeping in mind if/when this family's
 underlying boxed/tagged-scalar gap is eventually fixed: the fix needs
 to give LLVM a genuine salvage guard here too, not just close the C

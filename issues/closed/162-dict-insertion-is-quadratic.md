@@ -1,5 +1,9 @@
 # issues/162 — dict insertion does not scale
 
+> **CLOSED 2026-09-28 (fixed).** Re-verified 2026-09-28: 200 000 integer inserts run in 0.03 s. `dict` and `set` are hashed since closed/118 (`cdff0749`).
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** open, measured 2026-09-17.
 
 ## Symptom

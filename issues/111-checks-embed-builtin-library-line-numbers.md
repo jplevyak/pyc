@@ -1,6 +1,6 @@
 # 111 — COMPILE-OUT checks embed `__pyc__.py` line numbers
 
-**Status:** open
+**Status:** open, low priority. Re-checked 2026-09-28: only one `.check` still embeds a `__pyc__.py:<N>` line (`tests/empty_list_compare_via_dict.py.check`), so the tax is small today, but every builtin-library edit still risks it.
 **Area:** test harness
 
 ## Symptom

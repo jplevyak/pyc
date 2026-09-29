@@ -1,5 +1,9 @@
 # 112 — copy-of-copy of a tuple leaves `self[k]` unresolved
 
+> **CLOSED 2026-09-28 (merged into 110).** The `tuple(iterable)` flip and its copy-of-copy blocker are one piece of work; see [110](../110-tuple-from-iterable-returns-a-list.md).
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** open — **blocks defaulting `PYC_MAKESEQ` / `PYC_TUPLE_AS_LIST` on**
 **Area:** ifa flow analysis / `__pyc__` builtin library
 **Reproducer:** `tests/deepcopy_tuple_copy_of_copy.py` (18 lines)

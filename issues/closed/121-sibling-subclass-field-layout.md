@@ -5,7 +5,7 @@ re-verifying: `tests/sibling_subclass_field_layout.py` is in the suite
 with no `.known_issue` sidecar and passes (suite green, 308/17/0).
 
 **FIXED 2026-08-30**, filed the same day while root-causing
-[120](../120-richards-silent-wrong-answer.md). `promote_field` now promotes
+[120](120-richards-silent-wrong-answer.md). `promote_field` now promotes
 a CreationSet's pending fields in name-sorted order, so sibling classes
 agree on slot assignment. It briefly cost a `.known_issue` on
 `tests/deepcopy_objects.py` — once sibling classes stop getting
@@ -118,7 +118,7 @@ promoted fields.
 - `tests/sibling_subclass_field_layout.py` matches CPython on both
   backends (landed, no `.known_issue`).
 - richards' scheduler trace now matches CPython for every traced
-  iteration — [120](../120-richards-silent-wrong-answer.md) needs more
+  iteration — [120](120-richards-silent-wrong-answer.md) needs more
   than this and stays open.
 - All five gates green.
 

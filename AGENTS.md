@@ -276,6 +276,33 @@ trades semantics for representability, so it belongs behind
 otherwise require boxing. See
 [ifa/145](ifa/issues/closed/145-numeric-coercion-is-not-gated-on-permissive-mode.md).
 
+**Generalised (author, 2026-09-28): every Python-specific accommodation
+is flagged and non-strict.** Any behaviour that goes beyond CPython 3
+semantics or beyond static typing is an accommodation: accepting a
+Python-2 idiom, widening a numeric type, a typed default for an implicit
+`None`, returning a list where CPython returns a tuple, or reading `None`
+as a zero value. Each one must:
+
+- be behind a NAMED flag, on under `--permissive` (the default) and
+  **off under `--strict`**;
+- warn when it changes what the program would do under CPython;
+- reach generic ifa code only through `IFACallbacks`, never hard-coded
+  (ifa is not a Python compiler; for example, "a write to a missing
+  field discovers the field" is a Python-ism, see
+  [issues/128](issues/128-cross-class-field-promotion.md)).
+
+`--strict` therefore means CPython semantics or a compile error, never a
+silent deviation. The audit of every accommodation in the tree, and
+which ones break this rule today, is
+[issues/171](issues/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
+
+**Corpus programs with ACTUAL type errors may be edited** when no
+reasonable accommodation exists. An actual type error is one CPython
+itself raises on (`raise "message"`), or a slot that genuinely holds two
+unrepresentable types over time (`bh`). A union pyc invented is not one;
+the rule below still holds for that. The edit policy is
+[shedskin_examples/PYC_CHANGES.md](shedskin_examples/PYC_CHANGES.md).
+
 ## Boxing is never the answer for a corpus program
 
 **Author's directive.** No `shedskin_examples` program requires boxing.

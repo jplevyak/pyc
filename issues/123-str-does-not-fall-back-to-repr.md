@@ -1,6 +1,6 @@
 # 123 — `str()`/`print()` do not fall back to a class's `__repr__`
 
-**Status:** open, filed 2026-09-03. Found in the corpus `check` sweep
+**Status:** open (re-verified 2026-09-28: still prints `<object>`), filed 2026-09-03. Found in the corpus `check` sweep
 taken for [ifa/124](../ifa/issues/124-FA-refuse-imprecise-inference.md):
 `go` began compiling and running for the first time, and its stdout
 still did not match CPython — for this reason, unrelated to that fix.

@@ -54,7 +54,7 @@ union where marks previously kept it separated, and the **LLVM backend
 lacks a guard the C backend has** for that shape.
 
 That is the same family as
-[035](../035-list-element-cast-salvage-guard-and-set-item-union.md), whose
+[035](035-list-element-cast-salvage-guard-and-set-item-union.md), whose
 guards live in `cg.cc` — including the read-side one added the same day
 (`P_prim_index_object`'s constant-index record branch). `cg_emit_llvm.cc`
 has no counterpart, so where C emits a defined value (or the established

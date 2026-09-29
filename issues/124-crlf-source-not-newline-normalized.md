@@ -1,6 +1,6 @@
 # 124 — a CRLF source file puts `\r\n` inside string literals
 
-**Status:** open, filed 2026-09-03. Found while converting the corpus's
+**Status:** open (re-verified 2026-09-28: prints `8` / `False`), filed 2026-09-03. Found while converting the corpus's
 CRLF files to LF — the conversion would have silently MASKED this.
 **Area:** pyc frontend (`python_parse.cc` / the dparser tokenizer's
 source reading).

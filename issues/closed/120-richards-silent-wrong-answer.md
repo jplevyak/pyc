@@ -1,10 +1,14 @@
 # 120 — richards compiles clean, runs, and prints the wrong answer
 
+> **CLOSED 2026-09-28 (fixed).** richards compiles, matches CPython, and runs its timed half in 40 s (ifa/174, 2026-09-26). The dispatch it describes was backtracked to the union-receiver load.
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** open, filed 2026-08-29 from the issues/119 corpus A/B.
 **Affects:** `shedskin_examples/richards/richards.py`; a polymorphic
 dispatch that resolves to nothing useful.
 **Severity:** silent. Exit 0, wrong output (it does emit 4 warnings, all named below) — the shape
-[ifa/102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
+[ifa/102](../../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
 is about, one step worse than the abort it replaced.
 
 ## Symptom
@@ -24,7 +28,7 @@ complete instantly, so the task scheduler is doing no work at all, and
 
 ## History: this is a failure mode that MOVED, not a new defect
 
-Before [issues/119](closed/119-nested-tuple-repr-aborts.md) (clean
+Before [issues/119](119-nested-tuple-repr-aborts.md) (clean
 `f2501586`) richards aborted instead:
 
 ```
@@ -45,7 +49,7 @@ layout half either: `PYC_TUPLE_AS_LIST=0` and `=1` both print `False`.
 The two failures are almost certainly the same underlying defect —
 a polymorphic dispatch over a receiver union that has no runtime
 discriminator — seen from two sides. Compare
-[ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md), which is
+[ifa/030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md), which is
 that exact shape.
 
 ## Why the sweep did not flag it
@@ -89,7 +93,7 @@ loop 5  ident 4                 ident -44889163002019841
 ```
 
 **1. Wrong field offsets — FIXED, see
-[121](closed/121-sibling-subclass-field-layout.md).** The four `Task`
+[121](121-sibling-subclass-field-layout.md).** The four `Task`
 subclasses get their inherited data fields at different struct slots
 (`ident` at e31/e32/e33 across siblings), so a union receiver reads a
 neighbouring field. `3000` is `HandlerTask`'s `priority`. Fixing this

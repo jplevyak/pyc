@@ -1,6 +1,6 @@
 # 169 — a method of a function-local class that reads the function's local crashes the analysis
 
-**Status:** open. Found 2026-09-25 while testing the
+**Status:** open (re-verified 2026-09-28: still the `unique_AVar: Assertion 'es'` abort). Found 2026-09-25 while testing the
 [106](closed/106-empty-if-body-silently-accepted.md) parser fix: a program
 exercising every compound statement nested in a method crashed here, and
 the crash predates that fix.

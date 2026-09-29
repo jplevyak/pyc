@@ -1,5 +1,9 @@
 # 046 — two call sites omitting *different* defaulted parameters: the defaulted store is lost (silent wrong answer)
 
+> **CLOSED 2026-09-28 (fixed).** Re-verified 2026-09-28: `tests/default_arg_omitted_differently.py` prints CPython's `0` on both backends. Its stale `.known_issue` sidecar is deleted. sat's remaining failure is elsewhere.
+>
+> *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
+
 **Status:** open, 2026-08-15. Root-caused from `shedskin_examples/sat`'s
 runtime failure. Minimal repro landed as
 `tests/default_arg_omitted_differently.py`, tagged `.known_issue` (see
@@ -138,7 +142,7 @@ does not keep it alive and does not fix the answer); and parameter names
 shadowing the attribute names (renaming the parameters to `r`/`t` changes
 nothing).
 
-## Also found while narrowing — now [048](048-none-int-field-pair-runtime-abort.md)
+## Also found while narrowing — now [048](../048-none-int-field-pair-runtime-abort.md)
 
 ```python
 class V:
@@ -152,7 +156,7 @@ print(v.a, v.b)
 Here both fields DO get slots (`e12 /* a */`, `e13 /* b */`), pyc emits
 **zero warnings**, and the binary aborts at run time with `matching
 function not found`. CPython prints `1 2`. Filed separately as
-[048](048-none-int-field-pair-runtime-abort.md) — it shares only a
+[048](../048-none-int-field-pair-runtime-abort.md) — it shares only a
 discovery path with this issue.
 
 ## Verification plan
