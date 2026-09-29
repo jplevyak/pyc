@@ -55,7 +55,7 @@ genuinely does not resolve the union, exactly as the section below
 describes (it clones `str.__add__` for the union's `str` member with the
 call site's literal `10` baked in). That is this issue's own mechanism,
 and no other open issue covers it — 048 is codegen,
-[075](../../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md) is
+[075](../../ifa/issues/closed/075-FA-element-cs-method-split-idempotent-plan.md) is
 the container-method-per-element-CS plan, and
 [030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md) is
 classtag dispatch for object receivers, which this doc already notes does
@@ -79,7 +79,7 @@ still cites this issue and still fires: it blocked the C-helper form of
 [050](../050-pyc-string-builders-are-quadratic.md)'s fix when a trajectory
 change let `list.__add__` be specialised against a `bytes` receiver. So
 the *mechanism* named here is alive even though the dict/set symptoms are
-gone; [075](../../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
+gone; [075](../../ifa/issues/closed/075-FA-element-cs-method-split-idempotent-plan.md)
 remains the fix vehicle for that half.
 
 **Original status:** open.
@@ -97,7 +97,7 @@ and zero comprehension code involved. Also affects `set` (issue
 shape, same failure. Not a literal duplicate of any single
 `ifa/issues/` file, but the same underlying gap as
 [ifa/issues/063](../../ifa/issues/closed/063-no-type-bucket-triage.md) (diagnosis)
-/ [ifa/issues/075](../../ifa/issues/075-FA-element-cs-method-split-idempotent-plan.md)
+/ [ifa/issues/075](../../ifa/issues/closed/075-FA-element-cs-method-split-idempotent-plan.md)
 (concrete build plan) — pyc's shared `list`/`dict` container methods
 aren't cloned per element/key-CS, so a program with two
 differently-keyed dict instances gets one merged AVar for `key`
@@ -398,7 +398,7 @@ open), but the **diagnostic** is worth copying: naming the variable, its
 class and the exact union beats pyc's current
 `sizeof_element of non-container type 'float64'` from inside `__pyc__.py`.
 
-Full measurements in [ifa/issues/101](../../ifa/issues/101-FA-first-time-forever-splitting.md).
+Full measurements in [ifa/issues/101](../../ifa/issues/closed/101-FA-first-time-forever-splitting.md).
 
 
 ## Precedent: naming the user-level problem (2026-08-18)

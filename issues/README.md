@@ -209,7 +209,7 @@ to minimise.
   verified against CPython both backends — plus two bonus fixes found
   in the same audit, `sys.version` and `string.capwords`/`split`/
   `join`, and a new LLVM-only bug found along the way, filed as
-  [ifa/issues/095](../ifa/issues/095-LLVM-str-or-none-union-wrong-value.md)).
+  [ifa/issues/095](../ifa/issues/closed/095-LLVM-str-or-none-union-wrong-value.md)).
   `struct`/`hashlib` assessed and deferred — blocked on two actual
   compiler/runtime gaps (`bytes(iterable)` construction doesn't
   resolve; `*args` in a function definition is parsed but not
@@ -436,7 +436,7 @@ commit ref recorded in each file's status line.
   `in_boolean_context`) already applies to plain `if`/`while`/`elif` —
   `PY_list_if`/`PY_comp_if` just weren't in its recognized parent-kind
   list. Same crash signature as
-  [ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)
+  [ifa/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md)
   (`mismatched field sizes: class 'closure'...`), a third independent
   source of it. Found via `shedskin_examples/yopyra/yopyra.py`, which
   now compiles (a second, unrelated `__iadd__`-fallback gap in that

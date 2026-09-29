@@ -368,7 +368,7 @@ key. So **no `==` receiver in the program is genuinely polymorphic over
 analysis: `dict._keys` is one `list` field on a class shared
 program-wide, so its element type collects from every dict (and, being a
 list, from the program's other lists too). That is
-[ifa/105](../../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)
+[ifa/105](../../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md)
 and [issues/039](../039-list-mul-shared-element-type-cross-contamination.md),
 the same shared-CreationSet degeneration as everywhere else.
 
@@ -436,7 +436,7 @@ measurements of the same list CreationSets on `loop`
 So the union was not pre-existing and it was not `loop`'s: **the helper
 method created it.** `_slot(self, key)` is one more shared generic method
 on a class every program instantiates, and its `key` parameter merges
-every dict's key type into one contour — [ifa/105](../../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)'s
+every dict's key type into one contour — [ifa/105](../../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md)'s
 mechanism exactly, introduced by the very code that then tripped over it.
 
 **Inlining the probe fixes the miscompile.** The reduced `loop` now
@@ -694,6 +694,6 @@ Corpus `-m check` (`sweeps/check__default__752544ed+fc874656.tsv`, against
 `pylife` goes from a run timeout to output byte-identical to CPython.
 `loop` goes from a timeout to the stack segfault above. `othello3` fails to
 compile quickly instead of timing out. `ac_encode` compiles again; that is
-[ifa/171](../../ifa/issues/171-FA-numeric-union-sustains-itself-through-a-shared-contour.md)'s
+[ifa/171](../../ifa/issues/closed/171-FA-numeric-union-sustains-itself-through-a-shared-contour.md)'s
 layout sensitivity flipping back, not a fix. Its binary and CPython both
 hit the 120 s cap.

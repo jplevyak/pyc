@@ -54,7 +54,7 @@ of-self] trees, copy-of-copy, mutation isolation; deterministic,
 both backends), suites 200/0 x2, unit 58/0. genetic2 itself now has
 correct deepcopy SEMANTICS but its compile diverges in FA flow
 (unbounded matcher allocation over the copy-chain unions) --
-[ifa/issues/048](../../ifa/issues/048-FA-deepcopy-flow-divergence-genetic2.md).
+[ifa/issues/048](../../ifa/issues/closed/048-FA-deepcopy-flow-divergence-genetic2.md).
 
 Original report follows.
 

@@ -1,7 +1,7 @@
 # 106 — pyc accepts an `if:` with no body inside a function
 
 **Status:** CLOSED — fixed 2026-09-25. Found 2026-08-18 while delta-reducing `plcfrs` for
-[ifa/issues/105](../../ifa/issues/105-type-degeneration-in-shared-generic-methods.md).
+[ifa/issues/105](../../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md).
 Repro: `tests/empty_if_body_accepted.py` (now `.check_fail`).
 
 ## Symptom
@@ -97,7 +97,7 @@ closing an empty suite).
 ## Two sibling divergences, found the same way — both FIXED 2026-08-28
 
 Delta-reducing `shedskin_examples/linalg` for
-[ifa/105](../../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)
+[ifa/105](../../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md)
 surfaced two more places where pyc's front end and CPython disagree.
 Both are fixed; recorded here because this issue is where the "pyc's
 parser is not a proxy for Python's" rule lives, and because the second

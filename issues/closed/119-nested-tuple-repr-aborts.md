@@ -8,7 +8,7 @@ issue 069. `PYC_TUPLE_AS_LIST` defaults on to supply a valid layout for
 the runtime-arity tuples that unrolling then exposes. Regression test:
 `tests/nested_tuple_repr.py` (`.known_issue` dropped). See
 **Resolution** at the bottom. Filed 2026-08-29 while re-verifying
-[ifa/061](../../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md).
+[ifa/061](../../ifa/issues/closed/061-CGEN-multi-tuple-list-null-element-type.md).
 Split out because it is simpler than 061 and independent of it: no list,
 no `sort()`, no heterogeneity.
 **Affects:** `__pyc__/04_sequence.py`'s `tuple.__str__`/`__repr__` and
@@ -132,7 +132,7 @@ uniform −22 line shift and nothing else.
 
 ### What this also fixed
 
-[ifa/061](../../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md)'s
+[ifa/061](../../ifa/issues/closed/061-CGEN-multi-tuple-list-null-element-type.md)'s
 LLVM half. Its live repro printed `[(, ), (, )]` and now prints
 `[(2, (1, 9)), (1, (5, 5))]` — that symptom was this bug, not 061's.
 061 stays open, now C-backend-only (`incompatible pointer types`).

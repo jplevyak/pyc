@@ -22,9 +22,9 @@ that a scanning `__contains__` would exhaust. That question has to be
 answered, not worked around with a fourth hand-written method.
 
 Found working the `unresolved call` class
-([ifa/149](../ifa/issues/149-the-largest-diagnostic-class-reports-nothing.md)),
+([ifa/149](../ifa/issues/closed/149-the-largest-diagnostic-class-reports-nothing.md)),
 which is the largest warning class in the corpus. This was root cause #2 in
-it, behind [ifa/150](../ifa/issues/150-is-not-none-never-folds.md).
+it, behind [ifa/150](../ifa/issues/closed/150-is-not-none-never-folds.md).
 
 ## The defect
 
@@ -205,6 +205,6 @@ type-checked. Its run status is unchanged (`run_rc=134` before and after) —
 it aborted before and aborts now, a few statements later.
 
 That merge is a concrete instance of
-[ifa/151](../ifa/issues/151-split-an-entryset-on-a-constant-argument-on-demand.md):
+[ifa/151](../ifa/issues/closed/151-split-an-entryset-on-a-constant-argument-on-demand.md):
 two construction sites disagreeing on a constant argument, merged into one
 contour, with a demand (an unresolved call) blocked on the union.

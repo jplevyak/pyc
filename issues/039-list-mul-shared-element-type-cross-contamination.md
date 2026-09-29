@@ -104,7 +104,7 @@ identical `scores`/`set._items` symptom, now traced one level further.
 
 Not traced past this point into `fa.cc`/`ifa/if1` internals (would
 need the same kind of FA-level instrumentation
-[ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)'s
+[ifa/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md)'s
 chess.py dig used) — the leading hypothesis, unconfirmed: `list.__mul__`'s
 `__pyc_primitive__(__pyc_symbol__("merge"), self, self)` operand (the
 first argument to its `__pyc_c_call__`) causes FA to treat the result
@@ -196,7 +196,7 @@ Two separate mechanisms, worth keeping apart:
   `Body`-only fields are reachable only through a `Body *`.
 
 The second point is a gap in
-[ifa/123](../ifa/issues/123-CGEN-union-receiver-field-access-has-no-discrimination.md)'s
+[ifa/123](../ifa/issues/closed/123-CGEN-union-receiver-field-access-has-no-discrimination.md)'s
 option list, which offers per-class classtag dispatch on field access or
 a global slot assignment. shedskin's answer is a third: **lay classes
 out with the base-class prefix first**, so sibling subclasses share
@@ -208,7 +208,7 @@ enough, because nothing reads a `Body`-only field through `subp`." The
 premise is true and the conclusion does not follow. Reading a **shared**
 field through a union still needs a common offset, and that is exactly
 what bh does — see the layout analysis now in
-[ifa/123](../ifa/issues/123-CGEN-union-receiver-field-access-has-no-discrimination.md).
+[ifa/123](../ifa/issues/closed/123-CGEN-union-receiver-field-access-has-no-discrimination.md).
 Fixing this issue's imprecision does NOT unblock bh.
 
 ### Two mechanism hypotheses tested and REFUTED

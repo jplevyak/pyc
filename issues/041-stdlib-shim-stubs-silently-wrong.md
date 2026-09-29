@@ -241,7 +241,7 @@ spirit as the `letters`/`lowercase`/`uppercase` aliases already in that
 file).
 
 **A new LLVM-only bug found while verifying `getopt`**, filed
-separately: [ifa/issues/095](../ifa/issues/095-LLVM-str-or-none-union-wrong-value.md)
+separately: [ifa/issues/095](../ifa/issues/closed/095-LLVM-str-or-none-union-wrong-value.md)
 — a `str | None` local's `is not None` check reads back wrong
 specifically on `-b`; the C backend is correct. `getopt.py` itself has
 a comment flagging this; not fixed here.
@@ -270,7 +270,7 @@ compile failure rather than only a theoretical remainder:
 (now fixed; a residual, structurally different mismatch — an
 ordinary call site vs. its resolved callee clone's formal parameter
 type — is tracked separately as
-[ifa/issues/097](../ifa/issues/097-CGEN-callsite-vs-clone-formal-type-mismatch.md)).
+[ifa/issues/097](../ifa/issues/closed/097-CGEN-callsite-vs-clone-formal-type-mismatch.md)).
 `rdb.py` hits `sizeof_element of non-container type
 'str' (in __add__) — FA specialized a container method against a
 scalar` — [issues/018](closed/018-dict-mixed-key-types-boxing-failure.md)'s

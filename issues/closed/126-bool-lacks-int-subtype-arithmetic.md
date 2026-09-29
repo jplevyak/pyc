@@ -7,8 +7,8 @@ backends, with `tests/bool_int_subtype_arith.py` in the suite and no
 dangling here: see "Not fixed here" at the bottom.
 
 Root cause #3 in the `unresolved call` census
-([ifa/149](../../ifa/issues/149-the-largest-diagnostic-class-reports-nothing.md)),
-after [ifa/150](../../ifa/issues/150-is-not-none-never-folds.md) and
+([ifa/149](../../ifa/issues/closed/149-the-largest-diagnostic-class-reports-nothing.md)),
+after [ifa/150](../../ifa/issues/closed/150-is-not-none-never-folds.md) and
 [125](../125-in-has-no-iterable-fallback.md).
 
 ## Symptom
@@ -171,7 +171,7 @@ it has nothing to compare against either.
   issue.** `bool.__and__` exists and resolves fine in isolation
   (`(a > b) & (a < b)` compiles clean), so something else about that
   ternary's receiver is responsible. Unexamined; it is one of the residual
-  sites in [ifa/149](../../ifa/issues/149-the-largest-diagnostic-class-reports-nothing.md)'s
+  sites in [ifa/149](../../ifa/issues/closed/149-the-largest-diagnostic-class-reports-nothing.md)'s
   census.
 - **`rdb`'s `bool.__iand__`** with a class-instance argument
   (`basis &= MatchRule(props, rule)`) — a `TypeError` in CPython unless

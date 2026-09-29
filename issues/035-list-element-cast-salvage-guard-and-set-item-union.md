@@ -211,7 +211,7 @@ This is the same class of gap [018](closed/018-dict-mixed-key-types-boxing-failu
 / [ifa/030](../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 already track (no boxed/tagged representation for a genuinely
 heterogeneous scalar union) and the same *category* of finding as
-[ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)
+[ifa/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md)
 chess.py's dig (an unrelated site's union reaching into a shared
 structure) — but unlike 071, this one **does** reduce to a small,
 fully general, non-program-specific minimal repro; it isn't an
@@ -417,7 +417,7 @@ clean on `-b` (exit 0), but prints `(, )` instead of `(1, None)` —
 the tuple's fields print as empty strings rather than triggering any
 guard. Matches the same "C backend fails loud, LLVM backend fails
 silent" divergence already documented for
-[061](../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md)'s
+[061](../ifa/issues/closed/061-CGEN-multi-tuple-list-null-element-type.md)'s
 list-of-tuples case — worth keeping in mind if/when this family's
 underlying boxed/tagged-scalar gap is eventually fixed: the fix needs
 to give LLVM a genuine salvage guard here too, not just close the C

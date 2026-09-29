@@ -25,7 +25,7 @@ line previously read a flat "FIXED", which is how the gap survived — the
 the truth.
 
 **Originally filed** 2026-08-18 while delta-reducing `plcfrs` for
-[ifa/issues/105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md).
+[ifa/issues/105](../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md).
 Repro: `tests/undefined_name_executed.py` (`.known_issue`).
 
 **Target: make undefined-name handling consistent with CPython** — a
@@ -76,7 +76,7 @@ produces a crashing binary.
    reducer deleted every class definition, left the call sites, and pyc
    kept accepting the result — so four successive reduction oracles
    produced "reproducers" that were really pyc inferring over garbage.
-   See [105](../ifa/issues/105-type-degeneration-in-shared-generic-methods.md)'s
+   See [105](../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md)'s
    oracle table; `ifa/issues/repro/nameck.py` exists solely to work
    around this.
 3. **It can fabricate type degeneration.** An undefined name has *no*

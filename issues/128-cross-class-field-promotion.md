@@ -96,7 +96,7 @@ Vertex:  duplicate 16  mark 17  onhull 18  v 19  vnum 20
 Edge's `delete`/`newface`, both receive Face's `visible` — and **slot 22 is
 `onhull` on `Edge` and `newface` on `Vertex`**. A later read through a union
 receiver blind-casts across the two layouts, which
-[ifa/123](../ifa/issues/123-CGEN-union-receiver-field-access-has-no-discrimination.md)'s
+[ifa/123](../ifa/issues/closed/123-CGEN-union-receiver-field-access-has-no-discrimination.md)'s
 contract catches as
 
 ```
@@ -143,15 +143,15 @@ state is reset, but `promote_field` has already written into
 
 **So the decision outlives the evidence for it.** That is the same shape
 this tree keeps meeting from other directions —
-[ifa/128](../ifa/issues/128-cs-identity-over-discriminates-vs-element-type.md)'s
+[ifa/128](../ifa/issues/closed/128-cs-identity-over-discriminates-vs-element-type.md)'s
 "what persists is the DECISION, not the types".
 
 ## What is NOT the cause — each ruled out by measurement
 
-- **Not a shared container method contour** ([ifa/143](../ifa/issues/143-shared-container-method-contours-refuse-cs-splits.md)).
+- **Not a shared container method contour** ([ifa/143](../ifa/issues/closed/143-shared-container-method-contours-refuse-cs-splits.md)).
   `IFA_DBG_FUNES=__getitem__` shows **2 contours**, one per list
   (`list#1004`, `list#1005`). The method splits correctly.
-- **Not a merged container** ([ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)).
+- **Not a merged container** ([ifa/133](../ifa/issues/closed/133-split-a-container-on-its-element-type.md)).
   `IFA_DBG_ELEMTYPE` on `chull`: `list: 40 CS / 12 elemtypes`, `mixed=0`.
   The lists are separated.
 - **Not the start-merged flip.** Layouts byte-identical at both arms.
@@ -293,7 +293,7 @@ default argument is a distinct `list<void *> *`), and where a union
 legitimately does form it **hoists** the member to the lowest common
 ancestor as a virtual method or `virtualvars` (`shedskin/virtual.py:125`),
 so C++ inheritance gives one slot at one offset. Detail in
-[ifa/135](../ifa/issues/135-empty-sibling-contour-wins-the-clone-merge.md).
+[ifa/135](../ifa/issues/closed/135-empty-sibling-contour-wins-the-clone-merge.md).
 
 ## The design (author, 2026-09-14)
 
@@ -473,7 +473,7 @@ the same wall stage 1 already names with `tc_skip_rval`
 **So the demand is real and correctly identified, and the receiver is the
 wrong place to act on it.** The split has to happen at whatever contour
 FEEDS the local — which is exactly
-[ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s
+[ifa/133](../ifa/issues/closed/133-split-a-container-on-its-element-type.md)'s
 `PYC_ESBLOCK` shape ("find the blocker BY TEST": walk back to the formal of
 a contour with more than one in-edge, hold it terminal, and check whether
 the groups then separate) and
@@ -528,7 +528,7 @@ es=586  __setitem__  type= Vertex Edge Edge Edge Edge            <- already mixe
 es=91/473/585/679  append  type= Vertex Edge Edge Edge Edge
 ```
 
-This is [ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s
+This is [ifa/133](../ifa/issues/closed/133-split-a-container-on-its-element-type.md)'s
 `MIXELEM` reading exactly: **`__setitem__` already has one contour per value
 type** — `es=680` writes only Vertex, `es=497`/`es=93` write only Edge — and
 they all land in ONE element channel because the RECEIVER CreationSet is
@@ -667,7 +667,7 @@ to be its source. So the source is upstream in a form this census does not
 look at: a function return, a field, or a formal. A fused channel with no
 separable element source means *find the confluence one level up*, and
 `{int64, list}` is a scalar/container mix, which is
-[ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s
+[ifa/133](../ifa/issues/closed/133-split-a-container-on-its-element-type.md)'s
 residual family and issues/018's representation question rather than a
 splittable class union.
 
@@ -816,7 +816,7 @@ position 0 is the selector, as the `FUNES` dump shows
 **Why it gates the build:** the proposed split partitions a contour by its
 receiver. If receivers routinely hold N containers, the split hands back N
 groups and that is
-[144](../ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
+[144](../ifa/issues/closed/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
 fan — in the worst possible place, since `extend`/`append`/`__setitem__` are
 the most-shared functions in any program. `IFA_DBG_RECVCARD`.
 
@@ -846,7 +846,7 @@ contours at 8 or more, with `enumerate` at 20.
 
 So the rule that follows is not "split by receiver": it is **peel the
 demanded group and leave the rest fused**, exactly as
-[133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s ESBLOCK
+[133](../ifa/issues/closed/133-split-a-container-on-its-element-type.md)'s ESBLOCK
 does with its "take exactly TWO groups" rule. On a receiver holding 20
 containers the demand still names two — the one the Vertex reaches and
 everything else — and a partition of 2 is what must be applied, never 20.
@@ -983,7 +983,7 @@ The key it groups by is the assign-set / content signature. If at the moment
 of grouping `Hull.edges`' list and a vertex-holding list have the same
 signature, they stay together, and once the element has both they are
 indistinguishable by content forever — the lag
-[133](../ifa/issues/133-split-a-container-on-its-element-type.md) names as
+[133](../ifa/issues/closed/133-split-a-container-on-its-element-type.md) names as
 *"the demand is unobservable at the moment of the merge, and the merge is
 unrecoverable at the moment the demand appears."*
 
@@ -1029,7 +1029,7 @@ thing that matters would have been invisible to it.
 serving nine sites, and it is being used where `InitEdges()`'s edge list
 belongs (`self.edges.extend(f0.InitEdges())`, with `newedges=[]` inside
 `InitEdges`). That is
-[ifa/133](../ifa/issues/133-split-a-container-on-its-element-type.md)'s merged
+[ifa/133](../ifa/issues/closed/133-split-a-container-on-its-element-type.md)'s merged
 empty-list literal, and the important part:
 
 > **`defs=9` — so route 4 CAN partition it.** `CS_DEF_PARTITION` declines at
@@ -1133,7 +1133,7 @@ a reason the walk cannot see, and that reason is the next thing to find.
 `{writers reaching Edge}`, by the same rule ESBLOCK uses — first signature
 keeps the contour, everything else peels onto one product. The partition is
 named by the demand and is 2 by construction, so it cannot become
-[ifa/144](../ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
+[ifa/144](../ifa/issues/closed/144-route-4-fans-per-creation-point-instead-of-partitioning.md)'s
 fan. *Stop condition:* if the group count tracks the caller or member count,
 stop — that is the fan, and it has been built and reverted twice already.
 

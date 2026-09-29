@@ -42,64 +42,67 @@ observed a distinction that required it, not because the surrounding
 structure happened to split. Splitting driven by structure rather than
 by demand is a defect, however well it converges.
 
-**This keeps getting forgotten, so name the places it is violated today.**
-[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md) is the umbrella
-issue tracking the audit to completion, with the two-question test, the
-non-monotone diagnostic that identifies such a lever, and the running list
-of what has been removed and what is left. One remains in the analysis
-proper — structural splitting wearing the analysis's clothes:
+**This keeps getting forgotten, so the audit is written down.**
+[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md) tracks it to
+completion. It holds the two-question test and the non-monotone diagnostic
+that identifies an arbitrary lever. It lists what has been removed and what
+is still in the tree, and gives a verdict for every off-by-default
+splitting lever in `fa_flags.cc`. As of 2026-09-28, the violations still
+live on the default path are:
 
-- `creation_point` mints one CreationSet per *(allocation site ×
-  contour)*, so CS identity is decided by structure before any demand test
-  runs. Nothing asked for those contours.
+- **`MARK_SETTER` / `MARK_SETTER_OF_SETTER`** (`fa.cc`, the stage-4
+  block). Mark distance is provenance. The other three mark splitters are
+  gone. This one survived because `voronoi2` needed it, and that
+  prerequisite (the nil codegen fix at `cg.cc:3707`) has landed.
+- **Stage 5's per-CreationSet fan in `split_edges`.** Its partition size
+  is the receiver CS count. `PYC_SPLITEDGES2=1` bounds it to two groups.
+- **`SETTER_OF_SETTER`'s confluence test**, which has no type condition.
 
-**The rule holds on one side and not the other, and the asymmetry is
-measurable.** EntrySets DO start minimal — one per function — and split on
-demand; a two-call program splits `f` into exactly the two contours its
-argument types ask for. CreationSets did not: `creation_point` memoizes on
-`v->cs_map` where `v` is an AVar — a *(variable × contour)* pair — so it
-yields one CreationSet per *(allocation site × contour)* and never asks
-whether two could be the same. That is structural, and true by construction
-rather than by measurement.
-
-**`PYC_CSDCPA1=2` — start merged, one CreationSet per sym — is now the
-DEFAULT**, which is that premise implemented. `PYC_CSDCPA1=0` restores the
-old maximal start. What it costs and what is still owed for it is
+**Both sides now start minimal.** EntrySets start at one per function and
+split on demand: a two-call program splits `f` into exactly the two
+contours its argument types ask for. CreationSets start at one per sym
+(**`PYC_CSDCPA1=2`, the default**; `tuple` is excluded because arity and
+position are part of its type). Before that, `creation_point` memoized on
+the AVar and minted one CS per *(allocation site × contour)*. That was
+structural by construction: on chess, 95 list CSs stood for 6 element
+types
+([ifa/128](ifa/issues/closed/128-cs-identity-over-discriminates-vs-element-type.md)).
+The flip cut container CreationSets from 4.41 per shape to 3.19 per shape
+(sweep `4b61e721`). The plan, and what is still open, is
 [ifa/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md).
 
-*(`PYC_CSSPLIT=1` used to be named here as a second violation — a
-CreationSet following an EntrySet split by construction. It was REMOVED
-2026-09-08, ifa/146 A.)*
-
-The correct dependency is the inverse: an EntrySet is split **so that** a
+The dependency runs one way only: an EntrySet is split **so that** a
 CreationSet split becomes possible, when a demand test has asked for one.
 An ES split is a means to separate creation points, never a reason to
-create data contours.
+create data contours. `PYC_CSPARENTFIRST=1` (the default) enforces this.
+A creation point in a split-child ES joins its split parent's CS, and only
+a demand on the CS itself splits it. (`PYC_CSSPLIT=1`, which made a CS
+follow every ES split, was removed 2026-09-08.)
 
-pyc does not currently meet this. `creation_point` memoizes on the AVar,
-so it mints one CreationSet per *(allocation site × contour)* and never
-asks whether two could be the same; measured on chess, 95 list CSs stand
-for 6 distinct element types, and every one of the five reuse routes is
-inert at the default. See
-[ifa/issues/128](ifa/issues/128-cs-identity-over-discriminates-vs-element-type.md)
-for the root cause and
-[ifa/issues/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md)
-for the plan and every measurement.
+**A merge can be taken back.** `analyze_to_convergence` resets *before*
+every pass, so derived types are re-derived from bottom, and what persists
+is the DECISION (`av->cs_map`, the split ledger). So a decision taken on
+transient types should be revisited at convergence, not protected
+([ifa/170](ifa/issues/170-FA-contours-minted-on-transient-types-are-never-remerged.md)).
+[ifa/111](ifa/issues/111-FA-selective-invalidation-per-pass.md) is a
+performance lever for the extra passes, not a precondition. The separation
+mechanisms that made start-merged viable have landed, all default-on:
 
-**Corrected 2026-09-05:** 128 used to say a merge cannot be unlearned
-because the analysis is monotone, and that 128 and 111 were therefore one
-change. Both are wrong. `analyze_to_convergence` resets *before* every
-pass, so derived types are already re-derived from bottom; what persists
-is the DECISION, `av->cs_map`. Taking a decision back works — measured
-twice, by a re-join that reverses 36 of them corpus-wide with every
-verdict unchanged, and by `PYC_CSDCPA1` (start merged, one CreationSet
-per sym), which gives **−32% container CreationSets** with `ess` going
-DOWN. ifa/111 is a performance lever for the extra passes, not a
-precondition. What was actually missing were the separation mechanisms:
-[132](ifa/issues/132-arity-is-representation-not-provenance.md) (landed)
-and [133](ifa/issues/133-split-a-container-on-its-element-type.md) (open),
-plus [134](ifa/issues/134-remove-the-frontend-forced-split-opt-in.md) for
-the frontend annotations that still force splits by hand.
+- arity in CS identity ([132](ifa/issues/132-arity-is-representation-not-provenance.md));
+- route 4 (`CS_DEF_PARTITION`), with a content channel for every CS shape;
+- the backtrack to the merged CS (closed/152);
+- the ES split as a means (`PYC_ESBLOCK=1`).
+
+What still forces splits by hand is
+[134](ifa/issues/134-remove-the-frontend-forced-split-opt-in.md): nine
+frontend annotations.
+
+**Before blaming the splitter, check for a missing builtin.** On
+2026-09-28, `list.copy`, `dict.copy` and `str.rstrip` were the first
+errors of corpus programs whose failures had been read as splitting
+problems ([ifa/086](ifa/issues/086-list-and-dict-have-no-copy-method.md)).
+A cascade from an untyped value looks like imprecision everywhere
+downstream.
 
 See [ifa/INDEX.md](ifa/INDEX.md) for the full per-subsystem index
 (ARCHITECTURE, IR, IFA, CLONE, DISPATCH, PRIMITIVES, CFG_SSU,
@@ -257,7 +260,7 @@ technique:
   (`shedskin/lib/math/__init__.hpp:36`) and `int` in CPython 3. pyc matches
   CPython (`pyc_lib/math.py:32`). shedskin's clean typing of `bh` is bought
   by that deviation, not by better analysis — see
-  [ifa/144](ifa/issues/144-route-4-fans-per-creation-point-instead-of-partitioning.md).
+  [ifa/144](ifa/issues/closed/144-route-4-fans-per-creation-point-instead-of-partitioning.md).
 - pyc's own automatic numeric coercion widens an `int` member to `float`,
   so it prints `1.0` where CPython prints `1`. Landing an *inserted
   conversion* to fix a contour problem would buy shedskin's answer, not
@@ -271,7 +274,7 @@ the two conflict, CPython wins.
 trades semantics for representability, so it belongs behind
 `fruntime_errors`, and `--strict` must error on anything that would
 otherwise require boxing. See
-[ifa/145](ifa/issues/145-numeric-coercion-is-not-gated-on-permissive-mode.md).
+[ifa/145](ifa/issues/closed/145-numeric-coercion-is-not-gated-on-permissive-mode.md).
 
 ## Boxing is never the answer for a corpus program
 
@@ -343,13 +346,16 @@ The rule has paid for itself every time it has been applied here:
 
 - The lexical display was removed from every compatibility check
   (ifa/100) — contour counts fell 40-80% corpus-wide.
-- Mark-based splitting was retired (`PYC_NOMARK` defaults to 1) — mark
-  distance is depth-from-a-generating-AVar, so no type tuple can name what
-  it separates. Guard trips 18 → 10, −55% analysis time, −12.3% contours.
+- Mark-based splitting is being retired — mark distance is
+  depth-from-a-generating-AVar, so no type tuple can name what it
+  separates. Turning `MARK_TYPE` off: guard trips 18 → 10, −55% analysis
+  time, −12.3% contours. `MARK_TYPE` and two other mark splitters are
+  deleted; `MARK_SETTER` is still live (ifa/146 D).
 - The per-site key `v<id>|` in `cselem_shape_key` fragments contour
   identity 2.53× (ifa/129), and it is exactly provenance.
-- ifa/128's whole complaint is that CS identity is *(allocation site ×
-  contour)* — a product with provenance on one side.
+- ifa/128's whole complaint was that CS identity was *(allocation site ×
+  contour)* — a product with provenance on one side. Start-merged identity
+  (`PYC_CSDCPA1=2`) replaced it.
 
 The test to apply, from ifa/129: **does the rule encode what the deduced
 types ARE, or where the value CAME FROM?** The first is identity; the
@@ -366,7 +372,7 @@ each pass), so wholesale splitting by creation point costs precision, not
 correctness, and shedskin's ladder tries the finer routes first for
 exactly that reason. Attribution is the tempting shortcut and it is the
 wrong one — recorded in
-[133](ifa/issues/133-split-a-container-on-its-element-type.md), where
+[133](ifa/issues/closed/133-split-a-container-on-its-element-type.md), where
 "record provenance on element writes" was a live option until this rule
 retired it.
 
@@ -406,13 +412,14 @@ passes the test, and it has happened twice in this repo — see
 [ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s E and its
 note on the refinement.
 
-So `creation_point` keying on `(allocation site x contour)` is still
-wrong — the site is the reason there, and it splits with no demand at all.
+So `creation_point` keying on `(allocation site x contour)` was wrong (the
+site was the reason, and it split with no demand at all), which is why it
+was replaced by start-merged identity.
 Splitting an EntrySet per caller *because* a container it allocates has an
 irrepresentable element, and only then, is not.
 
 **And keep three things apart** (author, 2026-09-06;
-[136](ifa/issues/136-creation-point-identity-is-es-x-call-site.md)):
+[136](ifa/issues/closed/136-creation-point-identity-is-es-x-call-site.md)):
 
 | | decided by |
 | --- | --- |

@@ -1430,7 +1430,7 @@ Corpus effect: genetic2's deepcopy SEMANTICS are now correct (the
 runtime cyclic-tree crash is structurally impossible), but its
 compile currently diverges in FA flow over the copy-chain unions --
 filed with analysis and fix directions as
-[ifa/issues/048](../ifa/issues/048-FA-deepcopy-flow-divergence-genetic2.md);
+[ifa/issues/048](../ifa/issues/closed/048-FA-deepcopy-flow-divergence-genetic2.md);
 genetic2 drops out of the compiled column until 048 lands (24/77;
 its previous "compiled" state ran on miscompiled shallow copies).
 
@@ -2447,7 +2447,7 @@ gap unrelated to tuples — filed as
 Also surfaced (pre-existing, reproduces at baseline) a C-backend
 list-of-tuples element-type naming bug when several distinct tuple types
 coexist with a `.sort()` — filed as
-[ifa/issues/061](../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md).
+[ifa/issues/061](../ifa/issues/closed/061-CGEN-multi-tuple-list-null-element-type.md).
 
 ### "no type" bucket triaged: root-caused + three codegen-robustness fixes (39 → 51 compiled) (2026-07-22)
 
@@ -2510,7 +2510,7 @@ argless `range` in the generated C is a *salvage artifact*: `squares`
 goes NOTYPE for an upstream reason, and `convert_NOTYPE_to_void` then
 voids the whole `range(128)` construction feeding it. Corrected below;
 full detail in the rewritten
-[ifa/issues/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md).
+[ifa/issues/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md).
 
 `chess` compiles with one warning (`squares = tuple([i for i in
 range(128) if not i & 8])`: "expression has no type") and exit 0, then
@@ -2557,7 +2557,7 @@ backends, sweep buckets within parallel-timeout noise. chess itself
 still FAILs — its fatal blocker is now the bool|None representation
 mismatch (issue 018/030), NOT element inference. Full analysis and the
 corrected root-cause chain in
-[ifa/issues/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md);
+[ifa/issues/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md);
 the genuine empty-container element-inference family (which turned out
 not to block chess) is scoped with a shedskin-based backward-pass
 design in
@@ -2590,7 +2590,7 @@ Full trace: [032](closed/032-dict-view-membership-missing-contains.md).
 1. A **fatal compile crash** (`fail: mismatched field sizes: class
    'closure' field '<anon>' mixes 8- and 1-byte members ('bool')`) —
    the same crash signature
-   [ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)
+   [ifa/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md)
    root-caused for chess's `bool | None`, here from
    `if l.strip() and l.strip()[0] != "#":` as a **comprehension
    filter** (`Scene.__init__`'s scene-file parser), building a `bool
@@ -2665,7 +2665,7 @@ construction inside `set`'s own `union()`/`intersection()`/
 while building the class's method table regardless of whether this
 specific program ever dispatches to them) — not fully traced to a
 single call site, structurally similar to
-[ifa/071](../ifa/issues/071-FA-chess-accumulated-union-notype-cascade.md)'s
+[ifa/071](../ifa/issues/closed/071-FA-chess-accumulated-union-notype-cascade.md)'s
 "accumulated union, no single root cause" shape rather than a narrow
 bug. **A first attempt at this gap was tried and reverted**:
 `__set_iter__`/`__dict_iter__`/`__dict_items_iter__`
@@ -3135,7 +3135,7 @@ through (or move to a "filed" note) as each gets its own issue.
    `if __name__`/comprehension mechanism originally guessed. No new
    issue needed; already covered by 035.
 9. ~~**sudoku4**~~ — **DIAGNOSED and FILED 2026-08-07 as
-   [ifa/086](../ifa/issues/086-FA-self-recursive-copy-arg-notype-cascade.md).**
+   [ifa/086](../ifa/issues/086-list-and-dict-have-no-copy-method.md).**
    Direct fresh diagnosis (never done before): with real test data,
    `sudoku4.py` now compiles with warnings but **crashes at runtime**
    (`assert(!"runtime error: getter not resolved")` inside `search`
@@ -3192,7 +3192,7 @@ through (or move to a "filed" note) as each gets its own issue.
     `print((1, None))` compiles and runs clean on `-b` but silently
     prints `(, )` instead of `(1, None)`, no diagnostic whatsoever.
     Same "C loud failure, LLVM silent corruption" split
-    [ifa/061](../ifa/issues/061-CGEN-multi-tuple-list-null-element-type.md)
+    [ifa/061](../ifa/issues/closed/061-CGEN-multi-tuple-list-null-element-type.md)
     already documents for the list-of-tuples case. Recorded as a dated
     addendum on 035 rather than a new issue, since the underlying gap
     is already the subject of three open, cross-referenced issues
