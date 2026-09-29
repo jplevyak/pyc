@@ -4262,7 +4262,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           // Flush pending member
           if (pending_member) {
             Sym *t = new_sym(ast);
-            Code *send = if1_send(if1, &ast->code, 4, 1, sym_operator, cur_val, sym_period, pending_sym, t);
+            // A class name's value is its meta instance (`->self`); every
+            // other member flush reads through it, and `Cls.attr[i]` did
+            // not, so a class attribute read through a subscript was
+            // looked up on the class Sym and came back unresolved.
+            Sym *obj = cur_val->self ? cur_val->self : cur_val;
+            Code *send = if1_send(if1, &ast->code, 4, 1, sym_operator, obj, sym_period, pending_sym, t);
             send->ast = ast;
             send->partial = Partial_OK;
             cur_val = t;
