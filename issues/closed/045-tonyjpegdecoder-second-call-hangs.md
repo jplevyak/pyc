@@ -1,7 +1,7 @@
 # 045 — tonyjpegdecoder: ~~a second call to `main()` hangs~~ — root-caused 2026-08-15: it is neither a hang nor the second call
 
 > **CLOSED 2026-08-15** — fixed by the `list.__pyc_tobytes__` half of
-> [050](../050-pyc-string-builders-are-quadratic.md). tonyjpegdecoder now
+> [050](050-pyc-string-builders-are-quadratic.md). tonyjpegdecoder now
 > completes all 20 iterations and its decoded BMP is byte-identical to
 > CPython's (same md5).
 >
@@ -10,7 +10,7 @@
 > **O(n²)** in pyc's own builtin library, so each `main()` takes ~15 s on
 > this ~250 KB image and a 20-iteration run simply exceeds any timeout.
 > The general defect is filed as
-> [050](../050-pyc-string-builders-are-quadratic.md); this issue is its first
+> [050](050-pyc-string-builders-are-quadratic.md); this issue is its first
 > victim and should be closed with it.
 
 ## Bisection, 2026-08-15

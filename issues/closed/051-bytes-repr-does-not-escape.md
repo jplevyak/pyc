@@ -1,7 +1,7 @@
 # 051 — `repr(bytes)` does not escape non-printable bytes
 
 **Status:** CLOSED 2026-09-27 -- `bytes.__repr__` now escapes as CPython does; see "Fixed" at the end. Opened 2026-08-15. Found while pinning the semantics of
-`bytes(list)` for [050](../050-pyc-string-builders-are-quadratic.md). Repro
+`bytes(list)` for [050](050-pyc-string-builders-are-quadratic.md). Repro
 landed as `tests/bytes_repr_escapes.py` with a `.known_issue` tag.
 
 ## Symptom

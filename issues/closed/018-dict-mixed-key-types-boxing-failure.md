@@ -76,7 +76,7 @@ is not codegen and wrong that they differ.
 
 Note also that the `sizeof_element of non-container` guard in `cg.cc`
 still cites this issue and still fires: it blocked the C-helper form of
-[050](../050-pyc-string-builders-are-quadratic.md)'s fix when a trajectory
+[050](050-pyc-string-builders-are-quadratic.md)'s fix when a trajectory
 change let `list.__add__` be specialised against a `bytes` receiver. So
 the *mechanism* named here is alive even though the dict/set symptoms are
 gone; [075](../../ifa/issues/closed/075-FA-element-cs-method-split-idempotent-plan.md)

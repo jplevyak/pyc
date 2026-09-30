@@ -1,14 +1,9 @@
 # pyc shim for the standard `os` module
 
 def _str_sub(s, i, j):
-    # s[i:j] built via single-char indexing + concat: str has no
-    # working slice path yet (see __pyc__/01_str.py __contains__).
-    r = ""
-    k = i
-    while k < j:
-        r = r + s[k]
-        k += 1
-    return r
+    # issues/050: a slice, in one allocation. This was a char-by-char
+    # concat from before str had a slice path.
+    return s[i:j]
 
 class _os_path:
     def isdir(self, p): return __pyc_c_call__(bool, "_CG_is_dir", str, p)

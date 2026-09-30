@@ -4,8 +4,8 @@
 # (python.g's stringprefix is r/R/u/U only), so this operates on str
 # throughout rather than true bytes -- close enough for build-a-buffer
 # / parse-a-buffer use, not a byte-for-byte match of CPython's io.
-# str has no working slice path yet (__pyc__/01_str.py), so reads are
-# built via single-char indexing, same as pyc_lib/os.py and re.py.
+# Reads are slices (issues/050: they were char-by-char concatenations,
+# O(n^2), from before str had a slice path).
 
 class BytesIO:
     def __init__(self, initial=""):
@@ -17,11 +17,7 @@ class BytesIO:
         end = blen
         if n >= 0 and self.pos + n < blen:
             end = self.pos + n
-        r = ""
-        k = self.pos
-        while k < end:
-            r = r + self.buf[k]
-            k += 1
+        r = self.buf[self.pos:end]
         self.pos = end
         return r
 
@@ -33,11 +29,7 @@ class BytesIO:
             k += 1
         if k < blen:
             k += 1
-        r = ""
-        i = start
-        while i < k:
-            r = r + self.buf[i]
-            i += 1
+        r = self.buf[start:k]
         self.pos = k
         return r
 
@@ -68,11 +60,7 @@ class StringIO:
         end = blen
         if n >= 0 and self.pos + n < blen:
             end = self.pos + n
-        r = ""
-        k = self.pos
-        while k < end:
-            r = r + self.buf[k]
-            k += 1
+        r = self.buf[self.pos:end]
         self.pos = end
         return r
 
@@ -84,11 +72,7 @@ class StringIO:
             k += 1
         if k < blen:
             k += 1
-        r = ""
-        i = start
-        while i < k:
-            r = r + self.buf[i]
-            i += 1
+        r = self.buf[start:k]
         self.pos = k
         return r
 

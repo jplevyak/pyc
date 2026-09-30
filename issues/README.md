@@ -66,7 +66,6 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | --- | --- |
 | [103](103-unknown-kwarg-silently-bound-positionally.md) | an unknown keyword or an undefined name is refused, but reported as `'X' has no type`, not in CPython's terms. |
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | a method of a function-local class reading the function's local aborts the compiler. |
-| [050](050-pyc-string-builders-are-quadratic.md) | `str.join` / `upper` / `lower` / `replace` are O(n²): 122 s at n = 400 000. |
 | [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
 
 ### Closed on 2026-09-29 and 2026-09-30
@@ -75,6 +74,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | --- | --- | --- |
 | [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) | every audited accommodation gated, fixed, or documented | 172, 173, 007, 128, ifa/156 |
 | [124](closed/124-crlf-source-not-newline-normalized.md) | universal newlines at read time; pinned by a harness-staged CRLF test (2026-09-30) | — |
+| [050](closed/050-pyc-string-builders-are-quadratic.md) | `join`/case maps/`replace`/substring in one allocation; `replace("", x)` fixed (2026-09-30) | — |
 
 ### Closed on 2026-09-28
 

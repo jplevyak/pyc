@@ -72,32 +72,18 @@ class str:
     # issues/006: PEP 3101 format-spec mini-language, see int.__format__.
     return __pyc_c_call__(str, "_CG_format_str_spec", str, self, str, spec)
   def join(self, seq):
-    r = ""
-    first = True
+    # issues/050: collect once (`seq` may be a generator), then join in one
+    # allocation, as bytes.join does. Pairwise `r = r + x` was O(n^2):
+    # 400 000 one-char parts took over a minute.
+    parts = []
     for x in seq:
-      if not first:
-        r = r + self
-      r = r + x
-      first = False
-    return r
+      parts.append(x)
+    return __pyc_c_call__(str, "_CG_string_join", str, self, list, parts)
   def lower(self):
-    r = ""
-    for c in self:
-      o = ord(c)
-      if o >= 65 and o <= 90:
-        r = r + chr(o + 32)
-      else:
-        r = r + c
-    return r
+    # ASCII case maps, one allocation each (issues/050).
+    return __pyc_c_call__(str, "_CG_str_lower", str, self)
   def upper(self):
-    r = ""
-    for c in self:
-      o = ord(c)
-      if o >= 97 and o <= 122:
-        r = r + chr(o - 32)
-      else:
-        r = r + c
-    return r
+    return __pyc_c_call__(str, "_CG_str_upper", str, self)
   def isupper(self):
     # ASCII-only, matching upper()/lower() above. CPython: True iff
     # every cased character is uppercase AND at least one cased
@@ -145,16 +131,7 @@ class str:
     return True
   def swapcase(self):
     # issues/118. ASCII-only, consistent with upper()/lower().
-    r = ""
-    for c in self:
-      o = ord(c)
-      if o >= 97 and o <= 122:
-        r = r + chr(o - 32)
-      elif o >= 65 and o <= 90:
-        r = r + chr(o + 32)
-      else:
-        r = r + c
-    return r
+    return __pyc_c_call__(str, "_CG_str_swapcase", str, self)
   def __contains__(self, x):
     # Substring search by char compare; str has no working slice path
     # yet (the __pyc_any_type__ fallback mis-routes slices of str into
@@ -173,15 +150,9 @@ class str:
       i += 1
     return False
   def __pyc_substr__(self, i, j):
-    # self[i:j] by char concat -- same no-slice-path caveat as
-    # __contains__ above. O(j-i) concats; fine for corpus-scale
-    # correctness, optimize via a _CG helper if it ever matters.
-    r = ""
-    k = i
-    while k < j:
-      r = r + self[k]
-      k += 1
-    return r
+    # self[i:j] for non-negative i, j, in one allocation (issues/050; it
+    # was a char-by-char concat).
+    return __pyc_c_call__(str, "_CG_str_substr", str, self, int, i, int, j)
   def strip(self):
     # Whitespace-only form (no chars argument -- the corpus's one
     # `.strip(x)` call stays unsupported for now).
@@ -281,24 +252,9 @@ class str:
       raise ValueError("substring not found")
     return i
   def replace(self, old, new):
-    n = len(self)
-    m = len(old)
-    if m == 0:
-      return self
-    r = ""
-    i = 0
-    while i < n:
-      k = 0
-      if i + m <= n:
-        while k < m and self[i + k] == old[k]:
-          k += 1
-      if k == m:
-        r = r + new
-        i += m
-      else:
-        r = r + self[i]
-        i += 1
-    return r
+    # issues/050: one pass, one allocation. Also CPython's empty-`old`
+    # case, which the old loop answered with `self` unchanged.
+    return __pyc_c_call__(str, "_CG_str_replace", str, self, str, old, str, new)
   def count(self, sub):
     n = len(self)
     m = len(sub)

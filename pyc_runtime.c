@@ -50,6 +50,12 @@ extern void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v);
 extern char *_CG_strcat(const char *a, const char *b);
 extern void _CG_none_receiver(const char *sel);  // ifa/issues/165
 extern char *_CG_string_join(const char *sep, _CG_list parts);
+extern char *_CG_str_casemap(const char *s, int mode);  // issues/050
+extern char *_CG_str_lower(const char *s);
+extern char *_CG_str_upper(const char *s);
+extern char *_CG_str_swapcase(const char *s);
+extern char *_CG_str_substr(const char *s, int64 i, int64 j);
+extern char *_CG_str_replace(const char *s, const char *old, const char *nw);
 extern char *_CG_char_from_string(void *s, int i);
 extern int64 _CG_int_from_string(void *s, int i);
 extern char *_CG_byte_from_int(int64 v);

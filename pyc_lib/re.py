@@ -579,12 +579,7 @@ class Match:
         en = self._groups[2 * n + 1]
         if st < 0 or en < 0:
             return ""
-        r = ""
-        k = st
-        while k < en:
-            r = r + self.string[k]
-            k += 1
-        return r
+        return self.string[st:en]  # issues/050: was a char-by-char concat
 
     def groups(self):
         r = []

@@ -1556,6 +1556,62 @@ inline char *_CG_string_join(const char *sep, _CG_list parts) {
 }
 
 
+// issues/050: the str builders that used to concatenate one character at a
+// time in __pyc__/01_str.py (Theta(n^2) bytes copied, n dead buffers). Each
+// allocates its result once. ASCII case maps, as before; lengths come from
+// the header, so an embedded NUL is data (ifa/issues/070).
+inline char *_CG_str_casemap(const char *s, int mode) {  // 0 lower, 1 upper, 2 swap
+  size_t n = _CG_string_len(s);
+  char *x = _CG_string_alloc(n);
+  for (size_t i = 0; i < n; i++) {
+    char c = s[i];
+    if (c >= 'A' && c <= 'Z' && mode != 1) c += 32;
+    else if (c >= 'a' && c <= 'z' && mode != 0) c -= 32;
+    x[i] = c;
+  }
+  return x;
+}
+inline char *_CG_str_lower(const char *s) { return _CG_str_casemap(s, 0); }
+inline char *_CG_str_upper(const char *s) { return _CG_str_casemap(s, 1); }
+inline char *_CG_str_swapcase(const char *s) { return _CG_str_casemap(s, 2); }
+
+// self[i:j] for 0 <= i, j (clamped to the length; empty when j <= i).
+inline char *_CG_str_substr(const char *s, int64 i, int64 j) {
+  int64 n = (int64)_CG_string_len(s);
+  if (i < 0) i = 0;
+  if (j > n) j = n;
+  if (j <= i) return _CG_string_alloc(0);
+  char *x = _CG_string_alloc((size_t)(j - i));
+  memcpy(x, s + i, (size_t)(j - i));
+  return x;
+}
+
+// CPython's str.replace(old, new): every non-overlapping occurrence, left
+// to right. An EMPTY `old` inserts `new` before every character and at the
+// end ("ab".replace("", "-") == "-a-b-"); the __pyc__ loop returned `s`
+// unchanged there, silently.
+inline char *_CG_str_replace(const char *s, const char *old, const char *nw) {
+  size_t n = _CG_string_len(s), m = _CG_string_len(old), k = _CG_string_len(nw);
+  size_t count = 0;
+  if (!m)
+    count = n + 1;
+  else
+    for (size_t i = 0; i + m <= n;)
+      if (!memcmp(s + i, old, m)) { count++; i += m; } else i++;
+  if (!count) return (char *)s;
+  char *x = _CG_string_alloc(n - count * m + count * k);
+  char *o = x;
+  if (!m) {
+    for (size_t i = 0; i < n; i++) { memcpy(o, nw, k); o += k; *o++ = s[i]; }
+    memcpy(o, nw, k);
+    return x;
+  }
+  for (size_t i = 0; i < n;) {
+    if (i + m <= n && !memcmp(s + i, old, m)) { memcpy(o, nw, k); o += k; i += m; }
+    else *o++ = s[i++];
+  }
+  return x;
+}
 
 // issues/044: unlike _CG_list_resize_internal (backing list.append(),
 // which correctly mutates in place -- CPython's append() does too),
