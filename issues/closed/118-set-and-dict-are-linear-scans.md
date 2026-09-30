@@ -369,7 +369,7 @@ analysis: `dict._keys` is one `list` field on a class shared
 program-wide, so its element type collects from every dict (and, being a
 list, from the program's other lists too). That is
 [ifa/105](../../ifa/issues/closed/105-type-degeneration-in-shared-generic-methods.md)
-and [issues/039](../039-list-mul-shared-element-type-cross-contamination.md),
+and [issues/039](039-list-mul-shared-element-type-cross-contamination.md),
 the same shared-CreationSet degeneration as everywhere else.
 
 With precise contours `_slot`'s `==` would be monomorphic, codegen would

@@ -1,12 +1,15 @@
-# issues/039: `[None] * n`'s shared element representation lets one
+# issues/039: `[None] * n`'s shared element representation let one
 # heterogeneous list's element type leak into an unrelated, genuinely
 # homogeneous one. `Cell.subp` really does hold Body|Cell|None; `Tree.bodies`
-# only ever holds Body|None -- but pyc types the latter with Cell too and
-# warns on `t.bodies[0].tag()`. The program still runs correctly, so this
-# pins the precision loss, which is 039's actual subject.
+# only ever holds Body|None. Both lists come from the one `merge` creation
+# point in `list.__mul__`.
 #
-# Check files describe the CORRECT behaviour (no diagnostics, "Body Body");
-# the .known_issue tag keeps it out of the failure count.
+# `t.bodies[i].tag()` is the witness: `tag` exists only on Body, so if Cell
+# leaks into `bodies` again the call is refused. `subp` is read through
+# `mass`, which both classes have. (The fixture used to call
+# `c.subp[0].tag()` too. That is a Body-only method on a GENUINE union, so it
+# is refused on its own, whatever happens to `bodies`. It masked the fact
+# that 039 had been fixed. See issues/closed/039.)
 class Node:
     def __init__(self):
         self.mass = 0.0
@@ -33,4 +36,4 @@ class Tree:
 
 t = Tree()
 c = t.build()
-print(t.bodies[0].tag(), c.subp[0].tag())
+print(t.bodies[0].tag(), t.bodies[1].tag(), len(c.subp), c.subp[1].mass)

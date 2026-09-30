@@ -56,7 +56,6 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | --- | --- |
 | [172](172-generator-send-channel-and-stopiteration-value.md) | a generator's `send` value travels as `int64` (gated by `PYC_YIELD_INT_SEND`; refused under `--strict`), and `StopIteration.value` reads the global exception slot. |
 | [048](048-none-int-field-pair-runtime-abort.md) | genuine scalar unions (`{None, int}`, `{None, float}`, `{int, float}` elements): strict refuses; permissive gets a flagged sentinel or widening. |
-| [039](039-list-mul-shared-element-type-cross-contamination.md) | `[None] * n`: one list's element type leaks into an unrelated one (FA; mechanism in ifa/129). |
 | [128](128-cross-class-field-promotion.md) | "a write discovers a field" is hard-coded in generic ifa, and promoted fields are never re-derived. |
 | [125](125-in-has-no-iterable-fallback.md) | `x in y` has no iterable fallback; `object.__contains__` should be CPython's scan. |
 
@@ -75,6 +74,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) | every audited accommodation gated, fixed, or documented | 172, 173, 007, 128, ifa/156 |
 | [124](closed/124-crlf-source-not-newline-normalized.md) | universal newlines at read time; pinned by a harness-staged CRLF test (2026-09-30) | — |
 | [050](closed/050-pyc-string-builders-are-quadratic.md) | `join`/case maps/`replace`/substring in one allocation; `replace("", x)` fixed (2026-09-30) | — |
+| [039](closed/039-list-mul-shared-element-type-cross-contamination.md) | leak gone at convergence (setter split of `list.__mul__`); fixture was failing on a genuine union and now tests the leak | 128 (bh's transient promotion) |
 
 ### Closed on 2026-09-28
 
