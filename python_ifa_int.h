@@ -195,6 +195,7 @@ class PycCompiler : public PycCallbacks {
   Fun *rest_wrapper(Fun *, int nactuals);
   Fun *order_wrapper(Fun *, Map<MPosition *, MPosition *> &substitutions);
   bool reanalyze(Vec<ATypeViolation *> &type_violations);
+  bool retract_derived_state();  // issues/128 step 2
   bool c_codegen_pre_file(FILE *);
   // issue 011/050 (Tier 3a: native can_raise inside FA's own fixed
   // point). See ifa.h's declaration for the general contract; see

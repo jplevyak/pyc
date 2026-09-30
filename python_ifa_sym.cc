@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "optimize/dom.h"  // ifa/issues/050 3b: Dom::is_dominated_by
+#include <set>
+#include <string>
 
 PycSymbol *new_PycSymbol(cchar *name) {
   PycSymbol *s = new PycSymbol;
@@ -450,6 +452,20 @@ static bool promote_field_one(CreationSet *cs, Sym *field_sym, cchar *name) {
   return true;
 }
 
+// issues/128 step 2: promoted fields are DERIVED state. A write "discovers"
+// a field (P_prim_setter -> unknown_vars -> promote_field), but the write may
+// have come through a union that only existed on an early pass: on chull all
+// 777 promoting writes were at pass 0, through a union gone by pass 1, and
+// two unrelated classes kept each other's fields at colliding offsets. So a
+// promotion is re-checked at every fixed point (retract_derived_state): a
+// promoted field that received no value in the converged pass is withdrawn.
+//
+// Termination: a field withdrawn and then promoted AGAIN is pinned. Its
+// evidence reappeared once the field was gone, so the field is real; it is
+// never withdrawn twice, so the retraction can fire at most once per field.
+static Vec<Sym *> promoted_field_syms;            // every field promote_field created
+static std::set<std::pair<int, std::string>> retracted_fields, pinned_fields;  // (class id, name)
+
 // Promote `name` on `cs` only.  Reuses an existing field
 // Sym from `cs->sym->has` if one already exists for this
 // name so two CSs of the same class don't create
@@ -462,6 +478,7 @@ static bool promote_field_one(CreationSet *cs, Sym *field_sym, cchar *name) {
 static bool promote_field(CreationSet *cs, cchar *name) {
   if (!cs || !cs->sym || cs->sym->type_kind != Type_RECORD) return false;
   if (cs->var_map.get(name)) return false;
+  if (retracted_fields.count({cs->sym->id, name})) pinned_fields.insert({cs->sym->id, name});
   Sym *field_sym = nullptr;
   for (Sym *h : cs->sym->has) {
     if (h && h->name && !strcmp(h->name, name)) {
@@ -486,8 +503,64 @@ static bool promote_field(CreationSet *cs, cchar *name) {
     if (getenv("IFA_DBG_PROMOTED"))
       fprintf(stderr, "[promoted] cs=%d %s.%s\n", cs->id, cs->sym->name ? cs->sym->name : "?", name);
     cs->sym->has.add(field_sym);
+    promoted_field_syms.set_add(field_sym);
   }
   return promote_field_one(cs, field_sym, name);
+}
+
+bool PycCompiler::retract_derived_state() {
+  static int off = -1;
+  if (off < 0) off = getenv("PYC_NORETRACT") ? atoi(getenv("PYC_NORETRACT")) : 0;
+  if (off || !promoted_field_syms.n) return false;
+  static bool dbg = getenv("IFA_DBG_RETRACT") != nullptr;
+  AType *bottom = fa->type_world.bottom_type;
+  // Evidence is per CLASS, not per CreationSet. A field is part of the
+  // class's layout, and every clone of the class must agree on it: dropping
+  // it from one CreationSet while a sibling keeps it gave two clones of
+  // `Column` different slots (kanoodle: "'Column' is blind-cast to 'Column'
+  // ... member width differs"). So a promoted field is withdrawn only when NO
+  // CreationSet of its class received a value for it in the converged pass.
+  Vec<Sym *> classes;
+  for (CreationSet *cs : fa->all_creation_sets)
+    if (cs && cs->sym && cs->sym->type_kind == Type_RECORD) classes.set_add(cs->sym);
+  bool any = false;
+  for (Sym *c : classes) if (c) {
+    Vec<Sym *> drop;
+    for (Sym *h : c->has) {
+      if (!h || !h->name || !promoted_field_syms.set_in(h) || pinned_fields.count({c->id, h->name})) continue;
+      bool evidence = false;
+      for (CreationSet *cs : c->creators) {
+        if (!cs) continue;
+        AVar *iv = cs->var_map.get(h->name);
+        if (iv && iv->var->sym == h && iv->out && iv->out != bottom && iv->out->n) { evidence = true; break; }
+      }
+      if (!evidence) drop.add(h);
+    }
+    if (!drop.n) continue;
+    any = true;
+    Vec<Sym *> has;
+    for (Sym *h : c->has) if (!drop.in(h)) has.add(h);
+    c->has.move(has);
+    for (Sym *h : drop) {
+      retracted_fields.insert({c->id, h->name});
+      // No pass number: tests/promoted_field_retracted.py pins this line.
+      if (dbg) fprintf(stderr, "[retract] class %s drops %s\n", c->name, h->name);
+    }
+    for (CreationSet *cs : c->creators) {
+      if (!cs) continue;
+      Vec<AVar *> keep;
+      bool changed = false;
+      for (AVar *iv : cs->vars)
+        if (iv && drop.in(iv->var->sym)) changed = true;
+        else keep.add(iv);
+      if (!changed) continue;
+      cs->vars.move(keep);
+      cs->var_map.clear();
+      for (AVar *iv : cs->vars)
+        if (iv && iv->var->sym->name) cs->var_map.put(iv->var->sym->name, iv);
+    }
+  }
+  return any;
 }
 
 // issues/121: promote a CreationSet's pending fields in a CANONICAL

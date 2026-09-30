@@ -43,12 +43,33 @@ pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
    declares its fields. This was
    [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)
    #8.
-2. **Promoted fields are derived state.** Mark them (`Sym` has bitfield
-   room for `is_promoted_field`), reset them wherever `unknown_vars` is
-   reset, and re-derive them each pass. A transient pass-0 union then
-   leaves nothing behind. Check first: does anything cache a `has` index
-   mid-analysis? And how does `clone.cc`'s post-convergence `has` rebuild
-   (858/908/1453) interact?
+2. ~~**Promoted fields are derived state.**~~ **DONE 2026-09-30.**
+   `IFACallbacks::retract_derived_state()` (`ifa/ifa.h`) is called at a
+   fixed point, where the driver already runs its narrowing
+   (`cselem_resplit_diverged`): only when no other stage asked for a pass.
+   pyc's implementation (`python_ifa_sym.cc`) withdraws a promoted field
+   from its class, and from every CreationSet of the class, when **no**
+   CreationSet of the class received a value for it in the converged pass.
+   - **Per class, not per CreationSet.** The first version retracted per
+     CreationSet and broke `kanoodle`: two clones of `Column` disagreed on a
+     slot ("'Column' is blind-cast to 'Column' ... member width differs").
+     A field is part of the class's layout, so all clones must agree.
+   - **Termination.** A field withdrawn and then promoted again is pinned,
+     because its evidence reappeared once it was gone. So a field is
+     withdrawn at most once.
+   - **The pre-checks.** Nothing caches a record's `has` index during
+     analysis; the `has.n`/`has[i]` uses in `fa.cc` are pattern and tuple
+     arities. `clone.cc`'s `has` rebuild runs after convergence, on the
+     retracted set.
+   - **Measured.** The 14-line repro: `A {a}`, `B {b}` in the emitted
+     structs (`tests/promoted_field_retracted.py` pins the two retractions
+     via `IFA_DBG_RETRACT`; it fails with `PYC_NORETRACT=1`). `bh` drops
+     `Cell.acc` and `Cell.vel` (the residual closed/039 traced here).
+     `chull` drops 18 cross-class fields, and `chull` and `bh` match CPython.
+     `richards` prints byte-identical output to the previous build. Corpus
+     `check`: every verdict list identical to the baseline, with CreationSets
+     and EntrySets unchanged (sweep `check__default__11a77416+*`).
+     `PYC_NORETRACT=1` turns it off.
 3. **The three-way rule for a union receiver** (measured with
    `IFA_DBG_FIELDSPLIT`, `PYC_FIELDSPLIT` scaffolding in the tree):
    - ALL-HAVE: flow normally.
