@@ -1,0 +1,7 @@
+begin 0
+in f
+caught
+begin 1
+in f
+caught
+end

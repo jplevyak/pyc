@@ -40,7 +40,12 @@ class BaseException(object):
     return self.args
 
 class SystemExit(BaseException):
-  pass
+  # `code` as in CPython: exit(n) exits with status n once uncaught
+  # (__pyc_unhandled_exception__), silently, and a str code is printed to
+  # stderr with status 1.
+  code = 0
+  def __init__(self, code=0):
+    self.code = code
 
 class KeyboardInterrupt(BaseException):
   pass
@@ -132,6 +137,13 @@ __pyc_exc__ = None
 # __pyc_assert_fail__'s print+exit shape.
 def __pyc_unhandled_exception__():
     e = __pyc_exc__
+    if isinstance(e, SystemExit):
+        c = e.code
+        if isinstance(c, str):
+            __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 2)).write(c + "\n")
+            __pyc_c_call__(int, "::exit", int, 1)
+        else:
+            __pyc_c_call__(int, "::exit", int, c)
     if e is not None:
         print("Unhandled exception: " + e.__str__())
-    exit(1)
+    __pyc_c_call__(int, "::exit", int, 1)

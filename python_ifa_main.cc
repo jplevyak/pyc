@@ -777,7 +777,120 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   }
 }
 
+// issues/171 #13, issues/007: `@property` getters. A descriptor is
+// TYPE-DIRECTED -- `o.NAME` calls the getter when o's class defines the
+// property and reads a field otherwise (voronoi2 has both for one name) --
+// so the choice is left to ordinary method dispatch:
+//
+//  - each `@property def NAME(self)` is renamed `__pyc_get_NAME__` (its
+//    decorator dropped), so the class has an accessor METHOD;
+//  - every builtin class gets a default `__pyc_get_NAME__` that reads the
+//    field (`return self.NAME`); user classes inherit it through `object`;
+//  - build_if1 lowers every attribute READ of NAME to
+//    `o.__pyc_get_NAME__()` (pyc_is_property_name).
+//
+// Only the names are global; which accessor runs is decided per receiver
+// class by dispatch, like any method. Runs before the builtin module is
+// built, which is why it is a pre-scan over the program's modules (as
+// inject_tuple_methods is). A property in a module only reached through an
+// import is not seen here and is refused by build_syms. Setters are refused.
+static Vec<cchar *> pyc_property_names;
+
+bool pyc_is_property_name(cchar *name) {
+  if (!name) return false;
+  for (cchar *p : pyc_property_names)
+    if (!strcmp(p, name)) return true;
+  return false;
+}
+
+static cchar *decorated_single_decorator_name(PyDAST *d) {
+  // The one PY_decorator of a PY_decorated node, if there is exactly one.
+  if (!d || d->kind != PY_decorated || d->children.n != 2) return nullptr;
+  PyDAST *dec = d->children[0];
+  if (dec->kind == PY_suite) {
+    if (dec->children.n != 1) return nullptr;
+    dec = dec->children[0];
+  }
+  if (dec->kind != PY_decorator || dec->children.n != 1) return nullptr;
+  return dec->children[0]->str_val;
+}
+
+static bool is_property_decorated_def(PyDAST *d) {
+  cchar *nm = decorated_single_decorator_name(d);
+  return nm && decorator_name_is(nm, "property") && d->children.last()->kind == PY_funcdef;
+}
+
+static void scan_properties(PyDAST *n, cchar *filename) {
+  if (!n) return;
+  if (n->kind == PY_classdef && n->children.n) {
+    PyDAST *body = n->children.last();
+    Vec<PyDAST *> *stmts = body->kind == PY_suite ? &body->children : nullptr;
+    auto visit = [&](PyDAST *&stmt) {
+      if (!is_property_decorated_def(stmt)) return;
+      PyDAST *def = stmt->children.last();
+      cchar *pname = def->children[0]->str_val;
+      if (!pyc_is_property_name(pname)) pyc_property_names.add(dupstr(pname));
+      char buf[512];
+      snprintf(buf, sizeof(buf), "__pyc_get_%s__", pname);
+      def->children[0]->str_val = dupstr(buf);
+      stmt = def;  // the decorator is consumed
+    };
+    if (stmts)
+      for (int i = 0; i < stmts->n; i++) visit(stmts->v[i]);
+    else
+      visit(n->children.v[n->children.n - 1]);
+  }
+  for (PyDAST *c : n->children) scan_properties(c, filename);
+}
+
+// A `@NAME.setter` / `@NAME.deleter` needs a store/delete dispatch that does
+// not exist; refuse it rather than leave the decorator unapplied.
+static void refuse_property_setters(PyDAST *n) {
+  if (!n) return;
+  if (n->kind == PY_decorator && n->children.n && n->children[0]->str_val) {
+    cchar *s = n->children[0]->str_val;
+    cchar *dot = strrchr(s, '.');
+    if (dot && (decorator_name_is(dot + 1, "setter") || decorator_name_is(dot + 1, "deleter")))
+      fail("error line %d: property %s (@%s) are not supported; only read-only @property getters are "
+           "(issues/007)", n->line, decorator_name_is(dot + 1, "setter") ? "setters" : "deleters", s);
+  }
+  for (PyDAST *c : n->children) refuse_property_setters(c);
+}
+
+void inject_property_accessors(Vec<PycModule *> &mods) {
+  for (int i = 1; i < mods.n; i++) {
+    refuse_property_setters(mods[i]->pymod);
+    scan_properties(mods[i]->pymod, mods[i]->filename);
+  }
+  if (!pyc_property_names.n) return;
+  // One throwaway class of default accessors per builtin class, parsed at
+  // once; each builtin class takes its own copy's funcdefs.
+  Vec<PyDAST *> targets;
+  for (PyDAST *c : mods[0]->pymod->children)
+    if (c->kind == PY_classdef && c->children.n) targets.add(c);
+  char *buf = nullptr;
+  size_t sz = 0;
+  FILE *f = open_memstream(&buf, &sz);
+  for (int k = 0; k < targets.n; k++) {
+    fprintf(f, "class __pyc_prop_acc_%d__:\n", k);
+    for (cchar *pname : pyc_property_names)
+      fprintf(f, "  def __pyc_get_%s__(self):\n    return self.%s\n", pname, pname);
+  }
+  fclose(f);
+  PyDAST *gen = dparse_python_buf_to_ast("<property_accessors>", buf, (int)sz);
+  free(buf);
+  if (!gen) fail("internal error: property accessor generation failed to parse");
+  int k = 0;
+  for (PyDAST *gcls : gen->children) {
+    if (gcls->kind != PY_classdef || k >= targets.n) continue;
+    PyDAST *body = targets[k++]->children.last();
+    for (PyDAST *meth : gcls->children.last()->children)
+      if (meth->kind == PY_funcdef) body->children.add(meth);
+  }
+}
+
 int ast_to_if1(Vec<PycModule *> &mods) {
+  inject_property_accessors(mods);  // issues/171 #13: @property getters
   inject_tuple_methods(mods, 0);  // issue 069: program-sized tuple __eq__/__lt__
   // For the non-REPL path: build baseline for mods[0] (builtin), then extend.
   // The builtin_mods Vec is local; ctx->modules is updated to &mods by extend.

@@ -1,0 +1,4 @@
+mixed_numeric_field.py:13: warning: 'x' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+mixed_numeric_field.py:24: warning: 'x' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+mixed_numeric_field.py:30: warning: an expression holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+mixed_numeric_field.py:31: warning: an expression holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)

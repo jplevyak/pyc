@@ -898,7 +898,7 @@ static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
 // make_PycSymbol's PYC_USE case) and *before* exit_scope. Returns the
 // closure class Sym, or null if the scope captured nothing (the common,
 // unaffected case -- top-level lambdas, methods, non-capturing nested defs).
-static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx) {
+static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx, bool decorated = false) {
   Vec<Sym *> captured;
   form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
     if (x->value == NONLOCAL_USE) {
@@ -956,7 +956,17 @@ static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx) {
       // variable Sym (ast->rval) from the closure body's internal Sym
       // (ast->sym); a recursive self-reference resolves to the public
       // one. Same reasoning as above: not a capture.
-      if (ast->rval && outer->sym == ast->rval) continue;
+      //
+      // EXCEPT for a decorated def (issues/171 #12): its public name holds
+      // the decorator's RESULT, which a recursive reference must reach
+      // (CPython reads the binding), and the call reaching the body comes
+      // through the decorator's wrapper, not this activation, so the
+      // display path has no slot for it. Capture it; PY_decorated writes
+      // the decorated value into the field once it exists.
+      if (ast->rval && outer->sym == ast->rval) {
+        if (!decorated) continue;
+        ctx.decorated_self_refs.set_add(outer->sym);
+      }
       captured.add(outer->sym);
       // Transitive captures (issues/007 parameterized decorators,
       // e.g. `def add_n(n): def dec(f): def wrapper(x): return
@@ -1129,6 +1139,14 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           if (dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) continue;
           if (decorator_name_is(dec->children[0]->str_val, "staticmethod")) marker_static = true;
           else if (decorator_name_is(dec->children[0]->str_val, "classmethod")) marker_class = true;
+          // issues/171 #13: inject_property_accessors consumes every class
+          // @property getter of the modules it can see. One left here is in
+          // a module reached only by import, stacked with other decorators,
+          // or not on a method -- refuse it rather than ignore it.
+          else if (decorator_name_is(dec->children[0]->str_val, "property"))
+            fail("error line %d: this @property is not supported: only a class's read-only getter, alone "
+                 "and in a module compiled directly, is (issues/007)",
+                 dec->line);
         }
       }
       // Pre-scope: process decorators (markers excluded -- their names
@@ -1185,7 +1203,13 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           // PY_decorated in build_if1_pyda).
           def_ast->rval = ps->sym;
           def_ast->sym = def_fun_pyda(def, def_ast, new_sym(def_ast, def->children[0]->str_val, 1), ctx);
-          ctx.def_internal_fn.put(def_ast->rval, def_ast->sym);
+          // issues/171 #12: NOT linked in def_internal_fn. After `f = d(f)`
+          // the public name holds the DECORATED value, so it is not this
+          // function: linking it redirected a recursive `f(...)` in the body
+          // to the undecorated function (a memoising decorator never saw the
+          // recursion), and let can-raise gating attribute a call through
+          // the name to the wrong callee. Unlinked, the name reads its
+          // binding like any other variable, as in CPython.
         }
         ast->rval = def_ast->rval;
         ast->sym = def_ast->sym;
@@ -1202,12 +1226,19 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
               build_syms_pyda(c, ctx);
             }
           }
+        // Same as the plain PY_funcdef case below: prebind the locals, and
+        // closure-convert a nested def that captures enclosing locals
+        // (issues/001). Without the carrier, the decorator received the raw
+        // function, whose display slot for the enclosing function is null
+        // (`unique_AVar: Assertion 'es'`, issues/171 #12).
+        if (def->children.n >= 3) prebind_function_locals(def->children[2], ctx);
         if (def->children.n >= 3) build_syms_pyda(def->children[2], ctx);
         form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
           if (!MARKED(x->value) && !x->value->sym->is_fun) {
             x->value->sym->is_local = 1;
             x->value->sym->nesting_depth = LOCALLY_NESTED;
           }
+        if (!marker_method) maybe_synthesize_closure_pyda(def_ast, ctx, true);
         exit_scope(ctx);
       } else if (def->kind == PY_classdef) {
         goto Lclassdef_inner;

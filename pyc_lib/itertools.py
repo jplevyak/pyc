@@ -25,16 +25,10 @@ class count:
 
 def product(A, B=None, C=None, D=None, repeat=1):
     # issues/103: `repeat=N` is the cartesian product of A with itself N
-    # times. Its elements are LISTS, not tuples, and that is a deliberate
-    # deviation from CPython: N is a runtime value while pyc's tuples are
-    # fixed-arity records, so no tuple type can be given here. shedskin
-    # sidesteps this by having a variable-length homogeneous `tuple<T>`
-    # (its itertools.py is a type stub yielding a 1-tuple whatever
-    # `repeat` is, with the real work in C++); pyc has no such type.
-    #
-    # Lists support iteration, indexing, len and zip, which is what
-    # `repeat` is used for in practice -- shedskin_examples/life does
-    # `for pos, value in zip(ppos, case)`.
+    # times. N is a runtime value, so each element is built with
+    # `tuple(row)`, which is a runtime-length tuple (PYC_MAKESEQ, issues/110)
+    # -- a real tuple, as in CPython. issues/171 #5: these used to be LISTS,
+    # an observable deviation (printing, hashing, `==` against a tuple).
     if repeat != 1:
         items = []
         for a in A:
@@ -55,7 +49,7 @@ def product(A, B=None, C=None, D=None, repeat=1):
             row = []
             for i in range(repeat):
                 row.append(items[(k // pows[repeat - 1 - i]) % n])
-            out.append(row)
+            out.append(tuple(row))
         return out
     result = []
     if B is None:

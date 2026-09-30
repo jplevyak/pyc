@@ -1,0 +1,1 @@
+warning line 60, the value of a yield expression is carried as an int: a resume by next() reads 0 where CPython gives None, and a non-int send() is refused (issues/172)

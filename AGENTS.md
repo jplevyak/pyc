@@ -292,9 +292,12 @@ as a zero value. Each one must:
   [issues/128](issues/128-cross-class-field-promotion.md)).
 
 `--strict` therefore means CPython semantics or a compile error, never a
-silent deviation. The audit of every accommodation in the tree, and
-which ones break this rule today, is
-[issues/171](issues/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
+silent deviation. The audit of every accommodation in the tree is
+[issues/171](issues/closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md),
+closed 2026-09-29 with every item gated, fixed, or documented. Its
+verification record is also the method for checking a new accommodation:
+compile the suite with `--strict` and compare with CPython, then run the
+strict corpus sweep. Every program must match CPython or be refused.
 
 **Corpus programs with ACTUAL type errors may be edited** when no
 reasonable accommodation exists. An actual type error is one CPython

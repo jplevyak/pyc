@@ -1,0 +1,1 @@
+fail: error line 7: property setters (@x.setter) are not supported; only read-only @property getters are (issues/007)

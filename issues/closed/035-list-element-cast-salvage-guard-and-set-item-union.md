@@ -1,6 +1,6 @@
 # 035 — `P_prim_set_index_object` casts the assigned value with no compatibility check; a genuine `set`-element type union remains open
 
-> **CLOSED 2026-09-28 (merged into 048).** The `P_prim_set_index_object` guard landed 2026-08-06. The open half, `n*[0]` then `x[i] += 1.5` (a genuine `{int, float}` element union), is carried by [048](../048-none-int-field-pair-runtime-abort.md) with the other genuine scalar unions, under [171](../171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s permissive-only rule.
+> **CLOSED 2026-09-28 (merged into 048).** The `P_prim_set_index_object` guard landed 2026-08-06. The open half, `n*[0]` then `x[i] += 1.5` (a genuine `{int, float}` element union), is carried by [048](../048-none-int-field-pair-runtime-abort.md) with the other genuine scalar unions, under [171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s permissive-only rule.
 >
 > *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
 

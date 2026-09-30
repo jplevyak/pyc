@@ -29,7 +29,7 @@ compile or run reports it.
   1-byte/8-byte mix has no representation. Widening `bool` to `int` in
   the record would pack correctly but print `1` for `True`: an
   accommodation, so permissive-only under
-  [171](171-permissive-accommodations-must-be-flagged-and-non-strict.md).
+  [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
   The alternative is a corpus edit, `int(bool(last))`, which is a CPython
   no-op for `pack`. Prefer the edit (PYC_CHANGES.md: no accommodation
   where a no-op edit states the intent).

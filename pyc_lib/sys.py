@@ -24,7 +24,8 @@ argv = _get_argv()
 maxsize = 9223372036854775807
 
 def exit(status=0):
-    __pyc_c_call__(int, "::exit", int, status)
+    # CPython raises SystemExit; see the builtin exit (__pyc__/05_builtins.py).
+    raise SystemExit(status)
 
 # Recursion limit is a CPython interpreter detail with no analogue in
 # compiled code: accept and ignore.

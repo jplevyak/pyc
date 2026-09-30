@@ -125,10 +125,14 @@ class PycCompiler : public PycCallbacks {
   // path to redirect a function's own-name reference INSIDE its own
   // body to the internal Sym (value self-identity), so recursion
   // neither routes through ifa's stack-disciplined display machinery
-  // nor becomes a spurious self-capture. (Known CPython divergence,
-  // documented in issues/007: a recursive call inside a decorated
-  // function calls the UNDECORATED function.)
+  // nor becomes a spurious self-capture. A DECORATED def is not linked:
+  // its public name holds the decorator's result (issues/171 #12).
   Map<Sym *, Sym *> def_internal_fn;
+  // issues/171 #12: public names of DECORATED nested defs that the def's
+  // own body reads (recursion). The carrier holds the decorated value in a
+  // field written once, after decoration -- CPython's cell, provided nothing
+  // rebinds the name later, so a later store to one of these is refused.
+  Vec<Sym *> decorated_self_refs;
 
   // issue 025 module subsystem phase 2: for `import X`, X is bound to
   // a module-marker Sym (is_module set). This maps that marker to the
@@ -267,6 +271,7 @@ enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 // From python_ifa_util.cc:
 cchar *cannonicalize_string(cchar *s);
 bool decorator_name_is(cchar *s, cchar *want);
+bool pyc_is_property_name(cchar *name);  // issues/171 #13 (python_ifa_main.cc)
 
 // From python_ifa_sym.cc:
 PycSymbol *new_PycSymbol(cchar *name);

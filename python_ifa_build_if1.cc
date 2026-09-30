@@ -2554,6 +2554,9 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
   Sym *inst = new_sym(ast);
   if1_send(if1, code, 3, 1, sym_primitive, sym_new, cls, inst)->ast = ast;
   for (Sym *field : cls->has.values()) {
+    // issues/171 #12: a decorated def's own name is not bound yet here;
+    // PY_decorated stores the decorated value once it exists.
+    if (ctx.decorated_self_refs.set_in(field)) continue;
     Sym *val = field;
     // Transitive capture (issues/007 parameterized decorators): the
     // captured value may itself be a captured field of the CREATOR's
@@ -2672,8 +2675,13 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
         if1_add_send_arg(if1, find_send(a->code), val);
       else
         call_method(code, ast, a->rval, sym___setitem__, (ast->rval = new_sym(ast)), 2, a->sym, val);
-    } else
+    } else {
+      if (ctx.decorated_self_refs.set_in(a->sym))
+        fail("error line %d: '%s' is rebound after its decorated definition, whose body calls it recursively; "
+             "the recursion would not see the new value (pyc captures it once, after decoration; issues/171)",
+             ctx.lineno, a->sym->name ? a->sym->name : "?");
       if1_move(if1, code, val, a->sym);
+    }
   }
 }
 
@@ -3089,6 +3097,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if (def->kind == PY_funcdef) {
         PycAST *def_ast = getAST(def, ctx);
         reenter_scope_pyda(def, ctx);
+        // issues/001 via issues/171 #12: a capturing nested def is
+        // decorated as its closure-carrier instance, exactly as PY_funcdef
+        // binds it; fn->self must exist before the body is walked.
+        Sym *closure_cls = def_ast->closure_cls;
+        if (closure_cls) {
+          def_ast->sym->self = new_sym(def_ast);
+          def_ast->sym->self->must_implement_and_specialize(closure_cls);
+        }
         PyDAST *params = def->children[1];
         PyDAST *varargsl = (params->children.n > 0) ? params->children[0] : nullptr;
         if (varargsl)
@@ -3111,7 +3127,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // application. Only plain-name decorators (optionally with
         // an argument list, applied as `d(args)(fn)`) are handled;
         // dotted names keep the historical silent no-op.
-        Sym *cur = def_ast->sym;
+        Sym *carrier = closure_cls ? build_closure_instance_pyda(closure_cls, def_ast, &def_ast->code, ctx) : nullptr;
+        Sym *cur = carrier ? carrier : def_ast->sym;
         for (int i = n->children.n - 2; i >= 0; i--) {
           PyDAST *child = n->children[i];
           Vec<PyDAST *> decs;
@@ -3146,7 +3163,58 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
                 dval = t;
               }
             }
-            if (!dval) continue;  // dotted/unresolved: historical no-op
+            if (!dval && fname_node->str_val && strchr(fname_node->str_val, '.')) {
+              // issues/171 #13: a dotted decorator (`@mod.dec`, `@obj.attr`)
+              // was a silent no-op. Resolve it: the first name through the
+              // scope stack (or as a module), then one attribute read per
+              // remaining segment.
+              char *path = dupstr(fname_node->str_val);
+              for (char *e = path + strlen(path); e > path && isspace((unsigned char)e[-1]);) *--e = 0;
+              char *seg = strtok(path, ".");
+              int lvl = 0;
+              PycSymbol *dps = seg ? find_PycSymbol(ctx, cannonicalize_string(seg), &lvl) : nullptr;
+              Sym *v = nullptr;
+              if (dps && (intptr_t)dps > (intptr_t)NONLOCAL_DEF && dps->sym) {
+                v = dps->sym;
+                // A class reference keeps its Sym (its ->self is the
+                // class value, as in PY_power's class-qualified access).
+                if (!v->is_module && !(v->self && v->type_kind == Type_RECORD)) {
+                  Sym *t = new_sym(ast);
+                  if1_move(if1, &def_ast->code, v, t, ast);
+                  v = t;
+                }
+              }
+              for (seg = strtok(nullptr, "."); v && seg; seg = strtok(nullptr, ".")) {
+                if (v->is_module) {
+                  PycModule *mm = ctx.module_syms.get(v);
+                  PycScope *ms = mm ? mm->ctx->saved_scopes.get(mm->pymod) : nullptr;
+                  PycSymbol *member = ms ? ms->map.get(cannonicalize_string(seg)) : nullptr;
+                  v = (intptr_t)member > (intptr_t)NONLOCAL_DEF ? member->sym : nullptr;
+                  continue;
+                }
+                if (v->self && v->type_kind == Type_RECORD) {
+                  Sym *mfn = find_class_method_fn(v, cannonicalize_string(seg));
+                  if (mfn && mfn->is_static_method) {
+                    v = mfn;
+                    continue;
+                  }
+                  v = v->self;
+                }
+                Sym *t = new_sym(ast);
+                Code *send = if1_send(if1, &def_ast->code, 4, 1, sym_operator, v, sym_period,
+                                      make_symbol(cannonicalize_string(seg)), t);
+                send->ast = ast;
+                send->partial = Partial_OK;
+                v = t;
+              }
+              dval = v;
+            }
+            // issues/171 #13: an unapplied decorator changes the program, so
+            // it is refused in every mode, never skipped.
+            if (!dval)
+              fail("error line %d: decorator '%s' cannot be resolved; pyc refuses rather than ignore it "
+                   "(issues/007)",
+                   dec->line, fname_node->str_val ? fname_node->str_val : "?");
             if1_gen(if1, &def_ast->code, fname_ast->code);
             if (dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) {
               // @d(args): evaluate d(args) first, then apply.
@@ -3173,6 +3241,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // as PY_funcdef's fd_is_method.
         if (!(def_ast->rval && def_ast->rval->alias == def_ast->sym))
           if1_move(if1, &def_ast->code, cur, def_ast->rval, ast);
+        // issues/171 #12: the body reads its own name through the carrier
+        // (maybe_synthesize_closure_pyda); give it the decorated value.
+        if (carrier && closure_cls->has.in(def_ast->rval))
+          if1_send(if1, &def_ast->code, 5, 1, sym_operator, carrier, sym_setter,
+                   if1_make_symbol(if1, def_ast->rval->name), cur, new_sym(ast))
+              ->ast = ast;
         ast->rval = def_ast->rval;
         ast->code = def_ast->code;
       } else if (def->kind == PY_classdef) {
@@ -4096,6 +4170,24 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             qual_cls = qual_fn = nullptr;
           }
           cchar *attr = trailer->children[0]->str_val;
+          // issues/171 #13: a READ of a name some class defines as a
+          // @property is the accessor call `o.__pyc_get_NAME__()`; dispatch
+          // on o's class picks the getter or the default field read
+          // (inject_property_accessors). Not for a store target, not for a
+          // class-qualified reference (`C.NAME` is the property object in
+          // CPython), and not inside the default accessors themselves,
+          // whose `self.NAME` is the field read.
+          if (pyc_is_property_name(attr) && !(n->ctx == PY_STORE && i == n->children.n - 1) &&
+              !(cur_val && cur_val->self && cur_val->type_kind == Type_RECORD) &&
+              !(n->filename && !strcmp(n->filename, "<property_accessors>"))) {
+            char acc[512];
+            snprintf(acc, sizeof(acc), "__pyc_get_%s__", attr);
+            Sym *t = new_sym(ast);
+            call_method(&ast->code, ast, cur_val, make_symbol(acc), t, 0);
+            emit_exc_check(&ast->code, ast, ctx);
+            cur_val = t;
+            continue;
+          }
           // issue 027 feature: `ClassName.attr` -- class-qualified
           // member access. When attr names a method-valued prototype
           // field (own or inherited; the has[]/alias convention),
@@ -5099,6 +5191,27 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // through to `co_yield`'s own expression value (see
       // pyc_c_runtime.h's yield_awaiter) -- this is what makes
       // `.send()` observable inside the generator body at all.
+      //
+      // issues/171 #7: that value travels an int64 channel (P_prim_yield),
+      // so a resume by next() -- CPython's None -- reads 0, and a non-int
+      // send() is refused. An ACCOMMODATION: permissive only, announced;
+      // --strict (or PYC_YIELD_INT_SEND=0) refuses a yield whose value is
+      // used. The typed channel is issues/172.
+      {
+        static int accept = -1;
+        if (accept < 0) {
+          cchar *v = getenv("PYC_YIELD_INT_SEND");
+          accept = runtime_errors && (!v || atoi(v));
+        }
+        if (!accept)
+          fail("error line %d, the value of a yield expression is not supported under --strict: it is carried "
+               "as an int, so a resume by next() reads 0 where CPython gives None (issues/172)",
+               ctx.lineno);
+        fprintf(stderr,
+                "warning line %d, the value of a yield expression is carried as an int: a resume by next() reads 0 "
+                "where CPython gives None, and a non-int send() is refused (issues/172)\n",
+                ctx.lineno);
+      }
       Sym *yval = sym_nil;
       if (n->children.n > 0) {
         build_if1_pyda(n->children[0], ctx);

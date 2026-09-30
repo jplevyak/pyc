@@ -52,7 +52,7 @@ For such a program there are exactly two routes:
      default and **disabled by `--strict`**;
    - report itself (a warning naming the deviation) whenever it changes
      what the program would do under CPython;
-   - be listed in [issues/171](../issues/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
+   - be listed in [issues/171](../issues/closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
    Under `--strict` the program is refused with a diagnostic that names
    the type error.
 2. **A source edit**, when no reasonable accommodation exists, or when

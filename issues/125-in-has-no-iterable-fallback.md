@@ -37,7 +37,7 @@ exhausted by `in` in CPython too. The only real hazard is a builtin whose
 `iter()` returns itself where CPython's does not. That is pyc's `range`
 (`__iter__` returns `self`, so `r = range(10); for ...; for ...` iterates
 once). That is a deviation in its own right, and it belongs on
-[171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s
+[171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s
 list: make `range.__iter__` return a fresh iterator. `range` has its own
 arithmetic `__contains__`, so it never reaches the fallback anyway.
 

@@ -32,7 +32,7 @@ that fails:
   a slot genuinely holds two unrepresentable types over its lifetime),
   there are two routes: a pyc accommodation that is **flagged and
   non-strict only**
-  ([171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)),
+  ([171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)),
   or a minimal source edit that removes the error. The rules and the log
   of every edit are in
   [shedskin_examples/PYC_CHANGES.md](../shedskin_examples/PYC_CHANGES.md).
@@ -54,7 +54,7 @@ that fails:
 - `./corpus_sweep.sh -m check` is the reference: compile rc, run rc,
   CPython rc and a stdout comparison, cached by tree. Run `-l` first. Use
   `-e "PYC_STRICT=1"` for the strict-mode arm that
-  [171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)
+  [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)
   asks for.
 - `./shedskin_sweep.sh` buckets failures by first diagnostic, for
   triage.
@@ -70,10 +70,23 @@ that fails:
 | runs, no stdout to compare | dijkstra, mandelbrot2, pystone, sudoku3, sudoku5, tictactoe |
 | runs, **stdout differs** | ant, circle, kanoodle, mastermind2, tonyjpegdecoder (check for unseeded `random` or a `TIME` line before treating as a bug) |
 | runs, CPython reference times out (no oracle) | bh, chull, oliva2, path_tracing, pygmy, richards, timsort |
-| **compiles, then aborts** (ifa/102) | adatron 134, life 134, loop 139, pisang 134, quameon 134 |
+| **compiles, then aborts** (ifa/102) | adatron 134, pisang 134, quameon 134 (life moved to "does not compile", below) |
+| **compiles, then overflows the C stack** ([173](173-silent-deviations-found-by-the-strict-suite-check.md)) | loop 139: `sys.setrecursionlimit(100000)` is ignored; runs to completion under `ulimit -s unlimited` |
 | times out where CPython finishes | dijkstra2, solitaire |
 | both time out at 120 s | ac_encode, chaos, chess, kmeanspp, rubik2, score4, webserver, yopyra |
-| **does not compile** (24) | amaze, doom, genetic2, go, lz2, mao, minilight, minpng, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), pygasus, rdb, rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
+| **does not compile** (25) | amaze, doom, genetic2, go, life, lz2, mao, minilight, minpng, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), pygasus, rdb, rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
+
+**`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
+(`matching function not found`, rc 134) until `itertools.product(repeat=)`
+started yielding real tuples instead of lists. Now it is refused at compile
+time (`map(process, ...)`: `illegal call argument type ... closure`, and an
+untyped expression in `process`). Bisected: HEAD's `itertools.py` alone
+restores the old verdict. A reduced program with the same
+`product`/`zip`/`defaultdict`/generator/`map` shape compiles and matches
+CPython, and cutting `process`'s body to `return None` compiles too. So the
+new element flow meets `process`'s `while 1:` loop, whose only `return`s
+sit behind `board in history`. FA converges. Not yet root-caused. A refusal
+replaced a runtime abort, so no correct answer was lost.
 
 First blockers of the compile failures, where known: the triage below
 (13 are missing builtin surface); genetic2, a `{None, int64}` union (issues/048);

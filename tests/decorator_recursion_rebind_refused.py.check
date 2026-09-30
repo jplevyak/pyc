@@ -1,0 +1,1 @@
+fail: error line 13: 'down' is rebound after its decorated definition, whose body calls it recursively; the recursion would not see the new value (pyc captures it once, after decoration; issues/171)

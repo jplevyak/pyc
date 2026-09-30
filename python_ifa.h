@@ -20,6 +20,7 @@ class PycCallbacks : public IFACallbacks {
   // so int/bool arithmetic folds and types correctly instead of either
   // crashing (081) or silently salvaging to an untyped expression.
   bool bool_is_numeric() { return true; }
+  bool discovers_fields_by_write() { return true; }
   // ifa/issues/082: the exact wrapper-call names pyc's own frontend
   // lowers `isinstance(...)`/`x is None`/`x is not None` to (see
   // python_ifa_build_if1.cc and __pyc__/05_builtins.py) -- lets ifa's

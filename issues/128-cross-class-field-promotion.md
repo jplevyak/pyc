@@ -22,8 +22,8 @@ else    cs->unknown_vars.add(symbol);   // a write to a missing field DISCOVERS 
 pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
 `cs->sym->has`, and that index IS the emitted struct's `eN`. Two defects:
 
-1. **It is Python semantics hard-coded in ifa.** A language whose classes
-   declare their fields wants the `else` branch to be an error.
+1. ~~**It is Python semantics hard-coded in ifa.**~~ Now behind
+   `IFACallbacks::discovers_fields_by_write()` (step 1 below).
 2. **The conclusion outlives its evidence.** `unknown_vars` is cleared
    every pass (`clear_cs`), but `sym->has` is never cleared. On `chull`,
    all 777 promoting writes happen at pass 0, through a union that is
@@ -34,12 +34,15 @@ pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
 
 ## Fix, in order
 
-1. **`IFACallbacks::discovers_fields_by_write()`**, default `false`,
-   with pyc returning `true`. It is mechanical and changes no behaviour
-   for pyc. It puts the language rule where the other frontend policies
-   live, and it is the item
-   [171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)
-   #8 requires. With it off, a write to a missing field is a violation.
+1. ~~**`IFACallbacks::discovers_fields_by_write()`**~~ **DONE
+   2026-09-29** (`ifa/ifa.h`; `PycCallbacks` returns `true`). With it
+   `false` (ifa's default), a write to a missing field is a MEMBER
+   violation instead of a promotion (`fa_prims.cc`, `P_prim_setter`). No
+   behaviour change for pyc. The V-language tests (`ifa --test`, all 16
+   `test-ir` phases) pass unchanged with the default, as predicted: V
+   declares its fields. This was
+   [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)
+   #8.
 2. **Promoted fields are derived state.** Mark them (`Sym` has bitfield
    room for `is_promoted_field`), reset them wherever `unknown_vars` is
    reset, and re-derive them each pass. A transient pass-0 union then

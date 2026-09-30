@@ -70,7 +70,7 @@ Tests: `tests/tuple_deepcopy_elements.py` (heterogeneous and nested),
 2. `zip`/`map`/`filter`/`reversed` stay eager lists, and
    `itertools.product(repeat=)` yields lists. They are equivalent under
    iteration, but the observable cases (printing the result, an infinite
-   iterable) belong to [171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)
+   iterable) belong to [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)
    #5.
 
 ## Verification

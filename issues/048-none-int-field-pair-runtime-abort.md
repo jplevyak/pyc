@@ -5,7 +5,7 @@
 open half. History in git:
 `git show e3b44e2c:issues/048-none-int-field-pair-runtime-abort.md`.
 The policy it implements is
-[171](171-permissive-accommodations-must-be-flagged-and-non-strict.md).
+[171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
 
 ## Scope
 

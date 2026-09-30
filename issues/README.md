@@ -19,7 +19,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
    worse than a crash, which is worse than a refusal. When pyc cannot do
    something, it refuses and names the reason in CPython's terms.
 2. **Every Python accommodation is flagged and non-strict**
-   ([171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)).
+   ([171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)).
    Anything beyond CPython 3 or beyond static typing is an accommodation:
    accepting `raise "string"`, widening `int` to `float`, a typed default
    for an implicit `None`, a list where CPython returns a tuple. Each one
@@ -35,14 +35,15 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
-| [171](171-permissive-accommodations-must-be-flagged-and-non-strict.md) | **the audit**: ten accommodations, which are ungated today (`tuple()` → list; `None` read as zero; generator values as `int64`, and others); `raise "string"` and the `--strict` implicit-`None` inversion were fixed 2026-09-28, and the order to fix them. |
+| [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) | **the rule and its audit** (closed 2026-09-29): every accommodation is flagged, warns, and is off under `--strict`. All thirteen items are gated, fixed, or documented. Its verification record (the strict-suite comparison and the strict corpus sweep) is how to check a new one. |
 | [025](025-shedskin-examples-coverage.md) | **the corpus**: per-program state from the latest `check` sweep, edit candidates, and the 2026-09-28 first-blocker triage (13 of 17 "has no type" failures are missing builtin surface). |
 
 ### Silent wrong answers (worst first)
 
 | issue | what |
 | --- | --- |
-| [007](007-decorators-not-applied.md) | `@property` with a computed getter prints `<instance>`. An unhandled decorator must be refused, never ignored. |
+| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: `isinstance` on a `{list, str}` value folds to False; a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
+| [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
 | [123](123-str-does-not-fall-back-to-repr.md) | `print(obj)` ignores a class's `__repr__` and prints `<object>`. |
 | [124](124-crlf-source-not-newline-normalized.md) | a CRLF source puts `\r\n` inside multi-line string literals. |
@@ -54,6 +55,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
+| [172](172-generator-send-channel-and-stopiteration-value.md) | a generator's `send` value travels as `int64` (gated by `PYC_YIELD_INT_SEND`; refused under `--strict`), and `StopIteration.value` reads the global exception slot. |
 | [048](048-none-int-field-pair-runtime-abort.md) | genuine scalar unions (`{None, int}`, `{None, float}`, `{int, float}` elements): strict refuses; permissive gets a flagged sentinel or widening. |
 | [039](039-list-mul-shared-element-type-cross-contamination.md) | `[None] * n`: one list's element type leaks into an unrelated one (FA; mechanism in ifa/129). |
 | [128](128-cross-class-field-promotion.md) | "a write discovers a field" is hard-coded in generic ifa, and promoted fields are never re-derived. |
@@ -67,6 +69,12 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | a method of a function-local class reading the function's local aborts the compiler. |
 | [050](050-pyc-string-builders-are-quadratic.md) | `str.join` / `upper` / `lower` / `replace` are O(n²): 122 s at n = 400 000. |
 | [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
+
+### Closed on 2026-09-29
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) | every audited accommodation gated, fixed, or documented | 172, 173, 007, 128, ifa/156 |
 
 ### Closed on 2026-09-28
 

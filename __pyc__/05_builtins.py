@@ -33,7 +33,11 @@ def bin(x): # return integer as string in binary
   return prefix + s
 
 def exit(status = 0):
-    __pyc_c_call__(int, "::exit", int, status)
+    # CPython raises SystemExit, which a program may catch (kanoodle's
+    # `except SystemExit: pass` ends each search). This was a hard C exit,
+    # so kanoodle silently stopped after its first search, with rc 0.
+    # __pyc_unhandled_exception__ exits with the code when nothing catches it.
+    raise SystemExit(status)
 
 # issues/013: minimal `assert` support -- the frontend (PY_assert_stmt
 # in python_ifa_build_if1.cc) lowers `assert cond, msg` to
