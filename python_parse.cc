@@ -44,12 +44,30 @@ static D_Parser *make_python_parser(const char *filename, const char *buf, int l
 // Every buffer handed to dparse now has a '\n' immediately before it, so
 // the scan always stops inside our own allocation. The returned pointer is
 // interior to the allocation, which the GC keeps alive.
+//
+// issues/124: universal newlines (PEP 278), as CPython reads source: "\r\n"
+// and a lone "\r" become "\n" before the tokenizer sees them. Without it a
+// string literal spanning lines in a CRLF file kept the "\r" -- `len()` one
+// larger per line and `==` against "\n" text False, silently. Returns the
+// normalized length; `dst` may be `src` (the output never outgrows it).
+static int normalize_newlines(char *dst, const char *src, int len) {
+  int n = 0;
+  for (int i = 0; i < len; i++) {
+    if (src[i] == '\r') {
+      dst[n++] = '\n';
+      if (i + 1 < len && src[i + 1] == '\n') i++;
+    } else
+      dst[n++] = src[i];
+  }
+  return n;
+}
+
 static char *prepare_parse_buffer(const char *buf, int *len) {
-  bool nl = *len > 0 && buf[*len - 1] == '\n';
   char *mem = (char *)MALLOC(*len + 4);
   mem[0] = '\n';
   char *copy = mem + 1;
-  memcpy(copy, buf, *len);
+  *len = normalize_newlines(copy, buf, *len);
+  bool nl = *len > 0 && copy[*len - 1] == '\n';
   if (!nl) copy[(*len)++] = '\n';
   copy[*len] = 0;
   copy[*len + 1] = 0;
@@ -137,6 +155,7 @@ PyDAST *dparse_builtin_dir(const char *dirname) {
     char *fbuf = nullptr;
     int flen = 0;
     if (buf_read(path, &fbuf, &flen) > 0) {
+      flen = normalize_newlines(fbuf, fbuf, flen);  // issues/124
       file_bufs.add(fbuf);
       file_lens.add(flen);
       total += flen + 1;  // +1 for newline separator

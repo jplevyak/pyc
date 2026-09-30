@@ -279,7 +279,15 @@ def main():
     test_files = sorted(glob.glob(os.path.join(envs["TESTS_DIR"], "*.py")))
     for f in test_files:
         dst = os.path.join(envs["BUILD"], os.path.basename(f))
-        if not os.path.exists(dst):
+        if os.path.exists(f + ".crlf"):
+            # issues/124: stage a CRLF copy. The source stays LF in the
+            # repo, so no line-ending normalization (an editor, dos2unix,
+            # a .gitattributes rule) can silently retire the coverage.
+            with open(f, "rb") as src:
+                data = src.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            with open(dst, "wb") as out:
+                out.write(data)
+        elif not os.path.exists(dst):
             os.symlink(os.path.join("..", os.path.basename(f)), dst)
 
     # issues/113: stage test subdirectories too. Tests run with cwd =

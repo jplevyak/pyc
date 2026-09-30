@@ -46,7 +46,6 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
 | [123](123-str-does-not-fall-back-to-repr.md) | `print(obj)` ignores a class's `__repr__` and prints `<object>`. |
-| [124](124-crlf-source-not-newline-normalized.md) | a CRLF source puts `\r\n` inside multi-line string literals. |
 | [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |
 | [041](041-stdlib-shim-stubs-silently-wrong.md) | `hashlib` is a stub returning `""`. Shims must be real or raise. |
 | [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` returns a list in every mode. The fix is built (`PYC_MAKESEQ`) and held on a copy-of-copy deepcopy blocker; re-test after the ifa deepcopy fixes. |
@@ -70,11 +69,12 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [050](050-pyc-string-builders-are-quadratic.md) | `str.join` / `upper` / `lower` / `replace` are O(n²): 122 s at n = 400 000. |
 | [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
 
-### Closed on 2026-09-29
+### Closed on 2026-09-29 and 2026-09-30
 
 | closed | why | residual now in |
 | --- | --- | --- |
 | [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) | every audited accommodation gated, fixed, or documented | 172, 173, 007, 128, ifa/156 |
+| [124](closed/124-crlf-source-not-newline-normalized.md) | universal newlines at read time; pinned by a harness-staged CRLF test (2026-09-30) | — |
 
 ### Closed on 2026-09-28
 

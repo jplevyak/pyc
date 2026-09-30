@@ -45,7 +45,7 @@ until you know to look for this.
 
 ## 2026-09-03: `repr(str)` has it too, not just `repr(bytes)`
 
-Found alongside [124](../124-crlf-source-not-newline-normalized.md). The
+Found alongside [124](124-crlf-source-not-newline-normalized.md). The
 title says `bytes`, but plain `str` is identical:
 
 ```python

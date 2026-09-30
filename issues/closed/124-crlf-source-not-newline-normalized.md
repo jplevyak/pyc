@@ -1,14 +1,18 @@
 # 124 — a CRLF source file puts `\r\n` inside string literals
 
-**Status:** open (re-verified 2026-09-28: prints `8` / `False`), filed 2026-09-03. Found while converting the corpus's
+**Status:** closed 2026-09-30. Fixed: source buffers are read with
+universal newlines (`normalize_newlines`, `python_parse.cc`), so the repro
+prints `7` / `True` on both backends. Pinned by
+`tests/crlf_source_newlines.py`, which the harness stages as CRLF (see
+Resolution). Filed 2026-09-03. Found while converting the corpus's
 CRLF files to LF — the conversion would have silently MASKED this.
 **Area:** pyc frontend (`python_parse.cc` / the dparser tokenizer's
 source reading).
 **Severity:** **silent** — zero warnings, exit 0, wrong string contents
 and wrong `len()`.
-**Reproducer:** `issues/repro/124-crlf-source-newline.py` (4 lines, and
-the file itself must keep CRLF endings — see "Why the repro is not in
-`tests/`").
+**Reproducer:** the snippet below, saved with CRLF endings. The CRLF repro
+file that used to live in `issues/repro/` was removed when the test
+replaced it.
 
 ## Symptom
 
@@ -98,3 +102,25 @@ Correctness for any Python source not authored on Unix. It is a
 whole-class silent divergence: nothing in the compile output hints at
 it, and the only corpus programs that exercised it were ones whose
 stdout the sweep never checks.
+
+## Resolution (2026-09-30)
+
+- **Fix.** `normalize_newlines` turns `\r\n` and a lone `\r` into `\n` as
+  each buffer is prepared. That covers `prepare_parse_buffer` (every user
+  file, import, REPL input, and generated source) and each file of the
+  builtin `__pyc__/` directory. It happens at read time, as the Fix section
+  asked, so line numbering and all position arithmetic see the normalized
+  text.
+- **Verification.**
+  1. The repro prints `7` / `True`, C and LLVM.
+  2. Single-line literals, a lone `\r`, a backslash continuation over
+     CRLF, a docstring, and a file with no final newline all match CPython.
+  3. `shedskin_examples/bh/bh.py` (27 multi-line literals) converted to
+     CRLF produces byte-identical C and identical diagnostics to the LF
+     file.
+- **Test.** `tests/crlf_source_newlines.py` with a `.crlf` sidecar. The
+  harness (`test_pyc.py`) writes a CRLF copy of any test that has one into
+  `tests/build/`, instead of symlinking it, so the file in the repo stays
+  LF and no line-ending normalization can retire the coverage. It fails on
+  the unfixed compiler (checked) and passes now. `make test`: 374 passed,
+  0 failed, both backends.
