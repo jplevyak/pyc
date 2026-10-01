@@ -70,16 +70,55 @@ pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
      `check`: every verdict list identical to the baseline, with CreationSets
      and EntrySets unchanged (sweep `check__default__11a77416+*`).
      `PYC_NORETRACT=1` turns it off.
-3. **The three-way rule for a union receiver** (measured with
-   `IFA_DBG_FIELDSPLIT`, `PYC_FIELDSPLIT` scaffolding in the tree):
-   - ALL-HAVE: flow normally.
-   - ALL-MISS: promote, as derived state (step 2). `richards` needs
-     this; its 24 are real.
-   - MIXED (one class has the field, others do not): this is a DEMAND to
-     separate the union, {have} vs {miss}, exactly two groups. Acting at
-     the receiver was measured useless (162 demands, 0 splits: the
-     receivers are loop locals). It must feed the ESBLOCK blocker walk
-     (ifa/129), which reaches the shared writer contour.
+3. ~~**The three-way rule for a union receiver**~~ **BUILT 2026-09-30.**
+   A MIXED write is now a demand, asked in `split_css_by_defs` on the
+   CONVERGED types from that pass's writes (`record_field_write` in
+   `P_prim_setter`). A receiver's record classes split into those with
+   their OWN evidence for the field (a write through a receiver of that
+   single class) and those without. Its value flow is walked backward, and
+   every CreationSet on it is named and treated as demanded (like
+   `viol_named`), so the ES-block, defs==1 and route-4 rungs partition the
+   CreationSet that merged, or decline. `IFA_DBG_FIELDMIXED` prints each
+   demand once.
+   - **Why "own evidence" and not the probe's have/miss.** At convergence
+     the promotion itself gives every member the field, so every MIXED write
+     looks ALL-HAVE. That is why step 2's measurement found none.
+   - **Two constraints, both measured.** The first version named EVERY
+     CreationSet on the backward walk, on every pass. On `plcfrs` a single
+     pass-0 `'count'` write spans seven classes. It named 184 CreationSets
+     and the cascade added 306 (+66 EntrySets) with no verdict change: the
+     fan. So the demand (a) names only the CONFLUENCE, a CreationSet whose
+     content still carries a class with its own writer AND one without;
+     that alone still named 93, because everything mixes on pass 0. And (b)
+     it is asked only when no higher stage acted this pass (`quiescent`),
+     since a union a higher stage is still separating is not yet the
+     program's. With both, the corpus `check` (`check__default__888c8502+ee4a19cc`)
+     shows ZERO programs changing contour counts against step 2 and no
+     verdict change.
+   - **What it acts on today: nothing.** Every converged MIXED write I could
+     construct is a GENUINE union. A module global holds both classes over
+     time and names no CreationSet. An attribute reassigned over time names
+     one CreationSet, with one creation point. A heterogeneous list is one
+     literal. The rungs decline, correctly, and the output matches CPython.
+     Every shared-contour shape tried was separated before convergence by
+     existing machinery (setter splitting, route 4). That includes two lists
+     from one helper, two literals filled through one helper, one `Bag`
+     class per list, and one `Node` wrapper per object; none of 9 splitter
+     flags set to 0 leaves a MIXED write. The corpus has no converged MIXED
+     write either (step 2's measurement, over 76 programs).
+   - **A narrowing gap, found on the way:** an `isinstance` guard does not
+     narrow a MODULE-LEVEL variable, because each read is a fresh load of the
+     cell. So `if isinstance(x, A): x.f = 4` at module level is MIXED where
+     the same code in a function is not. Filed as
+     [ifa/177](../ifa/issues/177-FA-narrowing-does-not-reach-a-module-global.md);
+     it is a narrowing fix, not a split.
+   - **Replaced:** the `PYC_FIELDSPLIT` scaffolding. It split the receiver's
+     own contour by type, which was measured useless, and it read a demand
+     list that the split stage cleared before using it.
+   - **Test:** `tests/field_mixed_write_demand.py` pins, through its `.env`
+     and `.check`, which writes raise the demand: the temporal attribute and
+     the module global do, the narrowed local does not. It pins that all
+     three print what CPython prints.
 4. **A genuine union of unrelated classes** read through one receiver
    needs a diagnostic naming it (shedskin warns `dynamic (sub)type`), or
    hoisting to a real common base. Never a coincidental shared layout.
