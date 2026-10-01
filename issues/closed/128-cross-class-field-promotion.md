@@ -1,12 +1,14 @@
 # 128 — "a write discovers a field" is a Python-ism in generic ifa, and its result is never re-derived
 
-**Status:** open. Rewritten 2026-09-28. The union that made it reachable
-on `chull` is fixed by closed
-[ifa/152](../ifa/issues/closed/152-FA-backtrack-the-demand-to-the-merged-creation-set.md),
-and chull compiles and runs. The promotion mechanism this file is about is
-unchanged. The full record, including the four failed attempts (AGENTS.md
-cites them as its worked example of acting anywhere but the confluence),
-is in git: `git show e3b44e2c:issues/128-cross-class-field-promotion.md`.
+**Status:** closed 2026-09-30. Step 1 (the `IFACallbacks` hook), step 2
+(promoted fields as derived state) and step 3 (the MIXED-write demand) are
+done. Step 4 is closed without a diagnostic. The residual narrowing gap is
+[ifa/177](../../ifa/issues/177-FA-narrowing-does-not-reach-a-module-global.md).
+The union that made the mechanism reachable on `chull` was fixed by closed
+[ifa/152](../../ifa/issues/closed/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
+The full record of the four failed attempts (AGENTS.md cites them as its
+worked example of acting anywhere but the confluence) is in git:
+`git show e3b44e2c:issues/128-cross-class-field-promotion.md`.
 
 ## The mechanism
 
@@ -41,7 +43,7 @@ pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
    behaviour change for pyc. The V-language tests (`ifa --test`, all 16
    `test-ir` phases) pass unchanged with the default, as predicted: V
    declares its fields. This was
-   [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)
+   [171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)
    #8.
 2. ~~**Promoted fields are derived state.**~~ **DONE 2026-09-30.**
    `IFACallbacks::retract_derived_state()` (`ifa/ifa.h`) is called at a
@@ -110,7 +112,7 @@ pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
      narrow a MODULE-LEVEL variable, because each read is a fresh load of the
      cell. So `if isinstance(x, A): x.f = 4` at module level is MIXED where
      the same code in a function is not. Filed as
-     [ifa/177](../ifa/issues/177-FA-narrowing-does-not-reach-a-module-global.md);
+     [ifa/177](../../ifa/issues/177-FA-narrowing-does-not-reach-a-module-global.md);
      it is a narrowing fix, not a split.
    - **Replaced:** the `PYC_FIELDSPLIT` scaffolding. It split the receiver's
      own contour by type, which was measured useless, and it read a demand
@@ -119,9 +121,15 @@ pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
      and `.check`, which writes raise the demand: the temporal attribute and
      the module global do, the narrowed local does not. It pins that all
      three print what CPython prints.
-4. **A genuine union of unrelated classes** read through one receiver
-   needs a diagnostic naming it (shedskin warns `dynamic (sub)type`), or
-   hoisting to a real common base. Never a coincidental shared layout.
+4. ~~**A genuine union of unrelated classes**~~ **CLOSED 2026-09-30, no
+   diagnostic (author's decision).** The layout is not coincidental. The
+   post-analysis prefix alignment (`clone.cc`) puts the shared field at a
+   common slot, and the layout-obligation check refuses the program when it
+   cannot. Measured: `xs = [A(), B()]; x.a = 5` gives `A.a` and `B.a` both at
+   index 14 (`LAYOUT obligations=3 violations=0`). A variant whose other
+   fields differ in position and width (str, int, float, bool, list) matches
+   CPython on both backends. Nothing deviates from CPython, so a warning
+   would fire on correct programs.
 
 ## Verification
 

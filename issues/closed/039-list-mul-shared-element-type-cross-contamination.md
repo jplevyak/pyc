@@ -91,7 +91,7 @@ reach a `Cell` receiver happen only on passes 0-6 (with `str` in the same
 transient unions). From pass 7 to convergence at pass 33, every `acc`/`vel`
 write lands on `{None, Body}`. A promoted field is never re-derived, so the
 transient conclusion outlives its evidence. That is exactly
-[128](../128-cross-class-field-promotion.md)'s step 2 (promoted fields as
+[128](128-cross-class-field-promotion.md)'s step 2 (promoted fields as
 derived state). The cost is two dead slots in `Cell`, not a wrong answer.
 
 **Other things found on the way.** The defs==1 rung (`PYC_ESDEFS1`, off by

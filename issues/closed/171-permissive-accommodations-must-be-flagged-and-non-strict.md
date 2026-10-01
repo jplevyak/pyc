@@ -4,7 +4,7 @@
 gated, fixed, or a documented representation. The residuals went to
 [172](../172-generator-send-channel-and-stopiteration-value.md),
 [173](../173-silent-deviations-found-by-the-strict-suite-check.md),
-[007](../007-decorators-not-applied.md), [128](../128-cross-class-field-promotion.md)
+[007](../007-decorators-not-applied.md), [128](128-cross-class-field-promotion.md)
 and ifa/156 ("What remains"). The RULE stays in force: every new
 accommodation must meet it. Filed 2026-09-28 from the author's directive:
 *"all python specific features are under flags … all such accommodations
@@ -52,7 +52,7 @@ compile error.**
 | 5 | `zip`/`map`/`filter`/`reversed` return eager lists; `itertools.product(repeat=)` yields lists | `__pyc__/05_builtins.py:222`, `pyc_lib/itertools.py` | **`product` DONE 2026-09-29:** `repeat=N` yields `tuple(row)` (runtime-length tuples, `tests/itertools_product_repeat_tuple.py`) | ✓ for `product`. **Author's decision (2026-09-29): the eager lists stay**, as a documented representation. They are equivalent under iteration and `list()`. They are observable only through `len(zip(..))`, `zip(..)[i]` or printing the object, which CPython rejects or prints as `<zip object>` (`tests/zip_builtin.py`; see [173](../173-silent-deviations-found-by-the-strict-suite-check.md). |
 | 6 | `None` read as the zero value (`None + "y"` gives `"y"`) | nullable-pointer representation (ifa/164) | **DONE 2026-09-28** in every mode: a `{None, T*}` receiver is checked where the call is emitted and reports CPython's uncaught `TypeError` (`_CG_none_receiver`), and `{None, scalar}` is refused at FA time (a BOXING violation) | ✓ `tests/none_receiver_raises.py`. Remaining: the check reports and exits, so `except TypeError` cannot catch it ([ifa/165](../../ifa/issues/165-none-reaching-an-operation-is-silently-accepted.md). |
 | 7 | a generator's return / `send` value smuggled through `int64` (`0` where CPython gives `None`) | `__pyc__/09_generator.py`, `P_prim_yield` | **RETURN value DONE 2026-09-28**, every mode. **`send` channel GATED 2026-09-29:** a yield whose value is used warns in permissive (`PYC_YIELD_INT_SEND`) and is refused under `--strict` | ✓ Flagged and non-strict. The typed send channel, and `StopIteration.value` through the global exception slot, moved to [172](../172-generator-send-channel-and-stopiteration-value.md. |
-| 8 | "a write to a missing field discovers the field" | `P_prim_setter` (`ifa/analysis/fa_prims.cc`) | **DONE 2026-09-29:** `IFACallbacks::discovers_fields_by_write()`, default `false` (a MEMBER violation); `PycCallbacks` returns `true` | ✓ No behaviour change for pyc. The V-language tests pass with the default. The derived-state half is still [128](../128-cross-class-field-promotion.md. |
+| 8 | "a write to a missing field discovers the field" | `P_prim_setter` (`ifa/analysis/fa_prims.cc`) | **DONE 2026-09-29:** `IFACallbacks::discovers_fields_by_write()`, default `false` (a MEMBER violation); `PycCallbacks` returns `true` | ✓ No behaviour change for pyc. The V-language tests pass with the default. The derived-state half is still [128](128-cross-class-field-promotion.md. |
 | 9 | locals possibly read before assignment are zero-filled | `--safe` (ifa/039) | `--safe` only ✓ | ✓ already a flag, and non-strict by construction. |
 | 10 | a type violation compiled with a runtime check instead of refused | `fruntime_errors`, `convert_NOTYPE_to_void` | ✓ gated. `PYC_STRICTVIOL=1` (closed ifa/158) currently makes every violation fatal in every mode anyway | ✓ consistent. Note that permissive currently refuses too. |
 | 11 | `range` is its own iterator (`__iter__` returns `self`), so a range iterates once | `__pyc__/05_builtins.py` | **DONE** (already in the tree at `16a380f5`): `range.__iter__` returns a fresh `__range_iter__` | ✓ `tests/range_reiterable.py`. |
@@ -113,7 +113,7 @@ left is tracked elsewhere:
   `StopIteration.value`.
 - [ifa/156](../../ifa/issues/156-FA-split-int-from-float-coerce-last.md:
   split `{int, float}` where a split exists, and coerce last (#3).
-- [128](../128-cross-class-field-promotion.md steps 2-4: promoted fields as
+- [128](128-cross-class-field-promotion.md steps 2-4: promoted fields as
   derived state (#8's other half).
 - [007](../007-decorators-not-applied.md: property setters, and a property
   pyc cannot pre-scan.

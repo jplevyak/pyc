@@ -289,7 +289,7 @@ as a zero value. Each one must:
 - reach generic ifa code only through `IFACallbacks`, never hard-coded
   (ifa is not a Python compiler; for example, "a write to a missing
   field discovers the field" is a Python-ism, see
-  [issues/128](issues/128-cross-class-field-promotion.md)).
+  [issues/128](issues/closed/128-cross-class-field-promotion.md)).
 
 `--strict` therefore means CPython semantics or a compile error, never a
 silent deviation. The audit of every accommodation in the tree is
@@ -478,7 +478,7 @@ separated" is never the answer. The contour exists; the work is making pyc
 reach it.
 
 **The failure mode is acting anywhere but the confluence**, and
-[issues/128](issues/128-cross-class-field-promotion.md) is a worked record of
+[issues/128](issues/closed/128-cross-class-field-promotion.md) is a worked record of
 doing it wrong four times in one investigation. Each attempt was locally
 plausible and each was measured dead:
 
