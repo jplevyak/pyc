@@ -138,6 +138,7 @@ class range:
 
 class __range_iter__:
   i = 0
+  i0 = 0
   j = 0
   s = 1
   def __init__(self, ai, aj, ak):
@@ -145,15 +146,24 @@ class __range_iter__:
     # `self.i < self.j` per constant (issue 040) happens HERE now, in
     # the iterator, so its fields must carry range's constants through.
     self.i = __pyc_clone_constants__(ai)
+    self.i0 = __pyc_clone_constants__(ai)
     self.j = __pyc_clone_constants__(aj)
     self.s = __pyc_clone_constants__(ak)
   def __iter__(self):
     return self
   def __pyc_more__(self):
-    if self.s >= 0:
-      return self.i < self.j
-    else:
-      return self.i > self.j
+    # ifa/175, for range: `self.i` cannot carry an empty range's fact --
+    # once the body is live, `__next__`'s `self.i += self.s` widens it to
+    # int64 for good, and the loop feeds itself. `i0` is never written
+    # after __init__, and `!=` clones constants, so `range(0, 0)` folds to
+    # False here even when `<` shares a contour with non-constant
+    # comparisons. (`==` does not clone constants; `!=` does.)
+    if self.i0 != self.j:
+      if self.s >= 0:
+        return self.i < self.j
+      else:
+        return self.i > self.j
+    return False
   def __next__(self):
     x = self.i
     self.i += self.s

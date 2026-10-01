@@ -22,7 +22,10 @@ class __set_iter__:
     self._len = n
     self._pos = 0
   def __pyc_more__(self):
-    return self._pos < self._len
+    # ifa/175, as __dict_iter__: `_len` is never written after __init__,
+    # and `!=` clones constants, so an empty set folds to False here even
+    # though `_pos += 1` widens `_pos` once the body is live.
+    return self._len != 0 and self._pos < self._len
   def __next__(self):
     self._pos += 1
     return self._items[self._pos - 1]

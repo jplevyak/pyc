@@ -29,7 +29,11 @@ class __dict_iter__:
     self._len = n
     self._pos = 0
   def __pyc_more__(self):
-    return self._pos < self._len
+    # ifa/175, for a field-held bound: `_pos` cannot carry an empty
+    # dict's fact -- `__next__`'s `+= 1` widens it once the body is live,
+    # and the loop feeds itself. `_len` is never written after __init__,
+    # and `!=` clones constants, so an empty dict folds to False here.
+    return self._len != 0 and self._pos < self._len
   def __next__(self):
     self._pos += 1
     return self._keys[self._pos - 1]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "optimize/dom.h"  // ifa/issues/050 3b: Dom::is_dominated_by
+#include <algorithm>
 #include <set>
 #include <string>
 
@@ -523,6 +524,11 @@ bool PycCompiler::retract_derived_state() {
   Vec<Sym *> classes;
   for (CreationSet *cs : fa->all_creation_sets)
     if (cs && cs->sym && cs->sym->type_kind == Type_RECORD) classes.set_add(cs->sym);
+  // Issue 035: a set_add Vec iterates in heap-layout order. Retracting is
+  // per class and order-independent, but the [retract] lines a test pins
+  // are not; walk classes by Sym id.
+  classes.set_to_vec();
+  std::sort(classes.begin(), classes.end(), [](Sym *a, Sym *b) { return a->id < b->id; });
   bool any = false;
   for (Sym *c : classes) if (c) {
     Vec<Sym *> drop;
