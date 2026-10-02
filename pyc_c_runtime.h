@@ -1318,11 +1318,27 @@ inline char *_CG_strcat(const char *a, const char *b) {
   return x;
 }
 
-inline char *_CG_char_from_string(void *s, int i) {
-  char *x = _CG_string_alloc(1);
-  x[0] = ((char *)s)[i];
-  return x;
+// Every one-byte str, preallocated in the length-prefixed layout, as
+// CPython's and shedskin's single-character caches do: `s[i]` used to
+// GC-allocate a fresh string per read, which made brainfuck's interpreter
+// loop slower than CPython. Strings are never written after allocation, so
+// sharing is safe; the table is `const` (C99 allows that in an `inline`
+// function, not a modifiable static), so a stray write faults rather than
+// corrupting every later read of that character.
+typedef struct {
+  int64 len;
+  char c[8];
+} _CG_char_entry;
+#define _CG_CE1(n) {1, {(char)(n), 0}}
+#define _CG_CE4(n) _CG_CE1(n), _CG_CE1((n) + 1), _CG_CE1((n) + 2), _CG_CE1((n) + 3)
+#define _CG_CE16(n) _CG_CE4(n), _CG_CE4((n) + 4), _CG_CE4((n) + 8), _CG_CE4((n) + 12)
+#define _CG_CE64(n) _CG_CE16(n), _CG_CE16((n) + 16), _CG_CE16((n) + 32), _CG_CE16((n) + 48)
+inline char *_CG_one_char_string(unsigned char c) {
+  static const _CG_char_entry table[256] = {_CG_CE64(0), _CG_CE64(64), _CG_CE64(128), _CG_CE64(192)};
+  return (char *)table[c].c;
 }
+
+inline char *_CG_char_from_string(void *s, int i) { return _CG_one_char_string(((unsigned char *)s)[i]); }
 
 // `bytes` indexing counterpart to _CG_char_from_string above: `bytes`
 // shares str's exact length-prefixed char* buffer layout (see sym_bytes
@@ -1333,11 +1349,7 @@ inline char *_CG_char_from_string(void *s, int i) {
 // result from these instead of `bytes(list)`, whose conversion's internal
 // str lists merged with the int list on the start-merged list contour and
 // broke shedskin_examples/sha.
-inline char *_CG_byte_from_int(int64 v) {
-  char *x = _CG_string_alloc(1);
-  x[0] = (char)(v & 255);
-  return x;
-}
+inline char *_CG_byte_from_int(int64 v) { return _CG_one_char_string((unsigned char)(v & 255)); }
 
 // CPython's str repr: quote with ' unless the text contains ' and no ";
 // escape the backslash, \n \r \t and the chosen quote; other control
