@@ -47,7 +47,15 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_KEEPNIL_1__220794a9+eced1824` | 2026-10-02 | programs=77 compile_fail=24 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2181/692=3.15 pratio=2.15 n=76 |
+| `check__default__220794a9+eced1824` | 2026-10-02 | programs=77 compile_fail=24 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2162/664=3.26 pratio=2.16 n=76 |
+| `check__PYC_KEEPNIL_1__220794a9+4ac9b1b8` | 2026-10-02 | programs=77 compile_fail=24 run_fail=14 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2181/692=3.15 pratio=2.15 n=76 |
+| `check__default__220794a9+4ac9b1b8` | 2026-10-02 | programs=77 compile_fail=24 run_fail=14 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2162/664=3.26 pratio=2.16 n=76 |
+| `check__PYC_KEEPNIL_1__220794a9+c2afdd06` | 2026-10-01 | programs=77 compile_fail=24 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2193/692=3.17 pratio=2.15 n=76 |
+| `check__default__220794a9+c2afdd06` | 2026-10-01 | programs=77 compile_fail=24 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2173/664=3.27 pratio=2.16 n=76 |
+| `check__PYC_KEEPNIL_1_PYC_NORETURN_1__220794a9+c2afdd06` | 2026-10-01 | programs=77 compile_fail=26 run_fail=12 stdout_differs=5 unverifiable=6 with_warnings=13 cs/shapes=2021/670=3.02 pratio=2.08 n=76 |
 | `check__default__164bad43` | 2026-10-01 | programs=77 compile_fail=24 run_fail=13 stdout_differs=4 unverifiable=6 with_warnings=16 cs/shapes=2173/664=3.27 pratio=2.16 n=76 |
+| `check__PYC_KEEPNIL_1__e21cc929+d4673d70` | 2026-10-01 | programs=77 compile_fail=26 run_fail=14 stdout_differs=5 unverifiable=6 with_warnings=15 cs/shapes=2196/692=3.17 pratio=2.16 n=76 |
 | `check__default__e21cc929+d4673d70` | 2026-10-01 | programs=77 compile_fail=25 run_fail=16 stdout_differs=4 unverifiable=6 with_warnings=16 cs/shapes=2176/664=3.28 pratio=2.16 n=76 |
 | `check__default__5b7270b7+fd2e0016` | 2026-09-30 | programs=77 compile_fail=25 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2176/664=3.28 pratio=2.16 n=76 |
 | `check__default__888c8502+ee4a19cc` | 2026-09-30 | programs=77 compile_fail=25 run_fail=16 stdout_differs=4 unverifiable=6 with_warnings=16 cs/shapes=2176/664=3.28 pratio=2.16 n=76 |
