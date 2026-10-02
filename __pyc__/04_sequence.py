@@ -334,16 +334,29 @@ class list:
     x = self[i]
     self.__delitem__(i)
     return x
-  def index(self, x):
-    # Returns -1 when absent instead of raising ValueError (no
-    # exception model, issue 011).
+  def index(self, x, start=0, stop=None):
+    # CPython's list.index: optional start/stop, normalized like a
+    # slice, and ValueError when absent. It used to take no bounds
+    # (amaze's `distances2.index(dist, idx+1)` resolved to nothing)
+    # and return -1, a choice made before exceptions existed (issue 011).
     n = len(self)
-    i = 0
-    while i < n:
+    i = start
+    if i < 0:
+      i += n
+      if i < 0:
+        i = 0
+    e = n
+    if stop is not None:
+      e = stop
+      if e < 0:
+        e += n
+      if e > n:
+        e = n
+    while i < e:
       if self[i] == x:
         return i
       i += 1
-    return -1
+    raise ValueError("list.index(x): x not in list")
   def count(self, x):
     n = len(self)
     c = 0

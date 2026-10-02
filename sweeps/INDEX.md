@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__92ac5912+65417f57` | 2026-10-02 | programs=77 compile_fail=23 run_fail=15 stdout_differs=4 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- list.index start/stop: amaze compiles and matches CPython. run_fail 13->15 is brainfuck and tonyjpegdecoder rc=124 from parallel contention; alone they run in 114s and 93s, rc=0 |
 | `check__default__2845e67c+d13b1e24` | 2026-10-02 | programs=77 compile_fail=24 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2181/692=3.15 pratio=2.15 n=76 |
 | `check__default__5ca26ec4+36c6dfe7` | 2026-10-02 | programs=77 compile_fail=24 run_fail=14 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2181/692=3.15 pratio=2.15 n=76 |
 | `check__PYC_KEEPNIL_1__220794a9+eced1824` | 2026-10-02 | programs=77 compile_fail=24 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2181/692=3.15 pratio=2.15 n=76 |
