@@ -467,7 +467,8 @@ hello   (binary linking against libgc, libm)
 - `-lm` — standard math.
 - `CG_TARGET` — the output binary's path; `hello` by default (input filename,
   extension stripped) but overridden by pyc's `-o`/`--output` flag when given.
-- `-O` if `OPTIMIZE=1` (from pyc's `-O` flag).
+- `-O2` if `OPTIMIZE=1`, which pyc passes by default (`--no-optimize`
+  clears it, for debugging; the LLVM backend always uses `-O2`).
 - `-g` if `DEBUG=1` (from pyc's `-g` flag).
 
 The user's `hello.py` doesn't need to know about any of this. The
@@ -608,7 +609,7 @@ so error messages reference a consistent path.
 | "forward reference in `__pyc__/` fails" | Wrong numeric prefix; rename to enforce load order |
 | "stale `__pyc__.py` (single file) used" | Either delete the file or update it alongside the directory |
 | "`__pyc_insert_c_header__` had no effect" | The directive only works in builtin module load; user files can use `__pyc_insert_c_code__` instead |
-| "different output between OPTIMIZE=1 and =0" | C compiler issue, not pyc; reproduce with hand-written C |
+| "different output with `--no-optimize`" | Almost always undefined behavior in the generated C or the runtime (an out-of-bounds index, a read of an uninitialized slot), which `-O0` happens to tolerate; root-cause it in pyc, do not blame the C compiler |
 | "binary aborts in Boehm GC init" | Wrong libgc version; try `apt-get install libgc-dev` |
 
 ---

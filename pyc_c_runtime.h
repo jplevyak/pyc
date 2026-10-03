@@ -115,9 +115,31 @@ void* _CG_run_coro(void* coro_hdl);
 
 #ifdef __cplusplus
 #include <coroutine>
+#include <new>
+#include <utility>
+
+// Coroutine frames, and the heap closure a generator's coroutine lambda
+// lives in, hold pointers to GC objects -- a generator's arguments and
+// locals live ONLY there once the outer call returns. Allocated with the
+// global operator new they are invisible to the collector, which then
+// frees what they still reference. At -O0 a stale copy on the C stack
+// usually kept the object alive; at -O2 nothing did, and
+// shedskin_examples/sudoku5's recursive generator segfaulted (it runs
+// with GC_DONT_GC=1). A promise's operator new is what the coroutine
+// uses for its frame, so both promise types derive from this. The frame
+// is reached through the int64 handle stored in a GC object, which the
+// conservative scan sees, so it lives exactly as long as its generator.
+struct _CG_gc_frame {
+  static void *operator new(std::size_t n) { return GC_MALLOC(n); }
+  static void operator delete(void *) noexcept {}
+};
+template <typename T>
+inline std::decay_t<T> *_CG_gc_new(T &&v) {
+  return new (GC_MALLOC(sizeof(std::decay_t<T>))) std::decay_t<T>(std::forward<T>(v));
+}
 
 struct _CG_Coroutine {
-  struct promise_type {
+  struct promise_type : _CG_gc_frame {
     void* value = nullptr;
     std::coroutine_handle<> awaiter;
 
@@ -181,7 +203,7 @@ inline void* _CG_run_coro(_CG_Coroutine coro) {
 // with no way to actually deliver a sent value; the custom
 // yield_awaiter below is what makes that real.
 struct _CG_Generator {
-  struct promise_type {
+  struct promise_type : _CG_gc_frame {
     void* value = nullptr;
     void* sent = nullptr;
     // issues/014: the generator's `return value` (StopIteration.value

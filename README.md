@@ -107,7 +107,8 @@ The compiler reads `<file.py>`, type-checks the whole program, and produces a na
 |---|---|
 | `-D <dir>`, `--system-directory <dir>` | System directory containing `__pyc__.py` (default: same directory as `pyc`) |
 | `-o <path>`, `--output <path>` | Output binary path (default: input filename, extension stripped) |
-| `-O`, `--optimize` | Enable optimizations |
+| `-O`, `--optimize` | Compile the generated C at `-O2` (the default; kept for compatibility) |
+| `--no-optimize` | Compile the generated C at `-O0`, for debugging (`PYC_NO_OPTIMIZE`) |
 | `-g`, `--debug-info` | Emit debug information |
 | `-b`, `--emit-llvm` | Use the LLVM backend (build with `USE_LLVM=1`) |
 | `--strict` | Strict mode: hard compile errors on type violations, no permissive-Python fallbacks |

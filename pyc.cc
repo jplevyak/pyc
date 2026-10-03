@@ -101,6 +101,8 @@ static ArgumentDescription arg_desc[] = {
      "(ifa/issues/124)",
      "F", &frefuse_imprecise, "PYC_REFUSE_IMPRECISE", NULL},
     {"optimize", 'O', "Optimize", "F", &codegen_optimize, "PYC_OPTIMIZE", NULL},
+    {"no-optimize", ' ', "Compile the generated C without optimization (-O0, for debugging)", "f", &codegen_optimize,
+     "PYC_NO_OPTIMIZE", NULL},
     {"output", 'o', "Output File", "S511", codegen_output, "PYC_OUTPUT", NULL},
 #ifdef USE_LLVM
     {"emit-llvm", 'b', "LLVM Codegen (the only LLVM backend — internally v2 via cg_normalize_v2 + cg_v2_emit_llvm_module)",
@@ -252,6 +254,11 @@ int main(int argc, char *argv[]) {
     }
   }
   MEM_INIT();
+  // The C backend optimizes by default, as the LLVM backend always has
+  // (clang -O2): at -O0 the generated C ran 2-4x slower (brainfuck 100s vs
+  // 26s, slower than CPython) and every C-vs-LLVM timing compared optimized
+  // against unoptimized code. --no-optimize turns it off for debugging.
+  codegen_optimize = 1;
   process_args(&arg_state, argc, argv);
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;

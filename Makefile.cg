@@ -17,9 +17,27 @@ endif
 
 CC = clang++
 CFLAGS += -std=c++23
+# pyc's object model IS blind casts between prefix-compatible structs: a
+# shared method takes a generic receiver and reads it as the base's
+# layout (ifa/issues/110), and clones of one class are distinct struct
+# types. C++ strict aliasing says a store through `S*` cannot change a
+# load through `B*`, so at -O2 clang hoisted `b.more()` out of
+# `while b.more(): b.step()`, made the loop infinite and side-effect
+# free, deleted it, and fell through into the next function
+# (tests/method_override_field_offset.py). The LLVM backend emits no TBAA,
+# so this gives the C backend the same memory model.
+CFLAGS += -fno-strict-aliasing
+# `x ** 2` is libm's pow() in CPython. With the builtin, clang rewrites
+# pow(x, 2.0) as x*x, which is correctly rounded where glibc's pow is not:
+# they differ on ~0.08% of inputs, and nbody's trajectory diverged from
+# CPython's at -O2.
+CFLAGS += -fno-builtin-pow
 
+# pyc sets OPTIMIZE by default (--no-optimize clears it). -O2 matches the
+# LLVM backend; -O3 measured no faster (brainfuck 26.1s vs 25.4s, yopyra
+# 40.4s vs 41.9s, chaos 59.4s vs 59.6s).
 ifdef OPTIMIZE
-  CFLAGS += -O3
+  CFLAGS += -O2
 endif
 
 ifdef DEBUG
