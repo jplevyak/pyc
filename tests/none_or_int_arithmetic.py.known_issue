@@ -1,1 +1,0 @@
-ifa/issues/182 -- a {None, int} list ELEMENT is emitted as `_CG_void` (a pointer) on the C backend, so `[3]` with that element type does not compile; pisang fails at run time the same way. The LLVM backend passes since ifa/181 mirrored the `None | T` -> T collapse; the check file holds CPython output.
