@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `compile__PYC_LLVM_1__df1ce862+9d28c272` | 2026-10-02 | programs=77 compile_fail=23 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=14 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- LLVM None|T -> T representation: pisang compiles (24 -> 23 failures, now the same set as the C backend) |
+| `check__default__df1ce862+9d28c272` | 2026-10-02 | programs=77 compile_fail=23 run_fail=3 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- C function identity (token for bodiless functions): no verdict changed |
 | `compile__PYC_LLVM_1__c479bd6d+3cacacf8` | 2026-10-02 | programs=77 compile_fail=24 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=14 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- LLVM backend compile sweep for ifa/181: no program refused by the new error; 24 = the C 23 + pisang (pre-existing unary-minus codegen_fail) |
 | `check__default__c479bd6d+fe432547` | 2026-10-02 | programs=77 compile_fail=23 run_fail=3 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- ifa/181 (unhandled prim is a compile error; LLVM handles its drops on purpose): no verdict changed |
 | `check__default__b56adc1a+67598681` | 2026-10-02 | programs=77 compile_fail=23 run_fail=3 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- `**` on both backends (LLVM emitter, exact int pow): no verdict changed vs 628940dc+51566de8 |

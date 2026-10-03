@@ -40,6 +40,13 @@ def g():
 # function hashed to 0 and `hash(f) == hash(f)` passed by accident.
 print(hash(f) == hash(f), hash(f) == hash(g), hash(f) != 0)
 
+# A function VALUE must hash like the function itself. On LLVM, id() of a
+# function-typed formal used a token while a held value carried the real
+# address, so `hash(h) == hash(g)` came out False.
+import sys
+h = f if len(sys.argv) > 1 else g
+print(h(), hash(h) == hash(g), hash(h) == hash(f))
+
 # hashes that were already defined stay themselves, and equal values must
 # still hash equal
 print(hash("xy") == hash("x" + "y"), hash(7) == hash(7), hash((1, 2)) == hash((1, 2)))

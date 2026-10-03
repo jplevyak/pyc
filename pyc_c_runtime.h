@@ -399,6 +399,12 @@ typedef struct {
 
 typedef void *_CG_symbol;
 typedef void *_CG_function;
+#ifdef __cplusplus
+// ifa/issues/181: the identity of a function value whose function has no
+// emitted body -- one private byte per function Sym, so id()/hash() of it
+// is unique and stable. An emitted function's value is its own address.
+template <int N> struct _CG_fnid { static inline char token; };
+#endif
 typedef void *_CG_tuple;
 typedef void *_CG_list;
 typedef void *_CG_vector;
