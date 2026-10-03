@@ -33,7 +33,12 @@ print(hash(a) == hash(a), hash(a) == hash(b))
 def f():
     return 1
 
-print(hash(f) == hash(f))
+def g():
+    return 2
+
+# ifa/issues/181: on the LLVM backend id(f) produced no code, so every
+# function hashed to 0 and `hash(f) == hash(f)` passed by accident.
+print(hash(f) == hash(f), hash(f) == hash(g), hash(f) != 0)
 
 # hashes that were already defined stay themselves, and equal values must
 # still hash equal
