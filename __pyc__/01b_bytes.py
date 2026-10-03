@@ -106,6 +106,54 @@ class bytes:
     for x in seq:
       parts.append(x)
     return __pyc_c_call__(bytes, "_CG_string_join", bytes, self, list, parts)
+  # rstrip/upper/startswith: shedskin_examples/doom names its WAD lumps
+  # with 8-byte `s` fields (`name.rstrip(b'\0').upper()`), which only had
+  # a type once struct.unpack_from gave `s` fields one. bytes had none of
+  # the three. The default `chars` is CPython's bytes whitespace set
+  # (b' \t\n\r\x0b\x0c', which is what None means), so no None union.
+  def rstrip(self, chars=b" \t\n\r\x0b\x0c"):
+    j = len(self)
+    m = len(chars)
+    while j > 0:
+      c = self[j - 1]
+      k = 0
+      while k < m and chars[k] != c:
+        k += 1
+      if k == m:
+        break
+      j -= 1
+    return self.__pyc_getslice__(0, j, 1)
+  def upper(self):
+    # ASCII-only, like str.upper: same length-prefixed buffer layout.
+    return __pyc_c_call__(bytes, "_CG_str_upper", bytes, self)
+  def startswith(self, prefix):
+    n = len(self)
+    m = len(prefix)
+    if m > n:
+      return False
+    i = 0
+    while i < m:
+      if self[i] != prefix[i]:
+        return False
+      i += 1
+    return True
+  def __contains__(self, x):
+    # Subsequence test (`b'F_SKY' in name`, doom). CPython also accepts an
+    # int byte value here; only the bytes form is implemented.
+    n = len(self)
+    m = len(x)
+    i = 0
+    while i + m <= n:
+      j = 0
+      while j < m and self[i + j] == x[j]:
+        j += 1
+      if j == m:
+        return True
+      i += 1
+    return False
+  def replace(self, old, new):
+    # Same length-prefixed buffer as str, so str's one-pass helper serves.
+    return __pyc_c_call__(bytes, "_CG_str_replace", bytes, self, bytes, old, bytes, new)
   def decode(self, encoding="utf-8"):
     # ASCII/latin-1-safe byte-for-byte reinterpretation of the same
     # underlying buffer as str -- not real codec-aware decoding (no

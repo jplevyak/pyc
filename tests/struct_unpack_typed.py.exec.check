@@ -1,0 +1,9 @@
+2 16 b'E1M1'
+-257 18516
+b'THINGS\x00\x00'
+1 2
+513
+-123456
+4660
+b'FLAT' b'x' True False
+True False True b'SKY1'

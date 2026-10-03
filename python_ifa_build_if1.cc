@@ -805,6 +805,105 @@ static Sym *emit_make_set(PycCompiler &ctx, PycAST *ast, Code **code, Sym *set_c
 }
 
 // Check for and handle builtin function calls (super, __pyc_symbol__, etc.)
+// The struct module's own function `name`, by symbol identity -- what
+// `from struct import name` binds. Null when struct was never imported.
+static Sym *struct_module_function(cchar *name, PycCompiler &ctx) {
+  PycModule *m = get_module("struct", ctx);
+  if (!m || !m->ctx || !m->pymod) return nullptr;
+  PycScope *ms = m->ctx->saved_scopes.get(m->pymod);
+  PycSymbol *y = ms ? ms->map.get(cannonicalize_string(name)) : nullptr;
+  return y ? y->sym : nullptr;
+}
+
+// struct.unpack / unpack_from with a CONSTANT format, lowered to a tuple
+// literal of per-field readers so every position has its own type:
+//   unpack_from('<II8s', data, off)
+//     -> (_unpack_int(data, off, 0, 4, False, True),
+//         _unpack_int(data, off, 4, 4, False, True),
+//         _unpack_bytes(data, off, 8, 8))
+// The generic unpack_from (pyc_lib/struct.py) builds ONE list, so it can
+// only return ints -- a `s` field beside an integer field would be a
+// {int, bytes} element with no representation. shedskin rewrites
+// struct.unpack the same way (graph.py, struct_unpack); this matches
+// CPython's result exactly. Returns 0 (not lowered; the call proceeds
+// normally) for anything it does not handle precisely: a non-literal
+// format, `@`/no prefix (native mode ALIGNS fields, which the generic
+// path does not model either), a keyword argument, or a code other than
+// x b B h H i I l L q Q s. Only the direct-name form reaches here
+// (`from struct import unpack_from`); `struct.unpack_from(...)` takes the
+// member-call path.
+static int lower_struct_unpack(Sym *f, Vec<PyDAST *> &pos_args, Vec<PyDAST *> &kw_keys, PycAST *ast,
+                               PycCompiler &ctx) {
+  if (!f || kw_keys.n) return 0;
+  bool is_from = f == struct_module_function("unpack_from", ctx);
+  bool is_plain = !is_from && f == struct_module_function("unpack", ctx);
+  if (!is_from && !is_plain) return 0;
+  if (pos_args.n != (is_from ? 3 : 2) && !(is_from && pos_args.n == 2)) return 0;
+  PyDAST *fa = pos_args[0];
+  if (fa->kind != PY_string || !fa->str_val) return 0;
+  bool is_raw, is_fstring, is_bytes;
+  const char *p = skip_string_prefix(fa->str_val, &is_raw, &is_fstring, &is_bytes);
+  char q = *p;
+  if (is_fstring || (q != '\'' && q != '"')) return 0;
+  p++;
+  const char *end = strchr(p, q);
+  if (!end || memchr(p, '\\', end - p)) return 0;
+  if (p == end || !strchr("<>!=", *p)) return 0;
+  bool little = *p == '<' || *p == '=';
+  p++;
+  struct Field { int at, size; bool is_signed, is_bytes; };
+  Vec<Field> fields;
+  int at = 0, count = -1;
+  for (; p < end; p++) {
+    char c = *p;
+    if (c >= '0' && c <= '9') { count = (count < 0 ? 0 : count) * 10 + (c - '0'); continue; }
+    if (c == ' ' || c == '\t') continue;
+    int n = count < 0 ? 1 : count;
+    count = -1;
+    if (c == 's') {
+      fields.add(Field{at, n, false, true});
+      at += n;
+      continue;
+    }
+    int size = (c == 'x' || c == 'b' || c == 'B') ? 1 : (c == 'h' || c == 'H') ? 2
+             : (c == 'i' || c == 'I' || c == 'l' || c == 'L') ? 4 : (c == 'q' || c == 'Q') ? 8 : 0;
+    if (!size) return 0;
+    if (c == 'x') { at += n; continue; }
+    bool sgn = c == 'b' || c == 'h' || c == 'i' || c == 'l' || c == 'q';
+    for (int k = 0; k < n; k++, at += size) fields.add(Field{at, size, sgn, false});
+  }
+  if (count >= 0 || !fields.n) return 0;
+  Sym *read_int = struct_module_function("_unpack_int", ctx);
+  Sym *read_bytes = struct_module_function("_unpack_bytes", ctx);
+  if (!read_int || !read_bytes) return 0;
+  Sym *buf = getAST(pos_args[1], ctx)->rval;
+  Sym *base = pos_args.n == 3 ? getAST(pos_args[2], ctx)->rval : int64_constant(0);
+  Vec<Sym *> vals;
+  for (Field &fd : fields) {
+    Code *send = if1_send1(if1, &ast->code, ast);
+    if1_add_send_arg(if1, send, fd.is_bytes ? read_bytes : read_int);
+    if1_add_send_arg(if1, send, buf);
+    if1_add_send_arg(if1, send, base);
+    if1_add_send_arg(if1, send, int64_constant(fd.at));
+    if1_add_send_arg(if1, send, int64_constant(fd.size));
+    if (!fd.is_bytes) {
+      if1_add_send_arg(if1, send, fd.is_signed ? sym_true : sym_false);
+      if1_add_send_arg(if1, send, little ? sym_true : sym_false);
+    }
+    Sym *v = new_sym(ast);
+    if1_add_send_result(if1, send, v);
+    vals.add(v);
+  }
+  Code *send = if1_send1(if1, &ast->code, ast);
+  if1_add_send_arg(if1, send, sym_primitive);
+  if1_add_send_arg(if1, send, sym_make);
+  if1_add_send_arg(if1, send, sym_tuple);
+  for (Sym *v : vals) if1_add_send_arg(if1, send, v);
+  ast->rval = new_sym(ast);
+  if1_add_send_result(if1, send, ast->rval);
+  return 1;
+}
+
 static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAST *ast, PycCompiler &ctx) {
   Sym *f = atom_ast->sym;
   // Collect positional and keyword args from the call trailer
@@ -820,6 +919,7 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
         pos_args.add(arg);
     }
   }
+  if (lower_struct_unpack(f, pos_args, kw_keys, ast, ctx)) return 1;
   // issues/020: str(x) -- unlike print/super/etc., `str` is a real class
   // (__pyc__/01_str.py), not a compiler-level builtin Sym, so it isn't in
   // builtin_functions and must be resolved by name here (same pattern as
