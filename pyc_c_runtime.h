@@ -2045,7 +2045,35 @@ static inline auto _CG_mod_impl(A a, B b) {
 #else
 #define _CG_prim_mod(_a, _op, _b) ((_a) % (_b))
 #endif
+// `**`. CPython's int ** int is EXACT integer arithmetic, and float **
+// is libm's pow. This used to be pow() for both, so an int result went
+// through a double and lost everything past 2^53 (3**39 came out wrong).
+// The LLVM backend calls _CG_int_pow and pow (nobuiltin) by name, so it
+// is a plain inline function, not a template. A negative exponent
+// truncates toward zero, as the old pow-then-truncate did: CPython
+// returns a float there, which pyc's int ** int typing cannot express.
+inline int64 _CG_int_pow(int64 b, int64 e) {
+  if (e < 0) return b == 1 ? 1 : b == -1 ? ((e & 1) ? -1 : 1) : 0;
+  uint64 r = 1, x = (uint64)b;  // unsigned: wraps on overflow, never UB
+  while (e) {
+    if (e & 1) r *= x;
+    x *= x;
+    e >>= 1;
+  }
+  return (int64)r;
+}
+#ifdef __cplusplus
+template <class A, class B>
+static inline auto _CG_pow_impl(A a, B b) {
+  if constexpr (std::is_integral_v<A> && std::is_integral_v<B>)
+    return _CG_int_pow((int64)a, (int64)b);
+  else
+    return pow((double)a, (double)b);
+}
+#define _CG_prim_pow(_a, _op, _b) (_CG_pow_impl((_a), (_b)))
+#else
 #define _CG_prim_pow(_a, _op, _b) (pow((_a), (_b)))
+#endif
 #define _CG_prim_div(_a, _op, _b) ((_a) / (_b))
 #define _CG_prim_and(_a, _op, _b) ((_a) & (_b))
 #define _CG_prim_xor(_a, _op, _b) ((_a) ^ (_b))

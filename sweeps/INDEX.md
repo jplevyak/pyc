@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__b56adc1a+67598681` | 2026-10-02 | programs=77 compile_fail=23 run_fail=3 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- `**` on both backends (LLVM emitter, exact int pow): no verdict changed vs 628940dc+51566de8 |
 | `check__default__628940dc+51566de8` | 2026-10-02 | programs=77 compile_fail=23 run_fail=3 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- C backend defaults to -O2 (zero-init temporaries, -fno-strict-aliasing, -fno-builtin-pow, GC-allocated coroutine frames): run_fail 13->3, loop and solitaire now match CPython, 8 former timeouts run; no regressions |
 | `check__default__628940dc+1f07480a` | 2026-10-02 | programs=77 compile_fail=23 run_fail=4 stdout_differs=6 unverifiable=5 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- INTERMEDIATE C -O2 default (zero-init + -fno-strict-aliasing only): run_fail 13->4, but nbody (pow builtin) and sudoku5 (GC-unscanned coroutine frames) regressed; both fixed in the next row |
 | `check__default__cd183d2b+c80e4372` | 2026-10-02 | programs=77 compile_fail=23 run_fail=13 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- one-char string cache: brainfuck runs (116s -> 103s at C -O0, 24.8s -> 12.8s LLVM) and matches CPython; tonyjpegdecoder back to its known NO. No other verdict changed |
