@@ -141,7 +141,7 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime
 .PHONY: all defaulttarget install deinstall clean realclean clean-tests \
         test test-core test-e2e test-unit test-ir test-dparse test_dparse \
         test-links test_links test_llvm test-ifa-llvm test_ifa_llvm \
-        $(IFALIB) pullifa pushifa diffifa
+        $(IFALIB) pullifa pushifa diffifa show-sweep
 
 all: defaulttarget
 
@@ -326,6 +326,9 @@ pushifa:
 
 diffifa:
 	git diff ifa-remote/main HEAD:ifa
+
+show-sweep:
+	less sweeps/`ls -t sweeps/ | head -2 | tail -1`
 
 # Clean -----------------------------------------------------------------------
 
