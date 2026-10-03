@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `compile__PYC_LLVM_1__a9804c06+a734aca2` | 2026-10-03 | programs=77 compile_fail=23 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=14 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- matcher prune_uncoverable: every column identical to 7bc6e0ad+53f8b5e0 |
+| `check__default__a9804c06+a734aca2` | 2026-10-03 | programs=77 compile_fail=23 run_fail=2 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- matcher prune_uncoverable: every column identical to 7bc6e0ad+53f8b5e0 (verdicts AND contour counts); doom compiles in 2.9s instead of 346s |
 | `compile__PYC_LLVM_1__7bc6e0ad+53f8b5e0` | 2026-10-03 | programs=77 compile_fail=23 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=14 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- ifa/182: no LLVM compile verdict changed (23) |
 | `check__default__7bc6e0ad+53f8b5e0` | 2026-10-03 | programs=77 compile_fail=23 run_fail=2 stdout_differs=5 unverifiable=6 with_warnings=16 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- ifa/182: pisang runs on the C backend (matches CPython by hand: CPython exceeds the 120s cap); no other verdict changed |
 | `compile__PYC_LLVM_1__7bc6e0ad+dd73e4e0` | 2026-10-03 | programs=77 compile_fail=25 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=13 cs/shapes=2182/692=3.15 pratio=2.15 n=76 -- INTERMEDIATE ifa/182: same chess/quameon compiler crash; fixed in the next row |
