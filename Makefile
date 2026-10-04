@@ -7,7 +7,10 @@
 # optional; uncomment to enable.
 
 DEBUG=1
-#OPTIMIZE=1
+# On by default: an -O0 pyc spends about twice as long in flow analysis
+# (plcfrs 156 s -> 80 s, identical result). DEBUG still adds -g. For a
+# build to step through in gdb, use `make clean && make OPTIMIZE=`.
+OPTIMIZE=1
 #PROFILE=1
 #LEAK_DETECT=1
 #VALGRIND=1

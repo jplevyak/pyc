@@ -85,11 +85,12 @@ The `make` step builds `ifa/libifa_gc.a` and the `pyc` compiler binary.
 | Variable | Effect |
 |---|---|
 | `DEBUG=1` | Debug build with `-g -DDEBUG` (default) |
-| `OPTIMIZE=1` | Optimized build with `-O3 -march=native` |
+| `OPTIMIZE=1` | Optimized build with `-O3 -march=native` (default; `OPTIMIZE=` turns it off) |
 | `PROFILE=1` | Enable profiling with `-pg` |
 | `USE_LLVM=1` | Enable experimental LLVM backend |
 
-Example: `make OPTIMIZE=1`
+Example: `make clean && make OPTIMIZE=` for an unoptimized build to debug in gdb.
+The Makefiles do not track flags, so changing one needs `make clean` first.
 
 ## Usage
 

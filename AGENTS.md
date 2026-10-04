@@ -185,7 +185,9 @@ a `virtual` into `IFACallbacks` (which renumbers the vtable) segfaulted
 `ifa-test --phase codegen-c` with no output at all. Each time the fix
 was `make clean && make`, and each time the crash first read as a
 regression worth debugging. Anything that changes a struct layout, a
-bitfield, an enum's numbering, or a vtable needs the clean build.
+bitfield, an enum's numbering, or a vtable needs the clean build. So does
+changing a build flag (`OPTIMIZE=` / `OPTIMIZE=1`, on by default since
+2026-10-04): make does not track flags, so objects silently keep the old ones.
 
 ### Goldens: re-bless only what the change is ABOUT
 
