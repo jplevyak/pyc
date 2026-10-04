@@ -1,0 +1,6 @@
+numeric_union_self_sustaining.py:18: warning: 'u' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+numeric_union_self_sustaining.py:19: warning: 'x' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+numeric_union_self_sustaining.py:20: warning: 'u' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+numeric_union_self_sustaining.py:23: warning: 'u' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+numeric_union_self_sustaining.py:24: warning: 'u' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+numeric_union_self_sustaining.py:24: warning: 'x' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)

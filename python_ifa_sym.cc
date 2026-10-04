@@ -659,6 +659,11 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // path where the variable would still hold the original int at
   // runtime (e.g. the loop never ran), it now holds the float
   // (prints 0.0, not 0) -- the shedskin-style compromise.
+  // ifa/issues/156: split int from float where possible, coerce only as a
+  // last resort. A numeric mix at a contour shared by int-seeded and
+  // float-seeded call sites is split there first; coercion runs only on a
+  // quiescence where nothing more splits (a genuinely temporal mix).
+  if (do_coerce && fa_split_numeric_confluences()) return true;
   bool coerced = do_coerce && fa_coerce_numeric_confluences(type_violations);
   if (coerced) again = true;
   // ifa/issues/111 M1: which path keeps the outer loop alive? The
