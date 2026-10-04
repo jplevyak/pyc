@@ -153,17 +153,41 @@ class str:
     # self[i:j] for non-negative i, j, in one allocation (issues/050; it
     # was a char-by-char concat).
     return __pyc_c_call__(str, "_CG_str_substr", str, self, int, i, int, j)
-  def strip(self):
-    # Whitespace-only form (no chars argument -- the corpus's one
-    # `.strip(x)` call stays unsupported for now).
-    n = len(self)
-    i = 0
-    while i < n and (self[i] == " " or self[i] == "\t" or self[i] == "\n" or self[i] == "\r"):
+  # strip/lstrip/rstrip share one scanner. The default `chars` is the
+  # ASCII part of str.isspace() (what CPython's None means), so the
+  # parameter is always a str and there is no None union. go reads
+  # `readline().rstrip('\n')` (issues/025).
+  def __pyc_strip_from__(self, chars, i, n):
+    m = len(chars)
+    while i < n:
+      c = self[i]
+      k = 0
+      while k < m and chars[k] != c:
+        k += 1
+      if k == m:
+        break
       i += 1
-    j = n
-    while j > i and (self[j - 1] == " " or self[j - 1] == "\t" or self[j - 1] == "\n" or self[j - 1] == "\r"):
+    return i
+  def __pyc_strip_to__(self, chars, i, j):
+    m = len(chars)
+    while j > i:
+      c = self[j - 1]
+      k = 0
+      while k < m and chars[k] != c:
+        k += 1
+      if k == m:
+        break
       j -= 1
-    return self.__pyc_substr__(i, j)
+    return j
+  def strip(self, chars=" \t\n\r\x0b\x0c\x1c\x1d\x1e\x1f"):
+    n = len(self)
+    i = self.__pyc_strip_from__(chars, 0, n)
+    return self.__pyc_substr__(i, self.__pyc_strip_to__(chars, i, n))
+  def lstrip(self, chars=" \t\n\r\x0b\x0c\x1c\x1d\x1e\x1f"):
+    n = len(self)
+    return self.__pyc_substr__(self.__pyc_strip_from__(chars, 0, n), n)
+  def rstrip(self, chars=" \t\n\r\x0b\x0c\x1c\x1d\x1e\x1f"):
+    return self.__pyc_substr__(0, self.__pyc_strip_to__(chars, 0, len(self)))
   def split(self, sep=None):
     # sep=None: runs of whitespace, no empty tokens (Python
     # semantics). String sep: split on every occurrence, empty

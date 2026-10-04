@@ -111,7 +111,7 @@ standalone probe. Fixing a program's first blocker may uncover more.
 
 | program | first blocker (probe confirmed) | where |
 | --- | --- | --- |
-| go | `str.rstrip()`: no `rstrip`/`lstrip` at all, only `strip` | `__pyc__/01_str.py` |
+| go | ~~`str.rstrip()`: no `rstrip`/`lstrip` at all, only `strip`~~ FIXED 2026-10-03: `strip`/`lstrip`/`rstrip` take `chars`. go compiles, and every move and score matches CPython. Next blocker: `print(board)` on a class with only `__repr__` prints `<object>` | `__pyc__/01_str.py` |
 | minilight, mwmatching | `next(f)` on a file: `__pyc_file__` has `__iter__` but no `__next__` (a CPython file is its own iterator) | `__pyc__/07_file.py` |
 | othello2 | `int.bit_count()`. The later `__sub__`/`__mul__` errors are cascade | `__pyc__/02_numeric.py` |
 | sudoku4 | `dict.copy()` | `__pyc__/07_dict.py` |
