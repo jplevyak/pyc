@@ -64,8 +64,31 @@ class __file_iter__:
     self.nextline = self.thefile.readline()
     return l
 
+# A failed open raises as CPython does: the OSError subclass for errno, and
+# the message `[Errno 2] No such file or directory: 'path'`. It used to
+# return a 0 handle unchecked, and the first read segfaulted (doom without
+# its WAD). The errno values are POSIX's (Linux and macOS agree on these).
+#
+# The `raise` statements are in open() and open_binary() THEMSELVES, not in
+# a shared helper: builtin-module code does not propagate exceptions
+# (emit_exc_check, python_ifa_build_if1.cc), so a raise only reaches the
+# caller from the builtin function's own body -- the str.index pattern,
+# which also marks the function direct_raise so user call sites check.
+def __pyc_open_error_message__(path, e):
+  return "[Errno " + str(e) + "] " + __pyc_c_call__(str, "_CG_strerror", int, e) + ": " + repr(path)
+
 def open(path, mode="r"):
-  return __pyc_file__(__pyc_c_call__(int, "_CG_fopen", str, path, str, mode))
+  h = __pyc_c_call__(int, "_CG_fopen", str, path, str, mode)
+  if h == 0:
+    e = __pyc_c_call__(int, "_CG_errno")
+    if e == 2:
+      raise FileNotFoundError(__pyc_open_error_message__(path, e))
+    if e == 13 or e == 1:
+      raise PermissionError(__pyc_open_error_message__(path, e))
+    if e == 21:
+      raise IsADirectoryError(__pyc_open_error_message__(path, e))
+    raise OSError(__pyc_open_error_message__(path, e))
+  return __pyc_file__(h)
 
 # Binary-mode counterpart to __pyc_file__/open() above: read()/readline()/
 # readlines() return bytes instead of str. The open(...) builtin-call
@@ -130,7 +153,18 @@ class __binfile_iter__:
     return l
 
 def open_binary(path, mode="rb"):
-  return __pyc_binfile__(__pyc_c_call__(int, "_CG_fopen", str, path, str, mode))
+  # Same raises as open() above, repeated for the reason given there.
+  h = __pyc_c_call__(int, "_CG_fopen", str, path, str, mode)
+  if h == 0:
+    e = __pyc_c_call__(int, "_CG_errno")
+    if e == 2:
+      raise FileNotFoundError(__pyc_open_error_message__(path, e))
+    if e == 13 or e == 1:
+      raise PermissionError(__pyc_open_error_message__(path, e))
+    if e == 21:
+      raise IsADirectoryError(__pyc_open_error_message__(path, e))
+    raise OSError(__pyc_open_error_message__(path, e))
+  return __pyc_binfile__(h)
 
 def input(prompt=""):
   if len(prompt) > 0:

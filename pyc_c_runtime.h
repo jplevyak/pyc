@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
+#include <errno.h>
 #include <math.h>
 #ifdef __cplusplus
 #include <type_traits>
@@ -922,7 +923,25 @@ inline int64 _CG_str_to_int64_base(char *s, int base) { return (int64)strtoll(s,
 // a plain int field. A failed fopen returns 0; the library treats a zero
 // handle as an immediately-EOF/ignore-writes file rather than raising
 // (pyc has no exception model yet, issue 011).
-inline int64 _CG_fopen(char *path, char *mode) { return (int64)(intptr_t)fopen(path, mode); }
+// A failed open returns 0 and leaves errno for _CG_errno(); open()
+// (__pyc__/07_file.py) raises the matching OSError subclass, as CPython
+// does. It used to return 0 unchecked, so the first read segfaulted.
+// glibc's fopen SUCCEEDS on a directory in read mode, where CPython's
+// open() raises IsADirectoryError, hence the fstat.
+inline int64 _CG_fopen(char *path, char *mode) {
+  FILE *f = fopen(path, mode);
+  if (f) {
+    struct stat st;
+    if (!fstat(fileno(f), &st) && S_ISDIR(st.st_mode)) {
+      fclose(f);
+      errno = EISDIR;
+      return 0;
+    }
+  }
+  return (int64)(intptr_t)f;
+}
+inline int64 _CG_errno(void) { return (int64)errno; }
+inline char *_CG_strerror(int64 e) { return _CG_String(strerror((int)e)); }
 inline int64 _CG_fstd(int64 which) { return (int64)(intptr_t)(which == 0 ? stdin : which == 1 ? stdout : stderr); }
 inline int64 _CG_fclose(int64 h) { return h ? (int64)fclose((FILE *)(intptr_t)h) : 0; }
 inline int64 _CG_fflush(int64 h) { return h ? (int64)fflush((FILE *)(intptr_t)h) : 0; }

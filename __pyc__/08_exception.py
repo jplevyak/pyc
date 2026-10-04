@@ -113,6 +113,17 @@ class ValueError(Exception):
 # Py3 aliases OSError; subclasses here (class-alias assignment is a
 # separate, untested shape in the builtin module, and the difference
 # is unobservable without except-clause matching).
+# open() raises these (07_file.py, __pyc_open_failed__), chosen by errno
+# as CPython chooses them.
+class FileNotFoundError(OSError):
+  pass
+
+class PermissionError(OSError):
+  pass
+
+class IsADirectoryError(OSError):
+  pass
+
 class IOError(OSError):
   pass
 

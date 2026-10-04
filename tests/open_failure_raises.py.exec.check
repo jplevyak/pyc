@@ -1,0 +1,6 @@
+FileNotFoundError [Errno 2] No such file or directory: 'no_such_file.txt'
+IsADirectoryError [Errno 21] Is a directory: '/'
+FileNotFoundError [Errno 2] No such file or directory: 'no_dir/x.txt'
+OSError [Errno 2] No such file or directory: 'no_such.bin'
+FileNotFoundError [Errno 2] No such file or directory: 'no_such2.bin'
+# A failed

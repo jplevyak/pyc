@@ -58,6 +58,8 @@ extern char *_CG_str_substr(const char *s, int64 i, int64 j);
 extern char *_CG_str_replace(const char *s, const char *old, const char *nw);
 extern char *_CG_one_char_string(unsigned char c);
 extern int64 _CG_int_pow(int64 b, int64 e);
+extern int64 _CG_errno(void);
+extern char *_CG_strerror(int64 e);
 extern char *_CG_char_from_string(void *s, int i);
 extern int64 _CG_int_from_string(void *s, int i);
 extern char *_CG_byte_from_int(int64 v);

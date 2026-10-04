@@ -23,6 +23,7 @@ static int unify_seq_enabled() {
 static int build_if1_pyda(PyDAST *n, PycCompiler &ctx);
 static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx);
 static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *known_callee = nullptr);
+static Sym *resolve_plain_callee(Sym *cur_val, PycCompiler &ctx);
 
 static char *pyda_trim(const char *s) {
   if (!s) return nullptr;
@@ -1031,6 +1032,13 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
           if1_add_send_arg(if1, send, getAST(kw_vals[ki], ctx)->rval, cannonicalize_string(kw_keys[ki]->str_val));
         ast->rval = new_sym(ast);
         if1_add_send_result(if1, send, ast->rval);
+        // open_binary raises on a failed open, like open(). This intercept
+        // returns before the ordinary call path's exception check, so
+        // `open(path, 'rb')` inside a try never reached its handler. The
+        // callee is resolved as that path resolves it: can_raise lives on
+        // the def's internal fn Sym, not on the scope symbol bound to its
+        // name (passing that one read can_raise = 0 and skipped the check).
+        emit_exc_check(&ast->code, ast, ctx, resolve_plain_callee(open_bin_sym->sym, ctx));
         return 1;
       }
     }
@@ -1902,6 +1910,15 @@ static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *know
   } else if (!pyc_program_has_raise)
     return;
   if (known_callee && !known_callee->can_raise) return;
+  // Calling an `async def` only CREATES the coroutine; its body, and any
+  // exception from it, runs at the `await`. A check here is wrong in
+  // CPython's terms and broke coroutine codegen: once open() raised, an
+  // async function calling it became can_raise, and the check split the
+  // coroutine value across a copy that lost its coroutine type
+  // (tests/test_async_read.py: `co_await` on a `_CG_string`). Note that
+  // `await` itself has no check yet, so an exception inside a coroutine
+  // body still does not propagate through it -- a separate, older gap.
+  if (known_callee && known_callee->is_async) return;
   Label *target = exc_transfer_target(ctx);
   if (!target) return;
   Sym *t = new_sym(ast);
