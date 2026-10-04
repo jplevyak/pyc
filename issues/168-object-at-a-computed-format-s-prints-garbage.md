@@ -9,7 +9,7 @@ computed `%s` and left exactly this one.
 [165](closed/165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (the
 mechanism this would extend — the per-argument type tag),
 [040](closed/040-percent-format-float-arg-int-specifier-garbage.md) and
-[123](123-str-does-not-fall-back-to-repr.md) (the other `__str__` gaps).
+[123](closed/123-str-does-not-fall-back-to-repr.md) (the other `__str__` gaps).
 
 ## Symptom
 

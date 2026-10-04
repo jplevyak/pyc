@@ -1,7 +1,7 @@
 # 123 — `str()`/`print()` do not fall back to a class's `__repr__`
 
-**Status:** open (re-verified 2026-09-28: still prints `<object>`), filed 2026-09-03. Found in the corpus `check` sweep
-taken for [ifa/124](../ifa/issues/124-FA-refuse-imprecise-inference.md):
+**Status:** **closed 2026-10-03** (fix as proposed below; see Resolution). Filed 2026-09-03. Found in the corpus `check` sweep
+taken for [ifa/124](../../ifa/issues/124-FA-refuse-imprecise-inference.md):
 `go` began compiling and running for the first time, and its stdout
 still did not match CPython — for this reason, unrelated to that fix.
 **Area:** pyc builtin library (`__pyc__/00_runtime.py`), object protocol.
@@ -81,7 +81,7 @@ so the default rendering lives in `__repr__` (where CPython keeps it) and
 - **Dispatch cost.** `__str__` becomes a polymorphic call into
   `__repr__` on every user object printed. Every class gets a
   `__repr__` slot whether or not it defines one, which is the
-  member-slot growth [ifa/110](../ifa/issues/closed/110-override-duplicates-member-slot.md)
+  member-slot growth [ifa/110](../../ifa/issues/closed/110-override-duplicates-member-slot.md)
   was about — measure `ess`/`css` on the corpus, not just the suite.
 - **The reverse direction is NOT symmetric.** A class defining `__str__`
   only must still get the DEFAULT `repr()`, not its `__str__`. Do not
@@ -104,5 +104,32 @@ so the default rendering lives in `__repr__` (where CPython keeps it) and
 this way. More generally it is a **silent** wrong-answer class: nothing
 in the compile output hints at it, so `-m compile` and `-m run` sweeps
 are both blind to it and only `-m check` sees it — the argument
-[ifa/102](../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
+[ifa/102](../../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
 makes for running `check`.
+
+## Resolution (2026-10-03)
+
+Landed exactly the fix above. `object.__str__` returns `self.__repr__()`
+and `object.__repr__` returns `"<object>"`. No builtin needed its own
+`__repr__`: `int`, `float`, `list`, `tuple` and the rest do not inherit
+from `object` (their `repr` comes from `__pyc_any_type__`, whose
+`__repr__` still calls `__str__`), so `repr(1)`, `[1.5]` and `(None, True)`
+are unchanged.
+
+1. `tests/repr_without_str.py` passes, and its `.known_issue` is deleted.
+2. Its `D` class (`__str__` only) still gets the default `repr()`.
+3. A probe with `__repr__`-only, `__str__`-only, a subclass, and objects
+   inside lists, dicts and tuples matches CPython.
+4. `go`'s stdout matches CPython byte-for-byte apart from its `TIME` line.
+   The moves were never unseeded noise; they match too.
+5. A/B `check` sweep, same binary, only `00_runtime.py` toggled
+   (`sweeps/check__default__d2c2a42d+83753197.tsv` → `+5bd13f8c.tsv`):
+   `go` leaves `stdout-differs` and no program joins it. No compile, run
+   or warning status changes. Every program gains exactly +1 in the
+   function-count column (the new `object.__repr__`). `go` grows
+   751→814 / 2006→2102 because `Board.__repr__` is now reached, and `bh`
+   grows by 2–3. The slot growth the plan worried about is that one method.
+
+**Residual:** the default text. CPython prints
+`<__main__.A object at 0x…>` and pyc prints `<object>`; this is tracked in
+[173](../173-silent-deviations-found-by-the-strict-suite-check.md).

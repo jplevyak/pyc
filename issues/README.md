@@ -45,7 +45,6 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: `isinstance` on a `{list, str}` value folds to False; a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
-| [123](123-str-does-not-fall-back-to-repr.md) | `print(obj)` ignores a class's `__repr__` and prints `<object>`. |
 | [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |
 | [041](041-stdlib-shim-stubs-silently-wrong.md) | `hashlib` is a stub returning `""`. Shims must be real or raise. |
 | [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` returns a list in every mode. The fix is built (`PYC_MAKESEQ`) and held on a copy-of-copy deepcopy blocker; re-test after the ifa deepcopy fixes. |
@@ -65,6 +64,12 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [103](103-unknown-kwarg-silently-bound-positionally.md) | an unknown keyword or an undefined name is refused, but reported as `'X' has no type`, not in CPython's terms. |
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | a method of a function-local class reading the function's local aborts the compiler. |
 | [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
+
+### Closed on 2026-10-03
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [123](closed/123-str-does-not-fall-back-to-repr.md) | `object.__str__` calls `__repr__`, as in CPython; `go` matches CPython | 173 (the default repr text) |
 
 ### Closed on 2026-09-29 and 2026-09-30
 

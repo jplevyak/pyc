@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__d2c2a42d+5bd13f8c` | 2026-10-03 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2240/709=3.16 pratio=2.15 n=76 -- issues/123 fix (object.__str__ -> __repr__): vs +83753197 only go flips (stdout matches CPython); every program +1 function |
+| `check__default__d2c2a42d+83753197` | 2026-10-03 | programs=77 compile_fail=21 run_fail=2 stdout_differs=5 unverifiable=6 with_warnings=18 cs/shapes=2235/708=3.16 pratio=2.14 n=76 -- issues/123 A/B baseline: d2c2a42d with HEAD's 00_runtime.py |
 | `compile__PYC_LLVM_1__f7f51e05+80a05d11` | 2026-10-03 | programs=77 compile_fail=23 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=14 cs/shapes=2235/708=3.16 pratio=2.14 n=76 -- same tree: ac_encode compiles on LLVM again |
 | `check__default__f7f51e05+80a05d11` | 2026-10-03 | programs=77 compile_fail=22 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=17 cs/shapes=2235/708=3.16 pratio=2.14 n=76 -- ifa/156 fa_split_numeric_confluences + open() raises: vs 27b04a0c no verdict regressed; ac_encode warnings 206 -> 101; doom matches CPython; corpus coercion warnings 678 -> 572, ess +2.5% |
 | `compile__PYC_LLVM_1__f7f51e05+ca5fa06a` | 2026-10-03 | programs=77 compile_fail=24 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=13 cs/shapes=2235/708=3.16 pratio=2.14 n=76 -- INTERMEDIATE: same tree; ac_encode fails on LLVM too |

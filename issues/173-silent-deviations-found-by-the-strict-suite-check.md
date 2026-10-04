@@ -70,10 +70,12 @@ checked at run time. It must not see a value from the future.
 
 - `list_tuple_union_method`: strict prints `[1, 2]` for `(1, 2)`
   (ifa/102; `.known_issue` at the EXEC stage).
-- `repr_without_str`: `<object>` for a class's `__repr__`
-  ([123](123-str-does-not-fall-back-to-repr.md)).
+- ~~`repr_without_str`: `<object>` for a class's `__repr__`~~ FIXED
+  2026-10-03 ([123](closed/123-str-does-not-fall-back-to-repr.md)):
+  `object.__str__` now calls `__repr__`.
 - `lambda_class_attr`: the default `repr` of an instance (`<object>` for
-  `<__main__.A object at 0x…>`), same issue.
+  `<__main__.A object at 0x…>`). This is the residual of 123, which fixed
+  the fallback but not the default text.
 - `zip_builtin`, `tuple_list_mix`: `len(zip(...))` and `zip(...)[i]`
   compile, where CPython raises `TypeError`. `zip`/`map`/`filter` return
   eager lists. The author's decision (2026-09-29) is to keep the eager

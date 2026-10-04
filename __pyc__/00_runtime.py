@@ -105,7 +105,12 @@ class __pyc_any_type__:
 class object:
   def __null__(self):
     return False
+  # CPython's direction: object.__str__ calls __repr__, so a class that
+  # defines only __repr__ prints through it (go's Board). The builtins
+  # that define only __str__ carry their own `__repr__ -> __str__`.
   def __str__(self):
+    return self.__repr__()
+  def __repr__(self):
     return "<object>"
   def __pyc_tobytes__(self):
     # bytes(x) (python_ifa_build_if1.cc) dispatches to __pyc_tobytes__,

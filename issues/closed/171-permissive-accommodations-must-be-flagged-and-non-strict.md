@@ -168,7 +168,7 @@ exactly the new warnings (#3's and #7's), and nothing else.
   different. `circle` prints `sys.version`, which cannot match.
   `tonyjpegdecoder` prints a file object's repr, `<instance>` for
   `<_io.BufferedReader name='tiger1.jpg'>`: the default-repr gap,
-  [123](../123-str-does-not-fall-back-to-repr.md), wrong the same way in
+  [123](123-str-does-not-fall-back-to-repr.md), wrong the same way in
   permissive. No program compiles under strict and differs because of an
   accommodation.
 - **What strict refuses that permissive runs:** 16 programs. The first
