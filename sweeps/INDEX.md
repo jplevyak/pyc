@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__26deed74+b16ba512` | 2026-10-05 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2233/709=3.15 pratio=2.14 n=76 -- `None.__pyc_getslice__` stub (returned `[]`) deleted: vs 2863ac26+21344585 (same binary) all 77 programs identical in every status column; contour counts move on five, genetic2 CS 473 -> 405 |
 | `check__default__2863ac26+21344585` | 2026-10-04 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2240/709=3.16 pratio=2.15 n=76 -- dispatch/type allocation cuts: vs 33994291+908cb39b all 77 programs identical in every column |
 | `check__default__33994291+908cb39b` | 2026-10-04 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2240/709=3.16 pratio=2.15 n=76 -- pyc built -O3 -march=native by default: vs e4c4dd1c+f5f802d0 (same analysis code, -O0) all 77 programs identical in every column; sweep 554 -> 404 s |
 | `check__default__e4c4dd1c+f5f802d0` | 2026-10-04 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2240/709=3.16 pratio=2.15 n=76 -- dispatch class key drops the type at untyped formals: vs d2c2a42d+5bd13f8c all 77 programs identical in every column; plcfrs FA 168.9 -> 156.0 s serial |

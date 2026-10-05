@@ -89,7 +89,9 @@ sit behind `board in history`. FA converges. Not yet root-caused. A refusal
 replaced a runtime abort, so no correct answer was lost.
 
 First blockers of the compile failures, where known: the triage below
-(13 are missing builtin surface); genetic2, a `{None, int64}` union (issues/048);
+(13 are missing builtin surface); genetic2, a `{None, int64}` union (issues/048) from `execute`'s implicit
+fall-off, removed 2026-10-05 by a corpus edit (PYC_CHANGES.md); it now compiles,
+and its last blocker is the final genome print (issues/174);
 sunfish, `{list, tuple}` from `tuple(iterable)` (issues/110); voronoi2, a
 getopt path that provably always raises (ifa/049); rubik, `None` reaching
 `key[1]` (unlocated); softrender and othello3, unanalysed.

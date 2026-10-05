@@ -296,20 +296,6 @@ class __pyc_None_type__:
     # member of Optional[T] fields typed through the synthesized
     # per-class __deepcopy__ recursion, issues/029).
     return self
-  def __pyc_getslice__(self, i, j, s):
-    # Container ops on an Optional[container] field's nil member:
-    # `field[:k]` / `field[k]` where the field starts as None and is
-    # truth-guarded before use (`if node.args:` -- genetic2's
-    # crossover). The nil arm is runtime-dead behind the guard, but
-    # FA doesn't narrow attribute loads (ifa/issues/046 family), so
-    # without these the nil part of the union routes into the
-    # __pyc_any_type__ fallback and the whole expression loses its
-    # type. Returns [] (not self/None): the slice result flows into
-    # concatenation on the dead arm, and a None operand re-poisons
-    # list.__add__ (sizeof_element of non-container). CPython would
-    # raise TypeError -- pyc has no exception model (issues/011), so
-    # this is the documented degradation.
-    return []
   # NB deliberately NO __getitem__ or __len__ stubs: every container
   # class-body field defaulting to None (__tuple_iter__.thetuple,
   # __list_iter__.thelist, ...) makes {nil, T} unions at THEIR uses,

@@ -43,6 +43,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | issue | what |
 | --- | --- |
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: `isinstance` on a `{list, str}` value folds to False; a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
+| [174](174-format-with-a-tuple-variable-skips-str-and-arity.md) | `fmt % t` with a tuple VARIABLE: no `__str__` on its `%s` elements (an `int` segfaults, an object prints raw memory), and a runtime-length tuple is passed as one pointer. Constant format; the literal-tuple path is fine. genetic2's last blocker. |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
 | [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |

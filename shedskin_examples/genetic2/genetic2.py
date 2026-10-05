@@ -75,6 +75,11 @@ class TreeNode:
                 return self.args[1].execute(input)
             else:
                 return self.args[2].execute(input)
+        # pyc (issues/048, PYC_CHANGES.md): type-error fix, a CPython no-op.
+        # opcode is always OPCODE_NONE..OPCODE_IF, so the chain above always
+        # returns; falling off it would return None into `&`/`|`/`^`, a
+        # TypeError in CPython and an unrepresentable {int, None} for pyc.
+        raise ValueError("bad opcode")
 
     def __str__(self):
         if self.opcode == OPCODE_NONE:
