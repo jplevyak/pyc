@@ -1,0 +1,6 @@
+none_or_tuple_missing_member_strict.py:14:58: error: unresolved member 'append' of classes
+  class '__pyc_None_type__'
+  class 'tuple'
+    x.append(3)
+               ^
+fail: program does not type

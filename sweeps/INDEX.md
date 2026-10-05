@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `compile__default__2502f39e+8292fe20` | 2026-10-05 | programs=77 compile_fail=20 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=18 cs/shapes=2233/709=3.15 pratio=2.14 n=76 -- member violations asked of the converged receiver, not the transient `gates_flow`: vs check 26deed74+b16ba512 every compile status and contour count identical except genetic2, which compiles now from its corpus edit (2502f39e) |
 | `check__default__26deed74+b16ba512` | 2026-10-05 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2233/709=3.15 pratio=2.14 n=76 -- `None.__pyc_getslice__` stub (returned `[]`) deleted: vs 2863ac26+21344585 (same binary) all 77 programs identical in every status column; contour counts move on five, genetic2 CS 473 -> 405 |
 | `check__default__2863ac26+21344585` | 2026-10-04 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2240/709=3.16 pratio=2.15 n=76 -- dispatch/type allocation cuts: vs 33994291+908cb39b all 77 programs identical in every column |
 | `check__default__33994291+908cb39b` | 2026-10-04 | programs=77 compile_fail=21 run_fail=2 stdout_differs=4 unverifiable=6 with_warnings=18 cs/shapes=2240/709=3.16 pratio=2.15 n=76 -- pyc built -O3 -march=native by default: vs e4c4dd1c+f5f802d0 (same analysis code, -O0) all 77 programs identical in every column; sweep 554 -> 404 s |
