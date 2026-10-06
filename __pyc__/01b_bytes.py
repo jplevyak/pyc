@@ -20,6 +20,13 @@ class bytes:
     return __pyc_c_call__(bytes, "_CG_strcat", bytes, self, bytes, x)
   def __mul__(self, l):
     return __pyc_c_call__(bytes, "_CG_string_mult", bytes, self, int, l)
+  # CPython's fallback for a type with no in-place method: `x op= y` is
+  # `x = x op y`. Issue 034 synthesizes it for record classes only, so a
+  # builtin value type spells it out (rdb's `basis &= MatchRule(...)`).
+  def __imul__(self, x):
+    return self.__mul__(x)
+  def __imod__(self, x):
+    return self.__mod__(x)
   def __rmul__(self, l):
     # `n * self` (n an int): mirrors str.__rmul__/list.__rmul__ (issue
     # 025 R1) -- byte-string repetition is commutative too.
@@ -156,6 +163,55 @@ class bytes:
         return True
       i += 1
     return False
+  def find(self, sub, start=0, end=None):
+    # As str.find: slice-normalized start/end, then the C scan.
+    n = len(self)
+    i = start
+    if i < 0:
+      i += n
+      if i < 0:
+        i = 0
+    e = n
+    if end is not None:
+      e = end
+      if e < 0:
+        e += n
+      if e > n:
+        e = n
+    return __pyc_c_call__(int, "_CG_str_find", bytes, self, bytes, sub, int, i, int, e)
+  def split(self, sep=None, maxsplit=-1):
+    # As str.split, over bytes (rdb's `entry[33::2].split(b"\0", 1)`).
+    # sep=None splits on runs of ASCII whitespace, CPython's set for bytes.
+    r = []
+    n = len(self)
+    if sep is None:
+      i = 0
+      while i < n:
+        while i < n and (self[i] == 32 or (self[i] >= 9 and self[i] <= 13)):
+          i += 1
+        if i >= n:
+          break
+        if maxsplit >= 0 and len(r) == maxsplit:
+          r.append(self.__pyc_getslice__(i, n, 1))
+          break
+        j = i
+        while j < n and not (self[j] == 32 or (self[j] >= 9 and self[j] <= 13)):
+          j += 1
+        r.append(self.__pyc_getslice__(i, j, 1))
+        i = j
+      return r
+    m = len(sep)
+    if m == 0:
+      raise ValueError("empty separator")
+    start = 0
+    while maxsplit < 0 or len(r) < maxsplit:
+      k = self.find(sep, start)
+      if k < 0:
+        break
+      r.append(self.__pyc_getslice__(start, k, 1))
+      start = k + m
+    r.append(self.__pyc_getslice__(start, n, 1))
+    return r
   def replace(self, old, new):
     # Same length-prefixed buffer as str, so str's one-pass helper serves.
     return __pyc_c_call__(bytes, "_CG_str_replace", bytes, self, bytes, old, bytes, new)

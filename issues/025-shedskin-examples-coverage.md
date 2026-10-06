@@ -74,7 +74,7 @@ that fails:
 | **compiles, then overflows the C stack** ([173](173-silent-deviations-found-by-the-strict-suite-check.md)) | loop 139: `sys.setrecursionlimit(100000)` is ignored; runs to completion under `ulimit -s unlimited` |
 | times out where CPython finishes | dijkstra2, solitaire |
 | both time out at 120 s | ac_encode, chaos, chess, kmeanspp, pygasus (endless by design; see its row below), rubik2, score4, webserver, yopyra |
-| **does not compile** (22; lz2, mao, pygasus fixed 2026-10-05) | amaze, doom, genetic2, go, life, minilight, minpng, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), rdb, rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
+| **does not compile** (21; lz2, mao, pygasus fixed 2026-10-05, rdb 2026-10-06) | amaze, doom, genetic2, go, life, minilight, minpng, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -119,7 +119,7 @@ standalone probe. Fixing a program's first blocker may uncover more.
 | sudoku4 | `dict.copy()` | `__pyc__/07_dict.py` |
 | amaze | `list.index(x, start)`: `index(self, x)` only | `__pyc__/04_sequence.py:337` |
 | lz2 | ~~`str.find(sub, start, end)`: `find(self, sub)` only~~ FIXED 2026-10-05: `find`/`index` take CPython's slice-normalized `start`/`end`. lz2 compiles and runs; stdout and both output files match CPython. `find` and `__contains__` moved to a C scan (`_CG_str_find`): the `__pyc__` char loop allocated two 1-char strs per probe and made lz2 take 64 s, against CPython's 4.1 s. It now takes 4.1 s | `__pyc__/01_str.py` |
-| rdb | `str.split(sep, maxsplit)`, then `array.tobytes`/`fromfile` | `01_str.py:196`, `pyc_lib/array.py` |
+| rdb | ~~`str.split(sep, maxsplit)`, then `array.tobytes`/`fromfile`~~ FIXED 2026-10-06. It needed `str.split(sep, maxsplit)`, `bytes.split`/`find`, `bool &=`, file `seek`/`tell`, and `array`'s `tolist`/`fromlist`/`frombytes`/`fromfile`, slicing and `del` of a slice. One corpus edit: `a.fromstring` -> `a.frombytes` (Python 2; CPython 3 raises `AttributeError` there, see PYC_CHANGES.md). rdb compiles with no warnings. The corpus run has no iPod directory, so pyc and CPython both stop at that check with rc 1 and identical output. On scratch iPod fixtures (3 files, then 42 across nested directories, each run twice to exercise the read-back path), stdout and all four database files are byte-identical to CPython's | `__pyc__/01_str.py`, `01b_bytes.py`, `00_runtime.py`, `07_file.py`, `pyc_lib/array.py` |
 | neural1 | `sorted(..., reverse=True)`: `sorted(seq)` only | `__pyc__/05_builtins.py:418` |
 | sokoban | `filter(None, it)`. `Board.px`/`py` unresolved is cascade: the loop that sets them runs over the bottom list | `__pyc__/05_builtins.py` |
 | pygasus | ~~`array.tobytes()`, then `ord(bytes)`~~ FIXED 2026-10-05. `ord` takes only `str`, so `ord(f.read(1))` compiled to a runtime `C call argument type mismatch` abort, not a compile error. `ord(x)` now dispatches to `x.__pyc_ord__()` on str and bytes. pygasus is a `while True:` emulator, so both it and CPython hit the 120 s cap. A bounded copy (1500 `pExec` steps, checksumming registers, RAM, PPU/sprite RAM and the screen every 100) matches CPython at every checkpoint, 1.8 s vs 21.1 s | `__pyc__/05_builtins.py`, `01_str.py`, `01b_bytes.py` |

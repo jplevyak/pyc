@@ -77,6 +77,13 @@ class str:
     return __pyc_c_call__(bool, "_CG_str_ge", str, self, str, x)
   def __mod__(self, t):
     return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t)
+  # CPython's fallback for a type with no in-place method: `x op= y` is
+  # `x = x op y`. Issue 034 synthesizes it for record classes only, so a
+  # builtin value type spells it out (rdb's `basis &= MatchRule(...)`).
+  def __imul__(self, x):
+    return self.__mul__(x)
+  def __imod__(self, x):
+    return self.__mod__(x)
   def __format__(self, spec):
     # issues/006: PEP 3101 format-spec mini-language, see int.__format__.
     return __pyc_c_call__(str, "_CG_format_str_spec", str, self, str, spec)
@@ -182,10 +189,13 @@ class str:
     return self.__pyc_substr__(self.__pyc_strip_from__(chars, 0, n), n)
   def rstrip(self, chars=" \t\n\r\x0b\x0c\x1c\x1d\x1e\x1f"):
     return self.__pyc_substr__(0, self.__pyc_strip_to__(chars, 0, len(self)))
-  def split(self, sep=None):
+  def split(self, sep=None, maxsplit=-1):
     # sep=None: runs of whitespace, no empty tokens (Python
     # semantics). String sep: split on every occurrence, empty
-    # tokens included. No maxsplit. NOTE calling BOTH forms in one
+    # tokens included. maxsplit >= 0 caps the number of splits; the
+    # rest of the string is the last token, as in CPython (with
+    # sep=None it keeps its trailing whitespace). rdb's
+    # `action.split('=', 1)`. NOTE calling BOTH forms in one
     # program hits the two-default-shapes contour union (issue 025
     # round-3 notes) -- one form per program.
     r = []
@@ -195,29 +205,27 @@ class str:
       while i < n:
         while i < n and (self[i] == " " or self[i] == "\t" or self[i] == "\n" or self[i] == "\r"):
           i += 1
+        if i >= n:
+          break
+        if maxsplit >= 0 and len(r) == maxsplit:
+          r.append(self.__pyc_substr__(i, n))
+          break
         j = i
         while j < n and not (self[j] == " " or self[j] == "\t" or self[j] == "\n" or self[j] == "\r"):
           j += 1
-        if j > i:
-          r.append(self.__pyc_substr__(i, j))
+        r.append(self.__pyc_substr__(i, j))
         i = j
       return r
     m = len(sep)
     if m == 0:
-      r.append(self)
-      return r
-    i = 0
+      raise ValueError("empty separator")
     start = 0
-    while i + m <= n:
-      k = 0
-      while k < m and self[i + k] == sep[k]:
-        k += 1
-      if k == m:
-        r.append(self.__pyc_substr__(start, i))
-        i += m
-        start = i
-      else:
-        i += 1
+    while maxsplit < 0 or len(r) < maxsplit:
+      k = self.find(sep, start)
+      if k < 0:
+        break
+      r.append(self.__pyc_substr__(start, k))
+      start = k + m
     r.append(self.__pyc_substr__(start, n))
     return r
   def startswith(self, prefix):

@@ -196,11 +196,14 @@ class list:
   def __radd__(self, l):
     pass
   def __iadd__(self, l):
-    # NB self.__add__(l), not bare __add__(self, l): class bodies are
-    # not enclosing scopes for their methods (find_PycSymbol skips
-    # non-current class scopes per Python semantics -- a bare name in
-    # a method body resolves to the module, not to a sibling method).
-    return self.__add__(l)
+    # CPython's list += is extend() then `return self`: it MUTATES, so an
+    # alias sees the change (`m = l; l += [2]` leaves m == [1, 2]). This
+    # returned self.__add__(l), a new list, so every alias, field or
+    # caller's argument silently kept the old contents. extend's per-
+    # element append resizes the backing store in place (the list header
+    # stays put), and takes any iterable, as CPython's += does.
+    self.extend(l)
+    return self
   def __mul__(self, n):
     # ifa/154: the argument list is (declared_type, value) PAIRS. A stray
     # unpaired `")"` used to trail this one -- introduced with the body in
@@ -217,8 +220,21 @@ class list:
     # `n * self` (n an int): list repetition is commutative, so reuse
     # __mul__ (issue 025 R1 "missing sequence ops").
     return self.__mul__(n)
-  def __imul__(self, l):
-    pass
+  def __imul__(self, n):
+    # In place, like __iadd__. This was `pass`: `l *= 2` set l to None,
+    # with no diagnostic.
+    k = len(self)
+    if n <= 0:
+      self.__pyc_delslice__(0, k, 1)
+      return self
+    i = 1
+    while i < n:
+      j = 0
+      while j < k:
+        self.append(self[j])
+        j += 1
+      i += 1
+    return self
 #  @must_specialize("l:list")
   def __eq__(self, l):
     ll = len(l)
@@ -627,6 +643,11 @@ class tuple:
     return r
   def __pyc_tuplify__(self):
     return self
+  # CPython's fallback for a type with no in-place method: `x op= y` is
+  # `x = x op y`. Issue 034 synthesizes it for record classes only, so a
+  # builtin value type spells it out (rdb's `basis &= MatchRule(...)`).
+  def __iadd__(self, x):
+    return self.__add__(x)
   def __add__(self, t):
     # Dynamic tuple concatenation returns a LIST -- fixed-arity
     # structs can't concatenate at runtime; the compile-time

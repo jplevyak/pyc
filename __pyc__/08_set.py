@@ -232,6 +232,64 @@ class set:
     return r
   def __or__(self, other):
     return self.union(other)
+  def symmetric_difference(self, other):
+    r = set()
+    i = 0
+    while i < self._len:
+      if not other.__contains__(self._items[i]):
+        r.add(self._items[i])
+      i += 1
+    for item in other:
+      if not self.__contains__(item):
+        r.add(item)
+    return r
+  def __xor__(self, other):
+    return self.symmetric_difference(other)
+  # The in-place operators MUTATE self, as CPython's do, so an alias sees
+  # the change. Without them `s |= t` fell back to issue 034's synthesized
+  # `s = s | t`, which is CPython's fallback for a class with no
+  # __ior__ -- right for a user class, wrong for set, which has one.
+  # Each takes what it needs from `other` BEFORE mutating, so `s &= s`,
+  # `s -= s` and `s ^= s` see an unmodified operand.
+  def __ior__(self, other):
+    return self.update(other)
+  def intersection_update(self, other):
+    keep = []
+    i = 0
+    while i < self._len:
+      if other.__contains__(self._items[i]):
+        keep.append(self._items[i])
+      i += 1
+    self._items = keep
+    self._len = len(keep)
+    self.__pyc_rehash__()
+    return None
+  def __iand__(self, other):
+    self.intersection_update(other)
+    return self
+  def difference_update(self, other):
+    items = []
+    for item in other:
+      items.append(item)
+    for item in items:
+      self.discard(item)
+    return None
+  def __isub__(self, other):
+    self.difference_update(other)
+    return self
+  def symmetric_difference_update(self, other):
+    items = []
+    for item in other:
+      items.append(item)
+    for item in items:
+      if self.__contains__(item):
+        self.discard(item)
+      else:
+        self.add(item)
+    return None
+  def __ixor__(self, other):
+    self.symmetric_difference_update(other)
+    return self
   def __str__(self):
     x = "{"
     i = 0

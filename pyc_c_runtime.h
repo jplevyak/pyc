@@ -945,6 +945,15 @@ inline char *_CG_strerror(int64 e) { return _CG_String(strerror((int)e)); }
 inline int64 _CG_fstd(int64 which) { return (int64)(intptr_t)(which == 0 ? stdin : which == 1 ? stdout : stderr); }
 inline int64 _CG_fclose(int64 h) { return h ? (int64)fclose((FILE *)(intptr_t)h) : 0; }
 inline int64 _CG_fflush(int64 h) { return h ? (int64)fflush((FILE *)(intptr_t)h) : 0; }
+// file.seek(offset, whence) / file.tell(): the new absolute position, as
+// CPython returns it; -1 on a closed file or a failed seek.
+inline int64 _CG_fseek(int64 h, int64 off, int64 whence) {
+  if (!h) return -1;
+  FILE *f = (FILE *)(intptr_t)h;
+  if (fseeko(f, (off_t)off, whence == 1 ? SEEK_CUR : whence == 2 ? SEEK_END : SEEK_SET)) return -1;
+  return (int64)ftello(f);
+}
+inline int64 _CG_ftell(int64 h) { return h ? (int64)ftello((FILE *)(intptr_t)h) : -1; }
 inline int64 _CG_fwrite_str(int64 h, char *s) {
   if (!h) return 0;
   return (int64)fwrite(s, 1, _CG_string_len(s), (FILE *)(intptr_t)h);

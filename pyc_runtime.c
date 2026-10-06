@@ -89,6 +89,8 @@ extern int64 _CG_fopen(char *path, char *mode);
 extern int64 _CG_fstd(int64 which);
 extern int64 _CG_fclose(int64 h);
 extern int64 _CG_fflush(int64 h);
+extern int64 _CG_fseek(int64 h, int64 off, int64 whence);
+extern int64 _CG_ftell(int64 h);
 extern int64 _CG_fwrite_str(int64 h, char *s);
 extern char *_CG_fread_all(int64 h);
 extern char *_CG_fread_n(int64 h, int64 n);

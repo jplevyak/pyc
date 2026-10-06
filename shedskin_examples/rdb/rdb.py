@@ -373,7 +373,11 @@ def make_playback_state(volume=-1):
   try:
     f=open("iPod_Control/iTunes/iTunesPState","rb")
     a=array.array('B')
-    a.fromstring(f.read())
+    # pyc (PYC_CHANGES.md): type-error fix. array.fromstring is Python 2;
+    # it was removed in 3.9, so CPython 3 raises AttributeError here
+    # whenever iTunesPState exists, which the except clause below does not
+    # catch. frombytes is what it meant.
+    a.frombytes(f.read())
     PState=a.tolist()
     f.close()
   except (OSError, EOFError):

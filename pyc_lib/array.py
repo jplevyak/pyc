@@ -1,7 +1,7 @@
-# array: a list of the values plus its typecode. tobytes/tofile cover the
-# integer typecodes, packed little-endian (native on every platform pyc
-# targets, as in struct.py); the float codes f/d fail loudly rather than
-# pack garbage.
+# array: a list of the values plus its typecode. The byte conversions
+# (tobytes/tofile, frombytes/fromfile) cover the integer typecodes, packed
+# little-endian (native on every platform pyc targets, as in struct.py);
+# the float codes f/d fail loudly rather than pack garbage.
 
 def _itemsize(c):
     if c == "b" or c == "B":
@@ -12,7 +12,10 @@ def _itemsize(c):
         return 4
     if c == "q" or c == "Q":
         return 8
-    raise ValueError("array: tobytes of typecode '" + c + "' is not supported")
+    raise ValueError("array: byte conversion of typecode '" + c + "' is not supported")
+
+def _signed(c):
+    return c == "b" or c == "h" or c == "i" or c == "l" or c == "q"
 
 class array:
     def __init__(self, typecode, initializer=None):
@@ -53,3 +56,54 @@ class array:
     def tofile(self, f):
         # CPython's tofile is f.write(self.tobytes()) for a binary file.
         f.write(self.tobytes())
+
+    def __delitem__(self, i):
+        del self.data[i]
+
+    # Slices forward (i, j, s) unchanged: the list's runtime normalizes the
+    # omitted-bound sentinels. A slice is an array of the same typecode, as
+    # in CPython -- this class had no slicing, so `header[:18]` fell through
+    # to __getitem__ and came back an int (rdb).
+    def __pyc_getslice__(self, i, j, s):
+        r = array(self.typecode)
+        r.data = self.data.__pyc_getslice__(i, j, s)
+        return r
+
+    def __pyc_delslice__(self, i, j, s):
+        self.data.__pyc_delslice__(i, j, s)
+
+    def tolist(self):
+        return list(self.data)
+
+    def fromlist(self, l):
+        for x in l:
+            self.data.append(x)
+
+    def frombytes(self, b):
+        n = _itemsize(self.typecode)
+        if len(b) % n:
+            raise ValueError("bytes length not a multiple of item size")
+        if n == 1 and not _signed(self.typecode):
+            for v in b:
+                self.data.append(v)
+            return
+        top = 1 << (8 * n - 1)
+        k = 0
+        while k < len(b):
+            v = 0
+            for q in range(n):
+                v = v | (b[k + q] << (8 * q))
+            if _signed(self.typecode) and v >= top:
+                v = v - 2 * top
+            self.data.append(v)
+            k += n
+
+    def fromfile(self, f, n):
+        # CPython inserts the complete items that were read, then raises
+        # EOFError if there were fewer than n (rdb catches it).
+        size = _itemsize(self.typecode)
+        b = f.read(n * size)
+        k = len(b) // size
+        self.frombytes(b[0:k * size])
+        if k < n:
+            raise EOFError("read() didn't return enough bytes")

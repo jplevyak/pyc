@@ -30,6 +30,14 @@ class __pyc_file__:
   def flush(self):
     __pyc_c_call__(int, "_CG_fflush", int, self.handle)
     return None
+  def seek(self, offset, whence=0):
+    # rdb's `iTunesSD.seek(18)`. Raises on failure, as CPython does.
+    r = __pyc_c_call__(int, "_CG_fseek", int, self.handle, int, offset, int, whence)
+    if r < 0:
+      raise OSError("seek failed")
+    return r
+  def tell(self):
+    return __pyc_c_call__(int, "_CG_ftell", int, self.handle)
   def close(self):
     __pyc_c_call__(int, "_CG_fclose", int, self.handle)
     self.handle = 0
@@ -123,6 +131,14 @@ class __pyc_binfile__:
   def flush(self):
     __pyc_c_call__(int, "_CG_fflush", int, self.handle)
     return None
+  def seek(self, offset, whence=0):
+    # rdb's `iTunesSD.seek(18)`. Raises on failure, as CPython does.
+    r = __pyc_c_call__(int, "_CG_fseek", int, self.handle, int, offset, int, whence)
+    if r < 0:
+      raise OSError("seek failed")
+    return r
+  def tell(self):
+    return __pyc_c_call__(int, "_CG_ftell", int, self.handle)
   def close(self):
     __pyc_c_call__(int, "_CG_fclose", int, self.handle)
     self.handle = 0

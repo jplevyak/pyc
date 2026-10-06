@@ -346,6 +346,21 @@ class bool:
   # is `int & x`, never `bool & x`. That keeps a bool operand away from the
   # numeric primitives, which reject one, and avoids int() (`int(True)`
   # yields -1 on the LLVM backend).
+  # CPython's fallback for a type with no in-place method: `x op= y` is
+  # `x = x op y`. Issue 034 synthesizes it for record classes only, so a
+  # builtin value type spells it out (rdb's `basis &= MatchRule(...)`).
+  def __iadd__(self, x):
+    return self.__add__(x)
+  def __isub__(self, x):
+    return self.__sub__(x)
+  def __imul__(self, x):
+    return self.__mul__(x)
+  def __ior__(self, x):
+    return self.__or__(x)
+  def __ixor__(self, x):
+    return self.__xor__(x)
+  def __iand__(self, x):
+    return self.__and__(x)
   def __and__(self, x):
     if isinstance(x, bool):
       if self:
