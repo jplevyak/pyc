@@ -389,10 +389,20 @@ class bool:
     else:
       return True
   def __eq__(self, x):
-    if (self):
-      return x
-    else:
-      return not x
+    # bool is an int subtype: `True == 1` and `False == 0.0` are True, and
+    # a bool equals no non-number. This returned `x` itself for every
+    # operand, so `True == 5` printed 5 and `True == "a"` printed "a".
+    # Branch-on-self, as the ordering methods below, for the same reason.
+    if isinstance(x, bool):
+      if (self):
+        return x
+      else:
+        return not x
+    if isinstance(x, int) or isinstance(x, float):
+      if (self):
+        return x == 1
+      return x == 0
+    return False
   def __ne__(self, x):
     return not self.__eq__(x)
   # bool is an int subtype in Python, so ordering compares as 0/1

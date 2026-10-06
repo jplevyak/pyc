@@ -727,6 +727,48 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   fprintf(f, "      for i in range(%d, n):\n", max_arity);
   fputs("        h = h * 1000003 + self[i].__hash__()\n", f);
   fputs("    return h\n", f);
+  // `in`, count and index compare each element by `==`, so they need the
+  // same unroll: with a loop index, self[i] on a heterogeneous record tuple
+  // is not even a legal read (`"a" in (1, "a")` was "illegal primitive
+  // argument type 'key'"), and with a constant index each `==` is one
+  // field's own. Cross-type `==` answers False, as in CPython.
+  fputs("  def __contains__(self, item):\n", f);
+  fputs("    n = len(self)\n", f);
+  for (int i = 0; i < max_arity; i++)
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and self[%d] == item: return True\n", i + 1, i);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        if self[i] == item: return True\n", f);
+  fputs("    return False\n", f);
+  fputs("  def count(self, x):\n", f);
+  fputs("    c = 0\n", f);
+  fputs("    n = len(self)\n", f);
+  for (int i = 0; i < max_arity; i++)
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and self[%d] == x: c += 1\n", i + 1, i);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        if self[i] == x: c += 1\n", f);
+  fputs("    return c\n", f);
+  // CPython's tuple.index: start/stop normalized like a slice (as
+  // list.index in 04_sequence.py), ValueError when absent.
+  fputs("  def index(self, x, start=0, stop=None):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    b = start\n", f);
+  fputs("    if b < 0:\n", f);
+  fputs("      b += n\n", f);
+  fputs("      if b < 0: b = 0\n", f);
+  fputs("    e = n\n", f);
+  fputs("    if stop is not None:\n", f);
+  fputs("      e = stop\n", f);
+  fputs("      if e < 0: e += n\n", f);
+  fputs("      if e > n: e = n\n", f);
+  for (int i = 0; i < max_arity; i++)
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and b <= %d and %d < e and self[%d] == x: return %d\n",
+            i + 1, i, i, i, i);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        if b <= i and i < e and self[i] == x: return i\n", f);
+  fputs("    raise ValueError(\"tuple.index(x): x not in tuple\")\n", f);
   // issues/110: an element-recursive __deepcopy__. The any-type fallback
   // it replaces was a SHALLOW copy: `deepcopy((T(),))` shared the T with
   // the original.

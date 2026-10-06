@@ -136,7 +136,7 @@ static ArgumentDescription arg_desc[] = {
     {"dparse-ast", ' ', "Parse with DParser and print AST", "F", &dparse_ast, "PYC_DPARSE_AST", NULL},
     {"escape-in-fa", ' ', "Integrate escape analysis into IFA (Phase 1+, see ESCAPE_PLAN.md)", "F",
      &ifa_escape_in_fa, "IFA_ESCAPE_IN_FA", NULL},
-    {"fa-inline", ' ', "Run simple_inlining between FA passes (0/1, default 0)", "I",
+    {"fa-inline", ' ', "Run simple_inlining between FA passes (0/1, default 1)", "I",
      &ifa_fa_inline, "IFA_FA_INLINE", NULL},
     {"narrow", ' ', "Enable issue-025 per-branch type narrowing recognizer (0/1, default 1)", "I",
      &ifa_narrow, "IFA_NARROW", NULL},

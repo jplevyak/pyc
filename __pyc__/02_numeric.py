@@ -89,9 +89,18 @@ class int:
   def __not__(self):
     return __pyc_operator__(__pyc_symbol__("!"), self)
   def __eq__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("=="), x)
+    # CPython: a number never equals a non-number (`1 == "a"` is False;
+    # int.__eq__ returns NotImplemented, and so does the other side).
+    # The raw prim on a str or tuple operand was refused as an illegal
+    # primitive argument, which made a heterogeneous tuple's count/index/
+    # `in` uncompilable. isinstance folds per contour.
+    if isinstance(x, int) or isinstance(x, float) or isinstance(x, bool):
+      return __pyc_operator__(self, __pyc_symbol__("=="), x)
+    return False
   def __ne__(self, x):
-    return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("!="), __pyc_clone_constants__(x))
+    if isinstance(x, int) or isinstance(x, float) or isinstance(x, bool):
+      return __pyc_operator__(__pyc_clone_constants__(self), __pyc_symbol__("!="), __pyc_clone_constants__(x))
+    return True
   def __lt__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("<"), x)
   def __le__(self, x):
@@ -172,9 +181,14 @@ class float:
   def __not__(self):
     return __pyc_operator__(__pyc_symbol__("!"), self)
   def __eq__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("=="), x)
+    # A number never equals a non-number; see int.__eq__.
+    if isinstance(x, int) or isinstance(x, float) or isinstance(x, bool):
+      return __pyc_operator__(self, __pyc_symbol__("=="), x)
+    return False
   def __ne__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("!="), x)
+    if isinstance(x, int) or isinstance(x, float) or isinstance(x, bool):
+      return __pyc_operator__(self, __pyc_symbol__("!="), x)
+    return True
   def __lt__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("<"), x)
   def __le__(self, x):

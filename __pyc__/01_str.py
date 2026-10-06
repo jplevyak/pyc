@@ -55,9 +55,16 @@ class str:
   def __hash__(self):
     return __pyc_c_call__(int, "_CG_str_hash", str, self)
   def __eq__(self, x):
-    return __pyc_c_call__(bool, "_CG_str_eq", str, self, str, x)
+    # CPython: a str never equals a non-str (`"a" == 1` is False). Passing
+    # the other operand to _CG_str_eq as a str compiled to a run-time
+    # "C call argument type mismatch" abort. isinstance folds per contour.
+    if isinstance(x, str):
+      return __pyc_c_call__(bool, "_CG_str_eq", str, self, str, x)
+    return False
   def __ne__(self, x):
-    return __pyc_c_call__(bool, "_CG_str_ne", str, self, str, x)
+    if isinstance(x, str):
+      return __pyc_c_call__(bool, "_CG_str_ne", str, self, str, x)
+    return True
   def __lt__(self, x):
     return __pyc_c_call__(bool, "_CG_str_lt", str, self, str, x)
   def __le__(self, x):
