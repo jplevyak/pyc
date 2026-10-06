@@ -56,6 +56,7 @@ extern char *_CG_str_upper(const char *s);
 extern char *_CG_str_swapcase(const char *s);
 extern char *_CG_str_substr(const char *s, int64 i, int64 j);
 extern char *_CG_str_replace(const char *s, const char *old, const char *nw);
+extern int64 _CG_str_find(const char *s, const char *sub, int64 i, int64 e);
 extern char *_CG_one_char_string(unsigned char c);
 extern int64 _CG_int_pow(int64 b, int64 e);
 extern int64 _CG_errno(void);

@@ -1645,6 +1645,18 @@ inline char *_CG_str_substr(const char *s, int64 i, int64 j) {
   return x;
 }
 
+// str.find / str.__contains__: first index of `sub` within s[i:e], or -1.
+// i and e arrive normalized (0 <= i, e <= len); i > e finds nothing,
+// even an empty `sub`, as in CPython. The __pyc__ loop compared
+// `self[i + j] == sub[j]`, allocating two 1-char strs per probe -- lz2
+// spent 16x CPython's time there.
+inline int64 _CG_str_find(const char *s, const char *sub, int64 i, int64 e) {
+  size_t m = _CG_string_len(sub);
+  for (; i + (int64)m <= e; i++)
+    if (!m || !memcmp(s + i, sub, m)) return i;
+  return -1;
+}
+
 // CPython's str.replace(old, new): every non-overlapping occurrence, left
 // to right. An EMPTY `old` inserts `new` before every character and at the
 // end ("ab".replace("", "-") == "-a-b-"); the __pyc__ loop returned `s`

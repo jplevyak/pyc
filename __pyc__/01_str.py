@@ -140,22 +140,7 @@ class str:
     # issues/118. ASCII-only, consistent with upper()/lower().
     return __pyc_c_call__(str, "_CG_str_swapcase", str, self)
   def __contains__(self, x):
-    # Substring search by char compare; str has no working slice path
-    # yet (the __pyc_any_type__ fallback mis-routes slices of str into
-    # index_object), so only __getitem__(int) and __eq__ are used.
-    n = len(self)
-    m = len(x)
-    if m == 0:
-      return True
-    i = 0
-    while i + m <= n:
-      j = 0
-      while j < m and self[i + j] == x[j]:
-        j += 1
-      if j == m:
-        return True
-      i += 1
-    return False
+    return __pyc_c_call__(int, "_CG_str_find", str, self, str, x, int, 0, int, len(self)) >= 0
   def __pyc_substr__(self, i, j):
     # self[i:j] for non-negative i, j, in one allocation (issues/050; it
     # was a char-by-char concat).
@@ -255,19 +240,25 @@ class str:
         return False
       i += 1
     return True
-  def find(self, sub):
+  def find(self, sub, start=0, end=None):
+    # CPython's optional start/end, normalized like a slice (lz2's
+    # `c.find(c[fr:to], 0, fr)` resolved to nothing without them, and
+    # every value downstream of it went untyped).
     n = len(self)
-    m = len(sub)
-    i = 0
-    while i + m <= n:
-      j = 0
-      while j < m and self[i + j] == sub[j]:
-        j += 1
-      if j == m:
-        return i
-      i += 1
-    return -1
-  def index(self, sub):
+    i = start
+    if i < 0:
+      i += n
+      if i < 0:
+        i = 0
+    e = n
+    if end is not None:
+      e = end
+      if e < 0:
+        e += n
+      if e > n:
+        e = n
+    return __pyc_c_call__(int, "_CG_str_find", str, self, str, sub, int, i, int, e)
+  def index(self, sub, start=0, end=None):
     # str had no .index() at all -- only find() -- so `s.index(x)`
     # fell through to whatever OTHER class's .index() dispatch
     # resolved to (sudoku2.py's `lines[row].index(str(digit))`,
@@ -278,7 +269,7 @@ class str:
     # matches CPython exactly: raises ValueError on a missing
     # substring, since callers rely on catching it (sudoku2.py's
     # `except ValueError: pass` around exactly this call).
-    i = self.find(sub)
+    i = self.find(sub, start, end)
     if i < 0:
       raise ValueError("substring not found")
     return i

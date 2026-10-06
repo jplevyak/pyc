@@ -74,7 +74,7 @@ that fails:
 | **compiles, then overflows the C stack** ([173](173-silent-deviations-found-by-the-strict-suite-check.md)) | loop 139: `sys.setrecursionlimit(100000)` is ignored; runs to completion under `ulimit -s unlimited` |
 | times out where CPython finishes | dijkstra2, solitaire |
 | both time out at 120 s | ac_encode, chaos, chess, kmeanspp, rubik2, score4, webserver, yopyra |
-| **does not compile** (25) | amaze, doom, genetic2, go, life, lz2, mao, minilight, minpng, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), pygasus, rdb, rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
+| **does not compile** (24; lz2 fixed 2026-10-05) | amaze, doom, genetic2, go, life, mao, minilight, minpng, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), pygasus, rdb, rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -118,7 +118,7 @@ standalone probe. Fixing a program's first blocker may uncover more.
 | othello2 | `int.bit_count()`. The later `__sub__`/`__mul__` errors are cascade | `__pyc__/02_numeric.py` |
 | sudoku4 | `dict.copy()` | `__pyc__/07_dict.py` |
 | amaze | `list.index(x, start)`: `index(self, x)` only | `__pyc__/04_sequence.py:337` |
-| lz2 | `str.find(sub, start, end)`: `find(self, sub)` only | `__pyc__/01_str.py:256` |
+| lz2 | ~~`str.find(sub, start, end)`: `find(self, sub)` only~~ FIXED 2026-10-05: `find`/`index` take CPython's slice-normalized `start`/`end`. lz2 compiles and runs; stdout and both output files match CPython. `find` and `__contains__` moved to a C scan (`_CG_str_find`): the `__pyc__` char loop allocated two 1-char strs per probe and made lz2 take 64 s, against CPython's 4.1 s. It now takes 4.1 s | `__pyc__/01_str.py` |
 | rdb | `str.split(sep, maxsplit)`, then `array.tobytes`/`fromfile` | `01_str.py:196`, `pyc_lib/array.py` |
 | neural1 | `sorted(..., reverse=True)`: `sorted(seq)` only | `__pyc__/05_builtins.py:418` |
 | sokoban | `filter(None, it)`. `Board.px`/`py` unresolved is cascade: the loop that sets them runs over the bottom list | `__pyc__/05_builtins.py` |
