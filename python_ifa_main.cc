@@ -57,6 +57,48 @@ static void c_call_transfer_function(PNode *pn, EntrySet *es) {
     flow_vars(a, result);
 }
 
+// The __pyc_c_call__ targets whose declared argument types are real
+// constraints, not placeholders a C macro reinterprets (see the
+// whitelist rationale in c_call_codegen). cg_emit_llvm.cc keeps its own
+// copy of this list.
+static bool is_strict_c_call(cchar *name) {
+  return name && (!strcmp(name, "_CG_str_eq") || !strcmp(name, "_CG_str_ne") || !strcmp(name, "_CG_str_lt") ||
+                  !strcmp(name, "_CG_str_le") || !strcmp(name, "_CG_str_gt") || !strcmp(name, "_CG_str_ge") ||
+                  !strcmp(name, "_CG_fopen") || !strcmp(name, "_CG_chr") || !strcmp(name, "_CG_ord") ||
+                  !strcmp(name, "_CG_str_to_int64_base") || !strcmp(name, "_CG_strcat"));
+}
+
+// A strict target's arguments, checked in FA against their declared
+// types. Codegen used to be the only check, and under the default
+// permissive mode it emitted a runtime assert with no diagnostic at all:
+// pygasus's `ord(f.read(1))` passed `bytes` to `_CG_ord`'s `str`, compiled
+// silently, and aborted at startup. Recorded here, the mismatch is an
+// ordinary type violation -- fatal (ifa/158), reported at the call with
+// its call chain. The codegen checks stay as a backstop.
+//
+// The rule is c_call_arg_type_mismatch's, on FA's per-CreationSet types
+// rather than codegen's C representations: any two numeric types agree;
+// a numeric and a non-numeric one never do; two non-numeric types must
+// be the same type. `None` is skipped -- a `{None, str}` argument is a
+// pointer, and a None reaching the call is ifa/164's concern.
+static void c_call_check_function(PNode *pn, EntrySet *es) {
+  if (!is_strict_c_call(pn->rvals[3]->sym->constant)) return;
+  for (int i = 5; i < pn->rvals.n; i += 2) {
+    Sym *declared = unalias_type(pn->rvals[i - 1]->sym);
+    if (!declared) continue;
+    AVar *arg = make_AVar(pn->rvals[i], es);
+    Vec<CreationSet *> bad;
+    for (CreationSet *cs : arg->out->sorted) {
+      if (!cs || !cs->sym) continue;
+      Sym *t = cs->sym->type;
+      if (!t || t == declared || t == sym_nil_type) continue;
+      if (declared->num_kind && t->num_kind) continue;
+      bad.add(cs);
+    }
+    if (bad.n) type_violation(ATypeViolation_kind::PRIMITIVE_ARGUMENT, arg, make_AType(bad), make_AVar(pn->lvals[0], es));
+  }
+}
+
 static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
   cchar *name = n->rvals[3]->sym->constant;
   if (name && !strcmp(name, "__pyc_net_wait_read__")) {
@@ -106,12 +148,7 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
   // takes a real `int`; `_CG_strcat` (bytes.__add__/__radd__,
   // 01b_bytes.py) takes two real `bytes` operands, unlike
   // `_CG_list_add`'s deliberately-erased second argument.
-  bool strict_c_call = name && (!strcmp(name, "_CG_str_eq") || !strcmp(name, "_CG_str_ne") ||
-                                 !strcmp(name, "_CG_str_lt") || !strcmp(name, "_CG_str_le") ||
-                                 !strcmp(name, "_CG_str_gt") || !strcmp(name, "_CG_str_ge") ||
-                                 !strcmp(name, "_CG_fopen") || !strcmp(name, "_CG_chr") ||
-                                 !strcmp(name, "_CG_ord") || !strcmp(name, "_CG_str_to_int64_base") ||
-                                 !strcmp(name, "_CG_strcat"));
+  bool strict_c_call = is_strict_c_call(name);
   // The mismatch judgment itself (unalias_type() for Type_ALIAS
   // declared types like `int`; tolerating any two numeric types
   // regardless of width/precision; requiring exact cg_string
@@ -122,6 +159,12 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
   // c_call_arg_type_mismatch() (ifa/if1/sym.{h,cc}) so cg_emit_llvm.cc's
   // LLVM-backend counterpart (issue 096 design point 4) shares it
   // rather than re-deriving the same two false-positive fixes.
+  //
+  // A BACKSTOP since c_call_check_function: FA now records these
+  // mismatches as type violations, which are fatal (ifa/158), so a
+  // program reaching here means FA saw a type codegen does not -- a
+  // `_CG_any` actual, or a representation the per-CreationSet rule
+  // considers equal.
   for (int i = 5; strict_c_call && i < n->rvals.n; i += 2) {
     bool mismatch = c_call_arg_type_mismatch(n->rvals[i - 1]->sym, n->rvals[i]->type);
     if (mismatch) {
@@ -346,6 +389,7 @@ static void add_primitive_transfer_functions() {
   prim_reg(sym_write->name, return_nil_transfer_function, write_codegen)->is_visible = 1;
   prim_reg(sym_writeln->name, return_nil_transfer_function, writeln_codegen)->is_visible = 1;
   RegisteredPrim *c_call_prim = prim_reg(sym___pyc_c_call__->name, c_call_transfer_function, c_call_codegen);
+  c_call_prim->check_fn = c_call_check_function;
   c_call_prim->is_visible = 1;
   c_call_prim->is_functional = 0;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;

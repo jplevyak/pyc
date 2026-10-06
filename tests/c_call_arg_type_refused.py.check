@@ -1,0 +1,5 @@
+c_call_arg_type_refused.py:6:18: error: illegal primitive argument type 'x' illegal: bytes 
+        return __pyc_c_call__(int, "_CG_ord", str, x)
+                     ^
+  called from c_call_arg_type_refused.py:9
+fail: program does not type
