@@ -668,10 +668,8 @@ static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args) {
 // an imported module -- or a `*args` function defined in one, like
 // pyc_lib/struct.py's pack -- was missed, and a heterogeneous one was
 // refused through the runtime-index tail.
-void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
-  Vec<PyDAST *> asts;
-  for (PycModule *m : mods) asts.add(m->pymod);
-  prescan_imported_modules(mods, *make_search_path(), asts);
+// `asts` is every module to scan: `mods` plus what they import.
+static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &asts, int min_arity) {
   int max_arity = min_arity;
   for (PyDAST *a : asts) scan_max_tuple_arity(a, max_arity);
   {
@@ -908,8 +906,8 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
 // Only the names are global; which accessor runs is decided per receiver
 // class by dispatch, like any method. Runs before the builtin module is
 // built, which is why it is a pre-scan over the program's modules (as
-// inject_tuple_methods is). A property in a module only reached through an
-// import is not seen here and is refused by build_syms. Setters are refused.
+// inject_tuple_methods is), including every module reached by import
+// (prescan_imported_modules). Setters are refused.
 static Vec<cchar *> pyc_property_names;
 
 bool pyc_is_property_name(cchar *name) {
@@ -973,10 +971,17 @@ static void refuse_property_setters(PyDAST *n) {
   for (PyDAST *c : n->children) refuse_property_setters(c);
 }
 
-void inject_property_accessors(Vec<PycModule *> &mods) {
+// `imported` is the pre-parsed ASTs of every module `mods` imports
+// (prescan_imported_modules). import_file builds exactly these ASTs, so
+// the getters renamed here are the ones build_syms later sees.
+static void inject_property_accessors(Vec<PycModule *> &mods, Vec<PyDAST *> &imported) {
   for (int i = 1; i < mods.n; i++) {
     refuse_property_setters(mods[i]->pymod);
     scan_properties(mods[i]->pymod, mods[i]->filename);
+  }
+  for (PyDAST *a : imported) {
+    refuse_property_setters(a);
+    scan_properties(a, nullptr);
   }
   if (!pyc_property_names.n) return;
   // One throwaway class of default accessors per builtin class, parsed at
@@ -1005,9 +1010,24 @@ void inject_property_accessors(Vec<PycModule *> &mods) {
   }
 }
 
+void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
+  Vec<PyDAST *> asts;
+  for (PycModule *m : mods) asts.add(m->pymod);
+  prescan_imported_modules(mods, *make_search_path(), asts);
+  inject_tuple_methods_over(mods, asts, min_arity);
+}
+
 int ast_to_if1(Vec<PycModule *> &mods) {
-  inject_property_accessors(mods);  // issues/171 #13: @property getters
-  inject_tuple_methods(mods, 0);  // issue 069: program-sized tuple __eq__/__lt__
+  // Both injections shape the builtin module from the WHOLE program, so
+  // both need the imported modules, which build_syms only loads later.
+  // Pre-scanned once: import_file reuses these ASTs.
+  Vec<PyDAST *> imported;
+  prescan_imported_modules(mods, *make_search_path(), imported);
+  inject_property_accessors(mods, imported);  // issues/171 #13: @property getters
+  Vec<PyDAST *> asts;
+  for (PycModule *m : mods) asts.add(m->pymod);
+  for (PyDAST *a : imported) asts.add(a);
+  inject_tuple_methods_over(mods, asts, 0);  // issue 069: program-sized tuple __eq__/__lt__
   // For the non-REPL path: build baseline for mods[0] (builtin), then extend.
   // The builtin_mods Vec is local; ctx->modules is updated to &mods by extend.
   Vec<PycModule *> builtin_mods;

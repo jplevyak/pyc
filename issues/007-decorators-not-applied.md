@@ -54,10 +54,13 @@ silent deviation in every mode.
    `@property x`) writes a field. CPython raises `AttributeError`. Needs the
    store accessor from 1, whose default on a property class raises.
 3. **`@property` pyc cannot see ahead of time is refused.** That means a
-   property in a module reached only through an import (the pre-scan runs
-   before imports are resolved), a property stacked with other decorators,
-   and `@property` on a non-method. Refused by `build_syms` with a named
-   error. The REPL has no pre-scan, so every `@property` there is refused.
+   property stacked with other decorators and `@property` on a non-method.
+   Refused by `build_syms` with a named error. The REPL has no pre-scan,
+   so every `@property` there is refused. (A property in a module reached
+   only through an import was refused too, because the pre-scan ran before
+   imports were resolved. FIXED 2026-10-06: `prescan_imported_modules`
+   parses the imported modules first and `import_file` reuses those ASTs;
+   `tests/property_in_imported_module.py`.)
 4. **Class-based decorators** (`@Wrapper` with `__init__`/`__call__`): the
    class call in decorator position is emitted as a raw send, and FA
    reports "expression has no type". Refused, not silent.

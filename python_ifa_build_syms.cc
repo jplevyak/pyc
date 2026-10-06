@@ -1160,12 +1160,12 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           if (decorator_name_is(dec->children[0]->str_val, "staticmethod")) marker_static = true;
           else if (decorator_name_is(dec->children[0]->str_val, "classmethod")) marker_class = true;
           // issues/171 #13: inject_property_accessors consumes every class
-          // @property getter of the modules it can see. One left here is in
-          // a module reached only by import, stacked with other decorators,
-          // or not on a method -- refuse it rather than ignore it.
+          // @property getter of the program's modules, imported ones
+          // included. One left here is stacked with other decorators or
+          // not on a method -- refuse it rather than ignore it.
           else if (decorator_name_is(dec->children[0]->str_val, "property"))
-            fail("error line %d: this @property is not supported: only a class's read-only getter, alone "
-                 "and in a module compiled directly, is (issues/007)",
+            fail("error line %d: this @property is not supported: only a class's read-only getter, alone, "
+                 "is (issues/007)",
                  dec->line);
         }
       }
