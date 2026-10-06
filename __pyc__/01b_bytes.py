@@ -81,6 +81,11 @@ class bytes:
     for v in self:
       r.append(v)
     return r
+  def __pyc_ord__(self):
+    # ord(b"A") == 65: CPython takes a length-1 bytes as well as a str.
+    if len(self) != 1:
+      raise TypeError("ord() expected a character")
+    return self[0]
   def __pyc_tobytes__(self):
     # bytes(some_bytes): identity, matching CPython.
     return self

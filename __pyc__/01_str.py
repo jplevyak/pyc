@@ -35,6 +35,8 @@ class str:
     for c in self:
       r.append(c)
     return r
+  def __pyc_ord__(self):
+    return __pyc_c_call__(int, "_CG_ord", str, self)
   def __pyc_tobytes__(self):
     # bytes(some_str): same reinterpretation as encode() below (the
     # bytes(x) builtin call intercepts to x.__pyc_tobytes__(), mirroring

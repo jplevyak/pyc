@@ -73,7 +73,7 @@ that fails:
 | **compiles, then aborts** (ifa/102) | adatron 134, pisang 134, quameon 134 (life moved to "does not compile", below) |
 | **compiles, then overflows the C stack** ([173](173-silent-deviations-found-by-the-strict-suite-check.md)) | loop 139: `sys.setrecursionlimit(100000)` is ignored; runs to completion under `ulimit -s unlimited` |
 | times out where CPython finishes | dijkstra2, solitaire |
-| both time out at 120 s | ac_encode, chaos, chess, kmeanspp, rubik2, score4, webserver, yopyra |
+| both time out at 120 s | ac_encode, chaos, chess, kmeanspp, pygasus (endless by design; see its row below), rubik2, score4, webserver, yopyra |
 | **does not compile** (22; lz2, mao, pygasus fixed 2026-10-05) | amaze, doom, genetic2, go, life, minilight, minpng, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), rdb, rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
@@ -122,7 +122,7 @@ standalone probe. Fixing a program's first blocker may uncover more.
 | rdb | `str.split(sep, maxsplit)`, then `array.tobytes`/`fromfile` | `01_str.py:196`, `pyc_lib/array.py` |
 | neural1 | `sorted(..., reverse=True)`: `sorted(seq)` only | `__pyc__/05_builtins.py:418` |
 | sokoban | `filter(None, it)`. `Board.px`/`py` unresolved is cascade: the loop that sets them runs over the bottom list | `__pyc__/05_builtins.py` |
-| pygasus | ~~`array.tobytes()`~~ FIXED 2026-10-05: pygasus compiles. It then aborts at startup (rc 134, `C call argument type mismatch`): `ord(f.read(1))` passes `bytes`, and `ord` takes only `str`. The compiler emits a runtime assert there, not a compile error | `__pyc__/05_builtins.py:178` |
+| pygasus | ~~`array.tobytes()`, then `ord(bytes)`~~ FIXED 2026-10-05. `ord` takes only `str`, so `ord(f.read(1))` compiled to a runtime `C call argument type mismatch` abort, not a compile error. `ord(x)` now dispatches to `x.__pyc_ord__()` on str and bytes. pygasus is a `while True:` emulator, so both it and CPython hit the 120 s cap. A bounded copy (1500 `pExec` steps, checksumming registers, RAM, PPU/sprite RAM and the screen every 100) matches CPython at every checkpoint, 1.8 s vs 21.1 s | `__pyc__/05_builtins.py`, `01_str.py`, `01b_bytes.py` |
 | mao | ~~`array.tofile()`~~ FIXED 2026-10-05: `array` gained `tobytes`/`tofile` for the integer typecodes. That exposed a silent miscompile: `bytes.__mod__` copied any directive except `%c` through verbatim, so `b"%i %i\n" % (w, h)` wrote a literal `%i %i` PPM header. It now formats `%d`/`%i`/`%u` and raises on anything else. mao's `mao.ppm` is byte-identical to CPython's | `pyc_lib/array.py`, `__pyc__/01b_bytes.py` |
 | rsync | `list.index(x, start)`, `bytes(deque)`, `binfile.seek` | as above, plus `07_file.py` |
 | msp_ss | `b'%c' % int` (bytes `%` with a non-tuple operand), `struct.unpack('>H8xBB4x', ...)` | `01b_bytes.py:115`, `pyc_lib/struct.py` |

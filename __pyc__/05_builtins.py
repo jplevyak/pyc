@@ -176,7 +176,11 @@ def chr(x):
     return __pyc_c_call__(str, "_CG_chr", int, x)
 
 def ord(x):
-    return __pyc_c_call__(int, "_CG_ord", str, x)
+    # Dispatched on the receiver, like bytes(x) -> __pyc_tobytes__: str and
+    # bytes share a buffer layout, but _CG_ord is a strict C call declaring
+    # str, so ord(bytes) compiled to a runtime "C call argument type
+    # mismatch" abort (pygasus's `ord(f.read(1))`).
+    return x.__pyc_ord__()
 
 def __hex(x):
   if x < 10:
