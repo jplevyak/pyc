@@ -457,19 +457,19 @@ static int add_subdirs(cchar *p, Vec<cchar *> &a) {
   return n;
 }
 
-static void build_search_path(PycCompiler &ctx) {
+static Vec<cchar *> *make_search_path() {
+  Vec<cchar *> *search_path = new Vec<cchar *>;
   char f[PATH_MAX];
   char *here = dupstr(getcwd(f, PATH_MAX));
-  ctx.search_path = new Vec<cchar *>;
-  ctx.search_path->add(here);
+  search_path->add(here);
   // pyc's own standard-library shims (math, ...) live under
   // <system_dir>/pyc_lib, alongside the __pyc__ builtin module. Put
   // them on the module search path so `import math` resolves to the
   // shim (issue 025 bucket C). The cwd is searched first, so a user
   // module can still shadow a shim with its own file.
-  ctx.search_path->add(dupstrs((cchar *)system_dir, "/pyc_lib"));
+  search_path->add(dupstrs((cchar *)system_dir, "/pyc_lib"));
   const char *pythonpath_env = getenv("PYTHONPATH");
-  if (!pythonpath_env) return;
+  if (!pythonpath_env) return search_path;
   char *path = (char *)pythonpath_env;
   while (1) {
     char *p = path;
@@ -477,13 +477,16 @@ static void build_search_path(PycCompiler &ctx) {
     while (e > p && e[-1] == '/') e--;
     p = dupstr(p, e);
     if (file_exists(p)) {
-      ctx.search_path->add(p);
-      add_subdirs(p, *ctx.search_path);
+      search_path->add(p);
+      add_subdirs(p, *search_path);
     }
     if (!ee) break;
     path = ee + 1;
   }
+  return search_path;
 }
+
+static void build_search_path(PycCompiler &ctx) { ctx.search_path = make_search_path(); }
 
 
 void install_new_fun(Sym *f) {
@@ -658,13 +661,23 @@ static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args) {
 // min_arity: a floor for the unroll count. The REPL can't pre-scan future
 // interactive input, so it passes a generous floor; the batch path passes 0
 // and gets the exact program max.
+//
+// The scan covers every module the program imports, not just `mods`:
+// imports are resolved inside build_syms, after this has shaped the
+// builtin module, so without prescan_imported_modules a tuple built in
+// an imported module -- or a `*args` function defined in one, like
+// pyc_lib/struct.py's pack -- was missed, and a heterogeneous one was
+// refused through the runtime-index tail.
 void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
+  Vec<PyDAST *> asts;
+  for (PycModule *m : mods) asts.add(m->pymod);
+  prescan_imported_modules(mods, *make_search_path(), asts);
   int max_arity = min_arity;
-  for (PycModule *m : mods) scan_max_tuple_arity(m->pymod, max_arity);
+  for (PyDAST *a : asts) scan_max_tuple_arity(a, max_arity);
   {
     bool has_star = false;
     int max_call_args = 0;
-    for (PycModule *m : mods) scan_star_args(m->pymod, has_star, max_call_args);
+    for (PyDAST *a : asts) scan_star_args(a, has_star, max_call_args);
     if (has_star && max_call_args > max_arity) max_arity = max_call_args;
   }
   // Generate the two methods at exactly max_arity, wrapped in a throwaway
@@ -839,6 +852,23 @@ void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {
   fputs("    for i in range(n):\n", f);
   fputs("      r.append(self[i].__deepcopy__())\n", f);
   fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
+  // The tuple's elements as a list of int, read at CONSTANT indices so
+  // each conversion is one field's own. pyc_lib/struct.py's pack walks
+  // its `*args` with a runtime index, which is not a legal read of a
+  // record whose fields mix numeric types: minpng's
+  // `pack('<BHH', bool(last), n, ...)` is a (bool, int, int) record and
+  // was refused (ifa/134). shedskin's pack is a C++ variadic template
+  // whose fold expression instantiates one packer per argument type;
+  // this is the same per-position unroll, visible to the analysis.
+  fputs("  def __pyc_toints__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    r = []\n", f);
+  for (int i = 0; i < max_arity; i++)
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d): r.append(int(self[%d]))\n", i + 1, i);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        r.append(int(self[i]))\n", f);
+  fputs("    return r\n", f);
   fclose(f);
   PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", buf, (int)sz);
   free(buf);

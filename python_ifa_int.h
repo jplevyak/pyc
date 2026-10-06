@@ -300,6 +300,9 @@ PycModule *get_module(cchar *name, PycCompiler &ctx);
 // issues/113: PEP 328 -- turn a dot-prefixed relative module name into
 // an absolute dotted one, against the importing module's package.
 cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
+// Parse every module reachable by import from mods[1..] ahead of
+// build_syms (ASTs appended to `out`, and reused by import_file).
+void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out);
 int build_syms(PycModule *x, PycCompiler &ctx);
 void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name = 0);
 Sym *make_string(cchar *s, int len = -1);

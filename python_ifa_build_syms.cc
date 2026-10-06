@@ -26,6 +26,20 @@ static int compar_pycsymbol_by_name(const void *ai, const void *aj) {
 
 static void import_file(cchar *name, cchar *f, PycCompiler &ctx);
 
+// Imported modules parsed ahead of build_syms by prescan_imported_modules,
+// keyed on the file path; import_file takes its AST from here, so a
+// pre-scanned module is parsed once. A plain strcmp list: the pre-scan
+// runs before ifa_init, so cannonicalize_string is not available yet,
+// and a program imports a handful of modules.
+struct PreparsedModule { cchar *path; PyDAST *ast; };
+static Vec<PreparsedModule> preparsed_modules;
+
+static PyDAST *preparsed_module(cchar *path) {
+  for (PreparsedModule &m : preparsed_modules)
+    if (!strcmp(m.path, path)) return m.ast;
+  return nullptr;
+}
+
 // issues/113: resolve a possibly-DOTTED module name to a file under the
 // search-path root `p`. `a.b.c` is `<p>/a/b/c.py` if that is a module,
 // or `<p>/a/b/c/__init__.py` if it is a package. Returns null if neither
@@ -82,7 +96,8 @@ static void import_file(cchar *name, cchar *f, PycCompiler &ctx) {
   m->name = cannonicalize_string(name);
   int flen = strlen(f);
   m->is_package = flen >= 12 && !strcmp(f + flen - 12, "/__init__.py");
-  m->pymod = dparse_python_to_ast(f);
+  PyDAST *pre = preparsed_module(f);
+  m->pymod = pre ? pre : dparse_python_to_ast(f);
   ctx.modules->add(m);
   PycModule *saved_mod = ctx.mod;
   cchar *saved_filename = ctx.filename;
@@ -122,17 +137,18 @@ static void add_import_error(PycCompiler &ctx, cchar *fmt, ...) {
 // `..base`, or bare `.` / `..`. Resolve against the importing module's
 // package: one dot means that package, each extra dot strips a level.
 // A module with no dots is already absolute and passes through.
-cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx) {
+// `base` is the importing module's dotted name, null for the top-level
+// script; `is_package` says whether it is a package's __init__.py.
+static cchar *resolve_relative_module_in(cchar *mod, cchar *base, bool is_package) {
   if (!mod || mod[0] != '.') return mod;
   int dots = 0;
   while (mod[dots] == '.') dots++;
   cchar *rest = mod + dots;
   // The importing module's package: itself if it IS a package, else its
-  // parent. `ctx.mod` is null only for the top-level script, which has
-  // no package and so cannot host a relative import.
-  cchar *base = (ctx.mod && ctx.mod->name) ? ctx.mod->name : "";
-  char *b = dupstr(base);
-  if (ctx.mod && !ctx.mod->is_package) {
+  // parent. The top-level script has no package and so cannot host a
+  // relative import.
+  char *b = dupstr(base ? base : "");
+  if (base && !is_package) {
     char *d = strrchr(b, '.');
     if (d) *d = 0; else b[0] = 0;
   }
@@ -142,6 +158,10 @@ cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx) {
   }
   if (!*rest) return b[0] ? (cchar *)b : mod;
   return b[0] ? dupstrs(b, ".", rest) : rest;
+}
+
+cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx) {
+  return resolve_relative_module_in(mod, ctx.mod ? ctx.mod->name : nullptr, ctx.mod && ctx.mod->is_package);
 }
 
 static void rtrim_str(char *s) {
@@ -3123,4 +3143,93 @@ void gen_ifexpr(PycAST *ifcond, PycAST *ifif, PycAST *ifelse, PycAST *ast, bool 
 
 Sym *make_symbol(cchar *name) {
   return if1_make_symbol(if1, name);
+}
+
+// ---- Import pre-scan ----
+//
+// Every module the program can import, parsed BEFORE build_syms. The
+// builtin module is built first (ast_to_if1_baseline), and imports are
+// only resolved later, inside the user modules' build_syms -- so a pass
+// that must shape the builtin module from the whole program
+// (inject_tuple_methods' unroll count) saw only the main file. A
+// heterogeneous tuple created in an imported module, or a `*args`
+// function defined in one (pyc_lib/struct.py's pack), then went through
+// the runtime-index tail and was refused.
+//
+// Resolution follows build_import_syms: `import a.b` loads every prefix,
+// `from X import n` loads X and, when X.n is a module, X.n too. It is an
+// OVER-approximation by design -- a module that is found but never bound
+// only enlarges the scan -- and an unresolvable name is skipped here and
+// reported by build_import_syms as before.
+struct PrescanMod { PyDAST *ast; cchar *name; bool is_package; };
+
+static void prescan_load(cchar *mod, Vec<cchar *> &roots, Vec<PrescanMod> &work, Vec<PyDAST *> &out) {
+  if (!mod || !*mod || !strcmp(mod, "pyc_compat")) return;
+  for (cchar *p : roots) {
+    if (file_exists(p, "/__init__.py")) continue;
+    cchar *f = module_file(p, mod);
+    if (!f) continue;
+    if (preparsed_module(f)) return;
+    PyDAST *ast = dparse_python_to_ast(f);
+    if (!ast) return;  // import_file re-parses it and reports the error
+    preparsed_modules.add(PreparsedModule{f, ast});
+    out.add(ast);
+    int flen = strlen(f);
+    work.add(PrescanMod{ast, mod, flen >= 12 && !strcmp(f + flen - 12, "/__init__.py")});
+    return;
+  }
+}
+
+static void prescan_load_chain(cchar *mod, Vec<cchar *> &roots, Vec<PrescanMod> &work, Vec<PyDAST *> &out) {
+  for (cchar *d = strchr(mod, '.'); d; d = strchr(d + 1, '.')) prescan_load(dupstr(mod, d), roots, work, out);
+  prescan_load(mod, roots, work, out);
+}
+
+static cchar *trimmed(cchar *s) {
+  if (!s) return s;
+  char *t = dupstr(s);
+  rtrim_str(t);
+  return t;
+}
+
+static void prescan_imports(PyDAST *n, const PrescanMod &in, Vec<cchar *> &roots, Vec<PrescanMod> &work,
+                            Vec<PyDAST *> &out) {
+  if (!n) return;
+  if (n->kind == PY_import_name) {
+    for (PyDAST *c : n->children) {
+      if (c->kind == PY_dotted_as_name && c->children.n)
+        prescan_load_chain(trimmed(c->children[0]->str_val), roots, work, out);
+      else if (c->kind == PY_testlist)
+        for (PyDAST *cc : c->children)
+          if (cc->kind == PY_dotted_as_name && cc->children.n)
+            prescan_load_chain(trimmed(cc->children[0]->str_val), roots, work, out);
+    }
+    return;
+  }
+  if (n->kind == PY_import_from && n->children.n) {
+    cchar *from = resolve_relative_module_in(trimmed(n->children[0]->str_val), in.name, in.is_package);
+    prescan_load_chain(from, roots, work, out);
+    auto sub = [&](PyDAST *ia) {
+      if (ia->kind == PY_import_as_name && ia->children.n && ia->children[0]->str_val)
+        prescan_load(dupstrs(from, ".", trimmed(ia->children[0]->str_val)), roots, work, out);
+    };
+    for (int i = 1; i < n->children.n; i++) {
+      PyDAST *c = n->children[i];
+      if (c->kind == PY_testlist)
+        for (PyDAST *ia : c->children) sub(ia);
+      else
+        sub(c);
+    }
+    return;
+  }
+  for (PyDAST *c : n->children) prescan_imports(c, in, roots, work, out);
+}
+
+void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out) {
+  Vec<PrescanMod> work;
+  for (int i = 1; i < mods.n; i++) work.add(PrescanMod{mods[i]->pymod, nullptr, false});
+  for (int i = 0; i < work.n; i++) {
+    PrescanMod in = work[i];
+    prescan_imports(in.ast, in, roots, work, out);
+  }
 }

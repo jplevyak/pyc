@@ -62,6 +62,10 @@ def pack(fmt, *args):
     # shedskin_examples/sha. Pack results are a few bytes long.
     little = _little(fmt)
     out = b""
+    # Converted per position (tuple.__pyc_toints__, inject_tuple_methods)
+    # before any runtime index: `args[ai]` on a record whose fields mix
+    # numeric types -- minpng's (bool, int, int) -- has no layout.
+    vals = args.__pyc_toints__()
     ai = 0
     count = 0
     i = _start(fmt)
@@ -78,7 +82,7 @@ def pack(fmt, *args):
             if c == "x":
                 out = out + _byte(0)
                 continue
-            v = int(args[ai])
+            v = vals[ai]
             ai += 1
             for k in range(size):
                 if little:
