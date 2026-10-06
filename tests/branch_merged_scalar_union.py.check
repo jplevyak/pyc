@@ -1,6 +1,6 @@
-branch_merged_scalar_union.py:23:29: error: 'x' has mixed basic types:( int64 str ) 
-    if cond:
-            ^
+branch_merged_scalar_union.py:24:36: error: 'x' has mixed basic types:( int64 str ) 
+        x = 5
+             ^
 branch_merged_scalar_union.py:28:64: error: illegal primitive argument type 'x' illegal: int64 
         print(x + 10)
                      ^

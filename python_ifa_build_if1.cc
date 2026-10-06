@@ -2797,7 +2797,10 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
         fail("error line %d: '%s' is rebound after its decorated definition, whose body calls it recursively; "
              "the recursion would not see the new value (pyc captures it once, after decoration; issues/171)",
              ctx.lineno, a->sym->name ? a->sym->name : "?");
-      if1_move(if1, code, val, a->sym);
+      // The TARGET's node, not the statement's: a statement that opens an
+      // indented block starts on the line before it (the INDENT), so the
+      // statement's location blamed `if cond:` for `x = 5`.
+      if1_move(if1, code, val, a->sym, a);
     }
   }
 }
@@ -3574,7 +3577,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         else
           call_method(&ast->code, ast, a->rval, sym___setitem__, new_sym(ast), 2, a->sym, v->rval);
       } else {
-        if1_move(if1, &ast->code, v->rval, a->sym);
+        if1_move(if1, &ast->code, v->rval, a->sym, a);
       }
       ast->rval = v->rval; // Return the assigned value
       return 0;
@@ -3599,7 +3602,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           else
             call_method(&ast->code, ast, a->rval, sym___setitem__, new_sym(ast), 2, a->sym, v->rval);
         } else {
-          if1_move(if1, &ast->code, v->rval, a->sym);
+          if1_move(if1, &ast->code, v->rval, a->sym, a);
         }
       }
       ast->rval = 0;
