@@ -162,28 +162,40 @@ class bytes:
     return __pyc_c_call__(str, "_CG_string_identity", bytes, self)
   def __mod__(self, t):
     # Narrow, CPython-compatible subset of bytes' %-format mini-language:
-    # %c (one int arg, 0-255, -> that one byte) and literal %%. Covers
-    # the corpus's actual usage (mandelbrot2's PPM pixel writer,
-    # `b'%c%c%c%c' % (r,g,b,a)`) -- unlike str.__mod__, this deliberately
-    # does NOT reuse __pyc_format_string__/_CG_format_string (that
-    # primitive's FA transfer function returns sym_string
-    # unconditionally, python_ifa_main.cc, so it can't type as bytes) and
-    # does not implement %s/%d/%x/etc. Known gap; args must be a tuple
-    # (no single-value non-tuple form).
+    # %c (one int arg, 0-255, -> that one byte), %d/%i/%u (an int in
+    # decimal, no flags or width) and literal %%. Covers the corpus's
+    # actual usage (mandelbrot2's PPM pixel writer,
+    # `b'%c%c%c%c' % (r,g,b,a)`; mao's PPM header, `b"%i %i\n" % (w, h)`)
+    # -- unlike str.__mod__, this deliberately does NOT reuse
+    # __pyc_format_string__/_CG_format_string (that primitive's FA
+    # transfer function returns sym_string unconditionally,
+    # python_ifa_main.cc, so it can't type as bytes). Any other directive
+    # raises: it used to be copied through verbatim, so mao wrote a
+    # literal `%i %i` header. Args must be a tuple (no single-value
+    # non-tuple form).
     parts = []
     i = 0
     ti = 0
     n = len(self)
     while i < n:
       c = self[i]
-      if c == ord('%') and i + 1 < n and self[i + 1] == ord('c'):
-        parts.append(t[ti])
-        ti += 1
-        i += 2
-      elif c == ord('%') and i + 1 < n and self[i + 1] == ord('%'):
-        parts.append(c)
-        i += 2
-      else:
+      if c != ord('%'):
         parts.append(c)
         i += 1
+        continue
+      if i + 1 >= n:
+        raise ValueError("incomplete format")
+      d = self[i + 1]
+      if d == ord('c'):
+        parts.append(t[ti])
+        ti += 1
+      elif d == ord('d') or d == ord('i') or d == ord('u'):
+        for ch in str(int(t[ti])):
+          parts.append(ord(ch))
+        ti += 1
+      elif d == ord('%'):
+        parts.append(c)
+      else:
+        raise ValueError("bytes %-format: unsupported directive")
+      i += 2
     return bytes(parts)
