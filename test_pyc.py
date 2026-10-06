@@ -225,7 +225,11 @@ def _run_test(g, args, envs):
     exec_check_abs = os.path.abspath(exec_check)
     is_diff, diff_out = diff_files(exec_out_path, exec_check_abs)
     if rc != 0 or is_diff:
-        if os.path.exists(f"{g}.check_fail"):
+        # A `.check_fail` test expects the binary to FAIL, but its output
+        # must still match `.exec.check` (ifa/issues/184): accepting any
+        # failure OR any diff meant tests/none_receiver_raises.py would
+        # pass even if it printed the wrong answer and exited 0.
+        if os.path.exists(f"{g}.check_fail") and rc != 0 and not is_diff:
             return {"name": name, "status": "PASS", "msg": "(exec-fail-ok)"}
         diff_str = diff_out if is_diff else f"Exit code: {rc}"
         return {"name": name, "status": "FAIL", "stage": "EXEC", "msg": f"diff {envs['BUILD']}/{name}.exec.out {exec_check}", "diff": diff_str}
