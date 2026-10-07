@@ -1844,7 +1844,14 @@ static Label *exc_transfer_target(PycCompiler &ctx) {
 static void goto_exc_target(Code **code, PycAST *ast, PycCompiler &ctx, Label *target) {
   if (ctx.fun() && target == ctx.lreturn() && !ctx.fun()->fun_returns_value && !ctx.fun()->is_generator)
     if1_move(if1, code, sym_nil, ctx.fun()->ret, ast);
-  if1_goto(if1, code, target)->ast = ast;
+  Code *g = if1_goto(if1, code, target);
+  g->ast = ast;
+  // ifa/issues/049: leaving the function with an exception pending is the
+  // EXCEPTIONAL exit, which produces no value. Marked so FA does not count
+  // it as reaching the exit: a function that can only raise then never
+  // returns, and its result is never read. A generator or coroutine
+  // returns its handle whatever its body does, so it is left alone.
+  if (ctx.fun() && target == ctx.lreturn() && !ctx.fun()->is_generator && !ctx.fun()->is_async) g->exc_exit = 1;
 }
 
 // issue 011 (per-callee can-raise gating): given the VALUE Sym used
@@ -1926,6 +1933,7 @@ static void emit_exc_check(Code **code, PycAST *ast, PycCompiler &ctx, Sym *know
   Sym *cond = new_sym(ast);
   if1_send(if1, code, 4, 1, sym_primitive, make_symbol("isinstance"), t, sym_nil_type, cond)->ast = ast;
   Code *ifc = if1_if_goto(if1, code, cond, ast);
+  ifc->exc_check = 1;  // ifa/issues/049: see add_pnode_constraints' Code_IF
   Label *Lprop = if1_alloc_label(if1);
   Label *Lfollow = if1_alloc_label(if1);
   if1_if_label_false(if1, ifc, Lprop, ast);    // pending -> propagate stub

@@ -270,7 +270,7 @@ run, each doing genuinely non-redundant work.
 
 Investigating this surfaced a pre-existing, unrelated FA convergence
 gap — filed as
-[ifa/issues/049](../../ifa/issues/049-FA-raise-only-contour-notype.md): a
+[ifa/issues/049](../../ifa/issues/closed/049-FA-raise-only-contour-notype.md): a
 function whose only call site(s) in the whole program reach its
 raising branch (no call anywhere reaches the normal `return`) gets a
 bottom-typed return and spurious NOTYPE violations, since the raise
