@@ -17,6 +17,10 @@ class __pyc_file__:
   peek = ""
   def __init__(self, handle):
     self.handle = handle
+    # CPython's text file sits on a binary stream, `.buffer` (tarsalzp
+    # reads and writes `sys.stdin.buffer` / `sys.stdout.buffer`). Here it is
+    # a binary file over the same C stream.
+    self.buffer = __pyc_binfile__(handle)
   def __pyc_take_peek__(self):
     l = self.peek
     self.peeked = False

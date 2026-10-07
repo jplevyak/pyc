@@ -1,0 +1,2 @@
+b'bytes line\n'
+to stdout.buffer

@@ -59,24 +59,24 @@ that fails:
   triage.
 - `compile_rc=0` is not evidence of anything. Run the binaries.
 
-## Current state — sweep `check__default__a208ca8d+fd9a8c4c` (2026-10-07)
+## Current state — sweep `check__default__6f429396+92d1fa5d` (2026-10-07)
 
-77 programs: **71 compile, 6 do not; 33 match CPython.** Fixed since the
+77 programs: **72 compile, 5 do not; 34 match CPython.** Fixed since the
 2026-09-28 sweep (`4b61e721+d7af0afe`, 24 not compiling, 20 matching):
 lz2, mao and pygasus (2026-10-05); rdb, minpng, msp_ss, voronoi2 and
-mwmatching (2026-10-06); minilight, neural1, sokoban, othello2 and sudoku4 (2026-10-07). Each
+mwmatching (2026-10-06); minilight, neural1, sokoban, othello2, sudoku4 and tarsalzp (2026-10-07). Each
 has a row in the blocker table below.
 
 | outcome | programs |
 | --- | --- |
-| **matches CPython** (33) | amaze, astar, block, brainfuck, collatz, doom, fysphun, genetic, go, hq2x, kanoodle, linalg, loop, lz2, mandelbrot, msp_ss, mwmatching, nbody, neural1, neural2, othello, plcfrs, pylife, quameon, sat, sha, sokoban, solitaire, stereo, sudoku1, sudoku2, sudoku4, voronoi |
+| **matches CPython** (34) | amaze, astar, block, brainfuck, collatz, doom, fysphun, genetic, go, hq2x, kanoodle, linalg, loop, lz2, mandelbrot, msp_ss, mwmatching, nbody, neural1, neural2, othello, plcfrs, pylife, quameon, sat, sha, sokoban, solitaire, stereo, sudoku1, sudoku2, sudoku4, tarsalzp, voronoi |
 | runs, no deterministic stdout to compare (9) | dijkstra, mandelbrot2, minpng, othello2, pystone, sudoku3, sudoku5, tictactoe, voronoi2. othello2 prints a timing on every line, but its node counts differ from CPython's: int64 overflow, see its row below |
 | runs, **stdout differs** (5) | ant, circle, mastermind2, sieve, tonyjpegdecoder. sieve differs only in its `time:` lines, circle only in its Python-version line; the other three are not triaged (check for unseeded `random`, a `TIME` line, or int/float widening printing `1.0` for `1`) |
 | runs (rc 0), CPython reference times out at 120 s, so no oracle (18) | ac_encode, adatron, bh, chaos, chess, chull, kmeanspp, mao, minilight, oliva2, path_tracing, pisang, pygmy, richards, rubik2, score4, timsort, yopyra |
 | same exit status as CPython, no stdout verdict (3) | pygasus and webserver (both endless by design, 124; see pygasus's row below), rdb (both rc 1: the corpus run has no iPod directory) |
 | times out where CPython finishes (1) | dijkstra2 |
 | **compiles, then fails** (2) | genetic2 139 (issues/174), life 134 (ifa/183) |
-| **does not compile** (6) | othello3 (compile timeout), rsync, rubik, softrender, sunfish, tarsalzp |
+| **does not compile** (5) | othello3 (compile timeout), rsync, rubik, softrender, sunfish |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -160,6 +160,15 @@ That is a silent wrong answer (issues/041), not a compile error.
   slices all went through this path. `tests/class_attr_subscript.py`
   covers it. tarsalzp now stops at a later error,
   `Main.py: illegal call argument type ... illegal: Buffer`.
+
+  **Compiles 2026-10-07.** That later error was `sys.stdin.buffer` /
+  `sys.stdout.buffer`: a CPython text file sits on a binary stream,
+  `.buffer`, and pyc's file had none. Each text file now carries a
+  `__pyc_binfile__` over the same C stream. tarsalzp compiles with no
+  diagnostics on both backends; its help output matches CPython (the
+  corpus run), and encoding a 229 KB file gives CPython's exact 61916-byte
+  stream (5.2 s vs 13.8 s), with both decodes restoring the input, through
+  `fi=`/`fo=` and through stdin/stdout.
 - **sudoku1: `u == []` stops folding when the program also calls
   `list.pop(i)` with a non-constant `i`.** This is ifa/160 fragility.
   Minimal:
