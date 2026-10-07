@@ -1,0 +1,4 @@
+b'abXcd' 5 97
+bytearray(b'\x00\x00\x00') b'\x00\x00'
+bytearray(b'AB') b'hi' bytearray(b'q')
+['a', 'b'] [1, 2]

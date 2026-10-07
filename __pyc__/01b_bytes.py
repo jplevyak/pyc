@@ -114,6 +114,13 @@ class bytes:
   def __pyc_tobytes__(self):
     # bytes(some_bytes): identity, matching CPython.
     return self
+  def __pyc_tobytearray__(self):
+    # bytearray(some_bytes): a mutable copy.
+    n = len(self)
+    r = bytearray(n)
+    for i in range(n):
+      r[i] = self[i]
+    return r
   def __hash__(self):
     return __pyc_c_call__(int, "_CG_str_hash", bytes, self)
   def __eq__(self, x):

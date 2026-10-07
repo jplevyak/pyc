@@ -417,7 +417,14 @@ static char *decode_string_content(const char *s, const char *end, bool is_raw, 
       case 'f':  *op++ = '\f'; p++; break;
       case 'v':  *op++ = '\v'; p++; break;
       case 'a':  *op++ = '\a'; p++; break;
-      case '0':  *op++ = '\0'; p++; break;
+      // A backslash before a newline is a line continuation inside the
+      // literal: both vanish (sokoban's `level = """\` + newline). It was
+      // kept verbatim, so the level gained a "\" first row and every row
+      // index moved down by one.
+      case '\n': p++; break;
+      case '\r': p++; if (p < end && *p == '\n') p++; break;
+      // `\0` is the octal escape with one digit; the default case reads up
+      // to three (`\012` is "\n"), which a separate `case '0'` cut short.
       case 'x': {
         p++;
         int v = 0;
@@ -950,6 +957,22 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       PycAST *a0 = getAST(pos_args[0], ctx);
       ast->rval = new_sym(ast);
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tobytes__"), ast->rval, 0);
+      return 1;
+    }
+  }
+  // bytearray(x): the same dispatch. bytearray is a @vector class whose
+  // trailing array is sized by its constructor argument, so the raw
+  // constructor takes only a length; `bytearray(some_bytes)` (sokoban's
+  // `bytearray(data)`) had no conversion. x.__pyc_tobytearray__() does it:
+  // int allocates n zero bytes, bytes/bytearray/list copy. Builtin-module
+  // code keeps the raw constructor -- those methods call `bytearray(n)`
+  // themselves, and rewriting that would recurse.
+  if (f && pos_args.n == 1 && f->name && !strcmp(f->name, "bytearray") && !ctx.is_builtin()) {
+    PycSymbol *ba_cls = make_PycSymbol(ctx, "bytearray", PYC_USE);
+    if (ba_cls && f == ba_cls->sym) {
+      PycAST *a0 = getAST(pos_args[0], ctx);
+      ast->rval = new_sym(ast);
+      call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tobytearray__"), ast->rval, 0);
       return 1;
     }
   }

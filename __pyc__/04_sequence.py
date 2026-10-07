@@ -124,6 +124,16 @@ class list:
     # `self.__pyc_tolist__()` -- make_seq copies its source itself, so a
     # list needs no intermediate.
     return self
+  def __pyc_tobytearray__(self):
+    # bytearray([ints]). CPython requires each in range(0, 256).
+    n = len(self)
+    r = bytearray(n)
+    for i in range(n):
+      v = self[i]
+      if v < 0 or v > 255:
+        raise ValueError("byte must be in range(0, 256)")
+      r[i] = v
+    return r
   def __pyc_tobytes__(self):
     # bytes(a_list_of_ints) -- CPython requires every element in
     # range(0, 256); out-of-range values are truncated to their low 8

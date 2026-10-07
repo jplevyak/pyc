@@ -430,7 +430,16 @@ def map(f, seq):
   return r
 
 def filter(f, seq):
+  # CPython: `filter(None, it)` keeps the items that are true (sokoban's
+  # `filter(None, board.splitlines())` drops empty lines). It used to call
+  # f(x) regardless, a call on None. `f is None` folds per contour, so a
+  # None `f` never reaches the call.
   r = []
+  if f is None:
+    for x in seq:
+      if x:
+        r.append(x)
+    return r
   for x in seq:
     if f(x):
       r.append(x)

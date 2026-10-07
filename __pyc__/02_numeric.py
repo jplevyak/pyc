@@ -1,4 +1,7 @@
 class int:
+  # bytearray(n): n zero bytes (the frontend's bytearray(x) dispatch).
+  def __pyc_tobytearray__(self):
+    return bytearray(self)
   # bytes %-formatting's uniform argument record (01b_bytes.py).
   def __pyc_bytes_fmtarg__(self):
     return __pyc_bytes_fmtarg__(0, self, 0.0, b"")

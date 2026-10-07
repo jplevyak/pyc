@@ -16,6 +16,19 @@ class bytearray:
                              __pyc_primitive__(__pyc_symbol__("coerce"), __pyc_char__, value))
   def __len__(self):
     return self.length
+  def __pyc_tobytearray__(self):
+    # bytearray(a_bytearray): a copy.
+    n = self.length
+    r = bytearray(n)
+    for i in range(n):
+      r[i] = self[i]
+    return r
+  def __pyc_tobytes__(self):
+    # bytes(a_bytearray) (sokoban's `bytes(data2)`).
+    r = []
+    for i in range(self.length):
+      r.append(self[i])
+    return r.__pyc_tobytes__()
   def __iter__(self):
     return __base_iter__(self)
   def __str__(self):

@@ -1,0 +1,4 @@
+'abcdef'
+'xy'
+'p\\\nq'
+'\n' 'a\x00b' 'AA'
