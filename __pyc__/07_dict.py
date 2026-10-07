@@ -291,6 +291,22 @@ class dict:
         s = (s + 1) & m
         p = self._index[s]
     return default
+  # ifa/issues/086: d.copy(), a SHALLOW copy: a new dict with its own
+  # storage and the same key and value references (sudoku4's
+  # `assign(values.copy(), s, d)`). __pyc_copy__ is copy.copy's hook, which
+  # fell back to the copy primitive's one-level struct clone: the clone
+  # shared _keys/_vals/_index with the original, so writing an existing
+  # key through the copy changed the original too.
+  def copy(self):
+    r = dict()
+    r._keys = self._keys.__pyc_copy__()
+    r._vals = self._vals.__pyc_copy__()
+    r._len = self._len
+    r._index = self._index.__pyc_copy__()
+    r._mask = self._mask
+    return r
+  def __pyc_copy__(self):
+    return self.copy()
   def update(self, other):
     if other is None:
       return self

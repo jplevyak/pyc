@@ -556,6 +556,9 @@ class list:
     for k in range(n):
       h = h * 1000003 + self[k].__hash__()
     return h
+  # ifa/issues/086: l.copy(), the same shallow copy as copy.copy(l).
+  def copy(self):
+    return self.__pyc_copy__()
   def __pyc_copy__(self):
     # ifa/issues/118: SHALLOW copy -- a new list, the same element
     # references. The copy primitive cannot do this: cg.cc emits

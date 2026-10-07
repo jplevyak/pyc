@@ -59,24 +59,24 @@ that fails:
   triage.
 - `compile_rc=0` is not evidence of anything. Run the binaries.
 
-## Current state — sweep `check__default__4179d8cb+0f64aa0f` (2026-10-07)
+## Current state — sweep `check__default__a208ca8d+fd9a8c4c` (2026-10-07)
 
-77 programs: **70 compile, 7 do not; 32 match CPython.** Fixed since the
+77 programs: **71 compile, 6 do not; 33 match CPython.** Fixed since the
 2026-09-28 sweep (`4b61e721+d7af0afe`, 24 not compiling, 20 matching):
 lz2, mao and pygasus (2026-10-05); rdb, minpng, msp_ss, voronoi2 and
-mwmatching (2026-10-06); minilight, neural1, sokoban and othello2 (2026-10-07). Each
+mwmatching (2026-10-06); minilight, neural1, sokoban, othello2 and sudoku4 (2026-10-07). Each
 has a row in the blocker table below.
 
 | outcome | programs |
 | --- | --- |
-| **matches CPython** (32) | amaze, astar, block, brainfuck, collatz, doom, fysphun, genetic, go, hq2x, kanoodle, linalg, loop, lz2, mandelbrot, msp_ss, mwmatching, nbody, neural1, neural2, othello, plcfrs, pylife, quameon, sat, sha, sokoban, solitaire, stereo, sudoku1, sudoku2, voronoi |
+| **matches CPython** (33) | amaze, astar, block, brainfuck, collatz, doom, fysphun, genetic, go, hq2x, kanoodle, linalg, loop, lz2, mandelbrot, msp_ss, mwmatching, nbody, neural1, neural2, othello, plcfrs, pylife, quameon, sat, sha, sokoban, solitaire, stereo, sudoku1, sudoku2, sudoku4, voronoi |
 | runs, no deterministic stdout to compare (9) | dijkstra, mandelbrot2, minpng, othello2, pystone, sudoku3, sudoku5, tictactoe, voronoi2. othello2 prints a timing on every line, but its node counts differ from CPython's: int64 overflow, see its row below |
 | runs, **stdout differs** (5) | ant, circle, mastermind2, sieve, tonyjpegdecoder. sieve differs only in its `time:` lines, circle only in its Python-version line; the other three are not triaged (check for unseeded `random`, a `TIME` line, or int/float widening printing `1.0` for `1`) |
 | runs (rc 0), CPython reference times out at 120 s, so no oracle (18) | ac_encode, adatron, bh, chaos, chess, chull, kmeanspp, mao, minilight, oliva2, path_tracing, pisang, pygmy, richards, rubik2, score4, timsort, yopyra |
 | same exit status as CPython, no stdout verdict (3) | pygasus and webserver (both endless by design, 124; see pygasus's row below), rdb (both rc 1: the corpus run has no iPod directory) |
 | times out where CPython finishes (1) | dijkstra2 |
 | **compiles, then fails** (2) | genetic2 139 (issues/174), life 134 (ifa/183) |
-| **does not compile** (7) | othello3 (compile timeout), rsync, rubik, softrender, sudoku4, sunfish, tarsalzp |
+| **does not compile** (6) | othello3 (compile timeout), rsync, rubik, softrender, sunfish, tarsalzp |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -119,7 +119,7 @@ standalone probe. Fixing a program's first blocker may uncover more.
 | minilight, mwmatching | ~~`next(f)` on a file: `__pyc_file__` has `__iter__` but no `__next__` (a CPython file is its own iterator)~~ FIXED 2026-10-06: a file is now its own iterator (`iter(f) is f`), with one line of look-ahead for the for-loop protocol that every read drains first, so `next(f)`, `for line in f` and `readline` share one position; and `next()` past exhaustion raises StopIteration for every iterator. mwmatching compiles with no diagnostics and matches CPython (bar its `TIME` line); this was its only blocker. minilight gets past it to its other blockers | `__pyc__/07_file.py`, `05_builtins.py` |
 | minilight | FIXED 2026-10-07; three root causes behind `next(f)`, plus an LLVM bug. (1) `re.Pattern` had no `search` (camera/scene/triangle parse with `SEARCH.search(line)`); it was left out for ifa/040, which is closed. (2) `b'%s ... %u %u' % (PPM_ID, URI, w, h)`, a mixed tuple the bytes formatter read at a runtime index (ifa/134), and no `%s`; it now goes through `tuple.__pyc_bytes_fmtargs__`, a per-position unroll. (3) unseeded `random()` returned 0.0 forever (MT19937 from an all-zero state), so the path tracer's Russian roulette never ended a path and `get_radiance` overflowed the stack; it now seeds from OS entropy on first use, as CPython does on import. (4, LLVM only) same-named module globals were one LLVM global, so camera's `SEARCH` was scene's. Unmodified, minilight compiles (only the `raise '...'` warning, line 49 above) and runs on both backends; seeded, its image is byte-identical to CPython's. The new errors in bytes `%` do not propagate yet (issues/175) | `pyc_lib/re.py`, `01b_bytes.py`, `python_ifa_main.cc`, `pyc_lib/random.py`, `cg_emit_llvm.cc` |
 | othello2 | ~~`int.bit_count()`~~ FIXED 2026-10-07: `bit_count` added (popcount of `abs(x)`, CPython's definition), and two literal bugs behind it: `0b`/`0o` literals were parsed as base 10 and silently became 0 (its `move & 0b111`), and `_` digit separators did not parse. othello2 compiles and runs (0.5 s vs 49 s), but searches 220250 nodes where CPython searches 222922: its bitboards are 64-bit values up to 2^64, which wrap negative in pyc's int64, so `bit_count` of abs() counts the wrong bits. Counting the raw 64-bit pattern (shedskin's choice) gives CPython's 222922, but breaks `(-7).bit_count()` (62, not 3); kept CPython's definition (author's choice). The difference is int64 overflow, a representation limit | `__pyc__/02_numeric.py`, `python.g`, `python_ifa_build_if1.cc` |
-| sudoku4 | `dict.copy()` | `__pyc__/07_dict.py` |
+| sudoku4 | ~~`dict.copy()`~~ FIXED 2026-10-07 (ifa/086): `copy` on list, dict and set; and `copy.copy` of a dict or set no longer shares the original's storage (an overwrite through the copy changed the original). sudoku4 compiles with no diagnostics and matches CPython (bar `TIME`); this was its only blocker | `__pyc__/04_sequence.py`, `07_dict.py`, `08_set.py` |
 | amaze | `list.index(x, start)`: `index(self, x)` only | `__pyc__/04_sequence.py:337` |
 | lz2 | ~~`str.find(sub, start, end)`: `find(self, sub)` only~~ FIXED 2026-10-05: `find`/`index` take CPython's slice-normalized `start`/`end`. lz2 compiles and runs; stdout and both output files match CPython. `find` and `__contains__` moved to a C scan (`_CG_str_find`): the `__pyc__` char loop allocated two 1-char strs per probe and made lz2 take 64 s, against CPython's 4.1 s. It now takes 4.1 s | `__pyc__/01_str.py` |
 | rdb | ~~`str.split(sep, maxsplit)`, then `array.tobytes`/`fromfile`~~ FIXED 2026-10-06. It needed `str.split(sep, maxsplit)`, `bytes.split`/`find`, `bool &=`, file `seek`/`tell`, and `array`'s `tolist`/`fromlist`/`frombytes`/`fromfile`, slicing and `del` of a slice. One corpus edit: `a.fromstring` -> `a.frombytes` (Python 2; CPython 3 raises `AttributeError` there, see PYC_CHANGES.md). rdb compiles with no warnings. The corpus run has no iPod directory, so pyc and CPython both stop at that check with rc 1 and identical output. On scratch iPod fixtures (3 files, then 42 across nested directories, each run twice to exercise the read-back path), stdout and all four database files are byte-identical to CPython's | `__pyc__/01_str.py`, `01b_bytes.py`, `00_runtime.py`, `07_file.py`, `pyc_lib/array.py` |

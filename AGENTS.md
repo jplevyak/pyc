@@ -100,7 +100,7 @@ frontend annotations.
 **Before blaming the splitter, check for a missing builtin.** On
 2026-09-28, `list.copy`, `dict.copy` and `str.rstrip` were the first
 errors of corpus programs whose failures had been read as splitting
-problems ([ifa/086](ifa/issues/086-list-and-dict-have-no-copy-method.md)).
+problems ([ifa/086](ifa/issues/closed/086-list-and-dict-have-no-copy-method.md)).
 A cascade from an untyped value looks like imprecision everywhere
 downstream.
 

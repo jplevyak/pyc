@@ -101,6 +101,18 @@ class set:
       i += 1
       idx[s] = i
     self._mask = m
+  # ifa/issues/086: s.copy(), a SHALLOW copy with its own storage. As for
+  # dict, copy.copy's fallback struct clone shared _items/_index, so the
+  # copy and the original mutated each other.
+  def copy(self):
+    r = set()
+    r._items = self._items.__pyc_copy__()
+    r._len = self._len
+    r._index = self._index.__pyc_copy__()
+    r._mask = self._mask
+    return r
+  def __pyc_copy__(self):
+    return self.copy()
   def __len__(self):
     return self._len
   def __contains__(self, item):
