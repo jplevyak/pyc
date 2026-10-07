@@ -1,0 +1,1 @@
+issues/175 -- no exception check follows an operator send, so a raise inside __add__ / bytes.__mod__ stays pending past the expression instead of reaching the handler. The check file holds CPython's output; this flips to PASS when operators check.

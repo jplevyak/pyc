@@ -1,4 +1,7 @@
 class int:
+  # bytes %-formatting's uniform argument record (01b_bytes.py).
+  def __pyc_bytes_fmtarg__(self):
+    return __pyc_bytes_fmtarg__(0, self, 0.0, b"")
 #  @must_specialize("x:anynum") -- for dispatching to __radd__
 #  def __add__(self, x):
 #    return __pyc_operator__(self, "+", x)
@@ -135,6 +138,8 @@ class int:
                           int, self, str, spec)
 
 class float:
+  def __pyc_bytes_fmtarg__(self):
+    return __pyc_bytes_fmtarg__(1, 0, self, b"")
   def __add__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __sub__(self, x):

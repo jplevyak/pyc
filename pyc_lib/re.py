@@ -6,12 +6,15 @@
 # non-capturing (?:...)), alternation '|', quantifiers * + ? {m,n}
 # (with non-greedy '?' suffix), and anchors ^ $.
 #
-# Deliberately narrow surface -- module-level match()/fullmatch()/
-# compile() only, each a single one-shot Pattern().match() call. Two
-# pyc compiler bugs (both ifa/issues/040-class cross-clone
-# interference in the whole-program flow analysis, not bugs in this
-# module's logic -- confirmed by removing/isolating code, not
-# guessed) cut the surface down from a fuller re implementation:
+# Surface: compile(), match(), fullmatch() and search(), module-level and
+# on Pattern. findall/sub/split are not implemented (a missing name, not a
+# wrong answer).
+#
+# search() was left out because of the two compiler bugs below. Both were
+# ifa/issues/040-class cross-clone interference, and 040 is closed: a
+# Pattern matched any number of times works, and search() -- _run() looped
+# over start positions -- is minilight's camera parser (2026-10-07). The
+# notes stay as history, and as the reason `.kids` is never rebound:
 #
 # 1. Assigning a locally-built list wholesale to a shared class field
 #    (`node.kids = some_list`) -- whether a single-element list
@@ -27,11 +30,7 @@
 # 2. Calling Pattern._run() (the match attempt) more than once on the
 #    same Pattern instance segfaults -- confirmed with two sequential
 #    `.match()` calls on one compiled pattern, no search() involved.
-#    Root cause not found. This is why search() (which loops _run()
-#    over start positions) and findall/sub/split (which do the same)
-#    are not implemented: build a fresh Pattern (or use the
-#    module-level match/fullmatch functions, which do this for you)
-#    for every match attempt.
+#    Root cause not found then; no longer reproduces (see above).
 #
 # str has no working slice path yet (see __pyc__/01_str.py), so all
 # substring work here goes through single-char indexing.
@@ -626,6 +625,17 @@ class Pattern:
             return m
         return None
 
+    def search(self, s):
+        # The first position at which the pattern matches, as CPython.
+        start = 0
+        n = len(s)
+        while start <= n:
+            m = self._run(s, start)
+            if m is not None:
+                return m
+            start += 1
+        return None
+
 
 def compile(pattern):
     return Pattern(pattern)
@@ -635,3 +645,6 @@ def match(pattern, s):
 
 def fullmatch(pattern, s):
     return Pattern(pattern).fullmatch(s)
+
+def search(pattern, s):
+    return Pattern(pattern).search(s)

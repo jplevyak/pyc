@@ -941,6 +941,21 @@ inline int64 _CG_fopen(char *path, char *mode) {
   return (int64)(intptr_t)f;
 }
 inline int64 _CG_errno(void) { return (int64)errno; }
+
+// 32 bits of OS entropy, for pyc_lib/random.py's seed on first use: CPython
+// seeds an unseeded `random` from os.urandom, and pyc's generator used to
+// start from an all-zero state, so random() returned 0.0 forever (minilight's
+// path tracer then recursed until the stack overflowed). Falls back to time
+// and pid only if getentropy fails.
+inline int64 _CG_entropy32(void) {
+  uint32_t v = 0;
+  if (getentropy(&v, sizeof(v)) != 0) {
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    v = (uint32_t)(tv.tv_sec ^ (tv.tv_usec << 12) ^ ((uint64_t)getpid() << 20));
+  }
+  return (int64)v;
+}
 inline char *_CG_strerror(int64 e) { return _CG_String(strerror((int)e)); }
 inline int64 _CG_fstd(int64 which) { return (int64)(intptr_t)(which == 0 ? stdin : which == 1 ? stdout : stderr); }
 inline int64 _CG_fclose(int64 h) { return h ? (int64)fclose((FILE *)(intptr_t)h) : 0; }

@@ -324,6 +324,11 @@ class __pyc_None_type__:
     return True
 
 class bool:
+  # bytes %-formatting reads a bool as the int it is (`b'%d' % True`).
+  def __pyc_bytes_fmtarg__(self):
+    if self:
+      return __pyc_bytes_fmtarg__(0, 1, 0.0, b"")
+    return __pyc_bytes_fmtarg__(0, 0, 0.0, b"")
   # issues/127: `&` and `|` must split on whether the operand is a bool.
   #
   # bool is an int SUBTYPE, so CPython's rule differs by operand:

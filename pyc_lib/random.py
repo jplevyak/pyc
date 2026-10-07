@@ -28,7 +28,7 @@ _UPPER = 0x80000000
 _LOWER = 0x7fffffff
 
 _mt = [0] * 624
-_mti = 625
+_mti = 625  # _N + 1: not seeded yet (_genrand seeds from OS entropy)
 
 def _init_genrand(s):
     global _mti
@@ -73,6 +73,18 @@ def _init_by_array(key):
 
 def _genrand():
     global _mti
+    if _mti == _N + 1:
+        # Never seeded. CPython seeds from os.urandom when `random` is
+        # imported; with no seed this generator ran from an all-zero
+        # state and returned 0 forever, so random() was 0.0 (minilight's
+        # Russian roulette never ended a path). Seed from OS entropy on
+        # first use, the same way seed() does: init_by_array over words.
+        key = []
+        i = 0
+        while i < 8:
+            key.append(__pyc_c_call__(int, "_CG_entropy32"))
+            i = i + 1
+        _init_by_array(key)
     if _mti >= _N:
         kk = 0
         while kk < _N - _M:

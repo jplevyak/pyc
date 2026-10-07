@@ -1,4 +1,19 @@
+# One argument of bytes %-formatting, whatever its type: kind 0 int, 1
+# float, 2 bytes. A tuple of mixed arguments (minilight's
+# `b'%s ... %u %u' % (PPM_ID, URI, w, h)`) cannot be read at a runtime index
+# -- its fields differ in type (ifa/134) -- so tuple.__pyc_bytes_fmtargs__
+# (inject_tuple_methods) converts it position by position into a list of
+# these, and the formatter indexes that list.
+class __pyc_bytes_fmtarg__:
+  def __init__(self, kind, i, f, b):
+    self.kind = kind
+    self.i = i
+    self.f = f
+    self.b = b
+
 class bytes:
+  def __pyc_bytes_fmtarg__(self):
+    return __pyc_bytes_fmtarg__(2, 0, 0.0, self)
   # bytes shares str's exact length-prefixed char* buffer layout (see
   # sym_bytes registration, ifa/if1/ast.cc) -- every method below that
   # only touches the raw buffer (not a single element) reuses str's own
@@ -246,21 +261,19 @@ class bytes:
     # `b'%c' % c` (msp_ss). isinstance folds per contour, so a non-tuple
     # `t` never reaches the tuple path.
     if isinstance(t, tuple):
-      return self.__pyc_format__(t)
-    return self.__pyc_format__((t,))
-  def __pyc_format__(self, t):
-    # Narrow, CPython-compatible subset of bytes' %-format mini-language:
-    # %c (one int arg, 0-255, -> that one byte), %d/%i/%u (an int in
-    # decimal, no flags or width) and literal %%. Covers the corpus's
-    # actual usage (mandelbrot2's PPM pixel writer,
-    # `b'%c%c%c%c' % (r,g,b,a)`; mao's PPM header, `b"%i %i\n" % (w, h)`)
-    # -- unlike str.__mod__, this deliberately does NOT reuse
-    # __pyc_format_string__/_CG_format_string (that primitive's FA
+      args = t.__pyc_bytes_fmtargs__()
+    else:
+      args = [t.__pyc_bytes_fmtarg__()]
+    # CPython's bytes %-format for the directives without flags or width:
+    # %c (an int in range(256), or one byte), %d/%i/%u (an int, or a float
+    # truncated), %s/%b (bytes), and %%. Unlike str.__mod__, this does NOT
+    # reuse __pyc_format_string__/_CG_format_string (that primitive's FA
     # transfer function returns sym_string unconditionally,
-    # python_ifa_main.cc, so it can't type as bytes). Any other directive
-    # raises: it used to be copied through verbatim, so mao wrote a
-    # literal `%i %i` header. `t` is always a tuple here (__mod__ wraps a
-    # single value).
+    # python_ifa_main.cc, so it cannot type as bytes). Any other directive
+    # raises: it used to be copied through verbatim, so mao wrote a literal
+    # `%i %i` header. `args` is a list of __pyc_bytes_fmtarg__. The raises
+    # are in __mod__'s own body: builtin-module code does not propagate a
+    # callee's raise (emit_exc_check).
     parts = []
     i = 0
     ti = 0
@@ -274,16 +287,38 @@ class bytes:
       if i + 1 >= n:
         raise ValueError("incomplete format")
       d = self[i + 1]
-      if d == ord('c'):
-        parts.append(t[ti])
-        ti += 1
-      elif d == ord('d') or d == ord('i') or d == ord('u'):
-        for ch in str(int(t[ti])):
-          parts.append(ord(ch))
-        ti += 1
-      elif d == ord('%'):
+      i += 2
+      if d == ord('%'):
         parts.append(c)
+        continue
+      if ti >= len(args):
+        raise TypeError("not enough arguments for format string")
+      a = args[ti]
+      ti += 1
+      if d == ord('c'):
+        if a.kind == 0:
+          if a.i < 0 or a.i > 255:
+            raise OverflowError("%c arg not in range(256)")
+          parts.append(a.i)
+        elif a.kind == 2 and len(a.b) == 1:
+          parts.append(a.b[0])
+        else:
+          raise TypeError("%c requires an integer in range(256) or a single byte")
+      elif d == ord('d') or d == ord('i') or d == ord('u'):
+        if a.kind == 2:
+          raise TypeError("%d format: a real number is required, not bytes")
+        v = a.i
+        if a.kind == 1:
+          v = int(a.f)
+        for ch in str(v):
+          parts.append(ord(ch))
+      elif d == ord('s') or d == ord('b'):
+        if a.kind != 2:
+          raise TypeError("%b requires a bytes-like object, or an object that implements __bytes__")
+        for x in a.b:
+          parts.append(x)
       else:
         raise ValueError("bytes %-format: unsupported directive")
-      i += 2
+    if ti < len(args):
+      raise TypeError("not all arguments converted during bytes formatting")
     return bytes(parts)

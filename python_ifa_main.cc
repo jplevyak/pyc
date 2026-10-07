@@ -858,6 +858,19 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   // was refused (ifa/134). shedskin's pack is a C++ variadic template
   // whose fold expression instantiates one packer per argument type;
   // this is the same per-position unroll, visible to the analysis.
+  // The same unroll for bytes %-formatting: each position becomes a
+  // __pyc_bytes_fmtarg__ (__pyc__/01b_bytes.py), one type, so the formatter
+  // can index the list at runtime. minilight's PPM header formats
+  // (bytes, bytes, int, int).
+  fputs("  def __pyc_bytes_fmtargs__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    r = []\n", f);
+  for (int i = 0; i < max_arity; i++)
+    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d): r.append(self[%d].__pyc_bytes_fmtarg__())\n", i + 1, i);
+  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
+  fprintf(f, "      for i in range(%d, n):\n", max_arity);
+  fputs("        r.append(self[i].__pyc_bytes_fmtarg__())\n", f);
+  fputs("    return r\n", f);
   fputs("  def __pyc_toints__(self):\n", f);
   fputs("    n = len(self)\n", f);
   fputs("    r = []\n", f);

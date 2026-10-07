@@ -60,6 +60,7 @@ extern int64 _CG_str_find(const char *s, const char *sub, int64 i, int64 e);
 extern char *_CG_one_char_string(unsigned char c);
 extern int64 _CG_int_pow(int64 b, int64 e);
 extern int64 _CG_errno(void);
+extern int64 _CG_entropy32(void);
 extern char *_CG_strerror(int64 e);
 extern char *_CG_char_from_string(void *s, int i);
 extern int64 _CG_int_from_string(void *s, int i);
