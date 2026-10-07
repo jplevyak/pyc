@@ -235,6 +235,30 @@ static bool has_int_literal_base_prefix(const char *s) {
   return s[0] == '0' && (s[1] == 'x' || s[1] == 'X' || s[1] == 'o' || s[1] == 'O' || s[1] == 'b' || s[1] == 'B');
 }
 
+// A numeric literal's text without its `_` digit separators (`1_000`,
+// `0x_ff`, `1e1_0`); the grammar admits one between digits, as Python 3.
+static char *strip_numeric_underscores(const char *s) {
+  char *r = (char *)MALLOC(strlen(s) + 1), *o = r;
+  for (; *s; s++)
+    if (*s != '_') *o++ = *s;
+  *o = 0;
+  return r;
+}
+
+// The value of an integer literal's text. Both readers below used to
+// handle only `0x` and a C-style leading-zero octal, so `0b111` and `0o17`
+// fell through to base 10, stopped at the `b`/`o`, and were silently 0
+// (othello2's `move & 0b111`).
+static int64 parse_int_literal(const char *text) {
+  const char *s = strip_numeric_underscores(text);
+  char *end;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) return (int64)strtoull(s + 2, &end, 16);
+  if (s[0] == '0' && (s[1] == 'o' || s[1] == 'O')) return (int64)strtoull(s + 2, &end, 8);
+  if (s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) return (int64)strtoull(s + 2, &end, 2);
+  if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') return (int64)strtoull(s + 1, &end, 8);
+  return (int64)strtoll(s, &end, 10);
+}
+
 // Parse a PY_number PyDAST node as a decimal/hex/octal integer
 // literal. Mirrors the int-literal branch of make_num_pyda further
 // below: the grammar doesn't reliably populate is_int/int_val (see
@@ -248,10 +272,7 @@ static bool try_int_literal(PyDAST *n, long *out) {
   if (!has_int_literal_base_prefix(s))
     for (const char *p = s; *p; p++)
       if (*p == '.' || *p == 'e' || *p == 'E' || *p == 'j' || *p == 'J') return false;
-  char *end;
-  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) *out = strtol(s + 2, &end, 16);
-  else if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') *out = strtol(s + 1, &end, 8);
-  else *out = strtol(s, &end, 10);
+  *out = (long)parse_int_literal(s);
   return true;
 }
 
@@ -341,16 +362,7 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
     sprintf(buf, "%ld", n->int_val);
     return if1_const(if1, sym_int64, buf, &imm);
   } else if (!is_float) {
-    // Integer: parse hex/oct/decimal
-    char *end;
-    int64 v;
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
-      v = (int64)strtoul(s + 2, &end, 16);
-    else if (s[0] == '0' && s[1] >= '0' && s[1] <= '7')
-      v = (int64)strtoul(s + 1, &end, 8);
-    else
-      v = strtol(s, &end, 10);
-    // Skip trailing 'l'/'L'
+    int64 v = parse_int_literal(s);
     Immediate imm;
     imm.v_int64 = v;
     char buf[80];
@@ -358,7 +370,7 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
     return if1_const(if1, sym_int64, buf, &imm);
   } else {
     Immediate imm;
-    imm.v_float64 = strtod(s, nullptr);
+    imm.v_float64 = strtod(strip_numeric_underscores(s), nullptr);
     char buf[80];
     sprintf(buf, "%g", imm.v_float64);
     return if1_const(if1, sym_float64, buf, &imm);

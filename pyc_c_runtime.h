@@ -916,6 +916,12 @@ inline char *_CG_str_from_float(double d) {
 inline double _CG_str_to_float64(char *s) { return strtod(s, 0); }
 inline int64 _CG_str_to_int64(char *s) { return (int64)strtoll(s, 0, 10); }
 inline int64 _CG_str_to_int64_base(char *s, int base) { return (int64)strtoll(s, 0, base); }
+// int.bit_count(): the number of one bits in abs(x), as CPython defines it
+// (othello2 counts the pieces on its bitboards with it).
+inline int64 _CG_int_bit_count(int64 x) {
+  uint64_t u = x < 0 ? (uint64_t)0 - (uint64_t)x : (uint64_t)x;
+  return (int64)__builtin_popcountll(u);
+}
 
 // File I/O helpers for the library-level file object (__pyc__/07_file.py:
 // open(), read/readline/write/close, sys.std{in,out,err}, input()).

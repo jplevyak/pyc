@@ -1,4 +1,7 @@
 class int:
+  # The number of one bits in abs(self), as CPython (othello2's bitboards).
+  def bit_count(self):
+    return __pyc_c_call__(int, "_CG_int_bit_count", int, self)
   # bytearray(n): n zero bytes (the frontend's bytearray(x) dispatch).
   def __pyc_tobytearray__(self):
     return bytearray(self)
