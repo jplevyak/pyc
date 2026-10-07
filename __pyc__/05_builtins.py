@@ -436,29 +436,17 @@ def filter(f, seq):
       r.append(x)
   return r
 
-def sorted(seq):
-  # NOTE deliberately NO key=/reverse= parameters (use
-  # list.sort(key=, reverse=) instead, 04_sequence.py): merely ADDING
-  # defaulted params here -- even unused, and regardless of whether
-  # the default is inlined or global -- routes sorted() calls through
-  # a default_wrapper, and that extra Fun shifted the FA splitter's
-  # trajectory enough that builtins_batch's sum() stopped getting
-  # per-call-site contours (its int result printed as float bits).
-  # The issue 033/040 split-order fragility; revisit when that has a
-  # real fix.
-  # `<`-only comparison, same contract note as list.sort.
+def sorted(seq, key=None, reverse=False):
+  # CPython's signature; list.sort does the work (stable, O(n log^2 n),
+  # 04_sequence.py). This used to take `seq` only, because adding defaulted
+  # parameters once shifted the FA splitter enough that builtins_batch's
+  # sum() lost its per-call-site contours (issue 033/040 split-order
+  # fragility). That no longer reproduces: neural1's
+  # `sorted(..., reverse=True)` needs the parameters (2026-10-07).
   r = []
   for x in seq:
     r.append(x)
-  i = 1
-  while i < len(r):
-    x = r[i]
-    j = i - 1
-    while j >= 0 and x < r[j]:
-      r[j + 1] = r[j]
-      j = j - 1
-    r[j + 1] = x
-    i = i + 1
+  r.sort(key=key, reverse=reverse)
   return r
 
 def repr(x):
