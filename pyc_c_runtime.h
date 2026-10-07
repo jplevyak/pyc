@@ -182,7 +182,7 @@ inline void* _CG_run_coro(_CG_Coroutine coro) {
 // Generator support (issues/014): a Python generator function is
 // compiled as a C++20 coroutine, same family as _CG_Coroutine above,
 // but driven synchronously by __next__/__pyc_more__/.send() (pyc's
-// existing iterator protocol, see __pyc__/07_file.py's __file_iter__)
+// existing iterator protocol, see __pyc__/07_file.py's __pyc_file__)
 // instead of an event loop -- no awaiter chain, no _CG_event_loop_*
 // calls. _CG_generator_advance/_CG_generator_send are the only entry
 // points: each resumes the coroutine once (unless already done, where

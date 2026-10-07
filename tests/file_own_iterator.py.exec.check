@@ -1,0 +1,16 @@
+'alpha\n'
+'beta\n'
+loop 'gamma\n'
+loop 'delta\n'
+'epsilon\n'
+stop
+'' 31
+'alp' 'ha\n'
+True
+b'alpha\n' b'beta\n'
+b'gamma\n'
+b'delta\n'
+b'epsilon\n'
+31
+1 2
+list stop

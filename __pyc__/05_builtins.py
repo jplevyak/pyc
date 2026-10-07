@@ -230,9 +230,12 @@ def iter(x):
 
 def next(it):
   # pyc iterators' __next__ self-advances (list/base/generator
-  # iterators all do), so plain delegation is correct. Calling past
-  # exhaustion is undefined (no StopIteration -- issue 011), same as
-  # every other pyc iterator.
+  # iterators all do). Past exhaustion CPython raises StopIteration; ask
+  # __pyc_more__ first, as the for-loop protocol does. The raise is in
+  # next()'s own body: builtin-module code does not propagate a callee's
+  # (emit_exc_check), and this makes call sites check.
+  if not it.__pyc_more__():
+    raise StopIteration()
   return it.__next__()
 
 # ---- issue 025 "has no type" bucket: previously-missing builtins ----

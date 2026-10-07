@@ -8,13 +8,37 @@
 
 class __pyc_file__:
   handle = 0
+  # A file is its own iterator, as in CPython (`iter(f) is f`, and
+  # `next(f)` reads a line). The for-loop protocol asks __pyc_more__ before
+  # each __next__, which needs one line of look-ahead; `peek` holds it, and
+  # every read drains it first, so `next(f)`, `for line in f` and
+  # `f.readline()` share one position (mwmatching, minilight).
+  peeked = False
+  peek = ""
   def __init__(self, handle):
     self.handle = handle
+  def __pyc_take_peek__(self):
+    l = self.peek
+    self.peeked = False
+    self.peek = ""
+    return l
   def read(self, size=-1):
+    head = ""
+    if self.peeked:
+      head = self.__pyc_take_peek__()
+      if size >= 0:
+        if size <= len(head):
+          # Unread the rest of the look-ahead line.
+          self.peek = head[size:]
+          self.peeked = len(self.peek) > 0
+          return head[:size]
+        size -= len(head)
     if size < 0:
-      return __pyc_c_call__(str, "_CG_fread_all", int, self.handle)
-    return __pyc_c_call__(str, "_CG_fread_n", int, self.handle, int, size)
+      return head + __pyc_c_call__(str, "_CG_fread_all", int, self.handle)
+    return head + __pyc_c_call__(str, "_CG_fread_n", int, self.handle, int, size)
   def readline(self):
+    if self.peeked:
+      return self.__pyc_take_peek__()
     return __pyc_c_call__(str, "_CG_freadline", int, self.handle)
   def readlines(self):
     r = []
@@ -31,19 +55,36 @@ class __pyc_file__:
     __pyc_c_call__(int, "_CG_fflush", int, self.handle)
     return None
   def seek(self, offset, whence=0):
-    # rdb's `iTunesSD.seek(18)`. Raises on failure, as CPython does.
+    # rdb's `iTunesSD.seek(18)`. Raises on failure, as CPython does. The
+    # look-ahead line is discarded, as CPython discards its read-ahead.
+    self.__pyc_take_peek__()
     r = __pyc_c_call__(int, "_CG_fseek", int, self.handle, int, offset, int, whence)
     if r < 0:
       raise OSError("seek failed")
     return r
   def tell(self):
+    # Mid-iteration CPython refuses too; a line of look-ahead counted in
+    # characters cannot be turned back into a byte offset.
+    # An empty look-ahead is end of file, where CPython allows tell again.
+    if self.peeked and len(self.peek) > 0:
+      raise OSError("telling position disabled by next() call")
     return __pyc_c_call__(int, "_CG_ftell", int, self.handle)
   def close(self):
     __pyc_c_call__(int, "_CG_fclose", int, self.handle)
     self.handle = 0
     return None
   def __iter__(self):
-    return __file_iter__(self)
+    return self
+  def __pyc_more__(self):
+    if not self.peeked:
+      self.peek = __pyc_c_call__(str, "_CG_freadline", int, self.handle)
+      self.peeked = True
+    return len(self.peek) > 0
+  def __next__(self):
+    l = self.readline()
+    if len(l) == 0:
+      raise StopIteration()
+    return l
   # issues/170: a file is its own context manager. __exit__ closes it and
   # returns False, so an exception raised in the `with` body propagates.
   def __enter__(self):
@@ -51,26 +92,6 @@ class __pyc_file__:
   def __exit__(self, typ, value, tb):
     self.close()
     return False
-
-# Line iterator. The for-loop protocol checks __pyc_more__ before each
-# __next__, so the next line is read eagerly and buffered one ahead.
-class __file_iter__:
-  thefile = None
-  nextline = ""
-  def __iter__(self):
-    # Iterators are self-iterable (Python protocol) -- lets
-    # `for x in it:` consume an already-made iterator (functools
-    # .reduce, issue 025).
-    return self
-  def __init__(self, f):
-    self.thefile = f
-    self.nextline = f.readline()
-  def __pyc_more__(self):
-    return len(self.nextline) > 0
-  def __next__(self):
-    l = self.nextline
-    self.nextline = self.thefile.readline()
-    return l
 
 # A failed open raises as CPython does: the OSError subclass for errno, and
 # the message `[Errno 2] No such file or directory: 'path'`. It used to
@@ -109,13 +130,37 @@ def open(path, mode="r"):
 # not a new runtime code path.
 class __pyc_binfile__:
   handle = 0
+  # A file is its own iterator, as in CPython (`iter(f) is f`, and
+  # `next(f)` reads a line). The for-loop protocol asks __pyc_more__ before
+  # each __next__, which needs one line of look-ahead; `peek` holds it, and
+  # every read drains it first, so `next(f)`, `for line in f` and
+  # `f.readline()` share one position (mwmatching, minilight).
+  peeked = False
+  peek = b""
   def __init__(self, handle):
     self.handle = handle
+  def __pyc_take_peek__(self):
+    l = self.peek
+    self.peeked = False
+    self.peek = b""
+    return l
   def read(self, size=-1):
+    head = b""
+    if self.peeked:
+      head = self.__pyc_take_peek__()
+      if size >= 0:
+        if size <= len(head):
+          # Unread the rest of the look-ahead line.
+          self.peek = head[size:]
+          self.peeked = len(self.peek) > 0
+          return head[:size]
+        size -= len(head)
     if size < 0:
-      return __pyc_c_call__(bytes, "_CG_fread_all", int, self.handle)
-    return __pyc_c_call__(bytes, "_CG_fread_n", int, self.handle, int, size)
+      return head + __pyc_c_call__(bytes, "_CG_fread_all", int, self.handle)
+    return head + __pyc_c_call__(bytes, "_CG_fread_n", int, self.handle, int, size)
   def readline(self):
+    if self.peeked:
+      return self.__pyc_take_peek__()
     return __pyc_c_call__(bytes, "_CG_freadline", int, self.handle)
   def readlines(self):
     r = []
@@ -132,19 +177,33 @@ class __pyc_binfile__:
     __pyc_c_call__(int, "_CG_fflush", int, self.handle)
     return None
   def seek(self, offset, whence=0):
-    # rdb's `iTunesSD.seek(18)`. Raises on failure, as CPython does.
+    # rdb's `iTunesSD.seek(18)`. Raises on failure, as CPython does. The
+    # look-ahead line is discarded, as CPython discards its read-ahead.
+    self.__pyc_take_peek__()
     r = __pyc_c_call__(int, "_CG_fseek", int, self.handle, int, offset, int, whence)
     if r < 0:
       raise OSError("seek failed")
     return r
   def tell(self):
-    return __pyc_c_call__(int, "_CG_ftell", int, self.handle)
+    # Bytes: the look-ahead is exact, so the position is the C stream's
+    # minus what is buffered.
+    return __pyc_c_call__(int, "_CG_ftell", int, self.handle) - len(self.peek)
   def close(self):
     __pyc_c_call__(int, "_CG_fclose", int, self.handle)
     self.handle = 0
     return None
   def __iter__(self):
-    return __binfile_iter__(self)
+    return self
+  def __pyc_more__(self):
+    if not self.peeked:
+      self.peek = __pyc_c_call__(bytes, "_CG_freadline", int, self.handle)
+      self.peeked = True
+    return len(self.peek) > 0
+  def __next__(self):
+    l = self.readline()
+    if len(l) == 0:
+      raise StopIteration()
+    return l
   # issues/170: a file is its own context manager. __exit__ closes it and
   # returns False, so an exception raised in the `with` body propagates.
   def __enter__(self):
@@ -152,21 +211,6 @@ class __pyc_binfile__:
   def __exit__(self, typ, value, tb):
     self.close()
     return False
-
-class __binfile_iter__:
-  thefile = None
-  nextline = b""
-  def __iter__(self):
-    return self
-  def __init__(self, f):
-    self.thefile = f
-    self.nextline = f.readline()
-  def __pyc_more__(self):
-    return len(self.nextline) > 0
-  def __next__(self):
-    l = self.nextline
-    self.nextline = self.thefile.readline()
-    return l
 
 def open_binary(path, mode="rb"):
   # Same raises as open() above, repeated for the reason given there.

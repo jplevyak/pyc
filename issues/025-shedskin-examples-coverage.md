@@ -73,7 +73,7 @@ that fails:
 | **compiles, then overflows the C stack** ([173](173-silent-deviations-found-by-the-strict-suite-check.md)) | loop 139: `sys.setrecursionlimit(100000)` is ignored; runs to completion under `ulimit -s unlimited` |
 | times out where CPython finishes | dijkstra2, solitaire |
 | both time out at 120 s | ac_encode, chaos, chess, kmeanspp, pygasus (endless by design; see its row below), rubik2, score4, webserver, yopyra |
-| **does not compile** (18; lz2, mao, pygasus fixed 2026-10-05, rdb, minpng, msp_ss and voronoi2 2026-10-06) | amaze, doom, genetic2, go, life, minilight, mwmatching, neural1, othello2, othello3 (compile timeout), rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp |
+| **does not compile** (17; lz2, mao, pygasus fixed 2026-10-05, rdb, minpng, msp_ss, voronoi2 and mwmatching 2026-10-06) | amaze, doom, genetic2, go, life, minilight, neural1, othello2, othello3 (compile timeout), rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -113,7 +113,7 @@ standalone probe. Fixing a program's first blocker may uncover more.
 | program | first blocker (probe confirmed) | where |
 | --- | --- | --- |
 | go | ~~`str.rstrip()`: no `rstrip`/`lstrip` at all, only `strip`~~ FIXED 2026-10-03: `strip`/`lstrip`/`rstrip` take `chars`. go compiles, and its stdout matches CPython once [123](closed/123-str-does-not-fall-back-to-repr.md) is fixed (2026-10-03) | `__pyc__/01_str.py` |
-| minilight, mwmatching | `next(f)` on a file: `__pyc_file__` has `__iter__` but no `__next__` (a CPython file is its own iterator) | `__pyc__/07_file.py` |
+| minilight, mwmatching | ~~`next(f)` on a file: `__pyc_file__` has `__iter__` but no `__next__` (a CPython file is its own iterator)~~ FIXED 2026-10-06: a file is now its own iterator (`iter(f) is f`), with one line of look-ahead for the for-loop protocol that every read drains first, so `next(f)`, `for line in f` and `readline` share one position; and `next()` past exhaustion raises StopIteration for every iterator. mwmatching compiles with no diagnostics and matches CPython (bar its `TIME` line); this was its only blocker. minilight gets past it to its other blockers | `__pyc__/07_file.py`, `05_builtins.py` |
 | othello2 | `int.bit_count()`. The later `__sub__`/`__mul__` errors are cascade | `__pyc__/02_numeric.py` |
 | sudoku4 | `dict.copy()` | `__pyc__/07_dict.py` |
 | amaze | `list.index(x, start)`: `index(self, x)` only | `__pyc__/04_sequence.py:337` |
