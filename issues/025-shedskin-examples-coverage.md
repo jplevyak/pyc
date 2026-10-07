@@ -59,21 +59,24 @@ that fails:
   triage.
 - `compile_rc=0` is not evidence of anything. Run the binaries.
 
-## Current state — sweep `check__default__4b61e721+d7af0afe` (2026-09-28)
+## Current state — sweep `check__default__cba7d9e1+92c592eb` (2026-10-07)
 
-77 programs: **53 compile, 24 do not; 20 match CPython.**
+77 programs: **69 compile, 8 do not; 32 match CPython.** Fixed since the
+2026-09-28 sweep (`4b61e721+d7af0afe`, 24 not compiling, 20 matching):
+lz2, mao and pygasus (2026-10-05); rdb, minpng, msp_ss, voronoi2 and
+mwmatching (2026-10-06); minilight, neural1 and sokoban (2026-10-07). Each
+has a row in the blocker table below.
 
 | outcome | programs |
 | --- | --- |
-| **matches CPython** (20) | astar, block, brainfuck, collatz, fysphun, genetic, hq2x, linalg, mandelbrot, nbody, neural2, othello, plcfrs, pylife, sat, sha, sieve, stereo, sudoku2, voronoi |
-| runs, no stdout to compare | dijkstra, mandelbrot2, pystone, sudoku3, sudoku5, tictactoe |
-| runs, **stdout differs** | ant, circle, kanoodle, mastermind2, tonyjpegdecoder (check for unseeded `random` or a `TIME` line before treating as a bug) |
-| runs, CPython reference times out (no oracle) | bh, chull, oliva2, path_tracing, pygmy, richards, timsort |
-| **compiles, then aborts** (ifa/102) | adatron 134, pisang 134, quameon 134 (life moved to "does not compile", below) |
-| **compiles, then overflows the C stack** ([173](173-silent-deviations-found-by-the-strict-suite-check.md)) | loop 139: `sys.setrecursionlimit(100000)` is ignored; runs to completion under `ulimit -s unlimited` |
-| times out where CPython finishes | dijkstra2, solitaire |
-| both time out at 120 s | ac_encode, chaos, chess, kmeanspp, pygasus (endless by design; see its row below), rubik2, score4, webserver, yopyra |
-| **does not compile** (14; lz2, mao, pygasus fixed 2026-10-05, rdb, minpng, msp_ss, voronoi2 and mwmatching 2026-10-06, minilight, neural1 and sokoban 2026-10-07) | amaze, doom, genetic2, go, life, othello2, othello3 (compile timeout), rsync, rubik, softrender, sudoku1, sudoku4, sunfish, tarsalzp |
+| **matches CPython** (32) | amaze, astar, block, brainfuck, collatz, doom, fysphun, genetic, go, hq2x, kanoodle, linalg, loop, lz2, mandelbrot, msp_ss, mwmatching, nbody, neural1, neural2, othello, plcfrs, pylife, quameon, sat, sha, sokoban, solitaire, stereo, sudoku1, sudoku2, voronoi |
+| runs, no deterministic stdout to compare (8) | dijkstra, mandelbrot2, minpng, pystone, sudoku3, sudoku5, tictactoe, voronoi2 |
+| runs, **stdout differs** (5) | ant, circle, mastermind2, sieve, tonyjpegdecoder. sieve differs only in its `time:` lines, circle only in its Python-version line; the other three are not triaged (check for unseeded `random`, a `TIME` line, or int/float widening printing `1.0` for `1`) |
+| runs (rc 0), CPython reference times out at 120 s, so no oracle (18) | ac_encode, adatron, bh, chaos, chess, chull, kmeanspp, mao, minilight, oliva2, path_tracing, pisang, pygmy, richards, rubik2, score4, timsort, yopyra |
+| same exit status as CPython, no stdout verdict (3) | pygasus and webserver (both endless by design, 124; see pygasus's row below), rdb (both rc 1: the corpus run has no iPod directory) |
+| times out where CPython finishes (1) | dijkstra2 |
+| **compiles, then fails** (2) | genetic2 139 (issues/174), life 134 (ifa/183) |
+| **does not compile** (8) | othello2, othello3 (compile timeout), rsync, rubik, softrender, sudoku4, sunfish, tarsalzp |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
