@@ -22,17 +22,17 @@ compile or run reports it.
   whatever the corpus uses: `rsync`, `sha`), or make the stub raise
   `NotImplementedError`.
 - **`struct` gaps:** float codes (`f`, `d`), `s`/`p` and `?` raise, which
-  is correct. `msp_ss` needs `'>H8xBB4x'`, whose pad bytes are already
-  supported, and `b'%c' % int`.
-- **`minpng`**: `struct.pack('<BHH', bool(last), n, 0xffff ^ n)` builds
-  the rest tuple `(bool, int, int)` read at a runtime index, and the
-  1-byte/8-byte mix has no representation. Widening `bool` to `int` in
-  the record would pack correctly but print `1` for `True`: an
-  accommodation, so permissive-only under
-  [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md).
-  The alternative is a corpus edit, `int(bool(last))`, which is a CPython
-  no-op for `pack`. Prefer the edit (PYC_CHANGES.md: no accommodation
-  where a no-op edit states the intent).
+  is correct. (`minpng`'s `pack('<BHH', bool(last), ...)` is fixed, with
+  no corpus edit: `pack` reads its `*args` through a per-position unroll,
+  ddb2d555. `msp_ss`'s `'>H8xBB4x'` needed nothing.)
+
+**`serial`** (2026-10-06) was a stub that returned `""` from `read` and
+took only `(port, baudrate)`. It now models the pyserial 3.5 API surface.
+pyc cannot configure a serial port (that needs termios), so opening one
+raises `SerialException`, and I/O on an unopened port raises
+`PortNotOpenError`, exactly as pyserial does for a port it cannot open.
+That depended on ifa/049: a model whose operations can only raise was
+refused until then.
 
 ## Audit to repeat
 

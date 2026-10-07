@@ -73,7 +73,7 @@ that fails:
 | **compiles, then overflows the C stack** ([173](173-silent-deviations-found-by-the-strict-suite-check.md)) | loop 139: `sys.setrecursionlimit(100000)` is ignored; runs to completion under `ulimit -s unlimited` |
 | times out where CPython finishes | dijkstra2, solitaire |
 | both time out at 120 s | ac_encode, chaos, chess, kmeanspp, pygasus (endless by design; see its row below), rubik2, score4, webserver, yopyra |
-| **does not compile** (20; lz2, mao, pygasus fixed 2026-10-05, rdb and minpng 2026-10-06) | amaze, doom, genetic2, go, life, minilight, msp_ss, mwmatching, neural1, othello2, othello3 (compile timeout), rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp, voronoi2 |
+| **does not compile** (18; lz2, mao, pygasus fixed 2026-10-05, rdb, minpng, msp_ss and voronoi2 2026-10-06) | amaze, doom, genetic2, go, life, minilight, mwmatching, neural1, othello2, othello3 (compile timeout), rsync, rubik, softrender, sokoban, sudoku1, sudoku4, sunfish, tarsalzp |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -125,7 +125,7 @@ standalone probe. Fixing a program's first blocker may uncover more.
 | pygasus | ~~`array.tobytes()`, then `ord(bytes)`~~ FIXED 2026-10-05. `ord` takes only `str`, so `ord(f.read(1))` compiled to a runtime `C call argument type mismatch` abort, not a compile error. `ord(x)` now dispatches to `x.__pyc_ord__()` on str and bytes. pygasus is a `while True:` emulator, so both it and CPython hit the 120 s cap. A bounded copy (1500 `pExec` steps, checksumming registers, RAM, PPU/sprite RAM and the screen every 100) matches CPython at every checkpoint, 1.8 s vs 21.1 s | `__pyc__/05_builtins.py`, `01_str.py`, `01b_bytes.py` |
 | mao | ~~`array.tofile()`~~ FIXED 2026-10-05: `array` gained `tobytes`/`tofile` for the integer typecodes. That exposed a silent miscompile: `bytes.__mod__` copied any directive except `%c` through verbatim, so `b"%i %i\n" % (w, h)` wrote a literal `%i %i` PPM header. It now formats `%d`/`%i`/`%u` and raises on anything else. mao's `mao.ppm` is byte-identical to CPython's | `pyc_lib/array.py`, `__pyc__/01b_bytes.py` |
 | rsync | `list.index(x, start)`, `bytes(deque)`, `binfile.seek` | as above, plus `07_file.py` |
-| msp_ss | `b'%c' % int` (bytes `%` with a non-tuple operand), `struct.unpack('>H8xBB4x', ...)` | `01b_bytes.py:115`, `pyc_lib/struct.py` |
+| msp_ss | ~~`b'%c' % int`, `struct.unpack('>H8xBB4x', ...)`~~ FIXED 2026-10-06. The first blocker was `pyc_lib/serial.py`, a stub whose `Serial(port, baudrate)` could not take msp_ss's valid 8-argument pyserial call and whose `read` returned str: 249 errors, all cascade. It now models pyserial 3.5 and raises on open (issues/041), which exposed ifa/049: everything after a serial call can only be reached if the call returns, and it cannot. Also `bytes.strip`/`lstrip`, `b'%c' % value` with one operand, `int(bytes, base)` (dispatched on the argument, as `ord`), and two corpus edits for Python 2 / pyserial 2 calls CPython 3 rejects (`has_key`, `setBaudrate`; PYC_CHANGES.md). `struct.unpack('>H8xBB4x')` needed nothing. msp_ss compiles with no warnings; stdout matches CPython; with a port given, both raise `SerialException: could not open port` | `pyc_lib/serial.py`, `01b_bytes.py`, `01_str.py`, `python_ifa_build_if1.cc`, ifa/049 |
 
 Once rsync compiles it will hit `hashlib.md5(...).hexdigest()`, which is
 still a stub returning `""`. The probe exits 0 and prints an empty line.
@@ -174,8 +174,8 @@ That is a silent wrong answer (issues/041), not a compile error.
   `pop` shares a contour with the `ll = len(l)` that must fold to 0 in
   `list.__eq__`. **This is not confirmed.** Check it with `IFA_DBG_FUNES`
   on `len` before acting.
-- **voronoi2: in `getopt` with no `longopts`, `_match_long_opt` provably
-  always raises.** Its `possibilities` list is never written, so
+- **voronoi2 (FIXED 2026-10-06 by ifa/049; it compiles and runs): in
+  `getopt` with no `longopts`, `_match_long_opt` provably always raises.** Its `possibilities` list is never written, so
   `not possibilities` folds to true. The function returns bottom, and the
   caller's `has_arg, opt = ...` reports it, even though `_do_longs` is
   dead for this argv. This is the ifa/049 shape, and it is 175's measured

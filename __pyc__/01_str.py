@@ -35,6 +35,9 @@ class str:
     for c in self:
       r.append(c)
     return r
+  # int(s, base) (python_ifa_build_if1.cc lowers it to this).
+  def __pyc_int_base__(self, base):
+    return __pyc_c_call__(int, "_CG_str_to_int64_base", str, self, int, base)
   def __pyc_ord__(self):
     return __pyc_c_call__(int, "_CG_ord", str, self)
   def __pyc_tobytes__(self):

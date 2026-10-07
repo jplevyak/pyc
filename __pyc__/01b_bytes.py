@@ -88,6 +88,9 @@ class bytes:
     for v in self:
       r.append(v)
     return r
+  # int(b, base): CPython accepts bytes, and the buffer layout is str's.
+  def __pyc_int_base__(self, base):
+    return __pyc_c_call__(int, "_CG_str_to_int64_base", bytes, self, int, base)
   def __pyc_ord__(self):
     # ord(b"A") == 65: CPython takes a length-1 bytes as well as a str.
     if len(self) != 1:
@@ -135,6 +138,23 @@ class bytes:
         break
       j -= 1
     return self.__pyc_getslice__(0, j, 1)
+  # msp_ss strips the CR-LF from each Intel-HEX line it reads in binary
+  # mode (`l = l.strip()`). Same default set as rstrip.
+  def lstrip(self, chars=b" \t\n\r\x0b\x0c"):
+    i = 0
+    n = len(self)
+    m = len(chars)
+    while i < n:
+      c = self[i]
+      k = 0
+      while k < m and chars[k] != c:
+        k += 1
+      if k == m:
+        break
+      i += 1
+    return self.__pyc_getslice__(i, n, 1)
+  def strip(self, chars=b" \t\n\r\x0b\x0c"):
+    return self.rstrip(chars).lstrip(chars)
   def upper(self):
     # ASCII-only, like str.upper: same length-prefixed buffer layout.
     return __pyc_c_call__(bytes, "_CG_str_upper", bytes, self)
@@ -222,6 +242,13 @@ class bytes:
     # for call-site compatibility and otherwise ignored.
     return __pyc_c_call__(str, "_CG_string_identity", bytes, self)
   def __mod__(self, t):
+    # CPython takes a lone non-tuple operand as the only value:
+    # `b'%c' % c` (msp_ss). isinstance folds per contour, so a non-tuple
+    # `t` never reaches the tuple path.
+    if isinstance(t, tuple):
+      return self.__pyc_format__(t)
+    return self.__pyc_format__((t,))
+  def __pyc_format__(self, t):
     # Narrow, CPython-compatible subset of bytes' %-format mini-language:
     # %c (one int arg, 0-255, -> that one byte), %d/%i/%u (an int in
     # decimal, no flags or width) and literal %%. Covers the corpus's
@@ -232,8 +259,8 @@ class bytes:
     # transfer function returns sym_string unconditionally,
     # python_ifa_main.cc, so it can't type as bytes). Any other directive
     # raises: it used to be copied through verbatim, so mao wrote a
-    # literal `%i %i` header. Args must be a tuple (no single-value
-    # non-tuple form).
+    # literal `%i %i` header. `t` is always a tuple here (__mod__ wraps a
+    # single value).
     parts = []
     i = 0
     ti = 0

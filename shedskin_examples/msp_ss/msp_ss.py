@@ -1015,7 +1015,9 @@ class BootStrapLoader(LowLevel):
        dev_id, bslVerHi, bslVerLo = struct.unpack(">H8xBB4x", blkin[:-2]) #cut away checksum and extract data
 
        if self.cpu is None:                        #cpy type forced?
-           if deviceids.has_key(dev_id):
+           # pyc: was `deviceids.has_key(dev_id)`, Python 2; CPython 3 raises
+           # AttributeError here (PYC_CHANGES.md).
+           if dev_id in deviceids:
                self.cpu = deviceids[dev_id]        #try to autodectect CPU type
                if DEBUG:
                    sys.stderr.write("Autodetect successful: %04x -> %s\n" % (dev_id, self.cpu))
@@ -1189,7 +1191,10 @@ class BootStrapLoader(LowLevel):
        self.bslTxRx(BSL_CHANGEBAUD,   #Command: change baudrate
                    a, l)                   #args are coded in adr and len
        time.sleep(0.010)                   #recomended delay
-       self.serialport.setBaudrate(baudrate)
+       # pyc: was `self.serialport.setBaudrate(baudrate)`, pyserial 2 API;
+       # pyserial 3 removed it, so CPython raises AttributeError here
+       # (PYC_CHANGES.md).
+       self.serialport.baudrate = baudrate
 
    def actionReadBSLVersion(self):
        """informational output of BSL version number.
