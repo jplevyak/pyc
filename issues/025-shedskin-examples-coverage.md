@@ -76,7 +76,7 @@ has a row in the blocker table below.
 | same exit status as CPython, no stdout verdict (4) | pygasus and webserver (both endless by design, 124; see pygasus's row below), rdb (both rc 1: the corpus run has no iPod directory), rsync (both rc 1: no `testdata/` in the corpus or upstream) |
 | times out where CPython finishes (1) | dijkstra2 |
 | **compiles, then fails** (1) | genetic2 139 (issues/174) |
-| **does not compile** (3) | othello3 (compile timeout), softrender, sunfish (compile timeout: 534 s and 3 GB alone, against the 400 s cap; FA runs to its 50-pass limit. Once compiled it matches CPython on both backends) |
+| **does not compile** (3) | othello3 (compile timeout), softrender, sunfish (compile timeout: 534 s and 3 GB alone, against the 400 s cap; [ifa/185](../ifa/issues/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md). Once compiled it matches CPython on both backends) |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -206,8 +206,10 @@ no longer applies.)
   read of a mixed-width record (`(int, bool)` read field 1 at byte offset 1).
   It compiles with no diagnostics and matches CPython on both backends
   (timed half 4.4 s C / 7.6 s LLVM vs 5.0 s), but takes 534 s and 3 GB to
-  compile: FA runs to its 50-pass limit (non-convergence, the ifa/057
-  family), so the sweep's 400 s cap records a compile timeout.
+  compile, so the sweep's 400 s cap records a compile timeout. FA does
+  converge (47 passes); passes 1-13 cost ~375 s of it. Why it is slow:
+  [ifa/185](../ifa/issues/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md)
+  (a merged tuple receiver keeps the 64-step tuple-method unroll live).
 - **rubik (FIXED 2026-10-07: the multi-index subscript `key[a, b]` produced no index; it compiles and matches CPython): `None` reaches `key[1]` in `getCoords`**
   (`unresolved member '__getitem__' of class '__pyc_None_type__'`, 126
   errors). Suspects are `primeCube(frontFace=None)` and the if/elif
