@@ -2217,6 +2217,13 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       fn->self->must_implement_and_specialize(in);
     }
   }
+  if (varargsl && is_method)
+    for (auto c : varargsl->children.values())
+      if (PycFormalDispatch *d = pyc_formal_dispatch(c)) {
+        Sym *s = getAST(c, ctx)->sym;
+        s->dispatch_arity = d->arity;
+        if (d->class_typed && s != fn->self) s->must_implement_and_specialize(in);
+      }
   if1_closure(if1, fn, body, as.n, as.v);
 }
 

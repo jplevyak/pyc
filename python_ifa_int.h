@@ -273,6 +273,17 @@ enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 cchar *cannonicalize_string(cchar *s);
 bool decorator_name_is(cchar *s, cchar *want);
 bool pyc_is_property_name(cchar *name);  // issues/171 #13 (python_ifa_main.cc)
+// ifa/185: dispatch constraints on a formal of a GENERATED method, keyed on
+// the parameter's PyDAST. Python annotations are dropped by the grammar, so
+// the tuple-method generator (python_ifa_main.cc) records them here and
+// gen_fun_pyda applies them to the formal's Sym. `arity` is
+// Sym::dispatch_arity's value (-1 none); `class_typed` constrains the formal
+// to the enclosing class, as `self` always is.
+struct PycFormalDispatch {
+  int arity;
+  bool class_typed;
+};
+PycFormalDispatch *pyc_formal_dispatch(PyDAST *param);  // python_ifa_main.cc
 
 // From python_ifa_sym.cc:
 PycSymbol *new_PycSymbol(cchar *name);

@@ -3,6 +3,7 @@
 #include "python_parse.h"
 #include <cctype>
 #include <string>
+#include <vector>
 
 #include "codegen/codegen_common.h"
 
@@ -660,6 +661,78 @@ static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args) {
   for (PyDAST *c : n->children) scan_star_args(c, has_star, max_call_args);
 }
 
+// ifa/185: the dispatch constraints of the generated tuple methods'
+// formals, keyed on each parameter's PyDAST (pyc_formal_dispatch).
+static Map<PyDAST *, PycFormalDispatch *> formal_dispatch;
+
+PycFormalDispatch *pyc_formal_dispatch(PyDAST *param) { return formal_dispatch.get(param); }
+
+// One generated def's constraints, one entry per positional parameter.
+typedef std::vector<PycFormalDispatch> TupleDefSpec;
+
+// ifa/185: tuple.__eq__ as overloads on the operands' ARITY, written to `f`
+// as a class body with one TupleDefSpec per def in `specs`. "k" is a static
+// arity, "dyn" a tuple with none (list layout, from tuple(iterable) or a
+// slice). Subsumption picks the most specific, so:
+//
+//   (self k,   t tuple k)    element by element, straight line;
+//   (self k,   t tuple dyn)  length check, then the same;
+//   (self dyn, t tuple)      `t == self`: a record `t` goes to (k, dyn), so
+//                            it is never indexed at a runtime position,
+//                            which would demote it to list layout;
+//   (self dyn, t tuple dyn)  the runtime loop;
+//   (self,     t)            False: different static arities, None
+//                            (ifa/090 repro 2: `move in [(1, 2), ...]`
+//                            with move None), or not a tuple at all --
+//                            CPython never equates a tuple with a list.
+//
+// Bodies are emitted for every arity 0..max_arity; one that no CreationSet
+// reaches is never analysed.
+static void emit_tuple_arity_eq(FILE *f, int max_arity, std::vector<TupleDefSpec> &specs) {
+  const PycFormalDispatch none = {-1, false}, any_tuple = {-1, true}, dyn_self = {DISPATCH_ARITY_DYNAMIC, false},
+                          dyn_tuple = {DISPATCH_ARITY_DYNAMIC, true};
+  fputs("  def __eq__(self, t):\n    return False\n", f);
+  specs.push_back({none, none});
+  fputs("  def __eq__(self, t):\n    return t == self\n", f);
+  specs.push_back({dyn_self, any_tuple});
+  fputs("  def __eq__(self, t):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    if n != len(t): return False\n", f);
+  fputs("    for i in range(n):\n", f);
+  fputs("      if not (self[i] == t[i]): return False\n", f);
+  fputs("    return True\n", f);
+  specs.push_back({dyn_self, dyn_tuple});
+  for (int k = 0; k <= max_arity; k++) {
+    PycFormalDispatch self_k = {k, false}, tuple_k = {k, true};
+    for (int dyn = 0; dyn < 2; dyn++) {
+      fputs("  def __eq__(self, t):\n", f);
+      if (dyn) fprintf(f, "    if len(t) != %d: return False\n", k);
+      for (int i = 0; i < k; i++) fprintf(f, "    if not (self[%d] == t[%d]): return False\n", i, i);
+      fputs("    return True\n", f);
+      specs.push_back({self_k, dyn ? dyn_tuple : tuple_k});
+    }
+  }
+}
+
+// Attach `specs` to the funcdefs of the generated class body `gbody`, in
+// order. Only plain positional parameters are generated, so each is the
+// varargslist child itself.
+static void apply_tuple_def_specs(PyDAST *gbody, std::vector<TupleDefSpec> &specs) {
+  size_t i = 0;
+  for (PyDAST *meth : gbody->children) {
+    if (meth->kind != PY_funcdef) continue;
+    assert(i < specs.size());
+    TupleDefSpec &spec = specs[i++];
+    PyDAST *params = meth->children[1];
+    PyDAST *varargsl = params->children.n ? params->children[0] : nullptr;
+    assert(varargsl && varargsl->children.n == (int)spec.size());
+    for (int j = 0; j < varargsl->children.n; j++)
+      if (spec[j].arity != -1 || spec[j].class_typed)
+        formal_dispatch.put(varargsl->children[j], new PycFormalDispatch(spec[j]));
+  }
+  assert(i == specs.size());
+}
+
 // min_arity: a floor for the unroll count. The REPL can't pre-scan future
 // interactive input, so it passes a generous floor; the batch path passes 0
 // and gets the exact program max.
@@ -713,25 +786,15 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   // ran (ifa/157's cascade). A fold is not a demand; don't make one
   // depend on a split.
   fputs("class __pyc_tuple_cmp__:\n", f);
-  fputs("  def __eq__(self, t):\n", f);
-  // ifa/issues/090 repro 2: the operand may be None -- `move = None`
-  // then `move in [(1,2), ...]`, where list.__contains__ compares each
-  // element against it. `len(t)` below is then len(None), which
-  // resolves to nothing, and the whole comparison degrades: sunfish
-  // line 448 reports `unresolved call '__not__'` and the loop body
-  // never runs. CPython says a tuple is never equal to a non-tuple, so
-  // answer False directly. A None-typed operand cannot be handled by
-  // giving __pyc_None_type__ a __len__ -- 00_runtime.py documents why
-  // container stubs there inject None into element types program-wide.
-  fputs("    if t is None: return False\n", f);
-  fputs("    n = len(self)\n", f);
-  fputs("    if __pyc_operator__(n, __pyc_symbol__(\"!=\"), len(t)): return False\n", f);
-  for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and not (self[%d] == t[%d]): return False\n", i + 1, i, i);
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        if not (self[i] == t[i]): return False\n", f);
-  fputs("    return True\n", f);
+  // ifa/185: __eq__ dispatches on ARITY (Sym::dispatch_arity) instead of
+  // unrolling to max_arity behind `n >= k` guards. Those guards could not
+  // fold when one contour's `self` held tuples of several arities (`len`
+  // over them is the abstract int: the constant cap is 1), so every step
+  // went live, and a step past a receiver's end read every field. Here
+  // each body is straight-line at one arity, so no index is ever out of
+  // range, and a receiver holding several arities reaches one body per
+  // arity. They are generated by emit_tuple_arity_eq into their own class;
+  // see there for the overloads.
   fputs("  def __lt__(self, t):\n", f);
   fputs("    if t is None: return False\n", f);
   fputs("    n = len(self)\n", f);
@@ -882,6 +945,11 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   fprintf(f, "      for i in range(%d, n):\n", max_arity);
   fputs("        r.append(int(self[i]))\n", f);
   fputs("    return r\n", f);
+  // ifa/185: the arity-dispatched overloads, in a second throwaway class so
+  // their specs can be matched to its funcdefs by position.
+  std::vector<TupleDefSpec> arity_specs;
+  fputs("class __pyc_tuple_arity__:\n", f);
+  emit_tuple_arity_eq(f, max_arity, arity_specs);
   fclose(f);
   // ifa/185 B: read each element with the `index_object` primitive and a
   // LITERAL index instead of `self[k]` / `t[k]`. Those were calls to
@@ -920,22 +988,20 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   }
   PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", gen_src.c_str(), (int)gen_src.size());
   if (!gen) return;
-  PyDAST *gcls = nullptr;
+  Vec<PyDAST *> gclss;
   for (PyDAST *c : gen->children)
-    if (c->kind == PY_classdef) {
-      gcls = c;
-      break;
-    }
-  if (!gcls || !gcls->children.n) return;
-  PyDAST *gbody = gcls->children.last();
+    if (c->kind == PY_classdef && c->children.n) gclss.add(c);
+  if (gclss.n != 2) return;
+  apply_tuple_def_specs(gclss[1]->children.last(), arity_specs);
   // Append the generated funcdefs to the builtin `tuple` class body.
   for (PyDAST *c : mods[0]->pymod->children) {
     if (c->kind != PY_classdef || !c->children.n) continue;
     PyDAST *nm = c->children[0];
     if (!nm || !nm->str_val || strcmp(nm->str_val, "tuple")) continue;
     PyDAST *body = c->children.last();
-    for (PyDAST *meth : gbody->children)
-      if (meth->kind == PY_funcdef) body->children.add(meth);
+    for (PyDAST *gcls : gclss)
+      for (PyDAST *meth : gcls->children.last()->children)
+        if (meth->kind == PY_funcdef) body->children.add(meth);
     break;
   }
 }

@@ -1618,6 +1618,16 @@ typedef struct _CG_list_struct {
 #define _CG_list_total_len(_c, _l) (_CG_list_to_struct(_l)->total_len)
 #define _CG_list_ptr(_l) (_CG_list_to_struct(_l)->ptr)
 #define _CG_list_data(_l) (&_CG_list_to_struct(_l)->data[0])
+// ifa/185: the high bit of a TUPLE's total_len says it has a static arity
+// (FA's CreationSet had one). FA dispatches tuple methods on that, and a
+// record 2-tuple and tuple([a, b]) are otherwise indistinguishable at run
+// time -- same header, same length, no classtag. Set at construction of a
+// fixed-arity tuple (cg.cc / cg_emit_llvm.cc P_prim_make), read by the
+// arity dispatch (poly_dispatch_arity_plan). total_len is otherwise a
+// list's capacity, which a tuple never uses: the resize paths mask it.
+#define _CG_TUPLE_FIXED_ARITY 0x80000000u
+#define _CG_tuple_set_fixed(_l) (_CG_list_to_struct(_l)->total_len |= _CG_TUPLE_FIXED_ARITY)
+#define _CG_tuple_is_fixed(_l) ((_CG_list_to_struct(_l)->total_len & _CG_TUPLE_FIXED_ARITY) != 0)
 #define _CG_prim_len(_c, _l) ((_l) ? _CG_list_len(_l) : 0)
 #define _CG_ptr_to_list(_l) ((_CG_list)(((char *)(_l)) + SIZEOF_LIST_HEADER))
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
@@ -1753,7 +1763,7 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
 // their elements INLINE in the header.
 static inline _CG_list _CG_list_resize_internal(_CG_list l1, uint32 size1, uint32 new_len) {
   uint32 s1 = _CG_prim_len(0, l1);
-  uint32 cap = _CG_list_total_len(0, l1);
+  uint32 cap = _CG_list_total_len(0, l1) & ~_CG_TUPLE_FIXED_ARITY;  // ifa/185
   if (new_len && new_len <= cap && _CG_list_ptr(l1)) {
     // Already big enough: move the length and zero anything newly
     // exposed. No allocation, no copy -- this is the amortized path.

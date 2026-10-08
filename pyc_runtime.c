@@ -209,7 +209,7 @@ void *_CG_list_add(void *l1, void *l2, int64 size1, int64 size2) {
 //     the new buffer -- the bug the header fixed with `y * size1`.
 void *_CG_list_resize(void *l1, int64 size1, int64 new_len) {
   unsigned int s1 = _PYC_list_len(l1);
-  unsigned int cap = l1 ? _CG_LIST_HDR_TOTAL(l1) : 0;
+  unsigned int cap = l1 ? (_CG_LIST_HDR_TOTAL(l1) & ~_CG_TUPLE_FIXED_ARITY) : 0;  // ifa/185
   size_t sz = (size_t)size1;
   if (new_len && (unsigned int)new_len <= cap && _CG_LIST_HDR_PTR(l1)) {
     // Already big enough: move the length, zero anything newly exposed.
