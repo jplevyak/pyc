@@ -2,6 +2,7 @@
 #include "python_ifa_int.h"
 #include "python_parse.h"
 #include <cctype>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -641,6 +642,12 @@ static int estimate_tuple_arity(PyDAST *n) {
   }
   return -1;
 }
+static void scan_tuple_arities(PyDAST *n, std::set<int> &as) {
+  if (!n) return;
+  int a = estimate_tuple_arity(n);
+  if (a >= 0) as.insert(a);
+  for (PyDAST *c : n->children) scan_tuple_arities(c, as);
+}
 static void scan_max_tuple_arity(PyDAST *n, int &mx) {
   if (!n) return;
   int a = estimate_tuple_arity(n);
@@ -714,6 +721,200 @@ static void emit_tuple_arity_eq(FILE *f, int max_arity, std::vector<TupleDefSpec
   }
 }
 
+// ifa/185: the other tuple methods, dispatched on arity like __eq__.
+// `arities` is every arity a fixed-arity tuple can have (see
+// inject_tuple_methods_over). Each method gets one straight-line body per
+// arity, so every index is a constant in range, plus an UNCONSTRAINED body:
+// a runtime loop, for a tuple with no fixed arity (list layout, which a
+// runtime index can read) and for any arity the scan missed.
+//
+// Why straight-line at all (issues/119): __str__, __hash__ and the `==`
+// in __contains__/count/index dispatch a method ON AN ELEMENT, and with a
+// loop index the element of a HETEROGENEOUS record is the union of its
+// fields, which has no single resolution (`print((1, (2, 3)))` aborted).
+// A constant index is one field. Before arity dispatch the constant
+// indices came from an unroll to max_arity behind `n >= k` guards, which
+// did not fold once one contour held several arities.
+static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::vector<TupleDefSpec> &specs) {
+  const PycFormalDispatch none = {-1, false}, dyn_self = {DISPATCH_ARITY_DYNAMIC, false},
+                          dyn_tuple = {DISPATCH_ARITY_DYNAMIC, true};
+  auto self_k = [](int k) { return PycFormalDispatch{k, false}; };
+  auto tuple_k = [](int k) { return PycFormalDispatch{k, true}; };
+
+  // __lt__: lexicographic, as CPython defines it -- the first unequal pair
+  // decides, otherwise the shorter tuple is smaller. Both operands'
+  // arities are dispatched, so a pair of fixed arities compares exactly
+  // min(k, m) elements. A list-layout side is read at runtime positions.
+  // `t is None` answers False, as the unrolled method did.
+  for (int k : arities)
+    for (int m : arities) {
+      fputs("  def __lt__(self, t):\n", f);
+      for (int i = 0; i < k && i < m; i++) {
+        fprintf(f, "    if self[%d] < t[%d]: return True\n", i, i);
+        fprintf(f, "    if t[%d] < self[%d]: return False\n", i, i);
+      }
+      fprintf(f, "    return %s\n", k < m ? "True" : "False");
+      specs.push_back({self_k(k), tuple_k(m)});
+    }
+  for (int k : arities) {
+    fputs("  def __lt__(self, t):\n    m = len(t)\n", f);
+    for (int i = 0; i < k; i++) {
+      fprintf(f, "    if %d >= m: return False\n", i);
+      fprintf(f, "    if self[%d] < t[%d]: return True\n", i, i);
+      fprintf(f, "    if t[%d] < self[%d]: return False\n", i, i);
+    }
+    fprintf(f, "    return %d < m\n", k);
+    specs.push_back({self_k(k), dyn_tuple});
+    fputs("  def __lt__(self, t):\n    n = len(self)\n", f);
+    for (int i = 0; i < k; i++) {
+      fprintf(f, "    if %d >= n: return True\n", i);
+      fprintf(f, "    if self[%d] < t[%d]: return True\n", i, i);
+      fprintf(f, "    if t[%d] < self[%d]: return False\n", i, i);
+    }
+    fprintf(f, "    return n < %d\n", k);
+    specs.push_back({dyn_self, tuple_k(k)});
+  }
+  fputs("  def __lt__(self, t):\n", f);
+  fputs("    if t is None: return False\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    m = len(t)\n", f);
+  fputs("    for i in range(n):\n", f);
+  fputs("      if i >= m: return False\n", f);
+  fputs("      if self[i] < t[i]: return True\n", f);
+  fputs("      if t[i] < self[i]: return False\n", f);
+  fputs("    return n < m\n", f);
+  specs.push_back({none, none});
+
+  // One-operand methods: `self` alone is dispatched. `per` is the
+  // statement at index %d (printf'd with the index as every argument).
+  struct OneOp {
+    const char *sig;   // "def ...(...):"
+    int nparams;       // positional parameters, self first
+    const char *pre;   // before the elements; %d is the arity
+    const char *per;   // per element; every %d is the index
+    const char *post;  // after the elements; %d is the arity
+    const char *loop;  // the whole unconstrained body
+  };
+  static const OneOp ops[] = {
+      {"__hash__(self)", 1, "    h = 0\n", "    h = h * 1000003 + self[%d].__hash__()\n", "    return h\n",
+       "    h = 0\n    for i in range(len(self)):\n      h = h * 1000003 + self[i].__hash__()\n    return h\n"},
+      // `in`, count and index compare each element by `==`; cross-type
+      // `==` answers False, as in CPython.
+      {"__contains__(self, item)", 2, "", "    if self[%d] == item: return True\n", "    return False\n",
+       "    for i in range(len(self)):\n      if self[i] == item: return True\n    return False\n"},
+      {"count(self, x)", 2, "    c = 0\n", "    if self[%d] == x: c += 1\n", "    return c\n",
+       "    c = 0\n    for i in range(len(self)):\n      if self[i] == x: c += 1\n    return c\n"},
+      // The tuple's elements as a list of int / of __pyc_bytes_fmtarg__,
+      // read at constant indices so each conversion is one field's own:
+      // pyc_lib/struct.py's pack (minpng's (bool, int, int), ifa/134) and
+      // bytes %-formatting (minilight's (bytes, bytes, int, int)).
+      {"__pyc_bytes_fmtargs__(self)", 1, "    r = []\n", "    r.append(self[%d].__pyc_bytes_fmtarg__())\n",
+       "    return r\n",
+       "    r = []\n    for i in range(len(self)):\n      r.append(self[i].__pyc_bytes_fmtarg__())\n    return r\n"},
+      {"__pyc_toints__(self)", 1, "    r = []\n", "    r.append(int(self[%d]))\n", "    return r\n",
+       "    r = []\n    for i in range(len(self)):\n      r.append(int(self[i]))\n    return r\n"},
+  };
+  auto spec_for = [&](PycFormalDispatch s0, int nparams) {
+    TupleDefSpec sp(nparams, none);
+    sp[0] = s0;
+    return sp;
+  };
+  for (const OneOp &op : ops) {
+    for (int k : arities) {
+      fprintf(f, "  def %s:\n", op.sig);
+      fprintf(f, op.pre, k);
+      for (int i = 0; i < k; i++) fprintf(f, op.per, i, i, i, i);
+      fprintf(f, op.post, k);
+      specs.push_back(spec_for(self_k(k), op.nparams));
+    }
+    fprintf(f, "  def %s:\n%s", op.sig, op.loop);
+    specs.push_back(spec_for(none, op.nparams));
+  }
+
+  // __str__: CPython's repr, `(1,)` for one element.
+  for (int k : arities) {
+    fputs("  def __str__(self):\n", f);
+    if (!k) {
+      fputs("    return \"()\"\n", f);
+    } else {
+      fputs("    x = \"(\"\n", f);
+      for (int i = 0; i < k; i++) {
+        if (i) fputs("    x += \", \"\n", f);
+        fprintf(f, "    x += self[%d].__repr__()\n", i);
+      }
+      fprintf(f, "    x += \"%s)\"\n", k == 1 ? "," : "");
+      fputs("    return x\n", f);
+    }
+    specs.push_back(spec_for(self_k(k), 1));
+  }
+  fputs("  def __str__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    x = \"(\"\n", f);
+  fputs("    for i in range(n):\n", f);
+  fputs("      if i: x += \", \"\n", f);
+  fputs("      x += self[i].__repr__()\n", f);
+  fputs("    if n == 1: x += \",\"\n", f);
+  fputs("    x += \")\"\n", f);
+  fputs("    return x\n", f);
+  specs.push_back(spec_for(none, 1));
+
+  // CPython's tuple.index: start/stop normalized like a slice (as list.index
+  // in 04_sequence.py), ValueError when absent.
+  auto index_prologue = [&](const char *n) {
+    fprintf(f, "    n = %s\n", n);
+    fputs("    b = start\n", f);
+    fputs("    if b < 0:\n", f);
+    fputs("      b += n\n", f);
+    fputs("      if b < 0: b = 0\n", f);
+    fputs("    e = n\n", f);
+    fputs("    if stop is not None:\n", f);
+    fputs("      e = stop\n", f);
+    fputs("      if e < 0: e += n\n", f);
+    fputs("      if e > n: e = n\n", f);
+  };
+  for (int k : arities) {
+    fputs("  def index(self, x, start=0, stop=None):\n", f);
+    char nk[16];
+    snprintf(nk, sizeof(nk), "%d", k);
+    index_prologue(nk);
+    for (int i = 0; i < k; i++) fprintf(f, "    if b <= %d and %d < e and self[%d] == x: return %d\n", i, i, i, i);
+    fputs("    raise ValueError(\"tuple.index(x): x not in tuple\")\n", f);
+    specs.push_back(spec_for(self_k(k), 4));
+  }
+  fputs("  def index(self, x, start=0, stop=None):\n", f);
+  index_prologue("len(self)");
+  fputs("    for i in range(n):\n", f);
+  fputs("      if b <= i and i < e and self[i] == x: return i\n", f);
+  fputs("    raise ValueError(\"tuple.index(x): x not in tuple\")\n", f);
+  specs.push_back(spec_for(none, 4));
+
+  // issues/110: an element-recursive __deepcopy__, CONSTRUCTED rather than
+  // copied and overwritten: copy-then-overwrite leaves each field the union
+  // of the original element and its copy, and for a tuple element those are
+  // two record CreationSets with no common C type (`deepcopy(((T(), 1), 2))`
+  // segfaulted). One literal per arity; make_seq for a list-layout tuple,
+  // the construction tuple.__add__ uses.
+  for (int k : arities) {
+    fputs("  def __deepcopy__(self):\n", f);
+    if (!k) {
+      fputs("    return self\n", f);
+    } else {
+      fputs("    return (", f);
+      for (int i = 0; i < k; i++) fprintf(f, "%sself[%d].__deepcopy__()", i ? ", " : "", i);
+      fputs(k == 1 ? ",)\n" : ")\n", f);
+    }
+    specs.push_back(spec_for(self_k(k), 1));
+  }
+  fputs("  def __deepcopy__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    if n == 0: return self\n", f);
+  fputs("    r = []\n", f);
+  fputs("    for i in range(n):\n", f);
+  fputs("      r.append(self[i].__deepcopy__())\n", f);
+  fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
+  specs.push_back(spec_for(none, 1));
+}
+
 // Attach `specs` to the funcdefs of the generated class body `gbody`, in
 // order. Only plain positional parameters are generated, so each is the
 // varargslist child itself.
@@ -747,209 +948,39 @@ static void apply_tuple_def_specs(PyDAST *gbody, std::vector<TupleDefSpec> &spec
 static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &asts, int min_arity) {
   int max_arity = min_arity;
   for (PyDAST *a : asts) scan_max_tuple_arity(a, max_arity);
+  // ifa/185: the arities a fixed-arity tuple can have: every literal's
+  // (builtin modules included), a `*args` tuple's (any call's argument
+  // count), and the REPL's floor. A tuple of any other arity -- none can be
+  // built, but a missed construct would be one -- still reaches each
+  // method's unconstrained runtime-loop body, so the set bounds precision,
+  // not correctness. (__eq__ alone is emitted for all of 0..max_arity: its
+  // unconstrained body answers False.)
+  std::set<int> arity_set;
+  for (int k = 0; k <= min_arity; k++) arity_set.insert(k);
+  for (PyDAST *a : asts) scan_tuple_arities(a, arity_set);
   {
     bool has_star = false;
     int max_call_args = 0;
     for (PyDAST *a : asts) scan_star_args(a, has_star, max_call_args);
     if (has_star && max_call_args > max_arity) max_arity = max_call_args;
+    if (has_star)
+      for (int k = 0; k <= max_call_args; k++) arity_set.insert(k);
   }
-  // Generate the two methods at exactly max_arity, wrapped in a throwaway
-  // class so the parser yields funcdef nodes (which we move onto `tuple`).
+  arity_set.insert(max_arity);
+  std::vector<int> arities(arity_set.begin(), arity_set.end());
+  // The generated methods, wrapped in a throwaway class so the parser
+  // yields funcdef nodes (which we move onto `tuple`).
   char *buf = nullptr;
   size_t sz = 0;
   FILE *f = open_memstream(&buf, &sz);
-  // issues/110: the unroll count comes from scanning tuple LITERALS, so a
-  // tuple built by `tuple(iterable)` (make_seq -- runtime arity, no
-  // PY_tuple node anywhere) contributes nothing to max_arity. The unrolled
-  // body then compared only the first max_arity elements and returned
-  // True for everything past it: rubik2's id_() -> tuple(state[20:32])
-  // deduped 15 distinct 12-tuples down to 3 in a set (silently -- wrong
-  // answers, no diagnostic), and with NO tuple literal in the program at
-  // all max_arity is 0, making every same-length tuple compare equal.
-  //
-  // So each method gets a runtime tail past the unrolled prefix. For a
-  // RECORD tuple `n` is a compile-time constant <= max_arity, so `n >
-  // max_arity` folds to False and the tail is dead -- the same folding the
-  // `n >= k` guards already rely on, which is what keeps the non-constant
-  // `self[i]` out of a record contour where it would be invalid. For a
-  // LIST-layout tuple `n` is a runtime value and the tail does the work.
-  //
-  // Every guard on `n` / `m` is the operator PRIMITIVE, inline, not
-  // `n >= k` (a call to int.__ge__). The fold has to happen in THIS
-  // contour, where `n` is already a constant per receiver arity. Through
-  // int.__ge__ it needed that callee split per constant, and since
-  // ifa/151 only a demand splits it: sudoku5 compares 2-tuples and
-  // 3-tuples, the shared __ge__ answered `bool` for both, every
-  // `self[2]` on a 2-tuple and the runtime tail went live, and the
-  // unions they produced kept TYPE_CONFLUENCE acting on all 50 passes,
-  // so CONST_DEMAND -- the rung that could have split __ge__ -- never
-  // ran (ifa/157's cascade). A fold is not a demand; don't make one
-  // depend on a split.
-  fputs("class __pyc_tuple_cmp__:\n", f);
-  // ifa/185: __eq__ dispatches on ARITY (Sym::dispatch_arity) instead of
-  // unrolling to max_arity behind `n >= k` guards. Those guards could not
-  // fold when one contour's `self` held tuples of several arities (`len`
-  // over them is the abstract int: the constant cap is 1), so every step
-  // went live, and a step past a receiver's end read every field. Here
-  // each body is straight-line at one arity, so no index is ever out of
-  // range, and a receiver holding several arities reaches one body per
-  // arity. They are generated by emit_tuple_arity_eq into their own class;
-  // see there for the overloads.
-  fputs("  def __lt__(self, t):\n", f);
-  fputs("    if t is None: return False\n", f);
-  fputs("    n = len(self)\n", f);
-  fputs("    m = len(t)\n", f);
-  for (int i = 0; i < max_arity; i++) {
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and __pyc_operator__(m, __pyc_symbol__(\">=\"), %d):\n", i + 1, i + 1);
-    fprintf(f, "      if self[%d] < t[%d]: return True\n", i, i);
-    fprintf(f, "      if t[%d] < self[%d]: return False\n", i, i);
-  }
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d) and __pyc_operator__(m, __pyc_symbol__(\">\"), %d):\n", max_arity, max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        if i >= m: return False\n", f);
-  fputs("        if self[i] < t[i]: return True\n", f);
-  fputs("        if t[i] < self[i]: return False\n", f);
-  fputs("    return n < m\n", f);
-  // issues/119: __str__ and __hash__ need the same unroll, for the same
-  // reason. Both dispatch a method ON AN ELEMENT (self[k].__repr__() /
-  // self[k].__hash__()); with a loop index the element type is the union
-  // of every field type, and for a HETEROGENEOUS tuple that union has no
-  // single resolution. `print((1, (2, 3)))` compiled with zero
-  // diagnostics and then aborted with `matching function not found` on
-  // the C backend, and silently printed `(, )` on the LLVM one.
-  // __hash__ carried a comment claiming the index loop was safe here
-  // because the result type is int either way -- but it is the DISPATCH
-  // that fails, not the result type, so `hash((1, (2, 3)))` aborted too.
-  // A CONSTANT index makes self[k] one field, so each dispatch resolves.
-  // Homogeneous tuples never hit this, which is why `print((1, 2))` and
-  // `print(((1, 2), (3, 4)))` were fine and hid the bug.
-  fputs("  def __str__(self):\n", f);
-  fputs("    n = len(self)\n", f);
-  fputs("    x = \"(\"\n", f);
-  for (int i = 0; i < max_arity; i++) {
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d):\n", i + 1);
-    if (i) fputs("      x += \", \"\n", f);
-    fprintf(f, "      x += self[%d].__repr__()\n", i);
-  }
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        if i: x += \", \"\n", f);
-  fputs("        x += self[i].__repr__()\n", f);
-  fputs("    if __pyc_operator__(n, __pyc_symbol__(\"==\"), 1): x += \",\"\n", f);
-  fputs("    x += \")\"\n", f);
-  fputs("    return x\n", f);
-  fputs("  def __hash__(self):\n", f);
-  fputs("    h = 0\n", f);
-  fputs("    n = len(self)\n", f);
-  for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d): h = h * 1000003 + self[%d].__hash__()\n", i + 1, i);
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        h = h * 1000003 + self[i].__hash__()\n", f);
-  fputs("    return h\n", f);
-  // `in`, count and index compare each element by `==`, so they need the
-  // same unroll: with a loop index, self[i] on a heterogeneous record tuple
-  // is not even a legal read (`"a" in (1, "a")` was "illegal primitive
-  // argument type 'key'"), and with a constant index each `==` is one
-  // field's own. Cross-type `==` answers False, as in CPython.
-  fputs("  def __contains__(self, item):\n", f);
-  fputs("    n = len(self)\n", f);
-  for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and self[%d] == item: return True\n", i + 1, i);
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        if self[i] == item: return True\n", f);
-  fputs("    return False\n", f);
-  fputs("  def count(self, x):\n", f);
-  fputs("    c = 0\n", f);
-  fputs("    n = len(self)\n", f);
-  for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and self[%d] == x: c += 1\n", i + 1, i);
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        if self[i] == x: c += 1\n", f);
-  fputs("    return c\n", f);
-  // CPython's tuple.index: start/stop normalized like a slice (as
-  // list.index in 04_sequence.py), ValueError when absent.
-  fputs("  def index(self, x, start=0, stop=None):\n", f);
-  fputs("    n = len(self)\n", f);
-  fputs("    b = start\n", f);
-  fputs("    if b < 0:\n", f);
-  fputs("      b += n\n", f);
-  fputs("      if b < 0: b = 0\n", f);
-  fputs("    e = n\n", f);
-  fputs("    if stop is not None:\n", f);
-  fputs("      e = stop\n", f);
-  fputs("      if e < 0: e += n\n", f);
-  fputs("      if e > n: e = n\n", f);
-  for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d) and b <= %d and %d < e and self[%d] == x: return %d\n",
-            i + 1, i, i, i, i);
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        if b <= i and i < e and self[i] == x: return i\n", f);
-  fputs("    raise ValueError(\"tuple.index(x): x not in tuple\")\n", f);
-  // issues/110: an element-recursive __deepcopy__. The any-type fallback
-  // it replaces was a SHALLOW copy: `deepcopy((T(),))` shared the T with
-  // the original.
-  //
-  // The result is CONSTRUCTED, never copied and then overwritten. A
-  // copy-then-overwrite leaves every field typed as the union of the
-  // original element and its deep copy, and for an element that is itself
-  // a tuple those are two record CreationSets with no common C type
-  // (measured: `deepcopy(((T(), 1), 2))` emitted a `_CG_void` field and
-  // segfaulted). So: one literal per arity, unrolled like __str__ so each
-  // element keeps its own type -- on a RECORD tuple `n` is a constant and
-  // only its own arity's branch is live -- and, for a runtime-length tuple
-  // (list layout; `n` is not a constant), make_seq over the copied
-  // elements, the same construction tuple.__add__ uses.
-  fputs("  def __deepcopy__(self):\n", f);
-  fputs("    n = len(self)\n", f);
-  fputs("    if __pyc_operator__(n, __pyc_symbol__(\"==\"), 0): return self\n", f);
-  for (int k = 1; k <= max_arity; k++) {
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\"==\"), %d): return (", k);
-    for (int i = 0; i < k; i++) fprintf(f, "%sself[%d].__deepcopy__()", i ? ", " : "", i);
-    fputs(k == 1 ? ",)\n" : ")\n", f);
-  }
-  fputs("    r = []\n", f);
-  fputs("    for i in range(n):\n", f);
-  fputs("      r.append(self[i].__deepcopy__())\n", f);
-  fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
-  // The tuple's elements as a list of int, read at CONSTANT indices so
-  // each conversion is one field's own. pyc_lib/struct.py's pack walks
-  // its `*args` with a runtime index, which is not a legal read of a
-  // record whose fields mix numeric types: minpng's
-  // `pack('<BHH', bool(last), n, ...)` is a (bool, int, int) record and
-  // was refused (ifa/134). shedskin's pack is a C++ variadic template
-  // whose fold expression instantiates one packer per argument type;
-  // this is the same per-position unroll, visible to the analysis.
-  // The same unroll for bytes %-formatting: each position becomes a
-  // __pyc_bytes_fmtarg__ (__pyc__/01b_bytes.py), one type, so the formatter
-  // can index the list at runtime. minilight's PPM header formats
-  // (bytes, bytes, int, int).
-  fputs("  def __pyc_bytes_fmtargs__(self):\n", f);
-  fputs("    n = len(self)\n", f);
-  fputs("    r = []\n", f);
-  for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d): r.append(self[%d].__pyc_bytes_fmtarg__())\n", i + 1, i);
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        r.append(self[i].__pyc_bytes_fmtarg__())\n", f);
-  fputs("    return r\n", f);
-  fputs("  def __pyc_toints__(self):\n", f);
-  fputs("    n = len(self)\n", f);
-  fputs("    r = []\n", f);
-  for (int i = 0; i < max_arity; i++)
-    fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">=\"), %d): r.append(int(self[%d]))\n", i + 1, i);
-  fprintf(f, "    if __pyc_operator__(n, __pyc_symbol__(\">\"), %d):\n", max_arity);
-  fprintf(f, "      for i in range(%d, n):\n", max_arity);
-  fputs("        r.append(int(self[i]))\n", f);
-  fputs("    return r\n", f);
-  // ifa/185: the arity-dispatched overloads, in a second throwaway class so
-  // their specs can be matched to its funcdefs by position.
+  // ifa/185: every method dispatches on ARITY (Sym::dispatch_arity) rather
+  // than unrolling to max_arity behind `n >= k` guards; see
+  // emit_tuple_arity_methods. One throwaway class, whose funcdefs are moved
+  // onto `tuple` with their specs.
   std::vector<TupleDefSpec> arity_specs;
   fputs("class __pyc_tuple_arity__:\n", f);
   emit_tuple_arity_eq(f, max_arity, arity_specs);
+  emit_tuple_arity_methods(f, arities, arity_specs);
   fclose(f);
   // ifa/185 B: read each element with the `index_object` primitive and a
   // LITERAL index instead of `self[k]` / `t[k]`. Those were calls to
@@ -988,20 +1019,19 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   }
   PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", gen_src.c_str(), (int)gen_src.size());
   if (!gen) return;
-  Vec<PyDAST *> gclss;
+  PyDAST *gcls = nullptr;
   for (PyDAST *c : gen->children)
-    if (c->kind == PY_classdef && c->children.n) gclss.add(c);
-  if (gclss.n != 2) return;
-  apply_tuple_def_specs(gclss[1]->children.last(), arity_specs);
+    if (c->kind == PY_classdef && c->children.n) gcls = c;
+  if (!gcls) return;
+  apply_tuple_def_specs(gcls->children.last(), arity_specs);
   // Append the generated funcdefs to the builtin `tuple` class body.
   for (PyDAST *c : mods[0]->pymod->children) {
     if (c->kind != PY_classdef || !c->children.n) continue;
     PyDAST *nm = c->children[0];
     if (!nm || !nm->str_val || strcmp(nm->str_val, "tuple")) continue;
     PyDAST *body = c->children.last();
-    for (PyDAST *gcls : gclss)
-      for (PyDAST *meth : gcls->children.last()->children)
-        if (meth->kind == PY_funcdef) body->children.add(meth);
+    for (PyDAST *meth : gcls->children.last()->children)
+      if (meth->kind == PY_funcdef) body->children.add(meth);
     break;
   }
 }
