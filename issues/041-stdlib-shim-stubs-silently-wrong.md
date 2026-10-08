@@ -1,4 +1,4 @@
-# 041 — stdlib shims must be real or refuse: `hashlib` is still a silent stub
+# 041 — stdlib shims must be real or refuse
 
 **Status:** open, narrowed. Rewritten 2026-09-28; the per-module history
 is in git: `git show e3b44e2c:issues/041-stdlib-shim-stubs-silently-wrong.md`.
@@ -17,10 +17,10 @@ compile or run reports it.
 
 ## Open
 
-- **`hashlib`**: `md5(...).hexdigest()` returns `""`. `rsync` will hit
-  it once it compiles (issues/025 triage). Implement `md5`/`sha1` (or
-  whatever the corpus uses: `rsync`, `sha`), or make the stub raise
-  `NotImplementedError`.
+- **`hashlib`** (FIXED 2026-10-07): `md5` is a real RFC 1321
+  implementation (`tests/hashlib_md5.py`), which is what rsync uses. The
+  other algorithms raise `NotImplementedError` rather than returning an
+  empty digest.
 - **`struct` gaps:** float codes (`f`, `d`), `s`/`p` and `?` raise, which
   is correct. (`minpng`'s `pack('<BHH', bool(last), ...)` is fixed, with
   no corpus edit: `pack` reads its `*args` through a per-position unroll,

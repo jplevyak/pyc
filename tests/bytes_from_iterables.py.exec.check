@@ -1,0 +1,4 @@
+b'abcd' b'ABCDE' b''
+False
+True
+b'abcd' False

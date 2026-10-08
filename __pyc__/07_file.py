@@ -17,6 +17,8 @@ class __pyc_file__:
   peek = ""
   def __init__(self, handle):
     self.handle = handle
+    # `f.closed`, as CPython (rsync's `if datastream.closed`).
+    self.closed = False
     # CPython's text file sits on a binary stream, `.buffer` (tarsalzp
     # reads and writes `sys.stdin.buffer` / `sys.stdout.buffer`). Here it is
     # a binary file over the same C stream.
@@ -76,6 +78,7 @@ class __pyc_file__:
   def close(self):
     __pyc_c_call__(int, "_CG_fclose", int, self.handle)
     self.handle = 0
+    self.closed = True
     return None
   def __iter__(self):
     return self
@@ -143,6 +146,8 @@ class __pyc_binfile__:
   peek = b""
   def __init__(self, handle):
     self.handle = handle
+    # `f.closed`, as CPython (rsync's `if datastream.closed`).
+    self.closed = False
   def __pyc_take_peek__(self):
     l = self.peek
     self.peeked = False
@@ -195,6 +200,7 @@ class __pyc_binfile__:
   def close(self):
     __pyc_c_call__(int, "_CG_fclose", int, self.handle)
     self.handle = 0
+    self.closed = True
     return None
   def __iter__(self):
     return self

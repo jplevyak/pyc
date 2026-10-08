@@ -58,6 +58,11 @@ class deque:
     def __iter__(self):
         return iter(self.d[self.head:])
 
+    def __pyc_tobytes__(self):
+        # bytes(a_deque_of_ints) (rsync's `bytes(window)`): CPython builds
+        # bytes from any iterable of ints; the list path does the checking.
+        return self.d[self.head:].__pyc_tobytes__()
+
 class defaultdict:
     def __init__(self, factory=None, initial=None):
         self.factory = factory

@@ -135,6 +135,9 @@ class range:
     while it.__pyc_more__():
       r.append(it.__next__())
     return r
+  def __pyc_tobytes__(self):
+    # bytes(range(...)): CPython builds bytes from any iterable of ints.
+    return self.__pyc_tolist__().__pyc_tobytes__()
 
 class __range_iter__:
   i = 0
