@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "python_parse.h"
+#include <cctype>
+#include <string>
 
 #include "codegen/codegen_common.h"
 
@@ -881,8 +883,42 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   fputs("        r.append(int(self[i]))\n", f);
   fputs("    return r\n", f);
   fclose(f);
-  PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", buf, (int)sz);
+  // ifa/185 B: read each element with the `index_object` primitive and a
+  // LITERAL index instead of `self[k]` / `t[k]`. Those were calls to
+  // tuple.__getitem__, which is that same primitive behind
+  // `__pyc_clone_constants__(key)` -- so every step minted a __getitem__
+  // contour per constant index per receiver group (3,066 of 4,125 EntrySets
+  // on sunfish at pass 10). A literal at the use is already a constant.
+  std::string gen_src(buf, sz);
   free(buf);
+  if (getenv("PYC_TUPIX")) {
+    std::string out;
+    out.reserve(gen_src.size() * 2);
+    for (size_t i = 0; i < gen_src.size();) {
+      size_t nlen = 0;
+      if (gen_src.compare(i, 5, "self[") == 0 && (i == 0 || !(isalnum((unsigned char)gen_src[i - 1]) || gen_src[i - 1] == '_')))
+        nlen = 4;
+      else if (gen_src.compare(i, 2, "t[") == 0 && (i == 0 || !(isalnum((unsigned char)gen_src[i - 1]) || gen_src[i - 1] == '_')))
+        nlen = 1;
+      size_t j = i + nlen + 1;
+      if (nlen && j < gen_src.size() && isdigit((unsigned char)gen_src[j])) {
+        size_t k = j;
+        while (k < gen_src.size() && isdigit((unsigned char)gen_src[k])) k++;
+        if (k < gen_src.size() && gen_src[k] == ']') {
+          out += "__pyc_primitive__(__pyc_symbol__(\"index_object\"), ";
+          out.append(gen_src, i, nlen);
+          out += ", ";
+          out.append(gen_src, j, k - j);
+          out += ")";
+          i = k + 1;
+          continue;
+        }
+      }
+      out += gen_src[i++];
+    }
+    gen_src.swap(out);
+  }
+  PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", gen_src.c_str(), (int)gen_src.size());
   if (!gen) return;
   PyDAST *gcls = nullptr;
   for (PyDAST *c : gen->children)
