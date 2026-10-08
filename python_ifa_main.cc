@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "python_parse.h"
-#include <cctype>
 #include <set>
 #include <string>
 #include <vector>
@@ -677,6 +676,15 @@ PycFormalDispatch *pyc_formal_dispatch(PyDAST *param) { return formal_dispatch.g
 // One generated def's constraints, one entry per positional parameter.
 typedef std::vector<PycFormalDispatch> TupleDefSpec;
 
+// ifa/185: every element is read with the `index_object` primitive and a
+// LITERAL index, not `self[k]`. `self[k]` is a call to tuple.__getitem__,
+// which is that same primitive behind `__pyc_clone_constants__(key)`, so
+// each read minted a __getitem__ contour per constant index per receiver
+// group (3,066 of 4,125 EntrySets on sunfish at pass 10 under the unroll).
+// Measured with arity dispatch: sunfish compiles in 134 s this way, 168 s
+// through __getitem__. A runtime index (`self[i]`) still goes through
+// __getitem__.
+//
 // ifa/185: tuple.__eq__ as overloads on the operands' ARITY, written to `f`
 // as a class body with one TupleDefSpec per def in `specs`. "k" is a static
 // arity, "dyn" a tuple with none (list layout, from tuple(iterable) or a
@@ -714,7 +722,7 @@ static void emit_tuple_arity_eq(FILE *f, int max_arity, std::vector<TupleDefSpec
     for (int dyn = 0; dyn < 2; dyn++) {
       fputs("  def __eq__(self, t):\n", f);
       if (dyn) fprintf(f, "    if len(t) != %d: return False\n", k);
-      for (int i = 0; i < k; i++) fprintf(f, "    if not (self[%d] == t[%d]): return False\n", i, i);
+      for (int i = 0; i < k; i++) fprintf(f, "    if not (__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) == __pyc_primitive__(__pyc_symbol__(\"index_object\"), t, %d)): return False\n", i, i);
       fputs("    return True\n", f);
       specs.push_back({self_k, dyn ? dyn_tuple : tuple_k});
     }
@@ -750,8 +758,8 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
     for (int m : arities) {
       fputs("  def __lt__(self, t):\n", f);
       for (int i = 0; i < k && i < m; i++) {
-        fprintf(f, "    if self[%d] < t[%d]: return True\n", i, i);
-        fprintf(f, "    if t[%d] < self[%d]: return False\n", i, i);
+        fprintf(f, "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) < __pyc_primitive__(__pyc_symbol__(\"index_object\"), t, %d): return True\n", i, i);
+        fprintf(f, "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), t, %d) < __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d): return False\n", i, i);
       }
       fprintf(f, "    return %s\n", k < m ? "True" : "False");
       specs.push_back({self_k(k), tuple_k(m)});
@@ -760,16 +768,16 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
     fputs("  def __lt__(self, t):\n    m = len(t)\n", f);
     for (int i = 0; i < k; i++) {
       fprintf(f, "    if %d >= m: return False\n", i);
-      fprintf(f, "    if self[%d] < t[%d]: return True\n", i, i);
-      fprintf(f, "    if t[%d] < self[%d]: return False\n", i, i);
+      fprintf(f, "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) < __pyc_primitive__(__pyc_symbol__(\"index_object\"), t, %d): return True\n", i, i);
+      fprintf(f, "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), t, %d) < __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d): return False\n", i, i);
     }
     fprintf(f, "    return %d < m\n", k);
     specs.push_back({self_k(k), dyn_tuple});
     fputs("  def __lt__(self, t):\n    n = len(self)\n", f);
     for (int i = 0; i < k; i++) {
       fprintf(f, "    if %d >= n: return True\n", i);
-      fprintf(f, "    if self[%d] < t[%d]: return True\n", i, i);
-      fprintf(f, "    if t[%d] < self[%d]: return False\n", i, i);
+      fprintf(f, "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) < __pyc_primitive__(__pyc_symbol__(\"index_object\"), t, %d): return True\n", i, i);
+      fprintf(f, "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), t, %d) < __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d): return False\n", i, i);
     }
     fprintf(f, "    return n < %d\n", k);
     specs.push_back({dyn_self, tuple_k(k)});
@@ -796,22 +804,22 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
     const char *loop;  // the whole unconstrained body
   };
   static const OneOp ops[] = {
-      {"__hash__(self)", 1, "    h = 0\n", "    h = h * 1000003 + self[%d].__hash__()\n", "    return h\n",
+      {"__hash__(self)", 1, "    h = 0\n", "    h = h * 1000003 + __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__hash__()\n", "    return h\n",
        "    h = 0\n    for i in range(len(self)):\n      h = h * 1000003 + self[i].__hash__()\n    return h\n"},
       // `in`, count and index compare each element by `==`; cross-type
       // `==` answers False, as in CPython.
-      {"__contains__(self, item)", 2, "", "    if self[%d] == item: return True\n", "    return False\n",
+      {"__contains__(self, item)", 2, "", "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) == item: return True\n", "    return False\n",
        "    for i in range(len(self)):\n      if self[i] == item: return True\n    return False\n"},
-      {"count(self, x)", 2, "    c = 0\n", "    if self[%d] == x: c += 1\n", "    return c\n",
+      {"count(self, x)", 2, "    c = 0\n", "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) == x: c += 1\n", "    return c\n",
        "    c = 0\n    for i in range(len(self)):\n      if self[i] == x: c += 1\n    return c\n"},
       // The tuple's elements as a list of int / of __pyc_bytes_fmtarg__,
       // read at constant indices so each conversion is one field's own:
       // pyc_lib/struct.py's pack (minpng's (bool, int, int), ifa/134) and
       // bytes %-formatting (minilight's (bytes, bytes, int, int)).
-      {"__pyc_bytes_fmtargs__(self)", 1, "    r = []\n", "    r.append(self[%d].__pyc_bytes_fmtarg__())\n",
+      {"__pyc_bytes_fmtargs__(self)", 1, "    r = []\n", "    r.append(__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__pyc_bytes_fmtarg__())\n",
        "    return r\n",
        "    r = []\n    for i in range(len(self)):\n      r.append(self[i].__pyc_bytes_fmtarg__())\n    return r\n"},
-      {"__pyc_toints__(self)", 1, "    r = []\n", "    r.append(int(self[%d]))\n", "    return r\n",
+      {"__pyc_toints__(self)", 1, "    r = []\n", "    r.append(int(__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d)))\n", "    return r\n",
        "    r = []\n    for i in range(len(self)):\n      r.append(int(self[i]))\n    return r\n"},
   };
   auto spec_for = [&](PycFormalDispatch s0, int nparams) {
@@ -840,7 +848,7 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
       fputs("    x = \"(\"\n", f);
       for (int i = 0; i < k; i++) {
         if (i) fputs("    x += \", \"\n", f);
-        fprintf(f, "    x += self[%d].__repr__()\n", i);
+        fprintf(f, "    x += __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__repr__()\n", i);
       }
       fprintf(f, "    x += \"%s)\"\n", k == 1 ? "," : "");
       fputs("    return x\n", f);
@@ -877,7 +885,7 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
     char nk[16];
     snprintf(nk, sizeof(nk), "%d", k);
     index_prologue(nk);
-    for (int i = 0; i < k; i++) fprintf(f, "    if b <= %d and %d < e and self[%d] == x: return %d\n", i, i, i, i);
+    for (int i = 0; i < k; i++) fprintf(f, "    if b <= %d and %d < e and __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) == x: return %d\n", i, i, i, i);
     fputs("    raise ValueError(\"tuple.index(x): x not in tuple\")\n", f);
     specs.push_back(spec_for(self_k(k), 4));
   }
@@ -900,7 +908,7 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
       fputs("    return self\n", f);
     } else {
       fputs("    return (", f);
-      for (int i = 0; i < k; i++) fprintf(f, "%sself[%d].__deepcopy__()", i ? ", " : "", i);
+      for (int i = 0; i < k; i++) fprintf(f, "%s__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__deepcopy__()", i ? ", " : "", i);
       fputs(k == 1 ? ",)\n" : ")\n", f);
     }
     specs.push_back(spec_for(self_k(k), 1));
@@ -982,41 +990,8 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   emit_tuple_arity_eq(f, max_arity, arity_specs);
   emit_tuple_arity_methods(f, arities, arity_specs);
   fclose(f);
-  // ifa/185 B: read each element with the `index_object` primitive and a
-  // LITERAL index instead of `self[k]` / `t[k]`. Those were calls to
-  // tuple.__getitem__, which is that same primitive behind
-  // `__pyc_clone_constants__(key)` -- so every step minted a __getitem__
-  // contour per constant index per receiver group (3,066 of 4,125 EntrySets
-  // on sunfish at pass 10). A literal at the use is already a constant.
   std::string gen_src(buf, sz);
   free(buf);
-  if (getenv("PYC_TUPIX")) {
-    std::string out;
-    out.reserve(gen_src.size() * 2);
-    for (size_t i = 0; i < gen_src.size();) {
-      size_t nlen = 0;
-      if (gen_src.compare(i, 5, "self[") == 0 && (i == 0 || !(isalnum((unsigned char)gen_src[i - 1]) || gen_src[i - 1] == '_')))
-        nlen = 4;
-      else if (gen_src.compare(i, 2, "t[") == 0 && (i == 0 || !(isalnum((unsigned char)gen_src[i - 1]) || gen_src[i - 1] == '_')))
-        nlen = 1;
-      size_t j = i + nlen + 1;
-      if (nlen && j < gen_src.size() && isdigit((unsigned char)gen_src[j])) {
-        size_t k = j;
-        while (k < gen_src.size() && isdigit((unsigned char)gen_src[k])) k++;
-        if (k < gen_src.size() && gen_src[k] == ']') {
-          out += "__pyc_primitive__(__pyc_symbol__(\"index_object\"), ";
-          out.append(gen_src, i, nlen);
-          out += ", ";
-          out.append(gen_src, j, k - j);
-          out += ")";
-          i = k + 1;
-          continue;
-        }
-      }
-      out += gen_src[i++];
-    }
-    gen_src.swap(out);
-  }
   PyDAST *gen = dparse_python_buf_to_ast("<tuple_cmp>", gen_src.c_str(), (int)gen_src.size());
   if (!gen) return;
   PyDAST *gcls = nullptr;
