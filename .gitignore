@@ -150,6 +150,14 @@ __pycache__/
 *.txt
 *.log
 *.ir
+# ...but .ir under a fixture tree is a SOURCE. Without this, the blanket
+# rule above silently ignored every new IR fixture; the existing ones are
+# tracked only because they were force-added. The harness's scratch
+# output (--keep) stays ignored.
+!ifa/tests/ir/**/*.ir
+!tests/ir/**/*.ir
+ifa/tests/ir/build/
+tests/ir/build/
 out_class
 out_dyn
 out_mc
