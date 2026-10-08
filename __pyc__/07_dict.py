@@ -307,6 +307,14 @@ class dict:
     return r
   def __pyc_copy__(self):
     return self.copy()
+  # d.clear() (sunfish's transposition tables): empty, with fresh storage,
+  # exactly as __init__ leaves it.
+  def clear(self):
+    self._keys = []
+    self._vals = []
+    self._len = 0
+    self._index = []
+    self._mask = 0
   def update(self, other):
     if other is None:
       return self

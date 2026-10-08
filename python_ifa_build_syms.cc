@@ -2163,7 +2163,20 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // (dispatch is resolved statically at the class-qualified call site
   // in build_if1_pyda, so no receiver specialization is needed).
   bool is_method = in && !in->is_fun && !ast->is_staticmethod && !ast->is_classmethod;
-  if (cls) {
+  if (cls && fn->is_generator) {
+    // A capturing generator (sunfish's `moves()` inside `bound`): the
+    // carrier now dispatches to its generator WRAPPER (build_if1_pyda's
+    // PY_funcdef), so the coroutine body is value-carried, like a plain
+    // def's, and receives the carrier as an ordinary formal after the
+    // return cell, which the wrapper forwards. It used to take the
+    // carrier as as[0] with no wrapper at all, so `moves()` returned the
+    // body's raw result -- typed as its yields -- and `for x in moves()`
+    // iterated the first yielded value.
+    as.add(fn);
+    if (retcell) as.add(retcell);
+    as.add(fn->self);
+    retcell = nullptr;  // already placed
+  } else if (cls) {
     // issues/001: this nested def captures enclosing-function locals --
     // fn->self was already created and specialized against the
     // closure-carrier class in PY_funcdef's build_if1_pyda case (before
@@ -2195,9 +2208,9 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   }
   // issues/171 #7: the hidden return-cell formal goes first, so a `*args`
   // formal stays last; build_generator_wrapper finds it by identity.
+  int self_i = retcell ? 2 : 1;
   if (retcell) as.add(retcell);
   get_syms_args_pyda(ast, varargsl, as, ctx);
-  int self_i = retcell ? 2 : 1;
   if (!cls && is_method) {
     if (as.n > self_i) {
       fn->self = as[self_i];

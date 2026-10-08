@@ -33,6 +33,15 @@ next exception check, or as `Unhandled exception` at exit. Bytes formatting
 behaves the same way: `b'%c' % 300` should raise `OverflowError`, but prints
 `b''`, and the LLVM build can crash on that value.
 
+**Subscripts too, and silently (2026-10-07).** `d[3]` on a dict without
+that key, or on a class whose `__getitem__` raises, inside
+`try: ... except KeyError:`, is not caught. Worse, the program then exits
+**0 with no output at all**: neither handler runs, and the pending
+exception is never reported. A subscript lowers through `call_method`
+to `__getitem__`, the same operator-style send with no check after it.
+`defaultdict.__getitem__`'s new `KeyError` (missing key, no factory) is
+affected the same way.
+
 ## Root cause
 
 The frontend emits a pending-exception check (`emit_exc_check`,

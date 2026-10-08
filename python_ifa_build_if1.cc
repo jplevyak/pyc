@@ -3051,7 +3051,11 @@ static Sym *find_class_method_fn(Sym *cls, cchar *name) {
 // PY_dstar_arg / PY_arg_default handling for what a fuller version of
 // this would need to mirror). For a METHOD that includes `self`, which
 // is an ordinary positional formal and forwards like any other.
-static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, PycAST *ast, PycCompiler &ctx) {
+// `carrier`: for a capturing generator, the body's formal that receives
+// the closure carrier; the wrapper's own dispatch formal (dispatch0, the
+// carrier the call site called) is forwarded into it.
+static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, PycAST *ast, PycCompiler &ctx,
+                                    Sym *carrier = nullptr) {
   int lvl = 0;
   PycSymbol *gen_cls_ps = find_PycSymbol(ctx, cannonicalize_string("__pyc_generator__"), &lvl);
   if (!gen_cls_ps || !gen_cls_ps->sym)
@@ -3075,6 +3079,10 @@ static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, 
   for (int i = 1; i < body_fn->has.n; i++) {
     if (body_fn->has[i] == retcell) {
       if1_add_send_arg(if1, call_send, gen_inst);
+      continue;
+    }
+    if (carrier && body_fn->has[i] == carrier) {
+      if1_add_send_arg(if1, call_send, dispatch0);
       continue;
     }
     Sym *wf = new_sym(ast);
@@ -3162,7 +3170,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // issues/171 #7: the return-value cell, for exactly the generators
       // that get a wrapper below (the method-wrapper and plain-def-wrapper
       // branches after gen_fun_pyda) -- the wrapper is what fills it.
-      if (ast->sym->is_generator && !closure_cls && ast->rval && ast->rval != ast->sym) {
+      if (ast->sym->is_generator && ast->rval && ast->rval != ast->sym) {
         Sym *gmw = ctx.gen_method_wrapper.get(ast->sym);
         bool is_meth = ast->rval->alias == ast->sym || (gmw && ast->rval->alias == gmw);
         if (is_meth ? gmw != nullptr : true) ctx.gen_retcell.put(ast->sym, new_sym(ast));
@@ -3220,6 +3228,17 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           gen_method_wrapper->self->must_implement_and_specialize(fd_enclosing_in);
         }
       } else if (closure_cls) {
+        // A capturing generator gets a wrapper too, dispatched on the
+        // carrier (dispatch0 specialized to the closure class, as the body's
+        // as[0] was), which forwards the carrier into the body. The name
+        // is still bound to the carrier instance.
+        if (ast->sym->is_generator) {
+          Sym *wrapper = new_fun(ast);
+          wrapper->nesting_depth = ast->sym->nesting_depth;
+          Sym *dispatch0 = new_sym(ast);
+          dispatch0->must_implement_and_specialize(closure_cls);
+          build_generator_wrapper(wrapper, ast->sym, dispatch0, ast, ctx, ast->sym->self);
+        }
         Sym *inst = build_closure_instance_pyda(closure_cls, ast, &ast->code, ctx);
         if1_move(if1, &ast->code, inst, ast->rval, ast);
       } else if (!fd_is_method && ast->rval != ast->sym && ast->sym->is_generator) {
@@ -5490,8 +5509,36 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       return 0;
     }
 
+    case PY_subscriptlist: {
+      // `t[a, b]` is `t[(a, b)]`: the index is a tuple (sunfish's
+      // `self.tp_score[pos, (depth, root)] = Entry(...)`). This node used
+      // to build its children and produce no value, so the subscript's
+      // index was empty: a store keyed `t[1, 2]` was never found by
+      // `t.get((1, 2))`, and sunfish's transposition table read back only
+      // None. A slice inside the list (`a[1:2, 3]`, numpy's form) keeps the
+      // old path.
+      bool has_slice = false;
+      for (auto c : n->children.values())
+        if (c->kind == PY_slice) has_slice = true;
+      if (has_slice) {
+        for (auto c : n->children.values()) build_if1_pyda(c, ctx);
+        return 0;
+      }
+      for (auto c : n->children.values()) {
+        build_if1_pyda(c, ctx);
+        if1_gen(if1, &ast->code, getAST(c, ctx)->code);
+      }
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, sym_primitive);
+      if1_add_send_arg(if1, send, sym_make);
+      if1_add_send_arg(if1, send, unify_seq_enabled() ? sym_list : sym_tuple);
+      for (auto c : n->children.values()) if1_add_send_arg(if1, send, getAST(c, ctx)->rval);
+      ast->rval = new_sym(ast);
+      if1_add_send_result(if1, send, ast->rval);
+      return 0;
+    }
+
     case PY_slice:
-    case PY_subscriptlist:
     case PY_dotted_name:
     case PY_dotted_as_name:
     case PY_import_as_name:

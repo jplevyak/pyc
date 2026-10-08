@@ -73,11 +73,29 @@ class defaultdict:
 
     def __getitem__(self, key):
         if key not in self.d:
-            if self.factory:
-                self.d[key] = self.factory()
-            else:
-                self.d[key] = None
+            # No factory: a missing key is a KeyError, as for a plain
+            # dict. It used to insert None, silently.
+            if not self.factory:
+                raise KeyError(repr(key))  # as dict does: str(KeyError(k)) is repr(k)
+            self.d[key] = self.factory()
         return self.d[key]
+
+    def get(self, key, default=None):
+        return self.d.get(key, default)
+
+    def __delitem__(self, key):
+        del self.d[key]
+
+    # Equal to another defaultdict or a plain dict with the same items, as
+    # in CPython (life's `board in history`). It compared by identity, so
+    # equal boards never matched and life's process() never returned.
+    def __eq__(self, other):
+        if isinstance(other, defaultdict):
+            return self.d == other.d
+        return self.d == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
         
     def __setitem__(self, key, value):
         self.d[key] = value
