@@ -19,3 +19,12 @@ c[0:3] = b"xyz"
 print(c)
 c[::-1] = [1, 2, 3]
 print(c)
+# A length mismatch raises ValueError, and the handler sees it (issues/175:
+# no exception check followed a subscript send, and with no other raise in
+# the program the gate was never armed, so the error was dropped).
+try:
+    c[::2] = bytearray(5)
+    print("no raise")
+except ValueError as e:
+    print("ValueError", e)
+print(c)

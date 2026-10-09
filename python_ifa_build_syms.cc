@@ -708,6 +708,17 @@ static void collect_can_raise(PyDAST *n, PycCompiler &ctx, Sym *current_fn, Map<
       // or a call whose atom didn't resolve at all.
       if (current_fn && !resolved_calls.get(n)) raisers.add(current_fn);
       break;
+    case PY_subscript:
+      // issues/175: a SLICE subscript is a method send (`__pyc_setslice__`,
+      // ...) resolved only by FA, so it is the method-call case above:
+      // assume it can raise. It is followed by a pending-exception check,
+      // and without this its function stayed can_raise == false, so
+      // CALLERS skipped their check (emit_exc_check's known_callee) and the
+      // exception stopped at the function boundary. Item subscripts are
+      // left out with their check: counting every `a[i]` multiplied
+      // hq2x's compile time.
+      if (current_fn && n->children.n && n->children[0] && n->children[0]->kind == PY_slice) raisers.add(current_fn);
+      break;
     default:
       break;
   }
@@ -1712,6 +1723,14 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // (STORE), not a use; unmarked, the generic recursion would
       // resolve it as a load of an undefined name.
       if (n->children.n == 2 && n->children[1]->kind == PY_name) mark_store(n->children[1]);
+      // issues/175: a handler in user code is a program that observes
+      // exceptions, so it arms the gate like a `raise` does. Without it,
+      // a program whose only raise is in a builtin reached through a
+      // subscript or slice (`ba[::2] = bytearray(5)` -> ValueError in
+      // bytearray.__pyc_setslice__) emitted no checks at all, and the
+      // handler around it was dead. Structural: it asks whether the
+      // program catches, not which builtin a send might reach by name.
+      if (!ctx.is_builtin()) pyc_program_has_raise = true;
       goto generic_recurse;
 
     case PY_assert_stmt:
@@ -1840,6 +1859,20 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_tuple:
     case PY_exprlist:
     case PY_testlist: {
+      // issues/175: a slice STORE (`o[i:j:k] = v`) arms the gate, as
+      // `assert` and `yield` do: it is an AST shape that reaches a builtin
+      // raiser, `__pyc_setslice__`, and CPython raises ValueError for an
+      // extended-slice length mismatch on every mutable sequence, so the
+      // shape alone says it can raise. Without it a program whose only
+      // raise was `ba[::2] = bytearray(5)` ran on past the error, exit 0.
+      // Same test build_if1 uses for a slice store (PY_STORE power node,
+      // last trailer a PY_subscript holding a PY_slice).
+      if (n->kind == PY_power && n->ctx == PY_STORE && !ctx.is_builtin() && n->children.n > 1) {
+        PyDAST *last = n->children.last();
+        if (last && last->kind == PY_subscript && last->children.n && last->children[0] &&
+            last->children[0]->kind == PY_slice)
+          pyc_program_has_raise = true;
+      }
       // Mirrors CPython Tuple_kind: recurse children, set sym=sym_tuple for destructuring
       ast->rval = new_sym(ast);
       for (auto c : n->children.values()) build_syms_pyda(c, ctx);

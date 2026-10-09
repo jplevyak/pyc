@@ -2835,9 +2835,15 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
       if1_send(if1, code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, val, (ast->rval = new_sym(ast)))
           ->ast = ast;
     else if (a->is_object_index) {
-      if (a->is_slice)
+      // issues/175: a slice store is a method send that can raise
+      // (bytearray's length check). Its send was built with the target's
+      // AST (`a`); the check carries the same one, so the post-FA fold can
+      // find its callee. Item stores get no check yet: one after every
+      // `a[i] = v` multiplied hq2x's compile time by 4.6 (27 s -> 125 s).
+      if (a->is_slice) {
         if1_add_send_arg(if1, find_send(a->code), val);
-      else
+        emit_exc_check(code, a, ctx);
+      } else
         call_method(code, ast, a->rval, sym___setitem__, (ast->rval = new_sym(ast)), 2, a->sym, val);
     } else {
       if (ctx.decorated_self_refs.set_in(a->sym))
@@ -3638,9 +3644,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
                  new_sym(ast));
       } else if (a->is_object_index) {
-        if (a->is_slice)
+        if (a->is_slice) {
           if1_add_send_arg(if1, find_send(a->code), v->rval);
-        else
+          emit_exc_check(&ast->code, a, ctx);  // issues/175
+        } else
           call_method(&ast->code, ast, a->rval, sym___setitem__, new_sym(ast), 2, a->sym, v->rval);
       } else {
         if1_move(if1, &ast->code, v->rval, a->sym, a);
@@ -3663,9 +3670,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
                    new_sym(ast));
         } else if (a->is_object_index) {
-          if (a->is_slice)
+          if (a->is_slice) {
             if1_add_send_arg(if1, find_send(a->code), v->rval);
-          else
+            emit_exc_check(&ast->code, a, ctx);  // issues/175
+          } else
             call_method(&ast->code, ast, a->rval, sym___setitem__, new_sym(ast), 2, a->sym, v->rval);
         } else {
           if1_move(if1, &ast->code, v->rval, a->sym, a);
@@ -3703,6 +3711,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           // takes a whole replacement sequence, not a single value, so
           // the read-compute-write shape needs its own translation.
           if1_add_send_arg(if1, find_send(ast->code), v->rval);
+          emit_exc_check(&ast->code, t, ctx);  // issues/175
           if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, (ast->rval = new_sym(ast)))
               ->ast = ast;
         } else {
@@ -4609,12 +4618,22 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             // elements and shrinks, where `o[i:j:k] = []` is a length
             // mismatch. Route it to __pyc_delslice__, which takes no value
             // argument, so the step survives all the way to the runtime.
-            if (store && ctx.building_del_target)
+            // issues/175: a slice send can raise (bytearray's length
+            // check), so it is followed by the pending-exception check a
+            // call gets. Not the store here: its value is attached later,
+            // by the assignment, which finds the send as the LAST one in
+            // this code (find_send), so the assignment emits that check
+            // after it. Item subscripts get no check yet (see the plain
+            // assignment's store).
+            if (store && ctx.building_del_target) {
               call_method(&ast->code, ast, cur_val, sym___pyc_delslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
-            else if (store)
+              emit_exc_check(&ast->code, ast, ctx);
+            } else if (store)
               call_method(&ast->code, ast, cur_val, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
-            else
+            else {
               call_method(&ast->code, ast, cur_val, sym___pyc_getslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
+              emit_exc_check(&ast->code, ast, ctx);
+            }
             cur_val = ast->rval;
           } else {
             build_if1_pyda(sub_node, ctx);

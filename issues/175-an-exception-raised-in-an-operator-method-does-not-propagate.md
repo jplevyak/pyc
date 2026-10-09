@@ -1,6 +1,6 @@
 # 175 — an exception raised inside an operator method does not propagate
 
-**Status:** open. Found 2026-10-07 while making bytes `%`-formatting raise
+**Status:** open (slice subscripts fixed 2026-10-09; operators and item subscripts remain). Found 2026-10-07 while making bytes `%`-formatting raise
 CPython's errors (minilight).
 
 ## Symptom
@@ -42,13 +42,44 @@ to `__getitem__`, the same operator-style send with no check after it.
 `defaultdict.__getitem__`'s new `KeyError` (missing key, no factory) is
 affected the same way.
 
-**Slice stores too (2026-10-09).** `ba[::2] = bytearray(5)` raises
-`ValueError` in `bytearray.__pyc_setslice__` (`__pyc__/06_bytearray.py`),
-and inside `try: ... except ValueError:` the handler does not run: the
-`try` body continues, and the exception surfaces as `Unhandled exception`
-at exit. In a program with no other `raise`, the raise is dropped
-entirely, and the C shows the message being built and then `return 0`.
-`tests/bytearray_slice.py` leaves the case out for that reason.
+**Slice stores too (2026-10-09). FIXED the same day.** `ba[::2] =
+bytearray(5)` raises `ValueError` in `bytearray.__pyc_setslice__`
+(`__pyc__/06_bytearray.py`). Inside `try: ... except ValueError:` the
+handler did not run, and in a program with no other `raise` the raise was
+dropped entirely. Three gaps, each fixed:
+
+1. **No check after a slice send.** `__pyc_getslice__`, `__pyc_delslice__`
+   and, once the assignment attaches its value, `__pyc_setslice__` are now
+   followed by `emit_exc_check`, carrying the send's AST so the post-FA
+   fold can find the callee (`python_ifa_build_if1.cc`).
+2. **Callers did not check.** `collect_can_raise` counts a slice subscript
+   as an unresolved method send, like a method call, so a function
+   containing one is `can_raise` and its call sites keep their check.
+3. **The gate was not armed.** Two structural AST shapes now arm
+   `pyc_program_has_raise` (`python_ifa_build_syms.cc`): an `except`
+   clause in user code (the program observes exceptions), and a slice
+   store (CPython raises `ValueError` for an extended-slice length
+   mismatch on every mutable sequence, so the shape alone can raise, as
+   with `assert`).
+
+Tests: `slice_store_raise_is_caught` (the raise crosses a function
+boundary into the caller's handler) and `bytearray_slice`'s mismatch case.
+Uncaught, the program now stops with `Unhandled exception` and exit 1, as
+CPython does.
+
+**Item subscripts are NOT done, and the measurement says why.** The same
+three changes applied to every `a[i]` load, store and `del` compiled
+hq2x in 125 s against 27 s alone (old and new builds back to back), +72%
+compile time corpus-wide. A check after every item access, and every
+function with one counted `can_raise`, multiplies FA's work; the post-FA
+fold removes the checks only after FA has paid for them. Item subscripts
+and operators need a mechanism that does not emit the check up front, or
+one that FA prunes before it analyzes the exceptional arm.
+
+Also found on the way: once a subscript carried a check, minilight's
+`float('inf')` folded to a constant and the C backend printed it as
+`inf.0`. Non-finite floats are now emitted as `__builtin_inf()` /
+`__builtin_nan("")` (`cg_sprint_imm`, `cg.cc`).
 
 ## Root cause
 

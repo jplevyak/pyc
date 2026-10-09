@@ -5,3 +5,5 @@ bytearray(b'\x00\x00\x02\x00\x04\x00')
 bytearray(b'\x00\x00\x00\x00\x00\x00')
 bytearray(b'xyz')
 bytearray(b'\x03\x02\x01')
+ValueError attempt to assign bytes of size 5 to extended slice of size 2
+bytearray(b'\x03\x02\x01')
