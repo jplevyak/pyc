@@ -75,7 +75,7 @@ has a row in the blocker table below.
 | runs (rc 0), CPython reference times out at 120 s, so no oracle (18) | ac_encode, adatron, bh, chaos, chess, chull, kmeanspp, mao, minilight, oliva2, path_tracing, pisang, pygmy, richards, rubik2, score4, timsort, yopyra |
 | same exit status as CPython, no stdout verdict (4) | pygasus and webserver (both endless by design, 124; see pygasus's row below), rdb (both rc 1: the corpus run has no iPod directory), rsync (both rc 1: no `testdata/` in the corpus or upstream) |
 | times out where CPython finishes (1) | dijkstra2 |
-| **compiles, then fails** (1) | genetic2 139 (issues/174) |
+| **compiles, then fails** (0) | genetic2 matches CPython since 2026-10-09 (except its timing values) on both backends: [174](closed/174-format-with-a-tuple-variable-skips-str-and-arity.md) |
 | **does not compile** (2) | othello3 (compile timeout), sunfish (compile timeout: 534 s and 3 GB alone, against the 400 s cap; [ifa/185](../ifa/issues/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md). Once compiled it matches CPython on both backends) |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted

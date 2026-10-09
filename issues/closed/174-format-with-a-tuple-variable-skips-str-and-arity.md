@@ -1,13 +1,14 @@
 # 174 — `fmt % t` with a tuple VARIABLE: no `__str__`, and no expansion of a runtime-length tuple
 
-**Status:** open, root-caused 2026-10-05. Found as genetic2's last
+**Status:** CLOSED 2026-10-09 (see "Fixed" at the end). Root-caused
+2026-10-05. Found as genetic2's last
 blocker (its final `print` of the best genome). Reproducible on both
 backends. **Silent: compiles clean, exit 0 from pyc, then a segfault or
 raw memory in the output.**
 
-**Related:** [168](168-object-at-a-computed-format-s-prints-garbage.md)
+**Related:** [168](../168-object-at-a-computed-format-s-prints-garbage.md)
 (the same missing `__str__`, for a COMPUTED format),
-[165](closed/165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (the
+[165](165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (the
 per-argument type tag), ifa/109 (a tuple slice gets list layout).
 
 ## Symptom
@@ -75,3 +76,49 @@ implementing, and keep 168 in the same design.
   CPython's `TypeError`.
 - genetic2: its final line, `Finished in ... best individual: Genome:
   (...)`, matches CPython. All 101 `Epoch:` lines already match.
+
+## Fixed (2026-10-09)
+
+The design question above (is the right operand a tuple?) is answered by
+DISPATCH, so it needs no type in the frontend and no post-FA pass.
+
+- **Frontend** (`python_ifa_build_if1.cc`, `PY_OP_MOD` with a constant
+  format): any right operand other than a matching tuple display -- a
+  tuple variable or field, a single value, or a display of the wrong
+  length -- lowers to `x.__pyc_fmtargs__(n)` (n = the conversion count),
+  then indexes 0..n-1 and takes the literal display's path: `%s` / `%r`
+  converted, a fresh fixed-arity tuple made. That closes both gaps: the
+  elements get `__str__`, and what reaches `format_string_codegen` is
+  always a record, never a list-layout tuple. Formats with a mapping key
+  (`%(k)s`) or a `*` width keep the raw path.
+- **`__pyc__`**: `tuple.__pyc_fmtargs__` returns the tuple after
+  CPython's two count checks (`not enough arguments for format string`,
+  `not all arguments converted during string formatting`);
+  `__pyc_any_type__.__pyc_fmtargs__` wraps anything else as `(self,)`.
+  On `__pyc_any_type__`, not `object`: int, float and str do not reach
+  `object`'s methods. The send is followed by an exception check, so the
+  `TypeError` reaches a handler.
+
+genetic2 then matched CPython on the C backend but segfaulted under `-b`:
+its `__deepcopy__` receiver is a union of the original's and the copies'
+CreationSets, so the copy has no compile-time size. The LLVM backend sized
+it from the union's struct (16 of `TreeNode`'s 168 bytes), leaving the
+copy's method slots NULL, and the new `__str__` dispatch on a
+`{None, TreeNode}` element called address 0. It now calls
+`_CG_prim_copy_any` (run-time `GC_size`), as the C backend does
+(`cg_emit_llvm.cc`, exported from `pyc_runtime.c`).
+
+Tests: `format_tuple_variable` (every row of the table, the count errors,
+single values), `deepcopy_union_receiver_keeps_method_slots` (segfaulted
+under `-b` without the copy fix). genetic2 matches CPython on both
+backends except its two timing values.
+
+Sweep `047b6a38+4d71b5db`: genetic2 139 -> 0, stdout matches. Contours
+rise in most programs (typically +3 ES / +8 CS; more where formatting is
+heavy: timsort +35 ES), consistent with one `__pyc_fmtargs__` contour per
+receiver type and a fresh argument tuple per format site; not attributed
+per program. Its compile wall +68% and three new run timeouts (chaos,
+rubik2, tonyjpegdecoder) were machine load: re-measured ALONE, old tree vs
+new back to back, compile +2..11% (pystone 1.33 -> 1.48 s), run times and
+outputs unchanged (chaos 82 s, tonyjpegdecoder 94 s, rubik2 70 s, rc 0;
+chaos's image byte-identical).

@@ -47,6 +47,9 @@ extern char *_CG_format_str_spec(const char *val, const char *spec_str);
 extern char *_CG_string_mult(char *str, int64 n);
 extern char *_CG_string_identity(char *s);
 extern void *_CG_prim_primitive_clone_vector(void *p, size_t s, size_t v);
+/* P_prim_copy of a receiver whose static type is a union of record
+ * CreationSets (genetic2's TreeNode.__deepcopy__): sized at run time. */
+extern void *_CG_prim_copy_any(void *p);
 extern char *_CG_strcat(const char *a, const char *b);
 extern void _CG_none_receiver(const char *sel);  // ifa/issues/165
 extern char *_CG_string_join(const char *sep, _CG_list parts);

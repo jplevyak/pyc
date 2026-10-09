@@ -4259,14 +4259,52 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, targs, ast->rval)->ast = ast;
           return 0;
         }
-        if (convs.n == 1 && (convs[0] == 's' || convs[0] == 'r' || convs[0] == 'a') &&
-            n->children[1]->kind != PY_tuple) {
-          // Single non-tuple %s / %r argument.
+        // issues/174: any other right operand -- a tuple VARIABLE or field,
+        // a single value, or a display of the wrong length. Whether it is a tuple is a type question, so it
+        // is answered by dispatch, not here: `x.__pyc_fmtargs__(n)` returns a
+        // tuple itself (checking CPython's argument count) and wraps anything
+        // else as `(x,)` (__pyc__: tuple / object). Its elements 0..n-1 then
+        // take the literal display's path above: %s / %r converted, a fresh
+        // fixed-arity tuple made. Before, a tuple variable reached
+        // __pyc_format_string__ raw, so `%s` read an int as a char* and a
+        // runtime-length tuple (list layout) was passed as ONE pointer --
+        // genetic2's `"(if %s then %s else %s)" % self.args` segfaulted.
+        // A mapping key (`%(k)s`) or a `*` width consumes arguments
+        // differently and keeps the raw path.
+        bool plain_convs = convs.n > 0;
+        for (char c : convs)
+          if (c == '(' || c == '*') plain_convs = false;
+        // A tuple display reaches here only with the wrong element count
+        // (the branch above takes the matching one), which is CPython's
+        // TypeError: __pyc_fmtargs__ raises it.
+        if (plain_convs) {
           if1_gen(if1, &ast->code, rv->code);
-          Sym *sv = new_sym(ast);
-          call_method(&ast->code, ast, rv->rval, convs[0] == 's' ? sym___str__ : make_symbol("__repr__"), sv, 0);
+          Sym *fargs = new_sym(ast);
+          call_method(&ast->code, ast, rv->rval, make_symbol("__pyc_fmtargs__"), fargs, 1, int64_constant(convs.n));
+          // It raises CPython's TypeError on a count mismatch; without the
+          // check the indexing below read the raising call's undefined
+          // result (issues/175's operator gap, for a send made here).
+          emit_exc_check(&ast->code, ast, ctx);
+          Vec<Sym *> argv;
+          for (int i = 0; i < convs.n; i++) {
+            Sym *av = new_sym(ast);
+            call_method(&ast->code, ast, fargs, sym___getitem__, av, 1, int64_constant(i));
+            if (convs[i] == 's' || convs[i] == 'r' || convs[i] == 'a') {
+              Sym *sv = new_sym(ast);
+              call_method(&ast->code, ast, av, convs[i] == 's' ? sym___str__ : make_symbol("__repr__"), sv, 0);
+              argv.add(sv);
+            } else
+              argv.add(av);
+          }
+          Code *send = if1_send1(if1, &ast->code, ast);
+          if1_add_send_arg(if1, send, sym_primitive);
+          if1_add_send_arg(if1, send, sym_make);
+          if1_add_send_arg(if1, send, sym_tuple);
+          for (Sym *av : argv) if1_add_send_arg(if1, send, av);
+          Sym *targs = new_sym(ast);
+          if1_add_send_result(if1, send, targs);
           ast->rval = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, sv, ast->rval)->ast = ast;
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, targs, ast->rval)->ast = ast;
           return 0;
         }
       }

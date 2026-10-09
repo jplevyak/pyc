@@ -3,6 +3,14 @@ __pyc_insert_c_header__('pyc_c_runtime.h')
 class __pyc_any_type__:
   def __null__(self):
     return False
+  # issues/174: `fmt % x` with a constant fmt of n conversions lowers to
+  # x.__pyc_fmtargs__(n), then indexes 0..n-1 (python_ifa_build_if1.cc). A
+  # non-tuple right operand is ONE argument; tuple overrides this. Here, not
+  # on `object`: int, float and str do not reach `object`'s methods.
+  def __pyc_fmtargs__(self, n):
+    if n != 1:
+      raise TypeError("not enough arguments for format string")
+    return (self,)
   def __pyc_to_bool__(self):
     # issues/089: __pyc_any_type__ is ifa's own universal top type
     # (sym_any, python_ifa_sym.cc renames it "__pyc_any_type__") --

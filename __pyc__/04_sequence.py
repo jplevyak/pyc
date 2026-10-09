@@ -600,6 +600,16 @@ class __tuple_iter__:
     return self.thetuple.__getitem__(self.position-1)
 
 class tuple:
+  # issues/174: a tuple right operand of `%` is the argument list itself,
+  # whatever its layout (a runtime-length tuple from tuple(list) or a slice
+  # is list layout and was passed to the format as ONE pointer). CPython's
+  # two count errors, in its words.
+  def __pyc_fmtargs__(self, n):
+    if len(self) < n:
+      raise TypeError("not enough arguments for format string")
+    if len(self) > n:
+      raise TypeError("not all arguments converted during string formatting")
+    return self
   # __str__ and __hash__ are NOT here: both dispatch a method on an
   # ELEMENT, so a loop index (whose type is the union of every field)
   # leaves the dispatch unresolvable for a heterogeneous tuple
