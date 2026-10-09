@@ -108,7 +108,7 @@ numeric `__coerce__` constructor, so `bool([])` was `True`: the clipper's
 `return bool(vertices)` sent an empty list on to `vertices[-1]`. `bool`
 now lowers to `__pyc_to_bool__`, as `if x:` does. Tests:
 `bool_builtin_truthiness`, `list_mult_empty_is_a_list`, `bytearray_slice`.
-Under `-b` it still segfaults: [ifa/187](../ifa/issues/187-LLVM-constructor-clone-omits-a-method-slot-another-dispatch-reads.md).
+It then segfaulted under `-b`, fixed the same day: [ifa/187](../ifa/issues/closed/187-LLVM-constructor-clone-omits-a-method-slot-another-dispatch-reads.md). It matches CPython on both backends.
 
 ### "has no type" bucket re-triaged against 3f36072b (2026-09-28)
 

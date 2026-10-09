@@ -1,0 +1,1 @@
+method_slot_registered_on_concrete_type.py:13: warning: an expression holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
