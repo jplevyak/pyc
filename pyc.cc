@@ -107,7 +107,8 @@ static ArgumentDescription arg_desc[] = {
 #ifdef USE_LLVM
     {"emit-llvm", 'b', "LLVM Codegen (the only LLVM backend — internally v2 via cg_normalize_v2 + cg_v2_emit_llvm_module)",
      "F", &codegen_llvm, "PYC_LLVM", NULL},
-    {"jit", 'j', "JIT", "F", &codegen_jit, "PYC_JIT", NULL},
+    {"jit", 'j', "JIT: compile with the LLVM backend and run in-process (implies -b)", "F", &codegen_jit, "PYC_JIT",
+     NULL},
 #endif
     {"strict", ' ', "Strict mode: hard compile errors on type violations, no permissive-Python fallbacks",
      "F", &pyc_strict_mode, "PYC_STRICT", strict_mode_arg},
@@ -260,6 +261,13 @@ int main(int argc, char *argv[]) {
   // against unoptimized code. --no-optimize turns it off for debugging.
   codegen_optimize = 1;
   process_args(&arg_state, argc, argv);
+#ifdef USE_LLVM
+  // The JIT runs only on the LLVM backend (compile() consults codegen_jit
+  // inside the codegen_llvm branch), so `-j` alone used to be ignored
+  // silently: the C backend built a binary and nothing ran. The REPL
+  // already sets both.
+  if (codegen_jit) codegen_llvm = 1;
+#endif
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
   // Propagate the --verify-each flag down to the ifa lib's llvm.cc,
