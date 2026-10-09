@@ -7,7 +7,7 @@ OS_TYPE = $(shell uname -s | \
 ifdef NO_GC
   CFLAGS += -DPYC_NO_GC=1
 endif
-CFLAGS += -DUSE_GC=1 -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I$(CG_ROOT)/ifa/common -I/usr/local/include/gc -I/usr/local/include -I/opt/homebrew/include -I/opt/homebrew/include/gc -g -Wno-deprecated
+CFLAGS += -DUSE_GC=1 -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I$(CG_ROOT)/ifa/common -I/usr/local/include/gc -I/usr/local/include -I/opt/homebrew/include -I/opt/homebrew/include/gc -Wno-deprecated
 
 LIBS = -L/opt/homebrew/lib -L/usr/local/lib -lm -lgc -lpcre
 
