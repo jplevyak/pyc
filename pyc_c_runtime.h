@@ -1786,8 +1786,15 @@ static inline _CG_list _CG_list_resize_internal(_CG_list l1, uint32 size1, uint3
   return l1;
 }
 
-static inline _CG_list _CG_list_mult_internal(_CG_list l1, uint32 l, uint32 size) {
-  if (!l) return 0;
+// `[x] * n` is a NEW list even when n <= 0 (CPython: `[x] * 0` and
+// `[x] * -1` are both `[]`). This used to return NULL for n == 0. Reads
+// accept NULL as empty (ifa/166), but a NULL has no identity to mutate in
+// place: `a = [0.0] * 0; a[:] = b` segfaulted in the splice
+// (softrender's `RenderContext(0, 0)`), and `d = c; d.append(x)` could not
+// reach `c`. `l` is SIGNED: as uint32 a negative count became a huge
+// allocation.
+static inline _CG_list _CG_list_mult_internal(_CG_list l1, int32 l, uint32 size) {
+  if (l < 0) l = 0;
   uint32 s1 = _CG_prim_len(0, l1);
   _CG_list x = _CG_ptr_to_list((_CG_list)MALLOC(size * s1 * l + SIZEOF_LIST_HEADER));
   _CG_list_len(x) = s1 * l;

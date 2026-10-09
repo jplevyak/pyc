@@ -231,8 +231,10 @@ void *_CG_list_resize(void *l1, int64 size1, int64 new_len) {
   return l1;
 }
 
+// A NEW list even for k <= 0; see _CG_list_mult_internal in
+// pyc_c_runtime.h for why NULL is wrong here.
 void *_CG_list_mult(void *l1, int64 k, int64 size) {
-  if (!k) return (void *)0;
+  if (k < 0) k = 0;
   unsigned int s1 = _PYC_list_len(l1);
   size_t sz = (size_t)size;
   char *base = (char *)GC_MALLOC(sz * s1 * (size_t)k + _CG_SIZEOF_LIST_HDR);

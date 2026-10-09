@@ -1232,6 +1232,19 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
   // their own C call: CPython accepts both, and a fixed `str` declaration
   // refused msp_ss's `int(l[1:3], 16)` on a bytes line (as ord(bytes) was,
   // 3fea46ac).
+  // bool(x) is truthiness -- __bool__, else __len__ -- the protocol `if x:`
+  // already lowers to (__pyc_to_bool__). It used to fall through to the
+  // `__coerce__` conversion every numeric-kind class gets, a C cast, which
+  // is right for numbers and None and wrong for everything else: bool([]),
+  // bool({}) and bool(()) were True (a non-null pointer), bool("x") False,
+  // and a user __bool__ / __len__ was never called. softrender's clipper
+  // returns `bool(vertices)` and then indexed an empty list.
+  if (f == sym_bool && pos_args.n == 1) {
+    PycAST *a0 = getAST(pos_args[0], ctx);
+    ast->rval = new_sym(ast);
+    call_method(&ast->code, ast, a0->rval, sym___pyc_to_bool__, ast->rval, 0);
+    return 1;
+  }
   if (f && f->name && !strcmp(f->name, "int") && pos_args.n == 2) {
     PycSymbol *int_cls = make_PycSymbol(ctx, "int", PYC_USE);
     if (int_cls && f == int_cls->sym) {

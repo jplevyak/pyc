@@ -69,14 +69,14 @@ has a row in the blocker table below.
 
 | outcome | programs |
 | --- | --- |
-| **matches CPython** (36) | amaze, astar, block, brainfuck, collatz, doom, fysphun, genetic, go, hq2x, kanoodle, life, linalg, loop, lz2, mandelbrot, msp_ss, mwmatching, nbody, neural1, neural2, othello, plcfrs, pylife, quameon, rubik, sat, sha, sokoban, solitaire, stereo, sudoku1, sudoku2, sudoku4, tarsalzp, voronoi |
+| **matches CPython** (37) | amaze, astar, block, brainfuck, collatz, doom, fysphun, genetic, go, hq2x, kanoodle, life, linalg, loop, lz2, mandelbrot, msp_ss, mwmatching, nbody, neural1, neural2, othello, plcfrs, pylife, quameon, rubik, sat, sha, sokoban, softrender (C backend; prints nothing, rc 0 like CPython), solitaire, stereo, sudoku1, sudoku2, sudoku4, tarsalzp, voronoi |
 | runs, no deterministic stdout to compare (9) | dijkstra, mandelbrot2, minpng, othello2, pystone, sudoku3, sudoku5, tictactoe, voronoi2. othello2 prints a timing on every line, but its node counts differ from CPython's: int64 overflow, see its row below |
 | runs, **stdout differs** (5) | ant, circle, mastermind2, sieve, tonyjpegdecoder. sieve differs only in its `time:` lines, circle only in its Python-version line; the other three are not triaged (check for unseeded `random`, a `TIME` line, or int/float widening printing `1.0` for `1`) |
 | runs (rc 0), CPython reference times out at 120 s, so no oracle (18) | ac_encode, adatron, bh, chaos, chess, chull, kmeanspp, mao, minilight, oliva2, path_tracing, pisang, pygmy, richards, rubik2, score4, timsort, yopyra |
 | same exit status as CPython, no stdout verdict (4) | pygasus and webserver (both endless by design, 124; see pygasus's row below), rdb (both rc 1: the corpus run has no iPod directory), rsync (both rc 1: no `testdata/` in the corpus or upstream) |
 | times out where CPython finishes (1) | dijkstra2 |
 | **compiles, then fails** (1) | genetic2 139 (issues/174) |
-| **does not compile** (3) | othello3 (compile timeout), softrender, sunfish (compile timeout: 534 s and 3 GB alone, against the 400 s cap; [ifa/185](../ifa/issues/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md). Once compiled it matches CPython on both backends) |
+| **does not compile** (2) | othello3 (compile timeout), sunfish (compile timeout: 534 s and 3 GB alone, against the 400 s cap; [ifa/185](../ifa/issues/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md). Once compiled it matches CPython on both backends) |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -96,7 +96,19 @@ fall-off, removed 2026-10-05 by a corpus edit (PYC_CHANGES.md); it now compiles,
 and its last blocker is the final genome print (issues/174);
 sunfish, `{list, tuple}` from `tuple(iterable)` (issues/110); voronoi2, a
 getopt path that provably always raises (ifa/049); rubik, `None` reaching
-`key[1]` (unlocated); softrender and othello3, unanalysed.
+`key[1]` (unlocated); othello3, see [ifa/186](../ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md).
+
+**`softrender`, 2026-10-09: fixed, three bugs in a row.** (1) `bytearray`
+had no `__pyc_getslice__` / `__pyc_setslice__`, so
+`self.components[:] = self.reset` did not compile (missing builtin surface,
+as in the triage below). (2) `[x] * 0` was a NULL list in both runtimes
+(`_CG_list_mult`), and `self.zbuffer[:] = ...` under `RenderContext(0, 0)`
+segfaulted mutating it. (3) `bool(x)` lowered to a C cast through the
+numeric `__coerce__` constructor, so `bool([])` was `True`: the clipper's
+`return bool(vertices)` sent an empty list on to `vertices[-1]`. `bool`
+now lowers to `__pyc_to_bool__`, as `if x:` does. Tests:
+`bool_builtin_truthiness`, `list_mult_empty_is_a_list`, `bytearray_slice`.
+Under `-b` it still segfaults: [ifa/187](../ifa/issues/187-LLVM-constructor-clone-omits-a-method-slot-another-dispatch-reads.md).
 
 ### "has no type" bucket re-triaged against 3f36072b (2026-09-28)
 

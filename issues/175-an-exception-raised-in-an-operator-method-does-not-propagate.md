@@ -42,6 +42,14 @@ to `__getitem__`, the same operator-style send with no check after it.
 `defaultdict.__getitem__`'s new `KeyError` (missing key, no factory) is
 affected the same way.
 
+**Slice stores too (2026-10-09).** `ba[::2] = bytearray(5)` raises
+`ValueError` in `bytearray.__pyc_setslice__` (`__pyc__/06_bytearray.py`),
+and inside `try: ... except ValueError:` the handler does not run: the
+`try` body continues, and the exception surfaces as `Unhandled exception`
+at exit. In a program with no other `raise`, the raise is dropped
+entirely, and the C shows the message being built and then `return 0`.
+`tests/bytearray_slice.py` leaves the case out for that reason.
+
 ## Root cause
 
 The frontend emits a pending-exception check (`emit_exc_check`,
