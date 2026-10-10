@@ -195,6 +195,7 @@ shedskin_examples/minpng/minpng.png
 shedskin_examples/oliva2/oliva.pgm
 shedskin_examples/path_tracing/pt.ppm
 shedskin_examples/pygmy/pygmy.ppm
+shedskin_examples/rsync/testdata/locally-patched.file
 shedskin_examples/tonyjpegdecoder/tiger1.bmp
 shedskin_examples/yopyra/scene.txt.ppm
 
