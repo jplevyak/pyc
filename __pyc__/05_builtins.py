@@ -297,10 +297,51 @@ def enumerate(seq):
 def sum(seq, start=0):
   # int seed + float elements resolves to float via the numeric
   # unification (AVar::num_coerce); `start` also covers `sum(list_of_lists, [])`.
+  #
+  # Floats are added as CPython 3.12+ does (Python/bltinmodule.c,
+  # builtin_sum_impl): Neumaier's compensated summation, the correction
+  # added once at the end if it is nonzero and finite. A plain left-to-right
+  # sum differs in the last bit (ant's path lengths: 178.84921988630578 vs
+  # ...575, which then changed which path won a comparison). The isinstance
+  # tests fold per contour, so an int or list sum has no float arithmetic.
+  #
+  # As in CPython, the FIRST float is added to the running result plainly
+  # (PyNumber_Add), and only from then on does a separate double `f`
+  # accumulate with compensation `c`; an int after that is added to `f`
+  # uncompensated. Keeping `f` apart from `t` matters for the types too:
+  # compensating on `t` itself called abs() on a value that is the int start
+  # on the first iteration, which merged int and float in abs's contour.
+  #
+  # The float path is a separate function handed the rest of the iterator,
+  # so its float state exists only in a contour that has seen a float: there
+  # the isinstance folds true and here it folds false. In one function, a
+  # bool flag does not fold (no constant propagation, issues/050) and leaked
+  # the float accumulator into int sums' return type, and a None-initialized
+  # accumulator is {None, float}, which has no unboxed representation.
   t = start
-  for x in seq:
+  it = iter(seq)
+  for x in it:
+    if isinstance(x, float):
+      return __pyc_sum_floats__(t + x, it)
     t = t + x
   return t
+
+def __pyc_sum_floats__(f, it):
+  # sum()'s float path from its first float on: CPython's Neumaier loop.
+  c = 0.0
+  for x in it:
+    if isinstance(x, float):
+      s = f + x
+      if abs(f) >= abs(x):
+        c += (f - s) + x
+      else:
+        c += (x - s) + f
+      f = s
+    else:
+      f = f + x
+  if c != 0.0 and c - c == 0.0:
+    f = f + c
+  return f
 
 # min/max support both call forms via the default-None + `is None`
 # narrowing pattern (each call arity/type gets its own EntrySet
