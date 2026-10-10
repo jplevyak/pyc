@@ -96,6 +96,7 @@
 #   NAME_check.sh   a harness given the command that runs the program
 #                   (`./NAME`, or `python3 NAME.py`); its stdout is compared.
 #                   webserver: starts the server, sends requests, stops it.
+#                   rdb: builds a synthetic iPod in a scratch dir and runs it.
 # Both are covered by the tree, content and CPython keys.
 #
 set -u

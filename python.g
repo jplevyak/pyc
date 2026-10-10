@@ -303,12 +303,27 @@ for_stmt: 'for' exprlist 'in' testlist ':' suite else_clause? [
 ] {
   $$.ast = new_pyast_collect(PY_for_stmt, &$n);
 };
-try_stmt: ('try' ':' suite
-           ((except_handler)+
-            else_clause?
-            finally_clause? |
-            finally_clause)) [
-  if (!py_suite_deeper(${parser}, $n0.start_loc.s, d_get_child(&$n0, 2))) return -1;
+/* The same-column guard if/while/for have: an except/else/finally belongs to
+   this `try` only if it starts at the try's column. Without it GLR attached
+   an outer `if`'s `else` across a two-level DEDENT to a `try` nested in the
+   if's arm, as the try's else clause -- `if c: try: x=1 except E: x=2
+   else: x=3` ran x=3 after every successful try and never on `not c`
+   (rdb's open_log: its log file stayed empty). */
+try_stmt: 'try' ':' suite except_handler+ else_clause? finally_clause? [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n2)) return -1;
+  int t_ind = py_node_indent(${parser}, $n0.start_loc.s);
+  for (int i_ = 0; i_ < d_get_number_of_children(&$n3); i_++)
+    if (py_node_indent(${parser}, d_get_child(&$n3, i_)->start_loc.s) != t_ind) return -1;
+  if (d_get_number_of_children(&$n4) &&
+      py_node_indent(${parser}, d_get_child(&$n4, 0)->start_loc.s) != t_ind) return -1;
+  if (d_get_number_of_children(&$n5) &&
+      py_node_indent(${parser}, d_get_child(&$n5, 0)->start_loc.s) != t_ind) return -1;
+] {
+  $$.ast = new_pyast_collect(PY_try_stmt, &$n);
+}
+        | 'try' ':' suite finally_clause [
+  if (!py_suite_deeper(${parser}, $n0.start_loc.s, &$n2)) return -1;
+  if (py_node_indent(${parser}, $n3.start_loc.s) != py_node_indent(${parser}, $n0.start_loc.s)) return -1;
 ] {
   $$.ast = new_pyast_collect(PY_try_stmt, &$n);
 };

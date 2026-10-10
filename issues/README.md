@@ -46,6 +46,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
 | [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |
+| [176](176-int-and-float-of-an-invalid-string-do-not-raise.md) | `int("q")` is `0`, `int("3.5")` is `3`, `float("x")` is `0.0`: C `strtol`/`strtod` semantics, no `ValueError`. |
 | [041](041-stdlib-shim-stubs-silently-wrong.md) | `hashlib` is a stub returning `""`. Shims must be real or raise. |
 | [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` returns a list in every mode. The fix is built (`PYC_MAKESEQ`) and held on a copy-of-copy deepcopy blocker; re-test after the ifa deepcopy fixes. |
 
