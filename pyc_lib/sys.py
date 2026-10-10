@@ -57,6 +57,6 @@ platform = "linux"
 # from __pyc__/07_file.py; builtin-module names are globally visible).
 # These replace the earlier _StdoutStub: real fd-backed streams whose
 # write() does NOT append a newline (print-based stubs did).
-stdin = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 0))
-stdout = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 1))
-stderr = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 2))
+stdin = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 0), "<stdin>", "r", "utf-8", "rb")
+stdout = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 1), "<stdout>", "w", "utf-8", "wb")
+stderr = __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 2), "<stderr>", "w", "utf-8", "wb")

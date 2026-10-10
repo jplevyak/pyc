@@ -1,0 +1,13 @@
+<_io.TextIOWrapper name='file_repr_a.txt' mode='r' encoding=ENC> True True file_repr_a.txt r
+<_io.TextIOWrapper name='file_repr_o.txt' mode='w' encoding=ENC> True True file_repr_o.txt w
+<_io.TextIOWrapper name='file_repr_o.txt' mode='a' encoding=ENC> True True file_repr_o.txt a
+<_io.TextIOWrapper name='file_repr_a.txt' mode='r+' encoding=ENC> True True file_repr_a.txt r+
+<_io.BufferedReader name='file_repr_a.txt'> True file_repr_a.txt rb
+<_io.BufferedWriter name='file_repr_b.bin'> True file_repr_b.bin wb
+<_io.BufferedWriter name='file_repr_b.bin'> True file_repr_b.bin ab
+<_io.BufferedRandom name='file_repr_a.txt'> True file_repr_a.txt rb+
+<_io.BufferedRandom name='file_repr_b.bin'> True file_repr_b.bin rb+
+<_io.BufferedReader name='file_repr_a.txt'>
+<_io.BufferedReader name='file_repr_a.txt'>
+<_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'> <_io.TextIOWrapper name='<stdin>' mode='r' encoding='utf-8'> <_io.TextIOWrapper name='<stderr>' mode='w' encoding='utf-8'>
+True

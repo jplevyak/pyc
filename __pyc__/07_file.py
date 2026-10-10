@@ -15,14 +15,29 @@ class __pyc_file__:
   # `f.readline()` share one position (mwmatching, minilight).
   peeked = False
   peek = ""
-  def __init__(self, handle):
+  # `f.name`, `f.mode`, `f.encoding`, as CPython, and what its repr shows.
+  # The caller computes encoding and the buffer's binary mode: open() for a
+  # real file, constants for the std streams. Computing them HERE made every
+  # program analyze the locale query and the mode normalization, since every
+  # program reaches this class (the unhandled-exception stderr writer):
+  # +33 CreationSets on nbody, which opens no file.
+  def __init__(self, handle, name="", mode="r", encoding="utf-8", binmode="rb"):
     self.handle = handle
     # `f.closed`, as CPython (rsync's `if datastream.closed`).
     self.closed = False
+    self.name = name
+    self.mode = mode
+    self.encoding = encoding
     # CPython's text file sits on a binary stream, `.buffer` (tarsalzp
     # reads and writes `sys.stdin.buffer` / `sys.stdout.buffer`). Here it is
     # a binary file over the same C stream.
-    self.buffer = __pyc_binfile__(handle)
+    self.buffer = __pyc_binfile__(handle, name, binmode)
+  # CPython: `<_io.TextIOWrapper name='x' mode='r' encoding='UTF-8'>`, and
+  # str() is the same (tonyjpegdecoder's `'converted %s' % f`).
+  def __repr__(self):
+    return "<_io.TextIOWrapper name=" + repr(self.name) + " mode=" + repr(self.mode) + " encoding=" + repr(self.encoding) + ">"
+  def __str__(self):
+    return self.__repr__()
   def __pyc_take_peek__(self):
     l = self.peek
     self.peeked = False
@@ -124,7 +139,7 @@ def open(path, mode="r"):
     if e == 21:
       raise IsADirectoryError(__pyc_open_error_message__(path, e))
     raise OSError(__pyc_open_error_message__(path, e))
-  return __pyc_file__(h)
+  return __pyc_file__(h, path, mode, __pyc_c_call__(str, "_CG_locale_encoding"), __pyc_binary_mode__(mode))
 
 # Binary-mode counterpart to __pyc_file__/open() above: read()/readline()/
 # readlines() return bytes instead of str. The open(...) builtin-call
@@ -135,6 +150,24 @@ def open(path, mode="r"):
 # unchanged: the underlying C storage is identical (_CG_string-shaped
 # length-prefixed buffer) either way, so this is a pure typing difference,
 # not a new runtime code path.
+# A binary file's `.mode` as CPython's FileIO reports it, which is
+# normalized: x -> 'xb', a -> 'ab', w -> 'wb', r -> 'rb', and with `+`
+# 'xb+', 'ab+', or 'rb+' for both r+ and w+. A text file keeps the mode it
+# was given; its `.buffer` has this one.
+def __pyc_binary_mode__(mode):
+  plus = "+" in mode
+  if "x" in mode:
+    r = "xb"
+  elif "a" in mode:
+    r = "ab"
+  elif "w" in mode and not plus:
+    r = "wb"
+  else:
+    r = "rb"
+  if plus:
+    r = r + "+"
+  return r
+
 class __pyc_binfile__:
   handle = 0
   # A file is its own iterator, as in CPython (`iter(f) is f`, and
@@ -144,10 +177,25 @@ class __pyc_binfile__:
   # `f.readline()` share one position (mwmatching, minilight).
   peeked = False
   peek = b""
-  def __init__(self, handle):
+  def __init__(self, handle, name="", mode="rb"):
     self.handle = handle
     # `f.closed`, as CPython (rsync's `if datastream.closed`).
     self.closed = False
+    # Already normalized by the caller (__pyc_binary_mode__), as CPython's
+    # FileIO reports it.
+    self.name = name
+    self.mode = mode
+  # CPython's binary file is a BufferedReader, BufferedWriter or (with `+`)
+  # BufferedRandom, by mode: `<_io.BufferedReader name='tiger1.jpg'>`.
+  def __repr__(self):
+    kind = "BufferedReader"
+    if "+" in self.mode:
+      kind = "BufferedRandom"
+    elif "w" in self.mode or "a" in self.mode or "x" in self.mode:
+      kind = "BufferedWriter"
+    return "<_io." + kind + " name=" + repr(self.name) + ">"
+  def __str__(self):
+    return self.__repr__()
   def __pyc_take_peek__(self):
     l = self.peek
     self.peeked = False
@@ -234,7 +282,7 @@ def open_binary(path, mode="rb"):
     if e == 21:
       raise IsADirectoryError(__pyc_open_error_message__(path, e))
     raise OSError(__pyc_open_error_message__(path, e))
-  return __pyc_binfile__(h)
+  return __pyc_binfile__(h, path, __pyc_binary_mode__(mode))
 
 def input(prompt=""):
   if len(prompt) > 0:

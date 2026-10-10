@@ -49,6 +49,8 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <locale.h>
+#include <langinfo.h>
 
 #ifdef __cplusplus
 #include <coroutine>
@@ -947,6 +949,26 @@ inline int64 _CG_fopen(char *path, char *mode) {
   return (int64)(intptr_t)f;
 }
 inline int64 _CG_errno(void) { return (int64)errno; }
+// The encoding CPython's open() reports (locale.getencoding()): the C
+// locale's codeset from the environment, except that the "C"/"POSIX" locale
+// means UTF-8 mode, 'utf-8' (PEP 538/540). Asked without changing the
+// program's own locale: the previous LC_CTYPE is restored. A file's repr
+// shows it (`<_io.TextIOWrapper name='x' mode='r' encoding='UTF-8'>`).
+inline char *_CG_locale_encoding(void) {
+  const char *cur = setlocale(LC_CTYPE, NULL);
+  char saved[256];
+  snprintf(saved, sizeof(saved), "%s", cur ? cur : "C");
+  const char *env = setlocale(LC_CTYPE, "");
+  const char *enc = "utf-8";
+  char buf[64];
+  if (env && strcmp(env, "C") && strcmp(env, "POSIX")) {
+    const char *cs = nl_langinfo(CODESET);
+    if (cs && *cs) { snprintf(buf, sizeof(buf), "%s", cs); enc = buf; }
+  }
+  char *r = _CG_String(enc);
+  setlocale(LC_CTYPE, saved);
+  return r;
+}
 
 // 32 bits of OS entropy, for pyc_lib/random.py's seed on first use: CPython
 // seeds an unseeded `random` from os.urandom, and pyc's generator used to

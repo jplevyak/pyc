@@ -151,7 +151,7 @@ def __pyc_unhandled_exception__():
     if isinstance(e, SystemExit):
         c = e.code
         if isinstance(c, str):
-            __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 2)).write(c + "\n")
+            __pyc_file__(__pyc_c_call__(int, "_CG_fstd", int, 2), "<stderr>", "w", "utf-8", "wb").write(c + "\n")
             __pyc_c_call__(int, "::exit", int, 1)
         else:
             __pyc_c_call__(int, "::exit", int, c)
