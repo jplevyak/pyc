@@ -177,6 +177,9 @@ sweeps/cpython-cache/
 # Every entry below was verified write-only in the corpus source before
 # being untracked (the input it is derived from -- hq2x/randam.ppm,
 # tonyjpegdecoder/tiger1.jpg -- stays tracked).
+# corpus_sweep.sh check DRIVERS (NAME_check.py) compile to NAME_check beside
+# the program, like the program's own binary (shedskin_examples/.gitignore).
+shedskin_examples/*/*_check
 shedskin_examples/ac_encode/tmp.zip
 shedskin_examples/ac_encode/tmp2
 shedskin_examples/block/tmp.zip

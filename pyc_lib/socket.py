@@ -35,11 +35,14 @@ class socket:
         sock = socket(self.family, self.type, self.proto, cfd)
         return (sock, ("127.0.0.1", 0))
 
+    # bytes, as in CPython 3. These returned and took str, an unflagged
+    # deviation that let a Python-2 program (webserver's `"..." + data`)
+    # run under pyc where CPython raises TypeError.
     def recv(self, bufsize, flags=0):
-        return __pyc_c_call__(str, "_CG_net_read_str", int, self.fd, int, bufsize)
+        return __pyc_c_call__(bytes, "_CG_net_read_str", int, self.fd, int, bufsize)
 
     def send(self, data, flags=0):
-        return __pyc_c_call__(int, "_CG_net_write_str", int, self.fd, str, data)
+        return __pyc_c_call__(int, "_CG_net_write_str", int, self.fd, bytes, data)
 
     def close(self):
         if self.fd >= 0:

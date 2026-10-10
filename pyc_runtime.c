@@ -496,28 +496,21 @@ int _CG_net_connect(int fd, const char* host, int port) {
   return 0;
 }
 
+// socket.recv / socket.send (pyc_lib/socket.py): BYTES, as in CPython, and
+// bytes shares str's length-prefixed buffer, so these serve both. recv keeps
+// the length it read (an embedded NUL used to truncate it through
+// _CG_String's strlen); send writes the object's own length and prints
+// nothing (it printed `_CG_net_write_str called with fd=N` to stdout).
 char* _CG_net_read_str(int fd, int max_len) {
   char* buf = (char*)GC_MALLOC_ATOMIC(max_len + 1);
   int n = read(fd, buf, max_len);
   if (n < 0) n = 0;
   buf[n] = '\0';
-  return _CG_String(buf);
+  return _CG_String_n(buf, (size_t)n);
 }
 
 int _CG_net_write_str(int fd, const char* str) {
-  printf("_CG_net_write_str called with fd=%d\n", fd);
-  int err = 0;
-  socklen_t len = sizeof(err);
-  getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
-  if (err != 0) {
-    printf("socket error before write: %s\n", strerror(err));
-    return -1;
-  }
-  int res = write(fd, str, strlen(str));
-  if (res < 0) {
-    printf("write failed: %s\n", strerror(errno));
-  }
-  return res;
+  return (int)write(fd, str, _CG_string_len(str));
 }
 
 int _CG_net_socket(int family, int type, int proto) {

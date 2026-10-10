@@ -636,6 +636,14 @@ corpus `.py` invalidates the sweep cache, which is intended.
 in the issue it was measured for. `sweeps/*.tsv` is text and IS committed
 — it is a record of what has been measured, not a build artifact.
 
+**Check drivers (2026-10-09).** A program whose own run cannot be compared
+with CPython's (it never ends, or prints nothing that reflects its state)
+can carry `NAME_check.py` or `NAME_check.sh` beside it, an added file
+recorded in PYC_CHANGES.md. The sweep then runs the driver for both arms in
+place of the program; the compile columns still come from `NAME.py`. See
+the "check drivers" header of `corpus_sweep.sh`. pygasus and webserver use
+them.
+
 `compile` is not enough evidence for most changes. A binary that builds
 and then segfaults is invisible to it and to the test harness alike
 (ifa/issues/102), and `check` is the only mode that catches a program

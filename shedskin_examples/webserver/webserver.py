@@ -35,7 +35,11 @@ class WebServer:
             elif s in self.mapSocks.keys():
                 # handle all other sockets 
                 sock = self.mapSocks[s]
-                data = sock.recv(self.size)
+                # pyc: type-error fix (shedskin_examples/PYC_CHANGES.md). In
+                # CPython 3 recv returns bytes, so parseRequest's
+                # `"got data:" + data` raised TypeError on the first request.
+                # The program treats the request as text throughout.
+                data = sock.recv(self.size).decode()
                 if data:
                     #print "data detected", data
                     responseParams = {"status":"HTTP/1.0 200 OK"}
@@ -56,7 +60,8 @@ class WebServer:
                     #response = "HTTP/1.0 200 OK\nContent-Type: text/html\n\n"+responseHTML+"\n\n"
                     sock.send(response);
                     '''
-                    sock.send(response)
+                    # pyc: type-error fix, as at recv above: send takes bytes.
+                    sock.send(response.encode())
                     sock.close() 
                     self.input.remove(s)
                     #sock.send(data)

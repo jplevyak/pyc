@@ -81,6 +81,21 @@
 #   reads and writes `oliva.pgm`). The cached CPython output was produced
 #   after THAT sweep's pyc binary wrote that file. Use `-C` if a change
 #   could alter what a program writes into its own inputs.
+# --- check drivers ------------------------------------------------------
+# A program whose own run cannot be compared with CPython's -- it never ends,
+# or prints nothing that reflects its state -- may carry a CHECK DRIVER in
+# its directory, an added file, not an upstream edit (PYC_CHANGES.md lists
+# them). The compile verdict and contour columns still come from NAME.py;
+# only the run and the stdout comparison use the driver:
+#   NAME_check.py   a Python program (it imports NAME). pyc compiles and runs
+#                   it, CPython runs it. A driver that fails to compile is a
+#                   run failure, `c<rc>`, with its log in NAME.drv.compile.
+#                   pygasus: N emulated frames, state checksums at intervals.
+#   NAME_check.sh   a harness given the command that runs the program
+#                   (`./NAME`, or `python3 NAME.py`); its stdout is compared.
+#                   webserver: starts the server, sends requests, stops it.
+# Both are covered by the tree, content and CPython keys.
+#
 set -u
 ROOT=$(cd "$(dirname "$0")" && pwd)
 SELF="$ROOT/$(basename "$0")"   # workers are re-execs; a relative $0 breaks under xargs
@@ -92,6 +107,10 @@ if [ "${1:-}" = "--worker" ]; then
   phase=$2 name=$3
   d="$ROOT/shedskin_examples/$name"
   cd "$d" || exit 0
+  # What CPython runs: the program, or its check driver (see the header).
+  if [ -f "${name}_check.py" ]; then CPYCMD=(python3 "${name}_check.py")
+  elif [ -f "${name}_check.sh" ]; then CPYCMD=(bash "${name}_check.sh" python3 "$name.py")
+  else CPYCMD=(python3 "$name.py"); fi
   case "$phase" in
     compile)
       clog="$LOGS/$name.compile"
@@ -112,10 +131,27 @@ if [ "${1:-}" = "--worker" ]; then
       ;;
     run)
       t0=$(date +%s)
-      # argv[0] as CPython sees it (`python3 NAME.py`), or a program that
-      # prints sys.argv[0] (plcfrs's usage line) differs for no reason.
-      timeout "$RT" bash -c 'exec -a "$0" "./$1"' "$name.py" "$name" > "$LOGS/$name.pyc.out" 2> "$LOGS/$name.pyc.err"
-      echo $? > "$LOGS/$name.rrc"
+      if [ -f "${name}_check.py" ]; then
+        # A check DRIVER (see "check drivers" in the header): compile it
+        # and run it instead of the program. A driver that fails to
+        # compile is a run failure, recorded as `c<rc>`; its log is kept.
+        timeout "$CT" "$ROOT/pyc" -D "$ROOT" "${name}_check.py" > "$LOGS/$name.drv.compile" 2>&1
+        drc=$?
+        if [ $drc = 0 ]; then
+          timeout "$RT" bash -c 'exec -a "$0" "./$1"' "${name}_check.py" "${name}_check" > "$LOGS/$name.pyc.out" 2> "$LOGS/$name.pyc.err"
+          echo $? > "$LOGS/$name.rrc"
+        else
+          : > "$LOGS/$name.pyc.out"; echo "c$drc" > "$LOGS/$name.rrc"
+        fi
+      elif [ -f "${name}_check.sh" ]; then
+        timeout "$RT" bash "${name}_check.sh" "./$name" > "$LOGS/$name.pyc.out" 2> "$LOGS/$name.pyc.err"
+        echo $? > "$LOGS/$name.rrc"
+      else
+        # argv[0] as CPython sees it (`python3 NAME.py`), or a program that
+        # prints sys.argv[0] (plcfrs's usage line) differs for no reason.
+        timeout "$RT" bash -c 'exec -a "$0" "./$1"' "$name.py" "$name" > "$LOGS/$name.pyc.out" 2> "$LOGS/$name.pyc.err"
+        echo $? > "$LOGS/$name.rrc"
+      fi
       echo $(( $(date +%s) - t0 )) > "$LOGS/$name.rwall"
       ;;
     cpy)
@@ -129,7 +165,7 @@ if [ "${1:-}" = "--worker" ]; then
         exit 0
       fi
       t0=$(date +%s)
-      timeout "$RT" python3 "$name.py" > "$LOGS/$name.cpy.out" 2> "$LOGS/$name.cpy.err"
+      timeout "$RT" "${CPYCMD[@]}" > "$LOGS/$name.cpy.out" 2> "$LOGS/$name.cpy.err"
       prc=$?
       # issues/163: run CPython a SECOND time to find which lines the program
       # itself varies on. A line that differs between two CPython runs is
@@ -138,7 +174,7 @@ if [ "${1:-}" = "--worker" ]; then
       # pattern for "TIME", which would be matching by name and would also
       # wrongly excuse `3.11.0 (pyc)`, a version string pyc genuinely prints
       # differently and should be held to.
-      timeout "$RT" python3 "$name.py" > "$LOGS/$name.cpy2.out" 2>/dev/null
+      timeout "$RT" "${CPYCMD[@]}" > "$LOGS/$name.cpy2.out" 2>/dev/null
       echo $prc > "$LOGS/$name.prc"
       echo $(( $(date +%s) - t0 )) > "$LOGS/$name.pwall"
       echo miss > "$LOGS/$name.pcache"
@@ -157,7 +193,7 @@ if [ "${1:-}" = "--worker" ]; then
         cp "$CPYCACHE/$name.out3" "$LOGS/$name.cpy3.out"
         exit 0
       fi
-      timeout "$RT" python3 "$name.py" > "$LOGS/$name.cpy3.out" 2>/dev/null
+      timeout "$RT" "${CPYCMD[@]}" > "$LOGS/$name.cpy3.out" 2>/dev/null
       mkdir -p "$CPYCACHE"
       cp "$LOGS/$name.cpy3.out" "$CPYCACHE/$name.out3" 2>/dev/null
       ;;
@@ -216,11 +252,12 @@ esac
 # alongside `:!shedskin_examples` is silently dropped -- which made a
 # corpus SOURCE edit invisible to the key. Verified both ways.
 CORPUS_PY=':(glob)shedskin_examples/**/*.py'
+CORPUS_DRV=':(glob)shedskin_examples/**/*_check.sh'
 HEAD=$(cd "$ROOT" && git rev-parse --short HEAD 2>/dev/null || echo nogit)
 KEYDIRT=$(cd "$ROOT" && { git diff HEAD       -- . ':!sweeps' ':!shedskin_examples' 2>/dev/null
                           git status --porcelain -- . ':!sweeps' ':!shedskin_examples' 2>/dev/null
-                          git diff HEAD       -- "$CORPUS_PY" 2>/dev/null
-                          git status --porcelain -- "$CORPUS_PY" 2>/dev/null; })
+                          git diff HEAD       -- "$CORPUS_PY" "$CORPUS_DRV" 2>/dev/null
+                          git status --porcelain -- "$CORPUS_PY" "$CORPUS_DRV" 2>/dev/null; })
 if [ -n "$KEYDIRT" ]; then
   DIFF=$(printf '%s' "$KEYDIRT" | sha1sum | cut -c1-8)
   TREE="$HEAD+$DIFF"
@@ -240,6 +277,10 @@ CPYKEY=$( { python3 -V 2>&1
             (cd "$ROOT" && git rev-parse "HEAD:shedskin_examples" 2>/dev/null) || echo nogit
             (cd "$ROOT" && git diff HEAD -- 'shedskin_examples/*.py' 2>/dev/null)
             (cd "$ROOT" && git ls-files -o --exclude-standard -- 'shedskin_examples/*.py' 2>/dev/null \
+               | xargs -r sha1sum)
+            # A shell check driver decides what CPython's run prints, too.
+            (cd "$ROOT" && git diff HEAD -- 'shedskin_examples/*_check.sh' 2>/dev/null)
+            (cd "$ROOT" && git ls-files -o --exclude-standard -- 'shedskin_examples/*_check.sh' 2>/dev/null \
                | xargs -r sha1sum)
           } | sha1sum | cut -c1-12 )
 CPYCACHE="$SWEEPS/cpython-cache/$CPYKEY"
@@ -273,7 +314,7 @@ CONTENT=$( { sha1sum "$ROOT/pyc" 2>/dev/null || echo nopyc
              # the sweep returned `unverifiable=0` from a cached TSV that had
              # no such column.
              sha1sum "$0" 2>/dev/null || echo noscript
-             find "$ROOT/shedskin_examples" -name '*.py' -print0 2>/dev/null \
+             find "$ROOT/shedskin_examples" \( -name '*.py' -o -name '*_check.sh' \) -print0 2>/dev/null \
                | sort -z | xargs -0 -r cat | sha1sum
              printf '%s|%s|%s\n' "${ENVS:-}" "${TMO:-}" "$MODE"
            } | sha1sum | cut -c1-12 )
