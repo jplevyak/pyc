@@ -93,6 +93,8 @@
 #                   pygasus: N emulated frames, state checksums at intervals.
 #                   rsync: what its __main__ computes, printed (it prints
 #                   nothing itself; its result is a file).
+#                   minilight: one SEEDED render, its image hashed (its own
+#                   random() is unseeded).
 #   NAME_check.sh   a harness given the command that runs the program
 #                   (`./NAME`, or `python3 NAME.py`); its stdout is compared.
 #                   webserver: starts the server, sends requests, stops it.
