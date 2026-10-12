@@ -4365,6 +4365,22 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *cur_val = atom_ast->rval;
       bool pending_member = false;
       Sym *pending_sym = nullptr;
+      Sym *module_global_target = nullptr;  // `m.G` as a store target
+      // `open(...).method(...)`: the file is only a temporary, and CPython
+      // closes it as soon as that call returns (its reference count drops to
+      // zero), so a later open of the same path sees everything it wrote.
+      // pyc kept it open until exit: minpng's `open(p, 'wb').write(png)`
+      // left its last 2727 bytes unflushed for a read in the same process,
+      // and `open(p).read()` in a loop leaked a descriptor per call. The
+      // shape is exactly [open, call, attribute, call]; `open` is the
+      // builtin by symbol, as the open() intercept resolves it.
+      bool temp_open_chain = false;
+      Sym *temp_file = nullptr;
+      if (n->ctx != PY_STORE && n->children.n == 4 && n->children[1]->kind == PY_call &&
+          n->children[2]->kind == PY_attribute && n->children[3]->kind == PY_call && atom_ast->sym) {
+        PycSymbol *open_sym = make_PycSymbol(ctx, "open", PYC_USE);
+        temp_open_chain = open_sym && atom_ast->sym == open_sym->sym;
+      }
       // issue 027 feature: class-qualified member state, parallel to
       // pending_member/pending_sym. qual_cls is the class Sym `X` in
       // `X.attr` when X is a literal class reference and attr names a
@@ -4374,6 +4390,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *qual_cls = nullptr, *qual_fn = nullptr;
       for (int i = 1; i < n->children.n; i++) {
         PyDAST *trailer = n->children[i];
+        if (temp_open_chain && i == 2) temp_file = cur_val;  // open(...)'s file
         if (trailer->kind == PY_attribute) {
           // `X.attr` where X is an imported module (issue 025 module
           // subsystem phase 2): a module is a compile-time namespace,
@@ -4388,6 +4405,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               if ((intptr_t)member <= (intptr_t)NONLOCAL_DEF)
                 fail("error line %d, module '%s' has no attribute '%s'", ctx.lineno, mm->name, attr);
               cur_val = member->sym;
+              // A STORE to it (`m.G = v`) assigns that module global itself:
+              // the target is the variable, as for a plain name. It used to
+              // leave ast->sym unset, and the assignment's if1_move asserted
+              // (othello2_check's `othello2.NODES = 0`).
+              if (n->ctx == PY_STORE && i == n->children.n - 1) module_global_target = cur_val;
               continue;
             }
           }
@@ -4728,8 +4750,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           send->partial = Partial_OK;
           ast->rval = t;
         }
-      } else
+      } else {
         ast->rval = cur_val;
+        if (module_global_target) ast->sym = module_global_target;
+      }
+      if (temp_file) call_method(&ast->code, ast, temp_file, make_symbol("close"), new_sym(ast), 0);
       return 0;
     }
 

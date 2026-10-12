@@ -95,6 +95,9 @@
 #                   nothing itself; its result is a file).
 #                   minilight: one SEEDED render, its image hashed (its own
 #                   random() is unseeded).
+#                   dijkstra, mandelbrot2, minpng, othello2, pystone,
+#                   sudoku3, sudoku5, tictactoe, voronoi2: the result each
+#                   computes but prints only on an iteration it never reaches.
 #   NAME_check.sh   a harness given the command that runs the program
 #                   (`./NAME`, or `python3 NAME.py`); its stdout is compared.
 #                   webserver: starts the server, sends requests, stops it.
