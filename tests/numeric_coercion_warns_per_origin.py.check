@@ -1,0 +1,1 @@
+numeric_coercion_warns_per_origin.py:9: warning: 'back' holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). The int comes from line 12, the float from line 10; it widens 2 more expressions, on lines 14-15. Permissive numeric coercion, refused under --strict (issues/171)

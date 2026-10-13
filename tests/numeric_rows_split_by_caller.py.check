@@ -1,1 +1,1 @@
-numeric_rows_split_by_caller.py:24: warning: an expression holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+numeric_rows_split_by_caller.py:13: warning: the elements of this list hold both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). The int comes from line 13, the float from line 16; it widens 1 more expression, on line 24. Permissive numeric coercion, refused under --strict (issues/171)
