@@ -51,8 +51,6 @@ is still in the tree, and gives a verdict for every off-by-default
 splitting lever in `fa_flags.cc`. As of 2026-10-13, the violations still
 live on the default path are:
 
-- **Stage 5's per-CreationSet fan in `split_edges`.** Its partition size
-  is the receiver CS count. `PYC_SPLITEDGES2=1` bounds it to two groups.
 - **`SETTER_OF_SETTER`'s confluence test**, which has no type condition.
 
 **Both sides now start minimal.** EntrySets start at one per function and
