@@ -1667,6 +1667,109 @@ static void reenter_scope_pyda(PyDAST *n, PycCompiler &ctx) {
 }
 
 // Helper: build if-else chain for PY_if_stmt
+// ifa/177: REUSE A GUARD'S LOAD OF A MODULE VARIABLE IN ITS TRUE BRANCH.
+//
+// A module-level data variable is a memory cell: each read loads it into a
+// fresh temp (ifa/issues/031). FA narrows the operand of an `isinstance` /
+// `is None` guard, which is the temp the guard loaded, so a later read in
+// the branch loaded the unnarrowed cell again. `if isinstance(x, A):
+// x.f = 4` then wrote `f` on `{A, B}` and gave `B` a field it never has.
+// A function local has one SSU name and narrows fine.
+//
+// So reuse the guard's load in the branch. That is plain redundant-load
+// elimination, sound whenever nothing can store the cell in between:
+//   - the load must run whenever the condition does: not under the right
+//     operand of `and` / `or`, a ternary, or a later link of a chained
+//     comparison;
+//   - no function may declare the variable `global` (a call could then
+//     store it, and almost anything is a call);
+//   - nothing in the condition or the branch may store or delete it. Any
+//     node that mentions the name other than a plain read of this variable
+//     counts, which over-approximates (an attribute named `x` kills too)
+//     and so is safe. Loops make a whole-branch scan necessary: a store
+//     late in a loop body reaches an earlier read on the next iteration.
+// A module-attribute store (`m.x = v`) could only reach the module's own
+// top-level code through a circular import.
+static void unconditional_module_loads(PyDAST *n, PycCompiler &ctx, Vec<PyDAST *> &out) {
+  if (!n) return;
+  switch (n->kind) {
+    case PY_name: {
+      PycAST *a = getAST(n, ctx);
+      if (n->ctx == PY_LOAD && a->sym && a->rval && a->rval != a->sym && is_module_data_var(a->sym)) out.add(n);
+      return;
+    }
+    case PY_bool_and:
+    case PY_bool_or:
+      if (n->children.n) unconditional_module_loads(n->children[0], ctx, out);
+      return;
+    case PY_compare:
+      if (n->children.n >= 3) {
+        unconditional_module_loads(n->children[0], ctx, out);
+        unconditional_module_loads(n->children[2], ctx, out);
+      }
+      return;
+    case PY_bool_not:
+    case PY_power:
+    case PY_call:
+    case PY_arglist:
+    case PY_keyword_arg:
+    case PY_binop:
+    case PY_testlist:
+      for (auto c : n->children.values()) unconditional_module_loads(c, ctx, out);
+      return;
+    default:
+      return;  // anything else may not evaluate every operand
+  }
+}
+static bool mentions_other_than_read(PyDAST *n, Sym *var, cchar *name, PycCompiler &ctx) {
+  if (!n) return false;
+  if (n->str_val && name && !strcmp(n->str_val, name)) {
+    PycAST *a = n->kind == PY_name && n->ctx == PY_LOAD ? getAST(n, ctx) : nullptr;
+    if (!a || a->sym != var) return true;
+  }
+  for (auto c : n->children.values())
+    if (mentions_other_than_read(c, var, name, ctx)) return true;
+  return false;
+}
+// After `cond` is lowered and before `suite` is: push the reuses. Returns
+// how many were pushed, for guard_reuse_end.
+static int guard_reuse_begin(PyDAST *cond, PyDAST *suite, PycCompiler &ctx) {
+  static int enabled = -1;
+  if (enabled < 0) { const char *v = getenv("PYC_GUARDREUSE"); enabled = v ? atoi(v) : 1; }
+  if (!enabled) return 0;
+  Vec<PyDAST *> loads;
+  unconditional_module_loads(cond, ctx, loads);
+  int pushed = 0;
+  Vec<Sym *> done;
+  for (PyDAST *ln : loads) {
+    PycAST *a = getAST(ln, ctx);
+    Sym *var = a->sym;
+    if (done.set_in(var)) continue;
+    done.set_add(var);
+    if (ctx.globals_declared_in_functions.set_in(var)) continue;
+    if (mentions_other_than_read(suite, var, ln->str_val, ctx)) continue;
+    // ...and a store inside the condition itself, after the load (`:=`).
+    bool cond_store = false;
+    std::function<void(PyDAST *)> scan = [&](PyDAST *c) {
+      if (!c || cond_store) return;
+      if (c->kind == PY_name && c->ctx != PY_LOAD && c->str_val && !strcmp(c->str_val, ln->str_val)) cond_store = true;
+      for (auto cc : c->children.values()) scan(cc);
+    };
+    scan(cond);
+    if (cond_store) continue;
+    ctx.reuse_var.add(var);
+    ctx.reuse_temp.add(a->rval);
+    ctx.reuse_scope.add(ctx.scope_stack.last());
+    ++pushed;
+  }
+  return pushed;
+}
+static void guard_reuse_end(int pushed, PycCompiler &ctx) {
+  ctx.reuse_var.n -= pushed;
+  ctx.reuse_temp.n -= pushed;
+  ctx.reuse_scope.n -= pushed;
+}
+
 static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // n is PY_if_stmt: children = [cond, suite, elif1, elif2, ..., else?]
   // Build elif/else chain inside-out: process from innermost (last) to outermost.
@@ -1698,7 +1801,9 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       call_method(&elif_chain, elif_ast, elif_cond_ast->rval, sym___pyc_to_bool__, elif_t, 0);
     }
     Code *elif_then = 0;
+    int elif_reuse = guard_reuse_begin(elif_cond, elif_suite, ctx);
     build_if1_suite_pyda(elif_suite, &elif_then, ctx);
+    guard_reuse_end(elif_reuse, ctx);
     if1_if(if1, &elif_chain, 0, elif_t, elif_then, 0, chain, 0, 0, elif_ast);
     chain = elif_chain;
   }
@@ -1716,7 +1821,9 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, t, 0);
   }
   Code *then_code = 0;
+  int reuse = guard_reuse_begin(cond, suite, ctx);
   build_if1_suite_pyda(suite, &then_code, ctx);
+  guard_reuse_end(reuse, ctx);
   if1_if(if1, &ast->code, 0, t, then_code, 0, chain, 0, 0, ast);
 }
 
@@ -4793,7 +4900,16 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // through the wrapper the public name is bound to (gen_def_wrapper).
         Sym *gw = ifn->self ? nullptr : ctx.gen_def_wrapper.get(ifn);
         ast->rval = ifn->self ? ifn->self : (gw ? gw : ifn);
-      } else if (load && is_module_data_var(ast->sym)) {
+      } else if (load && is_module_data_var(ast->sym) && [&]() {
+                   // ifa/177: inside a guard's true branch, reuse the
+                   // guard's own load (see build_if_pyda).
+                   for (int i = ctx.reuse_var.n - 1; i >= 0; i--)
+                     if (ctx.reuse_var[i] == ast->sym && ctx.reuse_scope[i] == ctx.scope_stack.last()) {
+                       ast->rval = ctx.reuse_temp[i];
+                       return false;
+                     }
+                   return true;
+                 }()) {
         // ifa/issues/031 step 2: treat a module-level data variable
         // as a memory cell, not a register -- each *read* loads the
         // cell into a fresh local temp. The temp is on FA's

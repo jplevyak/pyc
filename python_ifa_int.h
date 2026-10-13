@@ -133,6 +133,14 @@ class PycCompiler : public PycCallbacks {
   // field written once, after decoration -- CPython's cell, provided nothing
   // rebinds the name later, so a later store to one of these is refused.
   Vec<Sym *> decorated_self_refs;
+  // ifa/177: module-level variables that some function declares `global`.
+  // A call can store one of these, so a load of it is never reused across
+  // code that might call (build_if_pyda's guarded-branch reuse).
+  Vec<Sym *> globals_declared_in_functions;
+  // ifa/177: active reuse of a guard's load inside its true branch:
+  // reads of `reuse_var[i]` in scope `reuse_scope[i]` use `reuse_temp[i]`.
+  Vec<Sym *> reuse_var, reuse_temp;
+  Vec<PycScope *> reuse_scope;
 
   // issue 025 module subsystem phase 2: for `import X`, X is bound to
   // a module-marker Sym (is_module set). This maps that marker to the

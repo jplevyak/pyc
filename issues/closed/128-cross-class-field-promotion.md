@@ -3,7 +3,7 @@
 **Status:** closed 2026-09-30. Step 1 (the `IFACallbacks` hook), step 2
 (promoted fields as derived state) and step 3 (the MIXED-write demand) are
 done. Step 4 is closed without a diagnostic. The residual narrowing gap is
-[ifa/177](../../ifa/issues/177-FA-narrowing-does-not-reach-a-module-global.md).
+[ifa/177](../../ifa/issues/closed/177-FA-narrowing-does-not-reach-a-module-global.md).
 The union that made the mechanism reachable on `chull` was fixed by closed
 [ifa/152](../../ifa/issues/closed/152-FA-backtrack-the-demand-to-the-merged-creation-set.md).
 The full record of the four failed attempts (AGENTS.md cites them as its
@@ -112,7 +112,7 @@ pyc's `promote_field` (`python_ifa_sym.cc`) then appends to
      narrow a MODULE-LEVEL variable, because each read is a fresh load of the
      cell. So `if isinstance(x, A): x.f = 4` at module level is MIXED where
      the same code in a function is not. Filed as
-     [ifa/177](../../ifa/issues/177-FA-narrowing-does-not-reach-a-module-global.md);
+     [ifa/177](../../ifa/issues/closed/177-FA-narrowing-does-not-reach-a-module-global.md);
      it is a narrowing fix, not a split.
    - **Replaced:** the `PYC_FIELDSPLIT` scaffolding. It split the receiver's
      own contour by type, which was measured useless, and it read a demand

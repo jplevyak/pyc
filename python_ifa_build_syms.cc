@@ -1582,7 +1582,14 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_global_stmt:
-      for (auto c : n->children.values()) make_PycSymbol(ctx, c->str_val, PYC_GLOBAL);
+      for (auto c : n->children.values()) {
+        make_PycSymbol(ctx, c->str_val, PYC_GLOBAL);
+        // ifa/177: a function that declares it can store it, so a call
+        // may change it between a guard's load and a later read.
+        if (ctx.scope_stack.n > 1)
+          if (PycSymbol *g = ctx.scope_stack[0]->map.get(c->str_val))
+            if ((intptr_t)g > (intptr_t)NONLOCAL_DEF && g->sym) ctx.globals_declared_in_functions.set_add(g->sym);
+      }
       return 0;
 
     case PY_nonlocal_stmt:
