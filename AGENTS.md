@@ -48,13 +48,9 @@ by demand is a defect, however well it converges.
 completion. It holds the two-question test and the non-monotone diagnostic
 that identifies an arbitrary lever. It lists what has been removed and what
 is still in the tree, and gives a verdict for every off-by-default
-splitting lever in `fa_flags.cc`. As of 2026-09-28, the violations still
+splitting lever in `fa_flags.cc`. As of 2026-10-13, the violations still
 live on the default path are:
 
-- **`MARK_SETTER` / `MARK_SETTER_OF_SETTER`** (`fa.cc`, the stage-4
-  block). Mark distance is provenance. The other three mark splitters are
-  gone. This one survived because `voronoi2` needed it, and that
-  prerequisite (the nil codegen fix at `cg.cc:3707`) has landed.
 - **Stage 5's per-CreationSet fan in `split_edges`.** Its partition size
   is the receiver CS count. `PYC_SPLITEDGES2=1` bounds it to two groups.
 - **`SETTER_OF_SETTER`'s confluence test**, which has no type condition.
@@ -172,8 +168,8 @@ rather than failing — easy to read as "fine". Two habits follow:
   LAST phase only. Check every phase's `failed:` line, or just trust
   `make test`'s exit code, which is the point of running it.
 
-Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed with
-2 known (below); `test_pyc.py` 0 failed on both backends, the LLVM one
+Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed, 0
+known; `test_pyc.py` 0 failed on both backends, the LLVM one
 well above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml
 when a change lifts the count).
 
@@ -206,6 +202,11 @@ changed line belongs to your change. Two real cases from this repo:
   `<fixture>.<phase>.known_issue` instead, which reports `KNOWN`,
   does not fail the run, and flips to `PASS` by itself when the stage
   works again. `--rebless` refuses to touch a fixture that has one.
+  (Epilogue, 2026-10-13: the "regression" was the mark split itself, which
+  is provenance. When `MARK_SETTER` was deleted (ifa/146 D), `ess=3` was
+  confirmed as the demand-driven answer, and these two goldens were
+  re-blessed and their sidecars removed. A `.known_issue` records what
+  you believe at the time; revisit it when the belief changes.)
 
 Same rule as `tests/<name>.py.known_issue` for the pyc suite — see
 [issues/README.md](issues/README.md). Prefer it over baking in wrong
@@ -382,8 +383,9 @@ The rule has paid for itself every time it has been applied here:
 - Mark-based splitting is being retired — mark distance is
   depth-from-a-generating-AVar, so no type tuple can name what it
   separates. Turning `MARK_TYPE` off: guard trips 18 → 10, −55% analysis
-  time, −12.3% contours. `MARK_TYPE` and two other mark splitters are
-  deleted; `MARK_SETTER` is still live (ifa/146 D).
+  time, −12.3% contours. All four mark splitters are deleted; the last,
+  `MARK_SETTER`, went on 2026-10-13 for −7% EntrySets, −7% CreationSets
+  and −12% compile time with every corpus verdict unchanged (ifa/146 D).
 - The per-site key `v<id>|` in `cselem_shape_key` fragments contour
   identity 2.53× (ifa/129), and it is exactly provenance.
 - ifa/128's whole complaint was that CS identity was *(allocation site ×
