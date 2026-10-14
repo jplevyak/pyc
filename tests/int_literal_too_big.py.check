@@ -1,0 +1,1 @@
+fail: error line 4, integer literal 99999999999999999999 does not fit in 64 bits; pyc's int is int64 (issues/177)

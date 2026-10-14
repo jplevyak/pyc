@@ -104,6 +104,15 @@
 #                   rdb: builds a synthetic iPod in a scratch dir and runs it.
 # Both are covered by the tree, content and CPython keys.
 #
+# NAME.vary, also an added file listed in PYC_CHANGES.md, names the lines
+# of a program's stdout that do not reflect its result: one extended
+# regex per line, each anchored on what the PROGRAM prints, never on what
+# pyc prints. Matching lines are dropped from both arms before the stdout
+# comparison. It is for what the variance probe below cannot learn: a
+# timing line CPython's samples happen to agree on (mastermind2), a
+# program too slow for a second sample (hq2x), or a line pyc differs on
+# by design (circle's sys.version). Covered by the tree and content keys.
+#
 set -u
 ROOT=$(cd "$(dirname "$0")" && pwd)
 SELF="$ROOT/$(basename "$0")"   # workers are re-execs; a relative $0 breaks under xargs
@@ -261,11 +270,12 @@ esac
 # corpus SOURCE edit invisible to the key. Verified both ways.
 CORPUS_PY=':(glob)shedskin_examples/**/*.py'
 CORPUS_DRV=':(glob)shedskin_examples/**/*_check.sh'
+CORPUS_VARY=':(glob)shedskin_examples/**/*.vary'
 HEAD=$(cd "$ROOT" && git rev-parse --short HEAD 2>/dev/null || echo nogit)
 KEYDIRT=$(cd "$ROOT" && { git diff HEAD       -- . ':!sweeps' ':!shedskin_examples' 2>/dev/null
                           git status --porcelain -- . ':!sweeps' ':!shedskin_examples' 2>/dev/null
-                          git diff HEAD       -- "$CORPUS_PY" "$CORPUS_DRV" 2>/dev/null
-                          git status --porcelain -- "$CORPUS_PY" "$CORPUS_DRV" 2>/dev/null; })
+                          git diff HEAD       -- "$CORPUS_PY" "$CORPUS_DRV" "$CORPUS_VARY" 2>/dev/null
+                          git status --porcelain -- "$CORPUS_PY" "$CORPUS_DRV" "$CORPUS_VARY" 2>/dev/null; })
 if [ -n "$KEYDIRT" ]; then
   DIFF=$(printf '%s' "$KEYDIRT" | sha1sum | cut -c1-8)
   TREE="$HEAD+$DIFF"
@@ -322,7 +332,7 @@ CONTENT=$( { sha1sum "$ROOT/pyc" 2>/dev/null || echo nopyc
              # the sweep returned `unverifiable=0` from a cached TSV that had
              # no such column.
              sha1sum "$0" 2>/dev/null || echo noscript
-             find "$ROOT/shedskin_examples" \( -name '*.py' -o -name '*_check.sh' \) -print0 2>/dev/null \
+             find "$ROOT/shedskin_examples" \( -name '*.py' -o -name '*_check.sh' -o -name '*.vary' \) -print0 2>/dev/null \
                | sort -z | xargs -0 -r cat | sha1sum
              printf '%s|%s|%s\n' "${ENVS:-}" "${TMO:-}" "$MODE"
            } | sha1sum | cut -c1-12 )
@@ -495,6 +505,13 @@ stdout_verdict() {  # stdout_verdict NAME -> yes | NO | none
     sed -e "$vary" "$LOGS/$name.pyc.out" > "$LOGS/$name.pyc.cmp" 2>/dev/null || cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
   else
     cp "$LOGS/$name.cpy.out" "$LOGS/$name.cpy.cmp"; cp "$LOGS/$name.pyc.out" "$LOGS/$name.pyc.cmp"
+  fi
+  local vf="$ROOT/shedskin_examples/$name/$name.vary" arm
+  if [ -s "$vf" ]; then
+    for arm in cpy pyc; do
+      grep -vE -f "$vf" "$LOGS/$name.$arm.cmp" > "$LOGS/$name.$arm.cmp.v"
+      mv "$LOGS/$name.$arm.cmp.v" "$LOGS/$name.$arm.cmp"
+    done
   fi
   if [ ! -s "$LOGS/$name.cpy.cmp" ] && [ ! -s "$LOGS/$name.pyc.cmp" ]; then
     echo none

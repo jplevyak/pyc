@@ -46,7 +46,10 @@ class _md5:
         pad = [0x80]
         while (n + len(pad)) % 64 != 56:
             pad.append(0)
-        bits = (n * 8) & 0xffffffffffffffff
+        # MD5 takes the bit length mod 2^64. A byte length fits int64, so
+        # n * 8 < 2^64 holds for any message that fits in memory; the mask
+        # was a no-op, and its literal does not fit pyc's int64 (issues/177).
+        bits = n * 8
         for i in range(8):
             pad.append((bits >> (8 * i)) & 0xff)
         msg = msg + bytes(pad)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "python_parse.h"
+#include <cerrno>
 #include <functional>
 
 // ifa/issues/104: unify `list` and `tuple` in the analysis, leaving the
@@ -249,14 +250,28 @@ static char *strip_numeric_underscores(const char *s) {
 // handle only `0x` and a C-style leading-zero octal, so `0b111` and `0o17`
 // fell through to base 10, stopped at the `b`/`o`, and were silently 0
 // (othello2's `move & 0b111`).
-static int64 parse_int_literal(const char *text) {
+//
+// The magnitude is read as uint64 in every base, so a literal past int64
+// is detectable: *range is 0 when it fits, 1 when it fits 64 bits but not
+// int64 (the value returned is its two's-complement wrap), and 2 when it
+// does not fit 64 bits at all. A decimal literal was read by strtoll,
+// which SATURATES, so 99999999999999999999 was silently INT64_MAX while
+// 0xFFFFFFFFFFFFFFFF was silently -1. `negated` is a literal under a
+// folded unary minus, for which 2^63 is INT64_MIN and fits.
+static int64 parse_int_literal(const char *text, int *range = nullptr, bool negated = false) {
   const char *s = strip_numeric_underscores(text);
-  char *end;
-  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) return (int64)strtoull(s + 2, &end, 16);
-  if (s[0] == '0' && (s[1] == 'o' || s[1] == 'O')) return (int64)strtoull(s + 2, &end, 8);
-  if (s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) return (int64)strtoull(s + 2, &end, 2);
-  if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') return (int64)strtoull(s + 1, &end, 8);
-  return (int64)strtoll(s, &end, 10);
+  int base = 10;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) base = 16, s += 2;
+  else if (s[0] == '0' && (s[1] == 'o' || s[1] == 'O')) base = 8, s += 2;
+  else if (s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) base = 2, s += 2;
+  else if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') base = 8, s += 1;
+  errno = 0;
+  uint64 u = strtoull(s, nullptr, base);
+  if (range) {
+    uint64 limit = negated ? (uint64)INT64_MAX + 1 : (uint64)INT64_MAX;
+    *range = errno == ERANGE ? 2 : u > limit ? 1 : 0;
+  }
+  return (int64)u;
 }
 
 // Parse a PY_number PyDAST node as a decimal/hex/octal integer
@@ -333,7 +348,35 @@ static bool try_fold_tuple_arity(PyDAST *n, Vec<PyDAST *> &out) {
 }
 
 // Make a number constant from a PyDAST PY_number node
-static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
+// issues/177: an integer literal past int64. CPython's int is exact, so
+// wrapping one is an ACCOMMODATION (issues/171): it is what C, and
+// shedskin, do with a 64-bit bit pattern such as othello2's
+// 0xFFFFFFFFFFFFFFFF board mask. Permissive mode wraps and says so;
+// --strict, or PYC_INT_LITERAL_WRAP=0, refuses. A literal that does not
+// fit 64 bits has no value to wrap to and is refused in every mode.
+static void check_int_literal_range(PyDAST *n, const char *s, int range, bool negated, int64 v, PycCompiler &ctx) {
+  if (!range) return;
+  const char *sign = negated ? "-" : "";
+  if (range == 2)
+    fail("error line %d, integer literal %s%s does not fit in 64 bits; pyc's int is int64 (issues/177)", ctx.lineno,
+         sign, s);
+  static int accept = -1;
+  if (accept < 0) {
+    cchar *e = getenv("PYC_INT_LITERAL_WRAP");
+    accept = runtime_errors && (!e || atoi(e));
+  }
+  long w = negated ? (long)(0 - (uint64)v) : (long)v;
+  if (!accept)
+    fail("error line %d, integer literal %s%s exceeds int64; pyc's int is int64, and wrapping it to %ld is accepted "
+         "only in permissive mode (issues/177)",
+         ctx.lineno, sign, s, w);
+  fprintf(stderr,
+          "%s:%d: warning: integer literal %s%s exceeds int64 and wraps to %ld, where CPython keeps it exact. "
+          "Permissive, refused under --strict (issues/177)\n",
+          n->filename ? n->filename : ctx.filename, ctx.lineno, sign, s, w);
+}
+
+static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx, bool negated = false) {
   // Parse str_val since is_int/int_val/float_val may not be set from grammar
   const char *s = n->str_val;
   if (!s) s = "0";
@@ -362,7 +405,9 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
     sprintf(buf, "%ld", n->int_val);
     return if1_const(if1, sym_int64, buf, &imm);
   } else if (!is_float) {
-    int64 v = parse_int_literal(s);
+    int range = 0;
+    int64 v = parse_int_literal(s, &range, negated);
+    check_int_literal_range(n, s, range, negated, v, ctx);
     Immediate imm;
     imm.v_int64 = v;
     char buf[80];
@@ -4440,7 +4485,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // Chained/non-literal operands (`-x`, `--1`, `~n`) still take
       // the general runtime-dispatch path below.
       if ((n->op == PY_OP_USUB || n->op == PY_OP_UADD) && n->children[0]->kind == PY_number) {
-        Sym *lit = make_num_pyda(n->children[0], ctx);
+        Sym *lit = make_num_pyda(n->children[0], ctx, n->op == PY_OP_USUB);
         if (n->op == PY_OP_USUB) {
           Immediate imm = lit->imm;
           char buf[80];
@@ -4448,7 +4493,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             imm.v_float64 = -imm.v_float64;
             sprintf(buf, "%g", imm.v_float64);
           } else {
-            imm.v_int64 = -imm.v_int64;
+            imm.v_int64 = (int64)(0 - (uint64)imm.v_int64);  // INT64_MIN negates to itself
             sprintf(buf, "%ld", (long)imm.v_int64);
           }
           lit = if1_const(if1, lit->type, buf, &imm);
