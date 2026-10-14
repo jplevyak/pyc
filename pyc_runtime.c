@@ -172,6 +172,7 @@ void *_CG_to_list_runtime(void *struct_ptr,
 #undef _CG_list_resize
 #undef _CG_list_mult
 #undef _CG_list_getslice
+#undef _CG_tuple_getslice
 #undef _CG_list_setslice
 #undef _CG_list_delslice
 
@@ -305,6 +306,14 @@ void *_CG_list_getslice(void *v, int64 size, int64 l_in, int64 h_in,
       }
     }
   }
+  return x;
+}
+
+/* ifa/102: a tuple slice is a dynamic tuple -- the list slicer, with the
+ * header's _CG_TUPLE_DYNAMIC bit set (pyc_c_runtime.h). */
+void *_CG_tuple_getslice(void *v, int64 size, int64 l_in, int64 h_in, int64 s) {
+  void *x = _CG_list_getslice(v, size, l_in, h_in, s);
+  _CG_LIST_HDR_TOTAL(x) |= 0x40000000u;
   return x;
 }
 

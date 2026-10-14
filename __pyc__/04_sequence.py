@@ -625,8 +625,10 @@ class tuple:
     # -- the same "unknown arity, known element type" representation a
     # list already has. Requires PYC_TUPELEM for sym_tuple to HAVE an
     # element sym at all (ifa/issues/104).
+    # ifa/102: _CG_tuple_getslice marks the result as a dynamic tuple in
+    # its header, so a {list, tuple} receiver can be dispatched on it.
     return __pyc_c_call__(__pyc_primitive__(__pyc_symbol__("merge"), self, self),
-                          "_CG_list_getslice",
+                          "_CG_tuple_getslice",
                           list, self,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, i,

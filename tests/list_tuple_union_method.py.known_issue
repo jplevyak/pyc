@@ -1,1 +1,0 @@
-ifa/issues/102 (was 030) -- a {list, tuple} union reaching any shared method (slice, len, index, iterate): two candidates with the same C receiver type and no runtime tag. Since 2026-10-14 it is refused at compile time ("cannot resolve the call to '__pyc_getslice__'") instead of aborting at run time; sunfish's original failure. Passes when a dispatch can discriminate the two.

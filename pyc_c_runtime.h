@@ -1650,6 +1650,16 @@ typedef struct _CG_list_struct {
 #define _CG_TUPLE_FIXED_ARITY 0x80000000u
 #define _CG_tuple_set_fixed(_l) (_CG_list_to_struct(_l)->total_len |= _CG_TUPLE_FIXED_ARITY)
 #define _CG_tuple_is_fixed(_l) ((_CG_list_to_struct(_l)->total_len & _CG_TUPLE_FIXED_ARITY) != 0)
+// ifa/102: the next bit says a tuple has NO static arity (make_seq, a
+// slice), so a {list, tuple} receiver can be dispatched by header: a
+// fixed-arity tuple has the bit above, a dynamic tuple this one, and a
+// list neither. Like the fixed bit, it is set at construction and lives in
+// capacity bits a tuple never uses.
+#define _CG_TUPLE_DYNAMIC 0x40000000u
+#define _CG_TUPLE_BITS (_CG_TUPLE_FIXED_ARITY | _CG_TUPLE_DYNAMIC)
+#define _CG_tuple_set_dynamic(_l) (_CG_list_to_struct(_l)->total_len |= _CG_TUPLE_DYNAMIC)
+#define _CG_tuple_is_dynamic(_l) ((_CG_list_to_struct(_l)->total_len & _CG_TUPLE_DYNAMIC) != 0)
+#define _CG_is_plain_list(_l) ((_CG_list_to_struct(_l)->total_len & _CG_TUPLE_BITS) == 0)
 #define _CG_prim_len(_c, _l) ((_l) ? _CG_list_len(_l) : 0)
 #define _CG_ptr_to_list(_l) ((_CG_list)(((char *)(_l)) + SIZEOF_LIST_HEADER))
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
@@ -1785,7 +1795,7 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
 // their elements INLINE in the header.
 static inline _CG_list _CG_list_resize_internal(_CG_list l1, uint32 size1, uint32 new_len) {
   uint32 s1 = _CG_prim_len(0, l1);
-  uint32 cap = _CG_list_total_len(0, l1) & ~_CG_TUPLE_FIXED_ARITY;  // ifa/185
+  uint32 cap = _CG_list_total_len(0, l1) & ~_CG_TUPLE_BITS;  // ifa/185, ifa/102
   if (new_len && new_len <= cap && _CG_list_ptr(l1)) {
     // Already big enough: move the length and zero anything newly
     // exposed. No allocation, no copy -- this is the amortized path.
@@ -2075,6 +2085,14 @@ inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
 #define _CG_list_mult(_l1, _l, _s) (_CG_list_mult_internal(_CG_to_list(_l1), _l, _s))
 #define _CG_list_getslice(_l, _s, _lower, _upper, _step) \
   (_CG_list_getslice_internal(_CG_to_list(_l), _s, _lower, _upper, _step))
+// A tuple slice is a dynamic tuple (ifa/102): the list slicer, marked.
+static inline _CG_list _CG_tuple_getslice_internal(_CG_list v, uint32 size, int32 l, int32 h, int32 s) {
+  _CG_list x = _CG_list_getslice_internal(v, size, l, h, s);
+  _CG_tuple_set_dynamic(x);
+  return x;
+}
+#define _CG_tuple_getslice(_l, _s, _lower, _upper, _step) \
+  (_CG_tuple_getslice_internal(_CG_to_list(_l), _s, _lower, _upper, _step))
 #define _CG_list_setslice(_l1, _s, _lower, _upper, _step, _l2) \
   (_CG_list_setslice_internal(_l1, _s, _lower, _upper, _step, _CG_to_list(_l2)))
 #define _CG_list_delslice(_l1, _s, _lower, _upper, _step) \
