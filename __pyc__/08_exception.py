@@ -15,12 +15,20 @@
 # is `Exception("message")` or a subclass with its own __init__, and
 # a string field keeps str(e) trivial without tuple formatting.
 
-class Exception(object):
+class BaseException(object):
   args = ""
   def __init__(self, args=""):
     self.args = args
   def __str__(self):
     return self.args
+
+# Derives from BaseException, as in CPython. It used to derive from
+# object with its own copy of __init__/__str__, so the hierarchy was flat:
+# `except BaseException` missed an Exception, and the unhandled-exception
+# printer's e.__str__() dispatched at run time between two identical
+# bodies (ifa/190).
+class Exception(BaseException):
+  pass
 
 # The standard exception hierarchy's commonly-referenced classes
 # (issue 025's "has no type" bucket: an undefined name types as
@@ -31,13 +39,6 @@ class Exception(object):
 # Flat where CPython nests (LookupError/ArithmeticError subtleties
 # don't matter without except-clause matching, issue 011); IOError
 # is aliased to OSError as in Python 3.
-
-class BaseException(object):
-  args = ""
-  def __init__(self, args=""):
-    self.args = args
-  def __str__(self):
-    return self.args
 
 class SystemExit(BaseException):
   # `code` as in CPython: exit(n) exits with status n once uncaught
