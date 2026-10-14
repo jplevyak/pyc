@@ -192,6 +192,7 @@ void compile(cchar *fn) {
   mark_exc_checks_constant(fa);
   if (ifa_optimize() < 0) fail("unable to optimize program");
   ifa_dbg_bodies("after-optimize");  // ifa/issues/112
+  { extern void sum_audit_check(cchar *); sum_audit_check("after-optimize"); }  // ifa/120
   if (fgraph) ifa_graph(fn);
   if (fdump_html) {
     char mktree_dir[512];
@@ -206,6 +207,7 @@ void compile(cchar *fn) {
       // cg_v2_emit_llvm_module (see llvm.cc:155 — old direct
       // emitter was retired in issue 014).
       llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
+      { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
       if (codegen_jit) {
         if (llvm_jit_execute()) fail("JIT execution failed");
       } else {
@@ -215,6 +217,7 @@ void compile(cchar *fn) {
 #endif
     {
       c_codegen_write_c(pdb->fa, if1->top->fun, fn);
+      { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
       if (c_codegen_compile(fn)) fail("compilation failure");
     }
   }
