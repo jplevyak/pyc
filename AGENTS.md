@@ -48,10 +48,11 @@ by demand is a defect, however well it converges.
 completion. It holds the two-question test and the non-monotone diagnostic
 that identifies an arbitrary lever. It lists what has been removed and what
 is still in the tree, and gives a verdict for every off-by-default
-splitting lever in `fa_flags.cc`. As of 2026-10-13, the violations still
-live on the default path are:
-
-- **`SETTER_OF_SETTER`'s confluence test**, which has no type condition.
+splitting lever in `fa_flags.cc`. As of 2026-10-13, no violation is known
+to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
+test, now asks for a demand. What remains is the off-by-default lever
+inventory. **A dispatch that cannot resolve statically is a demand**: the
+goal is zero run-time dispatch.
 
 **Both sides now start minimal.** EntrySets start at one per function and
 split on demand: a two-call program splits `f` into exactly the two
