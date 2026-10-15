@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__4f0de62f+913fcfe1` | 2026-10-15 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2669/799=3.34 pratio=2.27 n=76 |
 | `check__default__5fbbab3f+50288b47` | 2026-10-14 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2669/799=3.34 pratio=2.27 n=76 -- ifa/130 A1: inherited attributes resolve by the C3 MRO (prototype copy, data shadows a method in selector dispatch, MRO tie-break in subsumes_arg). -R. Versus `check__default__3e5d6ac1+3e52bf31`: every column identical on all 77. |
 | `check__default__3e5d6ac1+3e52bf31` | 2026-10-14 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2669/799=3.34 pratio=2.27 n=76 -- ifa/130 A3: class tags per class family (`cg_tag_name`), not per name. -R. Versus `check__default__d80ebc9e+ae99302a`: every column identical on all 77. |
 | `check__default__d80ebc9e+ae99302a` | 2026-10-14 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2669/799=3.34 pratio=2.27 n=76 -- issues/169: local classes closure-converted in the frontend; if1_fixup_nesting runs outermost first. -R. Versus `check__default__ee17b89c+e62d82bd`: every column identical on all 77. |
