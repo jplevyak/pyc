@@ -1,16 +1,18 @@
-# ifa/178: two records of one class, built through ONE constructor contour,
-# whose member ends up holding lists of different element types.
+# ifa/134: a branch that decides which list a record's member gets must fold
+# per contour, or the stores of BOTH arms reach both records.
 #
-# `a.labels` is an int list built by `append` inside `__init__`; `b.labels`
-# is the caller's str list. Both calls pass the same argument types, so no
-# formal confluence splits `__init__`, and both objects are allocated in the
-# one `__new__` contour: one Pot CreationSet, whose `labels` member holds
-# both lists, so `self.labels[j]` reads {int64, str}. Route 4 declines Pot
-# ("confluence only, no demand": the demand is on its member lists), and the
-# owner lift from those lists finds one group, because route 4's key follows
-# value flow INTO the member and never the store's receiver. tests/none_default_arg_splits_record.py is the same program with
-# `labels=None`, which passes only because {list} vs {None} splits
-# `__init__` on a formal.
+# Both calls pass the same argument types, and pyc already gives each object
+# its own Pot CreationSet and each call its own `__init__` contour. What
+# separates them is only the VALUE of `n`: 3 takes the first arm (an int list
+# filled by `append`), 1 the second (the caller's str list). `n > 2` runs in
+# `int.__gt__`, one contour shared by both calls, so its `self` is not a
+# constant there and the branch does not fold in either `__init__`. The
+# second object's `__init__` then stores both lists into `self.labels` and
+# appends ints through it into the str list, and `self.labels[j]` reads
+# {int64, str}. The demand is that violation; CONST_DEMAND walks from the
+# polluted list element to the `append` that wrote it and to the branch
+# guarding that call, and splits `int.__gt__` on the constants its callers
+# disagree on (1 and 3). (Filed first as ifa/178's writer split; it is not.)
 
 
 class Pot:
