@@ -193,6 +193,7 @@ void compile(cchar *fn) {
   if (ifa_optimize() < 0) fail("unable to optimize program");
   ifa_dbg_bodies("after-optimize");  // ifa/issues/112
   { extern void sum_audit_check(cchar *); sum_audit_check("after-optimize"); }  // ifa/120
+  { extern void compute_clone_equivalence(FA *); compute_clone_equivalence(pdb->fa); }  // ifa/121
   if (fgraph) ifa_graph(fn);
   if (fdump_html) {
     char mktree_dir[512];
