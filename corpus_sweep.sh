@@ -25,7 +25,7 @@
 #             check    + warning count, CPython exit status,
 #                        and whether stdout MATCHES CPython    (~12 min warm)
 #             default: compile
-#   -e ENV    environment for the pyc runs, e.g. -e "PYC_CSELEM=3"
+#   -e ENV    environment for the pyc runs, e.g. -e "PYC_CSBACKTRACK=0"
 #   -t SECS   per-step timeout (default 400 compile / 120 run)
 #   -j N      COMPILE parallelism (default: nproc)
 #   -J M      RUN/CPython parallelism (default: max(1, nproc/4))

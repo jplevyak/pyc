@@ -50,8 +50,10 @@ that identifies an arbitrary lever. It lists what has been removed and what
 is still in the tree, and gives a verdict for every off-by-default
 splitting lever in `fa_flags.cc`. As of 2026-10-13, no violation is known
 to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
-test, now asks for a demand. What remains is the off-by-default lever
-inventory. **A dispatch that cannot resolve statically is a demand**: the
+test, now asks for a demand. On 2026-10-15 every off-by-default lever
+measured dead, non-monotone or inert was deleted; what remains
+are three PENDING on their own issues (`PYC_SLOTARITY`, `PYC_RETDEMAND`,
+`PYC_TYPEMOVE`). **A dispatch that cannot resolve statically is a demand**: the
 goal is zero run-time dispatch.
 
 **Both sides now start minimal.** EntrySets start at one per function and
@@ -594,7 +596,7 @@ current one.
 ./corpus_sweep.sh -m run                  # + the binary's exit status (~11 min)
 ./corpus_sweep.sh -m check                # + warnings, CPython rc,
                                           #   and stdout vs CPython    (~11 min)
-./corpus_sweep.sh -m compile -e "PYC_CSELEM=3"
+./corpus_sweep.sh -m compile -e "PYC_CSBACKTRACK=0"
 ./corpus_sweep.sh -m check -R             # + confirm run timeouts alone
 ```
 
