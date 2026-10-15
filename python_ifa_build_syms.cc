@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
+#include "ast.h"
 #include "python_parse.h"
 
 
@@ -2823,21 +2824,52 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
   collect_match_args(cdef, cls->match_args);
   for (int i = 0; i < cls->includes.n && !cls->match_args.n; i++)
     if (cls->includes[i]->match_args.n) cls->match_args = cls->includes[i]->match_args;
-  // Build base ___init___ (class prototype initialization)
-  for (int i = 0; i < cls->includes.n; i++) {
-    Sym *inc = cls->includes[i];
-    for (int j = 0; j < inc->has.n; j++) {
-      Sym *iv = if1_make_symbol(if1, inc->has[j]->name);
-      if (!inc->has[j]->alias || !inc->has.v[j]->alias->is_fun) {
-        Sym *t = new_sym(ast);
-        if (inc->self) {
-          if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
-          if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, t, (ast->rval = new_sym(ast)))->ast = ast;
-        }
-      } else
-        if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, inc->has[j]->alias,
-                 (ast->rval = new_sym(ast)))
-            ->ast = ast;
+  // Build base ___init___ (class prototype initialization): each inherited
+  // attribute, resolved as CPython resolves it (ifa/130 A1). Every member of
+  // every base used to be copied in base order and by name, and the class's
+  // own body then wrote the same slots, so
+  //   - an OVERRIDE left the inherited value and the override in one slot,
+  //     a union over time CPython never has (`class B(A): x = "s"` over
+  //     `x = 1` was refused as {int, str}, a method over data likewise);
+  //   - with two bases defining a name the LAST base won, where the MRO
+  //     says the first (`class B(C, D)` read D's x silently).
+  // Now a name the class defines itself is not copied at all (it SHADOWS),
+  // and any other is copied once, from the first class in the class's C3
+  // MRO (c3_mro, the linearization ifa's dispatch uses) that defines it.
+  // The name is the query, as in Python's own lookup; what is copied is
+  // that class's member.
+  {
+    // A class's OWN members are those it defines (`in` is the class); its
+    // `has` may already hold inherited ones too, which must not shadow.
+    Vec<cchar *> resolved;
+    for (Sym *m : cls->has) if (m && m->name && m->in == cls) resolved.set_add((char *)m->name);
+    Vec<Sym *> mro;
+    c3_mro(cls, mro);
+    if (!mro.n) mro.add(cls);
+    Vec<Sym *> bases;  // the MRO after the class itself, then any include it does not list
+    for (int i = 1; i < mro.n; i++) bases.add(mro[i]);
+    for (Sym *inc : cls->includes) if (!bases.in(inc)) bases.add(inc);
+    for (Sym *inc : bases) {
+      if (!cls->includes.in(inc) && !inc->self) continue;
+      for (int j = 0; j < inc->has.n; j++) {
+        Sym *m = inc->has[j];
+        if (!m) continue;
+        // Only what this class itself defines: an inherited member is
+        // resolved at the class in the MRO that defines it. (A member with
+        // no defining class recorded keeps the old, unconditional copy.)
+        if (m->in && m->in != inc && !m->in->is_fun) continue;
+        if (m->name && !resolved.set_add((char *)m->name)) continue;  // shadowed, or an earlier class won
+        Sym *iv = if1_make_symbol(if1, m->name);
+        if (!m->alias || !m->alias->is_fun) {
+          Sym *t = new_sym(ast);
+          if (inc->self) {
+            if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
+            if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, t, (ast->rval = new_sym(ast)))->ast = ast;
+          }
+        } else
+          if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, m->alias, (ast->rval = new_sym(ast)))
+              ->ast = ast;
+      }
     }
   }
   // issues/169: store a local class's captured values on the prototype.
