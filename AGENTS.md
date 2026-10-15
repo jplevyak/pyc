@@ -53,7 +53,7 @@ to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
 test, now asks for a demand. On 2026-10-15 every off-by-default lever
 measured dead, non-monotone or inert was deleted, `PYC_SLOTARITY`,
 `PYC_TYPEMOVE` and `PYC_RETDEMAND` with them, so the inventory is empty.
-The writer split (ifa/129 A, ifa/178) has no known program that needs it.
+The writer split (ifa/178) has no known program that needs it.
 **A dispatch that cannot resolve statically is a demand**: the goal is zero
 run-time dispatch.
 

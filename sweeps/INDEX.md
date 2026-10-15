@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_CSBACKTRACK_0__e92568f3+2afef579` | 2026-10-15 | programs=77 compile_fail=2 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2664/798=3.34 pratio=2.27 n=76 -- ifa/129 (152 coverage): same binary as `check__default__ea9a60bc+23598ae4`. plcfrs fails to compile without backtracking; the other 76 unchanged. Still load-bearing. |
 | `check__default__ea9a60bc+23598ae4` | 2026-10-15 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2669/799=3.34 pratio=2.27 n=76 -- ifa/134: content-to-writers step default, flag deleted. -R. Versus `check__PYC_CONSTCS_1__ea9a60bc+4d3e2e96`: every column identical on all 77. |
 | `check__PYC_CONSTCS_1__ea9a60bc+4d3e2e96` | 2026-10-15 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2669/799=3.34 pratio=2.27 n=76 -- ifa/134: refined (pure int/float violations excluded), same binary as `check__default__ea9a60bc+4d3e2e96`. Every column identical on all 77; fixes tests/record_member_shared_constructor.py. Made default. |
 | `check__default__ea9a60bc+4d3e2e96` | 2026-10-15 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2669/799=3.34 pratio=2.27 n=76 -- ifa/134 baseline for the refined PYC_CONSTCS. Identical to `a2da5f5f`. |
