@@ -1939,17 +1939,24 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_list:
     case PY_slice:
     case PY_subscriptlist:
+    case PY_arglist: {
+      for (PyDAST *c : n->children) build_syms_pyda(c, ctx);
+      return 0;
+    }
     case PY_parameters:
     case PY_varargslist:
     case PY_fpdef:
     case PY_fplist:
-    case PY_arglist:
     case PY_keyword_arg: {
       // issues/107: children[0] is the PARAMETER NAME (`print(x, end=" ")`
       // -- `end` names a formal, not a reference to a variable called
       // `end`). It must still be WALKED (the earlier attempt to skip it
       // broke 283 tests), but an unresolved lookup on it must not be
-      // reported as an undefined name.
+      // reported as an undefined name. Only HERE: this case used to be
+      // shared with PY_arglist, PY_list and a dozen other kinds, whose
+      // children[0] is an ordinary expression -- the first argument of
+      // every call, the first element of every list -- so an undefined
+      // name there was never reported (`print(NoSuchName)`).
       ctx.in_kwarg_key++;
       if (n->children.n) build_syms_pyda(n->children[0], ctx);
       ctx.in_kwarg_key--;

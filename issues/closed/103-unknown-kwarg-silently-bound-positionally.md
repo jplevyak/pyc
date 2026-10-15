@@ -1,7 +1,10 @@
 # 103 — a refused program is reported in the analyzer's terms, not as the user's error
 
-**Status:** open. Rewritten 2026-09-28; it now also carries
-[107](closed/107-undefined-names-warn-then-segfault.md). History in git:
+**Closed 2026-10-14.** Both diagnostics now say what CPython says, as
+compile errors; see "Resolution" at the end.
+
+**Status at the time (kept as the record):** open. Rewritten 2026-09-28; it now also carries
+[107](107-undefined-names-warn-then-segfault.md). History in git:
 `git show e3b44e2c:issues/103-unknown-kwarg-silently-bound-positionally.md`.
 
 ## Where it stands
@@ -47,3 +50,26 @@ hold the correct diagnostic).
 Both fixtures print their `.check` diagnostics; delete their
 `.known_issue` sidecars. `life` and `itertools_module` stay green
 (`product(repeat=)` landed with this issue).
+
+## Resolution (2026-10-14)
+
+- **Undefined name as a call argument.** `build_syms_pyda` grouped
+  `PY_arglist` (and `PY_list`, `PY_slice`, `PY_subscriptlist`, the
+  literals) with `PY_keyword_arg`, whose child 0 is a parameter NAME and
+  is walked with `in_kwarg_key` set so it is never reported. For those
+  kinds child 0 is an ordinary expression -- the first argument of every
+  call, the first element of every list -- so an undefined name there was
+  never recorded. They now walk every child normally; only
+  `PY_keyword_arg` and the parameter-declaration kinds keep the
+  suppression. `report_undefined_names` also uses the standard
+  `file:line: error:` form: `undefined_name_executed.py:11: error: name
+  'NoSuchName' is not defined`.
+- **Unknown keyword argument.** When `PYC_KWSTRICT` rejects every
+  candidate of a call for a keyword that names no formal, `pattern.cc`
+  records the callee and the keyword against the send
+  (`unexpected_keyword_at`), and the call's type violation is reported in
+  CPython's words: `unknown_kwarg_rejected.py:29:44: error: f() got an
+  unexpected keyword argument 'nosuchkw'`.
+
+Both fixtures are `.check_fail` tests now, their checks the actual
+diagnostics.

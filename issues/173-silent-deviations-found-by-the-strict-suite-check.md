@@ -62,7 +62,7 @@ z = 1
 ```
 
 pyc reads the one module-level value, which is assigned later. Same family
-as [103](103-unknown-kwarg-silently-bound-positionally.md)'s executed
+as [103](closed/103-unknown-kwarg-silently-bound-positionally.md)'s executed
 undefined name: a read that CPython rejects at run time must be refused, or
 checked at run time. It must not see a value from the future.
 

@@ -932,10 +932,11 @@ int report_undefined_names(PycCompiler &ctx) {
   for (cchar *name : ctx.pending_order) {
     if (!name || ctx.bound_names.get(name)) continue;
     int line = ctx.pending_uses.get(name);
+    cchar *file = ctx.mod && ctx.mod->filename ? ctx.mod->filename : ctx.filename;
     if (is_unimplemented_builtin(name))
-      fprintf(stderr, "error line %d, builtin '%s' is not supported by pyc\n", line, name);
+      fprintf(stderr, "%s:%d: error: builtin '%s' is not supported by pyc\n", file ? file : "?", line, name);
     else
-      fprintf(stderr, "error line %d, name '%s' is not defined\n", line, name);
+      fprintf(stderr, "%s:%d: error: name '%s' is not defined\n", file ? file : "?", line, name);
     ++n;
   }
   ctx.pending_uses.clear();

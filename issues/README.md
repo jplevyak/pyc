@@ -63,7 +63,6 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
-| [103](103-unknown-kwarg-silently-bound-positionally.md) | an unknown keyword or an undefined name is refused, but reported as `'X' has no type`, not in CPython's terms. |
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | a method of a function-local class reading the function's local aborts the compiler. |
 | [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
 
@@ -95,6 +94,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [117](closed/117-property-and-reflected-ordering.md) | trivial `property` and reflected ordering landed | 007 (descriptors) |
 | [120](closed/120-richards-silent-wrong-answer.md) | richards matches CPython (ifa/174) | — |
 | [162](closed/162-dict-insertion-is-quadratic.md) | hashed dict (closed/118) | — |
+| [103](closed/103-unknown-kwarg-silently-bound-positionally.md) | closed 2026-10-14: both refusals say what CPython says (`name 'X' is not defined`, `f() got an unexpected keyword argument 'k'`) | — |
 
 Every archived file starts with a dated closure note. The archive is
 [`closed/`](closed/).
