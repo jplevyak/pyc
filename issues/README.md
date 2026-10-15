@@ -63,7 +63,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
-| [169](169-local-class-method-reading-enclosing-local-crashes.md) | a method of a function-local class reading the function's local aborts the compiler. |
+| [169](169-local-class-method-reading-enclosing-local-crashes.md) | local classes are closure-converted (2026-10-14); residual: a captured value of a different TYPE per call is refused (one global prototype per class statement). |
 | [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
 
 ### Closed on 2026-10-03

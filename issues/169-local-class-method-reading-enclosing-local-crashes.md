@@ -1,6 +1,11 @@
 # 169 — a method of a function-local class that reads the function's local crashes the analysis
 
-**Status:** open (re-verified 2026-09-28: still the `unique_AVar: Assertion 'es'` abort). Found 2026-09-25 while testing the
+**Status:** open, narrowed 2026-10-14 to one residual: a local class
+whose captured value has a DIFFERENT TYPE on different calls is refused
+(see "2026-10-14" at the end). The crash is fixed, and so is a silent
+wrong answer found on the way.
+
+**Original status:** open (re-verified 2026-09-28: still the `unique_AVar: Assertion 'es'` abort). Found 2026-09-25 while testing the
 [106](closed/106-empty-if-body-silently-accepted.md) parser fix: a program
 exercising every compound statement nested in a method crashed here, and
 the crash predates that fix.
@@ -79,3 +84,59 @@ Any program that defines a class inside a function and refers to the
 function's locals from a method — a common Python idiom (local exception
 classes, factory functions returning a configured class). Today it
 crashes the compiler rather than failing with a diagnostic.
+
+## 2026-10-14: closure conversion in the frontend
+
+**Two root causes, not one.**
+
+1. **Nesting depth by first use.** `if1_fixup_nesting` gives a
+   `LOCALLY_NESTED` Sym the depth of the first closure whose code uses
+   it, and closures are registered innermost first. A capturing lambda or
+   nested def never reads its parent's locals directly (it goes through
+   its carrier), but a local class's body and methods did, so the class
+   claimed `inner`'s `x` at the class's own depth, and `inner`'s own
+   formal then resolved through a display slot that did not exist: the
+   assert. `if1_finalize_flatten_and_fixup_nesting` now runs the fixup
+   outermost first (stable, by nesting depth), so a local is always
+   claimed by its owner, the shallowest closure that can use it.
+2. **The display is the wrong channel.** With (1) alone the crash goes
+   and a miscompile appears: `make2(2), make2(3)` printed `0 0`. The
+   class-body function's one contour, called from both of `make2`'s
+   contours, has one display slot, and read one call's `x` for both.
+   That is ifa/100's reason the display left contour identity.
+
+**The fix** (`python_ifa_build_syms.cc`, `local_class_captures` and
+`gen_class_pyda`; `pyc_read_captured` in `python_ifa_build_if1.cc`):
+names a local class's body or methods read from an enclosing function
+(NONLOCAL_USE resolving to a function scope, the filter
+`maybe_synthesize_closure_pyda` uses) are passed, not looked up. The
+class-body function takes one extra formal per name, the `class`
+statement passes the values read where it runs, the body stores each on
+the prototype under a hidden member (`__pyc_cap_<name>_<id>`, so it
+cannot collide with a user attribute), every instance copies it when
+cloned from the prototype, and a method reads `self.<member>`. A
+carrier made inside a method (a lambda capturing the same name) reads it
+the same way.
+
+As with carriers, the value is copied when the class statement runs: a
+later rebinding in the function is not seen, where CPython's shared cell
+would show it.
+
+`tests/local_class_reads_enclosing_local.py` passes (its `.known_issue`
+is gone); `tests/local_class_capture.py` covers a method capture, a
+class-body capture, a lambda in a method capturing transitively, two
+objects from two calls each keeping its own values, and the `make2` case.
+Both backends.
+
+**Residual: a different type per call.** `inner(1)` then `inner("a")` is
+refused (`{int64, str}`). The prototype of a class lives in ONE global
+(`cls->self`), and every `I()` clones it, so the hidden member holds
+every call's value, and no contour split separates the calls: the union
+forms in a single global, flow-insensitively. Making it per call needs
+the class object to be a per-call value that instantiation reads, which
+is a change to how classes are represented, not to capture. Values of
+one type across calls are correct.
+
+`make test` green (463 on each backend). Corpus check -R
+`check__default__d80ebc9e+ae99302a`: every column identical on all 77
+(no corpus program has a local class reading its function's locals).

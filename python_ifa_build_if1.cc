@@ -2883,7 +2883,10 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
     // if1_fixup_nesting (it looks like a LOCALLY_NESTED local of the
     // creator) and corrupt the outer function's own reads.
     Sym *cin = ctx.scope_stack.last()->in;
-    if (cin && cin != cls && cin->has.in(field) && ctx.fun() && ctx.fun()->self) {
+    if (ctx.scope_stack.last()->cap_formals.get(field) || ctx.scope_stack.last()->cap_fields.get(field)) {
+      // issues/169: created inside a local class's body or method
+      val = pyc_read_captured(ctx.scope_stack.last(), field, code, ast, ctx);
+    } else if (cin && cin != cls && cin->has.in(field) && ctx.fun() && ctx.fun()->self) {
       val = new_sym(ast);
       if1_send(if1, code, 4, 1, sym_operator, ctx.fun()->self, sym_period, if1_make_symbol(if1, field->name), val)
           ->ast = ast;
@@ -2893,6 +2896,25 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
         ->ast = ast;
   }
   return inst;
+}
+
+// See python_ifa_int.h.
+Sym *pyc_read_captured(PycScope *scope, Sym *s, Code **code, PycAST *ast, PycCompiler &ctx) {
+  if (!scope || !s) return s;
+  if (Sym *f = scope->cap_formals.get(s)) return f;  // a local class's body
+  if (cchar *fld = scope->cap_fields.get(s)) {       // a local class's method
+    Sym *t = new_sym(ast);
+    if1_send(if1, code, 4, 1, sym_operator, scope->cap_self, sym_period, if1_make_symbol(if1, fld), t)->ast = ast;
+    return t;
+  }
+  // a closure carrier's own captured field (issues/001)
+  Sym *cin = scope->in;
+  if (cin && cin->type_kind == Type_RECORD && cin->has.in(s) && scope->fun && scope->fun->self) {
+    Sym *t = new_sym(ast);
+    if1_send(if1, code, 4, 1, sym_operator, scope->fun->self, sym_period, if1_make_symbol(if1, s->name), t)->ast = ast;
+    return t;
+  }
+  return s;
 }
 
 // Assign an already-computed value Sym `val` to the (already-built)
@@ -4914,6 +4936,15 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // rval already set by build_syms_pyda; handle class member access
       TEST_SCOPE printf("%sfound '%s' at level %d\n", ast->sym ? "" : "not ", n->str_val, 0);
       bool load = (n->ctx != PY_STORE);
+      // issues/169: a local class's body or method reading an enclosing
+      // function's local reads its captured copy.
+      if (load && ast->sym) {
+        PycScope *sc = ctx.scope_stack.last();
+        if (sc->cap_formals.get(ast->sym) || sc->cap_fields.get(ast->sym)) {
+          ast->rval = pyc_read_captured(sc, ast->sym, &ast->code, ast, ctx);
+          return 0;
+        }
+      }
       Sym *in = ctx.scope_stack[ctx.scope_stack.n - 1]->in;
       if (in && in->type_kind == Type_RECORD && in->has.in(ast->sym)) {
         if (load)
