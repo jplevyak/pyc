@@ -42,6 +42,8 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
+| [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
+| [178](178-dict-of-a-mapping-reads-it-as-pairs.md) | `dict(m)` of a dict or defaultdict reads it as an iterable of pairs: `dict({"ab": 1})` is `{'a': 'b'}`. |
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: ~~`isinstance` on a `{list, str}` value folds to False~~ (refused 2026-10-15); a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [177](177-integer-literals-past-int64-were-accepted-silently.md) | `0xFFFFFFFFFFFFFFFF` was silently `-1` and `99999999999999999999` silently INT64_MAX, even under `--strict`; now warned, or refused. othello2's 64-bit masks. |
@@ -51,13 +53,21 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
-| [172](172-generator-send-channel-and-stopiteration-value.md) | a generator's `send` value travels as `int64` (gated by `PYC_YIELD_INT_SEND`; refused under `--strict`), and `StopIteration.value` reads the global exception slot. |
+| [172](172-generator-send-channel-and-stopiteration-value.md) | ~~a generator's `send` value travels as `int64`~~ (typed per generator 2026-10-16; the `next(g); g.send(5)` idiom keeps a flagged permissive zero for None, `PYC_SEND_NONE_ZERO`), and `StopIteration.value` reads the global exception slot. |
 | [048](048-none-int-field-pair-runtime-abort.md) | genuine scalar unions (`{None, int}`, `{None, float}`, `{int, float}` elements): strict refuses; permissive gets a flagged sentinel or widening. |
+
+### Missing features (refused, not wrong)
+
+| issue | what |
+| --- | --- |
+| [181](181-staticmethod-generator-does-not-compile.md) | a `@staticmethod` generator gets no generator object, so it does not compile. |
+| [182](182-kwargs-and-keyword-only-parameters.md) | `**kwargs` parameters and keyword-only parameters (`def f(a, *, b)`). |
 
 ### Diagnostics, crashes, performance, harness
 
 | issue | what |
 | --- | --- |
+| [180](180-method-assigned-across-classes-crashes.md) | `a.x = b.x` across unrelated classes compiles clean, then `a.x()` segfaults: it calls through the stored closure as if it were `A`'s method slot. |
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | local classes are closure-converted (2026-10-14); residual: a captured value of a different TYPE per call is refused (one global prototype per class statement). |
 
 ### Closed on 2026-10-15

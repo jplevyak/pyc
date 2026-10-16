@@ -1,0 +1,1 @@
+issues/178 (178-dict-of-a-mapping-reads-it-as-pairs): pyc is wrong here; the .exec.check holds CPython's output, so this flips to PASS when the issue is fixed.

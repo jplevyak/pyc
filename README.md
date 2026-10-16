@@ -1,36 +1,53 @@
 # pyc — Python Compiler
 
-**pyc** is a whole-program, statically-typed compiler for a substantial subset of Python 3. It uses
-interprocedural flow analysis (IFA) to infer types throughout the entire program and then emits C
-code that is compiled by the host C compiler.  The result is a stand-alone native binary with no
-Python runtime dependency.
+**pyc** is a whole-program, statically typed compiler for Python 3. It infers a type for every
+value in the program with interprocedural flow analysis (IFA), then emits C (or LLVM IR) and
+compiles it to a stand-alone native binary with no Python runtime dependency.
+
+The goal is **CPython semantics** for programs that can be typed without boxing: a compiled
+program prints what CPython prints, or pyc refuses it at compile time. Where pyc accepts a
+Python idiom that strict static typing cannot express exactly, the accommodation is named, warns
+when it changes behaviour, and is refused under `--strict` (see [Modes](#modes)).
 
 ## Features
 
-- **Type inference** — Hindley-Milner-style interprocedural flow analysis infers types without any
-  annotations.  Each monomorphic specialization of a polymorphic function gets its own compiled
-  version.
-- **Native code generation** — emits readable C, compiled with the system C compiler (`cc`).
-  An experimental LLVM backend is also included.
-- **Boehm GC** — uses the Boehm garbage collector so Python-style memory semantics are preserved.
-- **Python 3 syntax** — parsed by a custom DParser-based parser (no CPython runtime required at
-  compile time or at run time).
-- **Object-oriented Python** — classes, single inheritance, `super()`, `__init__`, operator
-  overloading (`__add__`, `__getitem__`, etc.), descriptors.
-- **First-class functions** — closures, lambdas, default arguments, mutable default arguments.
-- **Built-in types** — `int`, `float`, `complex`, `str`, `bool`, `list`, `tuple`, `dict`
-  (structural), `bytearray`, `range`, plus the usual numeric operators.
-- **Control flow** — `if`/`elif`/`else`, `for`/`while`/`break`/`continue`/`else`, list
-  comprehensions, generator expressions.
-- **Scoping** — full Python scoping rules including `global`, `nonlocal`, implicit capture, class
-  scopes, nested functions.
-- **Imports** — module imports resolved at compile time; imported module code is inlined.
-- **`pyc_compat`** — a small compatibility shim (`from pyc_compat import __pyc_declare__`) that lets
-  you declare polymorphic record fields while keeping the file runnable under standard Python.
+- **Type inference with no annotations.** IFA is a simultaneous data- and control-flow analysis
+  by abstract interpretation over a type lattice. It starts from one contour per function and
+  per allocation site, and splits contours only when a type distinction demands it. Each
+  resulting specialization of a function or class is compiled separately.
+- **Two backends.** The C backend (the default) emits C compiled by the system C compiler at `-O2`.
+  The LLVM backend (`-b`) emits LLVM IR directly. It also powers a JIT (`-j`) and an
+  interactive REPL (`--repl`). CI runs the whole test suite on both backends.
+- **Boehm GC** for memory management.
+- **Its own parser.** Python 3 syntax is parsed by a DParser grammar. CPython isn't needed at
+  compile time or at run time.
+
+### Supported Python
+
+- **Classes**: inheritance, `super()`, class attributes, operator overloading (`__add__`,
+  `__getitem__`, `__eq__`, …), `__str__`/`__repr__`, `__iter__`/`__next__`, `__enter__`/`__exit__`,
+  read-only `@property`.
+- **Functions**: closures, `nonlocal`/`global`, lambdas, default and mutable default
+  arguments, `*args`, nested functions, local classes.
+- **Exceptions**: `try`/`except`/`else`/`finally`, `raise`, user exception hierarchies, and
+  CPython's built-in exceptions raised by the runtime (`ValueError` from `int("x")`,
+  `IndexError`, `KeyError`, `StopIteration`, …).
+- **Generators**: `yield`, `yield from`, `send()`, and return values.
+- **`async`/`await`**, run on pyc's own event loop (there is no `asyncio` module).
+- **Control flow**: `if`/`elif`/`else`, `for`/`while` with `break`/`continue`/`else`, `with`,
+  `match`/`case` (all PEP 634 pattern kinds), comprehensions and generator expressions,
+  starred assignment (`a, *b = xs`).
+- **Built-in types**: `int` (64-bit), `float`, `bool`, `str`, `bytes`, `bytearray`, `list`,
+  `tuple`, `dict`, `set`, `range`, `slice`, `None`, with `%`-formatting and f-strings.
+- **Modules**: `import`, `from … import`, packages and relative imports, all resolved at compile
+  time. Partial implementations of common standard-library modules live in
+  [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os`, `collections`, `heapq`,
+  `copy`, `struct`, `string`, `socket` and parts of `re` and `itertools`. File I/O uses `open()`.
 
 ### Language extensions
 
-pyc exposes a small set of compiler directives accessible from Python:
+pyc exposes a small set of compiler directives. Its builtin library (`__pyc__/`) is written with
+them:
 
 | Name | Purpose |
 |---|---|
@@ -39,14 +56,20 @@ pyc exposes a small set of compiler directives accessible from Python:
 | `__pyc_primitive__(sym, ...)` | Invoke a compiler primitive |
 | `__pyc_char__` | The `uint8` / C `char` type |
 | `__pyc_operator__` | Access C-level operators directly |
+| `__pyc_insert_c_header__(h)` | Include a C header in the generated code |
 | `@vector("s")` | Annotate a class as a fixed-size value-type vector |
+
+[`pyc_compat.py`](pyc_compat.py) defines these names for CPython, so a program that uses
+`from pyc_compat import __pyc_declare__` still runs under `python3`.
 
 ## Requirements
 
-- **clang++** (C++23) and **llvm-ar**
+- **clang/clang++** (C++23) and **llvm-ar**
+- **LLVM** development libraries (`llvm-config` must be on `PATH`); the LLVM backend is always
+  built
 - **Boehm GC** (`libgc`, `libgccpp`)
 - **PCRE** (`libpcre`)
-- **[dparser](https://github.com/jplevyak/dparser)** — must be built with GC support and installed
+- **[dparser](https://github.com/jplevyak/dparser)**, built with GC support and installed
 
 On Ubuntu / Debian:
 
@@ -60,10 +83,13 @@ On Fedora / RHEL:
 dnf install clang llvm-devel gc-devel pcre-devel
 ```
 
+CI uses clang/LLVM **20** on Ubuntu 24.04. The unversioned packages there are LLVM 18, whose
+coroutine ABI breaks the generator and async tests.
+
 ## Building
 
 `ifa` (the IFA library) is included as a git subtree under `ifa/` and is built automatically.
-`dparser` must be built and installed separately (see below).
+Build and install `dparser` separately first:
 
 ```sh
 # 1. Build and install dparser (with GC support)
@@ -72,86 +98,85 @@ cd dparser
 sudo make install D_USE_GC=1
 cd ..
 
-# 2. Clone and build pyc (ifa is already included as a subtree)
+# 2. Clone and build pyc
 git clone https://github.com/jplevyak/pyc.git
 cd pyc
 make
 ```
 
-The `make` step builds `ifa/libifa_gc.a` and the `pyc` compiler binary.
+`make` builds `ifa/libifa_gc.a`, the runtime and the `pyc` compiler binary.
 
 ### Build options
 
 | Variable | Effect |
 |---|---|
-| `DEBUG=1` | Debug build with `-g -DDEBUG` (default) |
-| `OPTIMIZE=1` | Optimized build with `-O3 -march=native` (default; `OPTIMIZE=` turns it off) |
+| `DEBUG=1` | Adds `-g -DDEBUG` (default) |
+| `OPTIMIZE=1` | Builds pyc itself with `-O3 -march=native` (default; `OPTIMIZE=` turns it off) |
 | `PROFILE=1` | Enable profiling with `-pg` |
-| `USE_LLVM=1` | Enable experimental LLVM backend |
 
-Example: `make clean && make OPTIMIZE=` for an unoptimized build to debug in gdb.
-The Makefiles do not track flags, so changing one needs `make clean` first.
+For an unoptimized build to step through in gdb, use `make clean && make OPTIMIZE=`.
+
+The Makefiles track neither build flags nor all header dependencies. Run `make clean` after
+changing a flag or a header; otherwise stale objects can produce failures that look like real bugs.
 
 ## Usage
 
 ```sh
-pyc [options] <file.py>
+pyc -D <pyc-dir> [options] <file.py>
 ```
 
-The compiler reads `<file.py>`, type-checks the whole program, and produces a native executable
-(via an intermediate `<file.py>.c`) named after the input with its extension stripped — e.g.
-`hello.py` produces `hello` — unless `-o` gives it an explicit path.
+pyc reads `<file.py>` and everything it imports, analyzes the whole program, and writes a native
+executable named after the input with its extension stripped (`hello.py` → `hello`), unless `-o`
+names one. The intermediate C is kept as `<file.py>.c`.
 
-### Key options
+`-D` names the directory holding pyc's builtin library (`__pyc__/`, `pyc_lib/` and the runtime).
+It defaults to the current directory, or to `$PYC_SYSTEM_DIRECTORY` when that is set, so pass
+`-D` whenever you compile from somewhere other than the pyc checkout.
+
+### Options
 
 | Flag | Description |
 |---|---|
-| `-D <dir>`, `--system-directory <dir>` | System directory containing `__pyc__.py` (default: same directory as `pyc`) |
+| `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `.`, or `$PYC_SYSTEM_DIRECTORY`) |
 | `-o <path>`, `--output <path>` | Output binary path (default: input filename, extension stripped) |
-| `-O`, `--optimize` | Compile the generated C at `-O2` (the default; kept for compatibility) |
-| `--no-optimize` | Compile the generated C at `-O0`, for debugging (`PYC_NO_OPTIMIZE`) |
+| `--strict` | CPython semantics or a compile error: every type violation is fatal, no accommodations |
+| `--permissive` | The default: named accommodations are allowed, each with a warning |
+| `--safe` | Permissive, and also zero-initialize locals that may be read before assignment |
+| `--refuse-imprecise` | Refuse a program whose inference left a container element or parameter untyped |
+| `-b`, `--emit-llvm` | Use the LLVM backend |
+| `-j`, `--jit` | Compile with the LLVM backend and run in-process (implies `-b`) |
+| `--repl` | Interactive REPL (uses the JIT) |
+| `-O`, `--optimize` | Compile the generated C at `-O2` (the default) |
+| `--no-optimize` | Compile the generated C at `-O0`, for debugging |
 | `-g`, `--debug-info` | Emit debug information |
-| `-b`, `--emit-llvm` | Use the LLVM backend (build with `USE_LLVM=1`) |
-| `--strict` | Strict mode: hard compile errors on type violations, no permissive-Python fallbacks |
-| `--permissive` | Permissive mode (default): warn + insert runtime checks on type violations |
-| `--html` | Emit an HTML visualization of the type-annotated AST |
-| `-v`, `--verbose` | Increase verbosity (repeat for more) |
-| `-d`, `--debug` | Increase debug output (repeat for more) |
-| `--dparse-only` | Validate the parser only; do not compile |
-| `--dparse-ast` | Print the parsed AST and exit |
-| `--version` | Show version |
-| `--license` | Show license |
-| `-h`, `--help` | Show help (lists development/internal options too) |
+| `--html` | Emit an HTML visualization of the type-annotated program |
+| `-v`, `--verbose` / `-d`, `--debug` | Increase verbosity / debug output (repeat for more) |
+| `--version`, `--license`, `-h`, `--help` | Version, license, help (`--help` also lists development options) |
+
+### Modes
+
+Static typing without boxing cannot express everything CPython does. pyc's rule is that it never
+deviates silently:
+
+- **`--strict`**: the program has CPython's semantics, or it does not compile.
+- **`--permissive`** (the default) additionally allows a few named accommodations. Examples: a
+  numeric slot that holds both `int` and `float` is widened to `float`, and a generator's
+  `next()` resume delivers `0` instead of `None` when the generator is also sent numbers. Each
+  one is behind a named flag, warns at the place it applies, and is off under `--strict`.
+
+A value that genuinely holds two unrelated types, such as an `int` in one branch and a `str` in
+the other, has no representation. pyc refuses it in every mode and names the variable and the
+union.
 
 ### Module search path
 
-pyc searches for imported modules starting from the directory of the source file being compiled.
-Set `PYTHONPATH` to add additional directories:
+Imports resolve against the **current directory**, then `<pyc-dir>/pyc_lib/`, then each
+directory in `PYTHONPATH`. The source file's own directory is not searched, so compile from the
+program's directory, or add it to `PYTHONPATH`:
 
 ```sh
-PYTHONPATH=/my/libs pyc myprogram.py
+PYTHONPATH=/my/libs pyc -D ~/pyc myprogram.py
 ```
-
-## Running the tests
-
-```sh
-make test          # THE GATE: everything CI runs, in CI's order, both backends
-```
-
-`make test` chains four groups, each of which also runs on its own:
-
-```sh
-make test-core       # unit + ir + e2e (see tests/README.md for the
-                     # expected-fail and .known_issue conventions)
-make test-ifa-llvm   # ifa V-language LLVM smoke (= make -C ifa test_llvm)
-make test_dparse     # DParser parse-only validation on all test files
-make test_links      # every relative Markdown link resolves (needs no build)
-```
-
-`test-core` runs the end-to-end suite twice, once per backend — the C
-backend, then `PYC_FLAGS=-b` for LLVM. Note that this directory's
-`make test_llvm` is that pyc LLVM e2e, *not* the ifa V-language smoke
-of the same name; `make test-ifa-llvm` is the unambiguous spelling.
 
 ## Examples
 
@@ -163,7 +188,7 @@ print("Hello, world!")
 ```
 
 ```sh
-pyc -D. hello.py && ./hello
+pyc -D ~/pyc hello.py && ./hello
 ```
 
 ### Fibonacci
@@ -232,46 +257,98 @@ print(C("hello").value)
 print(C(3.14).value)
 ```
 
+## Testing
+
+```sh
+make test          # everything CI runs, in CI's order, on both backends (~4 minutes)
+```
+
+`make test` chains four groups, each of which also runs on its own:
+
+```sh
+make test-core       # ifa unit tests, IR phase tests, and the end-to-end suite
+                     # (./test_pyc.py) on the C backend, then on LLVM
+make test-ifa-llvm   # ifa V-language LLVM smoke (= make -C ifa test_llvm)
+make test-dparse     # DParser parse-only validation of every test file
+make test-links      # every relative Markdown link resolves (needs no build)
+```
+
+The end-to-end suite compiles each `tests/*.py`, runs it, and compares its output with the
+expected output and with CPython's. When green it reports 474 passed and 18 known issues on each
+backend. Tests carrying a `.known_issue` sidecar are filed bugs with CPython's answer as the
+expected output; they report `KNOWN` and flip to `PASS` once fixed. `make test` stops at the first
+failing group, so check its exit status rather than reading the tail of its output.
+
+Beware a name trap: this directory's `make test_llvm` is the pyc end-to-end suite on the LLVM
+backend, while `make -C ifa test_llvm` is the V-language smoke (`make test-ifa-llvm`).
+
+### The shedskin corpus
+
+[`shedskin_examples/`](shedskin_examples) holds shedskin's 77 example programs, pyc's larger
+benchmark. `./corpus_sweep.sh -m check` compiles and runs each one and compares its output with
+CPython's. Results are cached under [`sweeps/`](sweeps/INDEX.md), keyed on the source tree. As of
+2026-10-16:
+
+- 76 of 77 programs compile. `othello3` exceeds the 400 s compile cap.
+- All 76 binaries run to completion.
+- 58 print output byte-identical to CPython's, and 1 (`othello2`) differs.
+- The other 17 can't be compared because CPython itself exceeds the 120 s run cap.
+
 ## Architecture
 
 ```
 Python source (.py)
-  → DParser (custom grammar, no CPython)
-  → PyDAST (DParser AST)
-  → build_syms  — symbol table, scope resolution
-  → build_if1   — lower to IF1 intermediate form
-  → IFA          — interprocedural type inference / flow analysis
-  → C code generation
-  → cc / clang   — native binary
+  → DParser (python.g)          — parse to PyDAST
+  → build_syms                  — symbol tables, scopes, classes
+  → build_if1                   — lower to IF1, ifa's intermediate form
+  → IFA flow analysis           — type inference with demand-driven contour splitting
+  → clone                       — one concrete function/type per contour
+  → optimize                    — dead code, inlining, constant folding
+  → C codegen  → cc → binary
+    or LLVM codegen → binary / JIT
 ```
 
-The IFA engine (`ifa/`) is a general-purpose interprocedural analysis library used here as the
-type inference and code-generation backend.  It operates on an IF1-style functional intermediate
-representation where every value is typed by the set of concrete types that can flow to it.
+The IFA engine (`ifa/`) is a general-purpose interprocedural analysis library that pyc drives
+through the `IFACallbacks` interface. Every value is typed by the set of concrete types that can
+reach it.
+
+Where to read next:
+
+- [PIPELINE.md](PIPELINE.md): phase-by-phase map from `pyc file.py` to the binary
+- [PYTHON_FRONTEND.md](PYTHON_FRONTEND.md): the Python lowering
+- [RUNTIME.md](RUNTIME.md): the C runtime and the `__pyc__/` builtin library
+- [AGENTS.md](AGENTS.md): the design rules (demand-driven splitting, CPython semantics, no
+  boxing) and the change-acceptance process
+- [ifa/INDEX.md](ifa/INDEX.md): the IFA library's own documentation
 
 ## Limitations
 
-pyc targets a substantial but not complete subset of Python 3.  Known unsupported features
-include exceptions (`try`/`except`/`raise`), generators (`yield`), dictionaries as first-class
-values, starred assignment, `exec`, `eval`, and most of the standard library.  Programs that stay
-within the supported subset and rely on static type structure compile and run correctly.
+pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracked in
+[issues/](issues/README.md) (frontend, runtime, harness) and [ifa/issues/](ifa/issues)
+(analysis and codegen). Known unsupported features include:
 
-### Runtime class attribute mutation through inheritance (t18)
-
-Assigning to a class attribute at runtime (e.g., `A.n = 4`) does not propagate to subclasses
-that inherited the attribute (e.g., `B.n` still returns the original value).  pyc compiles class
-attribute access as direct C struct field access, with inheritance resolved entirely at compile
-time.  Propagating runtime attribute mutations across an inheritance hierarchy would require a
-dynamic dispatch mechanism incompatible with the static struct layout used throughout the
-generated code.
-
-### Cross-type method assignment (t30)
-
-Assigning a method from one class instance to another (e.g., `a.x = b.x` where `a` and `b` are
-instances of different classes) produces a compile error.  pyc's type inference creates
-distinct, incompatible closure struct types for methods of different classes.  Unifying these
-types at runtime would require a dynamic typing layer that is fundamentally at odds with the
-whole-program static type analysis that makes pyc's output efficient.
+- **Dynamic features**: `eval`, `exec`, and runtime reflection are not supported.
+- **Values that need boxing.** A variable, field or container element that genuinely holds two
+  unrelated types over time (`{int, str}`, `{None, int}`) has no representation and is refused.
+- **Parameters**: `**kwargs` and keyword-only parameters (`def f(a, *, b)`) are not supported
+  ([issues/182](issues/182-kwargs-and-keyword-only-parameters.md)).
+- **Properties**: only read-only `@property` getters. Setters and deleters are refused
+  ([issues/007](issues/007-decorators-not-applied.md)).
+- **`complex`** is not supported.
+- **Generators**: a `@staticmethod` generator does not compile
+  ([issues/181](issues/181-staticmethod-generator-does-not-compile.md)). `StopIteration.value` read in
+  an `except` clause is refused when the program raises `StopIteration` with more than one value
+  type ([issues/172](issues/172-generator-send-channel-and-stopiteration-value.md)).
+- **The standard library** is limited to the partial modules in `pyc_lib/`.
+- **Class attribute mutation through a subclass**: `A.n = 4` is not seen by `B.n` when `B`
+  inherits `n` from `A`, because each class holds its own copy
+  ([issues/173](issues/173-silent-deviations-found-by-the-strict-suite-check.md) #2).
+- **Cross-class method assignment**: `a.x = b.x`, where `a` and `b` are instances of unrelated
+  classes, is not supported; it currently compiles and crashes at run time
+  ([issues/180](issues/180-method-assigned-across-classes-crashes.md)).
+- **Known silent wrong answers** under repair: an out-of-range sequence index does not raise
+  `IndexError` ([issues/179](issues/179-sequence-index-out-of-range-does-not-raise.md)), and
+  `dict(m)` of a mapping is wrong ([issues/178](issues/178-dict-of-a-mapping-reads-it-as-pairs.md)).
 
 ## License
 
