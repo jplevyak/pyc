@@ -72,7 +72,6 @@ print(fmt2() % (3.9, 4, "x"))
 # format, so the number arrived raw and `%s` read it AS A POINTER --
 # `"%s" % 42` through a computed format SEGFAULTED, compiling clean first.
 # The type tag says what it really is, so the runtime renders it.
-# (An OBJECT at a computed `%s` is still wrong; see issues/168.)
 def sfmt(k):
     if k == 0:
         return "%s"
@@ -89,3 +88,37 @@ print(sfmt(2) % 42)
 print(sfmt(2) % "ab")
 print(sfmt(0) % 199999990000000)
 print(sfmt(0) % True)
+
+# issues/168: a value with no formatting of its own -- an object, a list,
+# a dict, None -- at a computed `%s`. It is printed through its __str__, as
+# the constant-format path does; it used to be printed as raw memory.
+class P:
+    def __str__(self):
+        return "P!"
+
+class Q:
+    def __init__(self, n):
+        self.n = n
+    def __str__(self):
+        return sfmt(1) % self.n      # a __str__ that itself formats
+
+print(sfmt(0) % P())
+print(sfmt(2) % P())                 # width applies to the rendered text
+print(sfmt(1) % (P(),))
+print(sfmt(0) % Q(5))
+def fmt3():
+    return "%s and %s"
+print(fmt3() % (P(), Q(6)))          # two objects in one format
+print(fmt3() % (P(), 7))             # an object beside a number
+print(sfmt(1) % [1, 2])
+print(sfmt(0) % {1: 2})
+print(sfmt(0) % None)
+print(sfmt(0) % ((1, 2),))           # a tuple element is one argument
+
+# A format the FRONTEND cannot read but codegen can: one literal returned
+# from a function, propagated into str.__mod__. A number meeting its `%s`
+# was passed as a pointer and segfaulted (found closing issues/168).
+def cfmt():
+    return "%s|%s"
+print(cfmt() % (42, True))
+print(cfmt() % (2.5, P()))

@@ -319,12 +319,24 @@ static void format_string_codegen(FILE *fp, PNode *n, Fun *f) {
   Vec<char> convs;
   if (fmt) collect_format_convs(fmt, convs);
   bool is_tuple = v->type && v->type->type_kind == Type_RECORD && !cg_has_classtag(v->type);
+  // issues/168: a format that is constant only HERE -- a function returning
+  // one literal, propagated into str.__mod__ -- was never read by the
+  // frontend, so a number meeting its `%s` arrived unconverted, and the
+  // casts below have nothing that renders a number as text: `%s` read 42 as
+  // a pointer and segfaulted. The tagged runtime renders it, so take that
+  // path for such a format, exactly as for one not known at all.
+  bool num_meets_s = false;
+  for (int i = 0; i < convs.n; i++) {
+    if (!strchr("sra", convs[i])) continue;
+    Sym *at = is_tuple ? (i < v->type->has.n ? v->type->has[i]->type : nullptr) : v->type;
+    if (fmt_arg_is_numeric(at)) num_meets_s = true;
+  }
   // issues/165: with a NON-constant format there are no conversions to
   // match arguments against, so the casts below cannot be chosen -- an
   // integer got widened and a float was left as a double, which then met
   // `%d` in the wrong register class. Hand the argument TYPES to the
   // runtime instead and let it pair them with the format it can see.
-  if (!fmt) {
+  if (!fmt || num_meets_s) {
     fputs("_CG_format_string_tagged(", fp);
     fputs(n->rvals[2]->cg_string, fp);
     fputs(", \"", fp);
@@ -864,6 +876,30 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
   fputs("    if n == 1: x += \",\"\n", f);
   fputs("    x += \")\"\n", f);
   fputs("    return x\n", f);
+  specs.push_back(spec_for(none, 1));
+
+  // issues/168: a computed format's arguments, each converted at a constant
+  // index so the conversion is that field's own (__pyc_any_type__'s
+  // __pyc_fmtconv__ is the one-value case). A list-layout tuple has one
+  // element type, so its runtime loop builds a list-layout tuple back.
+  for (int k : arities) {
+    fputs("  def __pyc_fmtconv__(self):\n", f);
+    if (!k) {
+      fputs("    return self\n", f);
+    } else {
+      fputs("    return (", f);
+      for (int i = 0; i < k; i++) fprintf(f, "%s__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__pyc_fmtval__()", i ? ", " : "", i);
+      fputs(k == 1 ? ",)\n" : ")\n", f);
+    }
+    specs.push_back(spec_for(self_k(k), 1));
+  }
+  fputs("  def __pyc_fmtconv__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    if n == 0: return self\n", f);
+  fputs("    r = []\n", f);
+  fputs("    for i in range(n):\n", f);
+  fputs("      r.append(self[i].__pyc_fmtval__())\n", f);
+  fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
   specs.push_back(spec_for(none, 1));
 
   // CPython's tuple.index: start/stop normalized like a slice (as list.index

@@ -11,6 +11,20 @@ class __pyc_any_type__:
     if n != 1:
       raise TypeError("not enough arguments for format string")
     return (self,)
+  # issues/168: `fmt % x` with a format that is NOT a compile-time constant.
+  # The frontend cannot see which arguments meet `%s`, so str.__mod__
+  # converts every argument before the format primitive sees it: a value
+  # with no formatting of its own becomes its __str__, and int, float, bool
+  # and str (which override __pyc_fmtval__) stay as they are, for the
+  # primitive's per-argument type tag (issues/165) to pair with whatever
+  # conversion meets them. Without this an object, list, dict or None at a
+  # computed `%s` was printed as raw memory. __pyc_fmtconv__ is the whole
+  # right operand: one value here, each element for a tuple (generated per
+  # arity, python_ifa_main.cc).
+  def __pyc_fmtval__(self):
+    return self.__str__()
+  def __pyc_fmtconv__(self):
+    return self.__pyc_fmtval__()
   def __pyc_to_bool__(self):
     # issues/089: __pyc_any_type__ is ifa's own universal top type
     # (sym_any, python_ifa_sym.cc renames it "__pyc_any_type__") --
@@ -350,6 +364,9 @@ class __pyc_None_type__:
     return True
 
 class bool:
+  # issues/168: a computed format's argument stays a bool (__pyc_any_type__).
+  def __pyc_fmtval__(self):
+    return self
   # issues/176: int(True) == 1, float(False) == 0.0.
   def __pyc_int__(self):
     if self:

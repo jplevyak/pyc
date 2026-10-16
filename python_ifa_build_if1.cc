@@ -4374,8 +4374,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // strlen'd the scalar (segfault: genetic2's
       // `"Epoch: %s, best fitness: %s" % (epoch, fitness)`) and an
       // object could never print its __str__. %d/%f/etc. args stay
-      // raw (matching specs already work). Non-constant formats keep
-      // the old path. For a literal arg tuple, the conversions are
+      // raw (matching specs already work). A non-constant format is
+      // converted in str.__mod__ instead (issues/168), so these sends go
+      // to str.__pyc_mod__, which does not convert again. For a literal arg tuple, the conversions are
       // emitted BEFORE the tuple's own make send and the make's args
       // are swapped in place (building a second tuple would leave the
       // original het-tuple make dead but diagnosed).
@@ -4442,7 +4443,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           Sym *targs = new_sym(ast);
           if1_add_send_result(if1, send, targs);
           ast->rval = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, targs, ast->rval)->ast = ast;
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__pyc_mod__"), fmt_sym, targs, ast->rval)->ast = ast;
           return 0;
         }
         // issues/174: any other right operand -- a tuple VARIABLE or field,
@@ -4490,7 +4491,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           Sym *targs = new_sym(ast);
           if1_add_send_result(if1, send, targs);
           ast->rval = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, targs, ast->rval)->ast = ast;
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__pyc_mod__"), fmt_sym, targs, ast->rval)->ast = ast;
           return 0;
         }
       }

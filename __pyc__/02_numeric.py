@@ -1,4 +1,7 @@
 class int:
+  # issues/168: a computed format's argument stays a number (__pyc_any_type__).
+  def __pyc_fmtval__(self):
+    return self
   # issues/176: int(x) / float(x) dispatch on x (the synthesized __coerce__).
   # Not the coerce primitive: from Python, `int`/`float` as its target name
   # C's 32-bit int and an undeclared `_CG_float`, not int64/float64.
@@ -151,6 +154,9 @@ class int:
                           int, self, str, spec)
 
 class float:
+  # issues/168: a computed format's argument stays a number (__pyc_any_type__).
+  def __pyc_fmtval__(self):
+    return self
   # issues/176: see int's. Truncates toward zero, as CPython's int(float).
   def __pyc_int__(self):
     return __pyc_c_call__(int, "_CG_float_to_int64", float, self)

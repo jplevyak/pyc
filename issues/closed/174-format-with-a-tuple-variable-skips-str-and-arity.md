@@ -6,7 +6,7 @@ blocker (its final `print` of the best genome). Reproducible on both
 backends. **Silent: compiles clean, exit 0 from pyc, then a segfault or
 raw memory in the output.**
 
-**Related:** [168](../168-object-at-a-computed-format-s-prints-garbage.md)
+**Related:** [168](168-object-at-a-computed-format-s-prints-garbage.md)
 (the same missing `__str__`, for a COMPUTED format),
 [165](165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (the
 per-argument type tag), ifa/109 (a tuple slice gets list layout).

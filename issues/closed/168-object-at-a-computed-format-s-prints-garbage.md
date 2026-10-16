@@ -1,15 +1,15 @@
 # 168 — an object at a computed `%s` prints raw memory
 
-**Status:** open, root-caused (re-verified 2026-09-28: still prints raw bytes), reproducible on both backends. Found while
-closing [165](closed/165-percent-d-truncates-a-64-bit-int-to-32-bits.md)'s
+**Status:** CLOSED 2026-10-15. Fixed on both backends; see Resolution. Found while
+closing [165](165-percent-d-truncates-a-64-bit-int-to-32-bits.md)'s
 non-constant-format half, which fixed every other argument type at a
 computed `%s` and left exactly this one.
 
 **Related:**
-[165](closed/165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (the
+[165](165-percent-d-truncates-a-64-bit-int-to-32-bits.md) (the
 mechanism this would extend — the per-argument type tag),
-[040](closed/040-percent-format-float-arg-int-specifier-garbage.md) and
-[123](closed/123-str-does-not-fall-back-to-repr.md) (the other `__str__` gaps).
+[040](040-percent-format-float-arg-int-specifier-garbage.md) and
+[123](123-str-does-not-fall-back-to-repr.md) (the other `__str__` gaps).
 
 ## Symptom
 
@@ -31,7 +31,7 @@ print("%s" % P())       # CPython: P!   -- and pyc gets this one right
 | `fmt(0) % P()` — computed format | `P!` | `\xef\xbf\xbd1o\xef\xbf\xbd\xef\xbf\xbdZ` |
 
 **Compiles clean, exit 0, wrong output** — the class
-[ifa/158](../ifa/issues/closed/158-FA-every-type-violation-is-fatal.md) exists to
+[ifa/158](../../ifa/issues/closed/158-FA-every-type-violation-is-fatal.md) exists to
 stop and cannot catch, because nothing here fails to type. The bytes are
 the object's own memory read as a NUL-terminated C string, so the output
 is whatever happens to follow the struct; it changes between runs.
@@ -89,3 +89,41 @@ filed because it is a **silent wrong answer** that compiles clean, not
 because something is waiting on it. It is the last piece of 165 —
 everything else reaching a computed format now matches CPython — and a
 program that hits it gets unpredictable output rather than a diagnostic.
+
+## Resolution (2026-10-15)
+
+The proposed fix could not be done where it was proposed: the frontend
+does not know an argument's static type, so it cannot pick out the
+objects. The conversion is a method dispatch instead, made where the
+format is applied:
+
+- `__pyc_any_type__.__pyc_fmtval__` returns `self.__str__()`. `int`,
+  `float`, `bool` and `str` override it to return `self`, so 165's type tag
+  still sees a number for `%d` and `%f`. An object, a list, a dict and None
+  all get their `__str__`. All four printed raw memory before, not only
+  objects.
+- `__pyc_fmtconv__` is the whole right operand: one value converts itself,
+  and a tuple converts each element. The tuple method is generated per
+  arity (`emit_tuple_arity_methods`, `python_ifa_main.cc`), so each index
+  is a constant and each conversion is that field's own. A tuple element
+  that is itself a tuple is one argument and becomes its `str`.
+- `str.__mod__` applies `__pyc_fmtconv__` before the format primitive. The
+  frontend's constant-format paths have already converted, so they send
+  `str.__pyc_mod__`, which does not convert again.
+
+**A second bug, found closing this one.** A format that is constant only
+after the analysis (a function that returns one literal, propagated into
+`str.__mod__`) takes codegen's constant-format path, which has no
+rendering for a number meeting `%s`. `f() % 42`, with `f` returning
+`"%s|"`, segfaulted on HEAD before this change. Both emitters now take the
+tagged path (`_CG_format_string_tagged`) for a known format where a number
+meets `%s`, `%r` or `%a`. The LLVM emitter decides this before coercing,
+since a tagged argument keeps its own type.
+
+`tests/format_nonconstant_string.py` gains an object at a computed `%s`,
+with width, inside a 1-tuple, two objects in one format, an object beside
+a number, an object whose `__str__` itself formats, a list, a dict, None,
+a tuple element, and the analysis-constant format with an int, a bool, a
+float and an object. Both backends are byte-identical to CPython.
+`make test`: 473 passed, 13 known, 0 failed on both backends. Sweep
+`check__default__bdefc172+0dfb3ecc`: every compile verdict, warning count and stdout verdict unchanged; +2 EntrySets and +47 CreationSets over the corpus, from the new library methods. Three run timeouts in that sweep were outside load on the machine (see sweeps/INDEX.md).
