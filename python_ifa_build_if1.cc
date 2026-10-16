@@ -5660,37 +5660,26 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_yield_expr: {
-      // issues/014: `yield expr` as an expression (`x = yield foo`).
-      // Same "yield" primitive send as PY_yield_stmt above, but this
-      // form's own value is consumed by the caller -- real Python
-      // gives it whatever a subsequent `.send(v)` provides (None for
-      // a plain `next()`/`__pyc_more__`-driven advance). cg.cc's
-      // P_prim_yield now assigns the send's real result Sym here
-      // (`yval_result`) instead of the old hardcoded `sym_nil`, wired
-      // through to `co_yield`'s own expression value (see
-      // pyc_c_runtime.h's yield_awaiter) -- this is what makes
-      // `.send()` observable inside the generator body at all.
+      // issues/014: `yield expr` as an expression (`x = yield foo`). Its
+      // value is what the resume delivers: None for next(), v for
+      // send(v).
       //
-      // issues/171 #7: that value travels an int64 channel (P_prim_yield),
-      // so a resume by next() -- CPython's None -- reads 0, and a non-int
-      // send() is refused. An ACCOMMODATION: permissive only, announced;
-      // --strict (or PYC_YIELD_INT_SEND=0) refuses a yield whose value is
-      // used. The typed channel is issues/172.
-      {
-        static int accept = -1;
-        if (accept < 0) {
-          cchar *v = getenv("PYC_YIELD_INT_SEND");
-          accept = runtime_errors && (!v || atoi(v));
-        }
-        if (!accept)
-          fail("error line %d, the value of a yield expression is not supported under --strict: it is carried "
-               "as an int, so a resume by next() reads 0 where CPython gives None (issues/172)",
-               ctx.lineno);
-        fprintf(stderr,
-                "warning line %d, the value of a yield expression is carried as an int: a resume by next() reads 0 "
-                "where CPython gives None, and a non-int send() is refused (issues/172)\n",
-                ctx.lineno);
-      }
+      // issues/172: it is read from the generator's own object (its
+      // `sendval`, through the hidden formal `return X` stores into,
+      // gen_retcell), which send(v) and next() write before they resume
+      // the body. So it is typed per generator: a resume by next() reads
+      // None, and send() takes any type. The primitive's own result -- the
+      // coroutine's `sent` word -- was the old channel, an int64 that read 0
+      // for None (an accommodation, now gone); it is no longer read.
+      //
+      // A generator with no generator object has no cell. Only a
+      // `@staticmethod` generator is built that way, and it is not
+      // supported at all yet (it returns the bare coroutine handle).
+      Sym *sendcell = ctx.fun()->is_generator ? ctx.gen_retcell.get(ctx.fun()) : nullptr;
+      if (!sendcell)
+        fail("error line %d, the value of this yield expression has nowhere to come from: the generator has no "
+             "generator object (a @staticmethod generator is not supported) (issues/172)",
+             ctx.lineno);
       Sym *yval = sym_nil;
       if (n->children.n > 0) {
         build_if1_pyda(n->children[0], ctx);
@@ -5702,6 +5691,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *yval_result = new_sym(ast);
       Code *send = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), yval, yval_result);
       send->ast = ast;
+      yval_result = new_sym(ast);
+      if1_send(if1, &ast->code, 4, 1, sym_operator, sendcell, sym_period, if1_make_symbol(if1, "sendval"), yval_result)
+          ->ast = ast;
       ast->rval = yval_result;
       ast->sym = ast->rval;
       return 0;
@@ -5721,12 +5713,15 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // .throw()/GeneratorExit -- pyc has neither) to:
       //
       //   __yf_sub = EXPR
-      //   __yf_sent = 0                          # None
+      //   __yf_val = __yf_sub.__next__()         # may raise StopIteration
+      //   [post-call check, as below]
+      //   goto Lyield
       // Lloop:
       //   __yf_val = __yf_sub.send(__yf_sent)    # may raise StopIteration
       //   [post-call check, exactly emit_exc_check's own shape --
       //    ANY pending exception jumps to Ldispatch below; __yf_val is
       //    only defined/read on the fallthrough (no-exception) edge]
+      // Lyield:
       //   __yf_sent = yield __yf_val
       //   goto Lloop
       // Ldispatch:
@@ -5751,19 +5746,35 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_gen(if1, &ast->code, sub_ast->code);
       Sym *sub = sub_ast->rval;
 
+      Sym *sendcell = ctx.fun()->is_generator ? ctx.gen_retcell.get(ctx.fun()) : nullptr;
       Sym *sent = new_sym(ast);
-      if1_move(if1, &ast->code, int64_constant(0), sent, ast);
 
       Label *Lloop = if1_alloc_label(if1);
+      Label *Lyield = if1_alloc_label(if1);
       Label *Ldispatch = if1_alloc_label(if1);
       Label *Ldone = if1_alloc_label(if1);
 
+      Sym *val = new_sym(ast);
+      if (!sendcell)
+        fail("error line %d, `yield from` needs a generator object to receive what is sent: a @staticmethod "
+             "generator is not supported (issues/172)",
+             ctx.lineno);
+      // issues/172: start the sub-generator with next(), as PEP 380 does,
+      // not send(None). A send stores its value in the sub-generator's
+      // cell, so send(None) put a None there that the priming resume never
+      // delivers (__pyc_resume_none__, python_ifa_main.cc).
+      ctx.try_stack.add(PycTryFrame{Ldispatch, ctx.fun()});
+      call_method(&ast->code, ast, sub, make_symbol("__next__"), val, 0);
+      emit_exc_check(&ast->code, ast, ctx);
+      ctx.try_stack.n--;
+      if1_goto(if1, &ast->code, Lyield)->ast = ast;
+
       if1_label(if1, &ast->code, ast, Lloop);
       ctx.try_stack.add(PycTryFrame{Ldispatch, ctx.fun()});
-      Sym *val = new_sym(ast);
       call_method(&ast->code, ast, sub, make_symbol("send"), val, 1, sent);
       emit_exc_check(&ast->code, ast, ctx);
       ctx.try_stack.n--;
+      if1_label(if1, &ast->code, ast, Lyield);
 
       // Fallthrough: .send() returned normally (no exception pending)
       // -- yield the delegated value out to OUR OWN caller, then feed
@@ -5775,6 +5786,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       gen_yield_type_contribution(val, ast, ctx);
       Code *yfsend = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), val, new_sent);
       yfsend->ast = ast;
+      // issues/172: what our caller sent arrives in our own cell, as for a
+      // plain `x = yield v` (PY_yield_expr).
+      new_sent = new_sym(ast);
+      if1_send(if1, &ast->code, 4, 1, sym_operator, sendcell, sym_period, if1_make_symbol(if1, "sendval"), new_sent)
+          ->ast = ast;
       if1_move(if1, &ast->code, new_sent, sent, ast);
       if1_goto(if1, &ast->code, Lloop)->ast = ast;
 

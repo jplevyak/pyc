@@ -664,6 +664,10 @@ bool PycCompiler::reanalyze(Vec<ATypeViolation *> &type_violations) {
   // float-seeded call sites is split there first; coercion runs only on a
   // quiescence where nothing more splits (a genuinely temporal mix).
   if (do_coerce && fa_split_numeric_confluences()) return true;
+  // issues/172: a generator's send cell that converged to {None, scalar}
+  // only because next() can deliver None (pyc_record_send_none_cells).
+  // Reads converged types, so it runs with the coercion.
+  if (do_coerce && pyc_record_send_none_cells()) return true;
   bool coerced = do_coerce && fa_coerce_numeric_confluences(type_violations);
   if (coerced) again = true;
   // ifa/issues/111 M1: which path keeps the outer loop alive? The
@@ -695,13 +699,29 @@ AType *PycCompiler::provably_constant_isinstance(AVar *operand_av, EntrySet *es,
   if (strcmp(def->rvals[0]->sym->name, "__pyc_exc__")) return nullptr;
   if (!def->code->ast) return nullptr;
   IFAAST *ast = def->code->ast;
+  // Every CALL this check can follow, from the static IF1 (the AST's own
+  // PNodes, complete from pass 0), each with its resolved edges in this
+  // contour. Not es->out_edges alone: that set GROWS during a pass, and this
+  // is a transfer-function fold, whose answer must not sharpen (update_gen
+  // unions). Reading it found the edges analyzed SO FAR -- a `yield from`'s
+  // `__pyc_to_bool__` before its `send` -- and folded the check after the
+  // send to "cannot raise"; nothing re-ran it once the send's edge arrived,
+  // so the sub-generator's StopIteration went unhandled (issues/172).
   bool found_any = false;
-  for (AEdge *e : es->out_edges) {
-    if (!e || !e->pnode || !e->pnode->code || e->pnode->code->ast != ast) continue;
+  for (PNode *n : ast->pnodes) {
+    if (!n || !n->code || n->code->kind != Code_SEND || n->prim) continue;
+    Vec<AEdge *> *m = es->out_edge_map.get(n);
+    bool resolved = false;
+    if (m)
+      for (AEdge *e : *m) {
+        if (!e || !es->out_edges.set_in(e)) continue;
+        if (!e->to || e->to->can_raise) return nullptr;  // raising -- stay conservative
+        resolved = true;
+      }
+    if (!resolved) return nullptr;  // a call not resolved (yet) -- stay conservative
     found_any = true;
-    if (!e->to || e->to->can_raise) return nullptr;  // unresolved or raising -- stay conservative
   }
-  if (!found_any) return nullptr;  // no matching outgoing edge (yet) -- stay conservative
+  if (!found_any) return nullptr;  // no call at all -- not a check this recognizes
   return fa->type_world.true_type;
 }
 

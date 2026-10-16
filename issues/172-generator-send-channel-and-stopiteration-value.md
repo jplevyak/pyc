@@ -1,6 +1,6 @@
 # 172 — a generator's `send` channel is `int64`, and `StopIteration.value` reads the global exception slot
 
-**Status:** open. Split out of
+**Status:** open: #1 FIXED 2026-10-16 (see its Resolution); #2 open. Split out of
 [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) #7 on
 2026-09-29. The RETURN value half of #7 is done (its own channel,
 `gen_retcell`); these are the two halves that need a real channel.
@@ -40,6 +40,55 @@ instead of pinned to `int64`. `yield from` already forwards `send` through
 the sub-generator's `send()`, so it needs no separate change. The runtime
 hand-off (`_CG_generator_send`) keeps passing an opaque word for the resume
 itself; only the TYPE moves into the cell.
+
+### Resolution of #1 (2026-10-16)
+
+The fix as proposed: `__pyc_generator__` has a `sendval` cell, written by
+`send(v)` and by `next()` before they resume the body, and `x = yield`
+reads it through the body's hidden generator-object formal (the one
+`retval` uses). The value is typed per generator. The repro prints `None`
+then `2` in every mode, `--strict` included, and `send("a")`, an object and a
+tuple all arrive. The coroutine's `sent` word is no longer read, and
+`_CG_generator_send` is deleted (`send` resumes with `_CG_generator_advance`).
+`PYC_YIELD_INT_SEND` and its warning are deleted. A generator with no
+generator object (only a `@staticmethod` generator, which is not supported
+at all yet) is refused with a named error rather than given the int channel.
+
+**One accommodation remains, narrower, and it is named.** The priming
+`next()` of the common `next(g); g.send(5)` idiom stores a None that CPython
+never delivers (no yield is paused yet). Field types are flow-insensitive,
+so `x` types as `{None, int}`, which has no representation: `total += x`
+failed to compile in every mode. Under permissive only
+(`PYC_SEND_NONE_ZERO`, default on), a generator whose cell converged to
+`{None, scalar}` is recorded by `reanalyze` (`pyc_record_send_none_cells`,
+`python_ifa_main.cc`). On the next pass its `next()` resume delivers a zero
+of the cell's own type (`__pyc_resume_none__`), so a non-priming `next()`
+reads 0 where CPython gives None. It warns at the generator's `def`.
+`--strict` refuses, with a note at the `def` before the type error. The
+record is a decision kept across passes, so the transfer stays monotone
+within one. The five suite tests carry the new warning and match CPython.
+The precise answer is a started/unstarted typestate on the generator object,
+not built.
+
+**`yield from` starts the sub-generator with `next()`**, as PEP 380 does, not
+`send(None)`. A send stores into the sub-generator's cell, so `send(None)`
+put a None there through a path the record does not cover.
+
+**A latent FA bug, found on the way.** `provably_constant_isinstance`
+(`python_ifa_sym.cc`) folds an exception check to "cannot raise" when every
+call on the check's AST cannot. It read the contour's `out_edges`, which
+grow during a pass. With two calls on one AST (the new `yield from`: a
+`__next__` and a `send`), it saw only the `__pyc_to_bool__` edge analyzed
+first and folded the check after `send`. Nothing re-ran it, so the
+sub-generator's StopIteration went unhandled (`generator_methods`). It now
+walks the AST's own call PNodes, which are static, and declines while any has
+no resolved edge in the contour.
+
+`tests/generator_send_typed.py` pins the exact cases (a `next()`-only
+resume reads None; str, object and tuple sends; a str through `yield
+from`), byte-identical to CPython on both backends and under `--strict`
+with no warning. `make test`: 474 passed, 13 known, 0 failed on both
+backends. Sweep `check__default__0e65aa3e+59ad4f41` (`-R`): every corpus compile, warning and stdout verdict unchanged, +20 EntrySets / +10 CreationSets; no corpus program uses generator `send()`.
 
 ## 2. `StopIteration.value` reads the one global exception slot
 

@@ -55,6 +55,8 @@ extern cchar *cannonical_self;
 extern Vec<Sym *> super_aspect_syms;
 extern Vec<Sym *> builtin_functions;
 extern bool pyc_program_has_raise;
+// issues/172: the send-cell decision (python_ifa_main.cc), taken from reanalyze.
+bool pyc_record_send_none_cells();
 
 // -- PycCompiler: combines PycCallbacks + former PycContext state --
 

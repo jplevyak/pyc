@@ -187,8 +187,8 @@ inline void* _CG_run_coro(_CG_Coroutine coro) {
 // but driven synchronously by __next__/__pyc_more__/.send() (pyc's
 // existing iterator protocol, see __pyc__/07_file.py's __pyc_file__)
 // instead of an event loop -- no awaiter chain, no _CG_event_loop_*
-// calls. _CG_generator_advance/_CG_generator_send are the only entry
-// points: each resumes the coroutine once (unless already done, where
+// calls. _CG_generator_advance is the only entry
+// point: it resumes the coroutine once (unless already done, where
 // resuming would be UB) and reports whether a value is now available.
 // Callers must always pair one advance()/send() with at most one
 // _CG_generator_value() read before the next advance()/send() --
@@ -196,6 +196,13 @@ inline void* _CG_run_coro(_CG_Coroutine coro) {
 // "primed" flag so both the __pyc_more__-then-__next__ alternation
 // PY_for_stmt's lowering does, and bare repeated __next__()/.send()
 // calls with no __pyc_more__ in between, stay one-for-one.
+//
+// issues/172: the value a resume delivers to a paused `x = yield foo`
+// does NOT travel through here any more. send(v) and next() store it in
+// the generator object's own `sendval` before resuming, and the body
+// reads it there, typed per generator (__pyc__/09_generator.py), where
+// `sent` below was an untyped word. `sent` stays only as yield_awaiter's
+// result, which nothing reads; the text below is its history.
 //
 // `sent`: the value delivered to a paused `x = yield foo` expression
 // by the *next* resume. A plain advance (bare next()) delivers None
@@ -256,21 +263,6 @@ inline bool _CG_generator_advance(long long raw_handle) {
   auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
   if (h.done()) return false;
   h.promise().sent = nullptr;
-  h.resume();
-  return !h.done();
-}
-
-// .send(v): like _CG_generator_advance, but delivers `v` as the
-// value of the paused `yield` expression being resumed into, instead
-// of None. Calling .send() on a not-yet-started generator (no paused
-// yield to deliver into yet) is the same UB-if-done guard as advance
-// -- real Python raises a TypeError for that specific case, which
-// pyc has no exception model to express (issue 011); left unchecked,
-// matching every other iterator's past-exhaustion behavior here.
-inline bool _CG_generator_send(long long raw_handle, long long value) {
-  auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
-  if (h.done()) return false;
-  h.promise().sent = (void*)(uintptr_t)value;
   h.resume();
   return !h.done();
 }
