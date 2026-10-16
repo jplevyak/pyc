@@ -46,6 +46,11 @@ jobs:
       # emits (matching LLVM 20's intrinsic signatures) gets fed to a
       # differently-versioned clang++ and fails the same way.
       PYC_LLVM_CXX: clang++-20
+      # PYC_CXX: the same for the C backend (Makefile.cg compiles the
+      # emitted C++ with it). The runner image stopped shipping an
+      # unversioned `clang++` around 2026-10-13, and every C-backend
+      # e2e test then failed with `make: clang++: No such file`.
+      PYC_CXX: clang++-20
 
     steps:
       - name: Checkout pyc
