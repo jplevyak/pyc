@@ -42,6 +42,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
+| [183](183-none-or-int-in-arithmetic-reads-none-as-zero.md) | a `{None, int}` value in arithmetic (`x + 5`) compiles in every mode, `--strict` included, and reads None as 0 where CPython raises `TypeError`. |
 | [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: ~~`isinstance` on a `{list, str}` value folds to False~~ (refused 2026-10-15); a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
@@ -59,7 +60,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
-| [181](181-staticmethod-generator-does-not-compile.md) | a `@staticmethod` generator gets no generator object, so it does not compile. |
+| [184](184-classmethod-attribute-through-cls.md) | an attribute read through `cls` in a `@classmethod` (`cls.base`, `cls.h()`) does not type; `cls(...)` works. |
 | [182](182-kwargs-and-keyword-only-parameters.md) | `**kwargs` parameters and keyword-only parameters (`def f(a, *, b)`). |
 
 ### Diagnostics, crashes, performance, harness
@@ -73,6 +74,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | closed | why | residual now in |
 | --- | --- | --- |
+| [181](closed/181-staticmethod-generator-does-not-compile.md) | every decorated generator (`@staticmethod`, `@classmethod`, any decorator) gets its return/send cell and generator-object wrapper | — |
 | [178](closed/178-dict-of-a-mapping-reads-it-as-pairs.md) | `dict(x)` / `d.update(x)` copy a mapping (any class with `keys`) and read anything else as pairs, by dispatch | — |
 
 ### Closed on 2026-10-15
