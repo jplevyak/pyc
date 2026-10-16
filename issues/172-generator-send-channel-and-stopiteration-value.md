@@ -64,7 +64,7 @@ failed to compile in every mode. Under permissive only
 `python_ifa_main.cc`). On the next pass its `next()` resume delivers a zero
 of the cell's own type (`__pyc_resume_none__`), so a non-priming `next()`
 reads 0 where CPython gives None. It warns at the generator's `def`.
-`--strict` gives a note at the `def`. **Correction (2026-10-16):** it does not always refuse. `total += x` is refused, but `x + 5` on the `{None, int}` value compiles under `--strict` and reads None as 0. That is the general operator gap of [183](183-none-or-int-in-arithmetic-reads-none-as-zero.md), and its fix makes this case a refusal. The
+`--strict` gives a note at the `def`. **Correction (2026-10-16):** it does not always refuse. `total += x` is refused, but `x + 5` on the `{None, int}` value compiles under `--strict` and reads None as 0. That was the general operator gap of [183](closed/183-none-or-int-in-arithmetic-reads-none-as-zero.md), fixed the same day: `--strict` now refuses it. The
 record is a decision kept across passes, so the transfer stays monotone
 within one. The five suite tests carry the new warning and match CPython.
 The precise answer is a started/unstarted typestate on the generator object,

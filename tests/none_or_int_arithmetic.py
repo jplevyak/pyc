@@ -9,6 +9,11 @@ def first_negative(xs):
     for x in xs:
         if x < 0:
             return x
+    # issues/183: falling off the end would return None, giving {None, int},
+    # which cannot tell None from 0 at `abs(lit)` or `lit > 0` and is refused
+    # in every mode. This test follows pisang, whose `unfixed` was edited the
+    # same way because its None is unreachable (PYC_CHANGES.md).
+    raise ValueError("no negative element")
 
 fixedt = [0] * 10
 mods = [3]

@@ -1,1 +1,0 @@
-issues/183 (183-none-or-int-in-arithmetic-reads-none-as-zero): pyc is wrong here; the .exec.check holds CPython's output, so this flips to PASS when the issue is fixed.

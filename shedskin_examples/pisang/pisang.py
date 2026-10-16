@@ -91,6 +91,12 @@ def unfixed(clause):
         fixed = fixedt[abs(lit)]
         if fixed == -1:
             return lit
+    # pyc (issues/183): unreachable, and saying so is a CPython no-op.
+    # unfixed is only called when length(clause) == 1: no literal of the
+    # clause is satisfied and exactly one is unfixed, so the loop returns.
+    # Falling off the end would return None, giving {int, None}, which
+    # reaches abs(lit) and lit > 0 in propagate.
+    raise ValueError("unfixed: clause has no unfixed literal")
 
 def unfixed_vars():
     return [var for var in vars[1:] if fixedt[var] == -1]

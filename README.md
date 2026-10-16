@@ -159,9 +159,7 @@ Static typing without boxing cannot express everything CPython does. pyc's rule 
 deviates silently:
 
 - **`--strict`**: the program has CPython's semantics, or it does not compile. Gaps in this
-  guarantee are bugs and are tracked as silent wrong answers in [issues/](issues/README.md); one
-  open today is a `None`-or-`int` value in arithmetic
-  ([issues/183](issues/183-none-or-int-in-arithmetic-reads-none-as-zero.md)).
+  guarantee are bugs, tracked as silent wrong answers in [issues/](issues/README.md).
 - **`--permissive`** (the default) additionally allows a few named accommodations. Examples: a
   numeric slot that holds both `int` and `float` is widened to `float`, and a generator's
   `next()` resume delivers `0` instead of `None` when the generator is also sent numbers. Each
@@ -277,7 +275,7 @@ make test-links      # every relative Markdown link resolves (needs no build)
 ```
 
 The end-to-end suite compiles each `tests/*.py`, runs it, and compares its output with the
-expected output and with CPython's. When green it reports 476 passed and 18 known issues on each
+expected output and with CPython's. When green it reports 477 passed and 17 known issues on each
 backend. Tests carrying a `.known_issue` sidecar are filed bugs with CPython's answer as the
 expected output; they report `KNOWN` and flip to `PASS` once fixed. `make test` stops at the first
 failing group, so check its exit status rather than reading the tail of its output.
@@ -350,11 +348,8 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
 - **Cross-class method assignment**: `a.x = b.x`, where `a` and `b` are instances of unrelated
   classes, is not supported; it currently compiles and crashes at run time
   ([issues/180](issues/180-method-assigned-across-classes-crashes.md)).
-- **Known silent wrong answers** under repair: an out-of-range sequence index does not raise
-  `IndexError` ([issues/179](issues/179-sequence-index-out-of-range-does-not-raise.md)), and a
-  value that may be `None` or an `int` is read as `0` in arithmetic instead of raising
-  `TypeError`, in every mode
-  ([issues/183](issues/183-none-or-int-in-arithmetic-reads-none-as-zero.md)).
+- **A known silent wrong answer** under repair: an out-of-range sequence index does not raise
+  `IndexError` ([issues/179](issues/179-sequence-index-out-of-range-does-not-raise.md)).
 
 ## License
 
