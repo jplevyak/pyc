@@ -2808,6 +2808,52 @@ static void synthesize_default_iop(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym 
       ->ast = ast;
 }
 
+// issues/178: CPython's `dict(x)` (and `d.update(x)`) copies a MAPPING --
+// `d[k] = x[k]` for each `k in x.keys()` -- and reads anything else as an
+// iterable of pairs; which one is decided by whether x has `keys`. So a
+// class whose body defines `keys` gets
+//   def __pyc_dict_into__(self, d): return __pyc_dict_from_mapping__(d, self)
+// and every other type inherits the pairs loop (__pyc_any_type__). The
+// choice is then made by dispatch on x, per receiver type. The name is
+// CPython's own protocol here, not an inference about the program.
+static void synthesize_dict_into(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody) {
+  cchar *name = "__pyc_dict_into__";
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
+  if (!ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, "keys"))) return;  // not a mapping
+  PycSymbol *copy_fn = make_PycSymbol(ctx, "__pyc_dict_from_mapping__", PYC_USE);
+  if (!copy_fn || !copy_fn->sym) return;  // builtin module not loaded (unit tests)
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Sym *d = new_sym(ast);  // the dict being filled
+  d->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, name));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, name));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  as.add(d);
+  Code *b = 0;
+  Code *send = if1_send1(if1, &b, ast);
+  if1_add_send_arg(if1, send, copy_fn->sym);
+  if1_add_send_arg(if1, send, d);
+  if1_add_send_arg(if1, send, mfn->self);
+  Sym *res = new_sym(ast);
+  if1_add_send_result(if1, send, res);
+  if1_move(if1, &b, res, mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(name)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, name), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size, bool derive_compare) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
@@ -3010,6 +3056,7 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     synthesize_default_iop(ctx, ast, cls, fn, &body, "__iand__", "__and__");
     synthesize_default_iop(ctx, ast, cls, fn, &body, "__ifloordiv__", "__floordiv__");
   }
+  if (is_record) synthesize_dict_into(ctx, ast, cls, fn, &body);
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;

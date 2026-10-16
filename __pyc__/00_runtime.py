@@ -21,6 +21,13 @@ class __pyc_any_type__:
   # computed `%s` was printed as raw memory. __pyc_fmtconv__ is the whole
   # right operand: one value here, each element for a tuple (generated per
   # arity, python_ifa_main.cc).
+  # issues/178: `dict(x)` / `d.update(x)` of a value with no keys(): an
+  # iterable of (key, value) pairs. dict and every class defining keys()
+  # override it with the mapping form (07_dict.py, gen_class_pyda).
+  def __pyc_dict_into__(self, d):
+    for pair in self:
+      d[pair[0]] = pair[1]
+    return d
   def __pyc_fmtval__(self):
     return self.__str__()
   def __pyc_fmtconv__(self):
