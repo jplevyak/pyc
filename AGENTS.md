@@ -2,7 +2,7 @@
 
 **A contour is NEVER split because a surrounding contour was split. Splitting is only ever on demand.** The primary purpose of IFA is that demand splitting, especially of data contours, which IFA calls Creation Sets.
 
-**ALL DEMAND IS EVALUATED AT QUIESCENCE. All of it.** A demand is a property of the CONVERGED types — "this AVar holds a union that something cannot proceed on" — so it is asked once the types have reached a fixed point, and re-asked every pass. Never on the transient event of a union forming. [ifa/157](ifa/issues/157-FA-all-demand-must-be-evaluated-at-quiescence.md) is the standing issue, and its first measurement is the warning to read before acting on this rule: the types ARE already converged when every split stage runs, so *when* was never the defect people assumed — and asking the level question instead of the edge one, on its own, buys nothing.
+**ALL DEMAND IS EVALUATED AT QUIESCENCE. All of it.** A demand is a property of the CONVERGED types — "this AVar holds a union that something cannot proceed on" — so it is asked once the types have reached a fixed point, and re-asked every pass. Never on the transient event of a union forming. [ifa/157](ifa/issues/closed/157-FA-all-demand-must-be-evaluated-at-quiescence.md) (closed 2026-10-15) records it, and its first measurement is the warning to read before acting on this rule: the types ARE already converged when every split stage runs, so *when* was never the defect people assumed — and asking the level question instead of the edge one, on its own, buys nothing.
 
 # Document Index
 
@@ -27,15 +27,17 @@ calls Creation Sets.
 
 **And all demand is evaluated at QUIESCENCE** — on converged types, never
 on the transient event of a union forming.
-[ifa/157](ifa/issues/157-FA-all-demand-must-be-evaluated-at-quiescence.md)
-is the standing issue. Read its first measurement before acting on the rule:
-`analyze_to_convergence` drains every worklist BEFORE the split stages run,
-so the types they read are already at a fixed point on every pass. The
-`!analyze_again` gate that `fa.cc` calls quiescence throughout is not one —
-it tests whether a higher-priority stage acted, and it is why
-`PER_CS_RECEIVER` and `CSM_ELEMENT_CS` fire ZERO times on every program
-measured. The starvation is a cascade, not a convergence problem, and a
-level-triggered detector was built, measured against it, and deleted.
+[ifa/157](ifa/issues/closed/157-FA-all-demand-must-be-evaluated-at-quiescence.md)
+(closed 2026-10-15) records it. Read its first measurement before acting on
+the rule: `analyze_to_convergence` drains every worklist BEFORE the split
+stages run, so the types they read are already at a fixed point on every
+pass. The `!analyze_again` gate is not a quiescence gate: it tests whether a
+higher-priority stage acted, and `fa.cc` now calls it the CASCADE gate
+(`higher_stages_idle`, `PYC_DBG_CASCADE`). It delays lower stages but cannot
+lose a demand: the loop ends only on a pass where no stage acted, so every
+gated stage runs on the final converged state. The 2026-10-15 census found
+no program that needs a stage sooner, and a level-triggered detector was
+built, measured, and deleted.
 
 That is the yardstick for any change in `ifa/analysis/`. A contour —
 function (EntrySet) or data (CreationSet) — exists because something
