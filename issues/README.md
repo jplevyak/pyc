@@ -44,10 +44,8 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | --- | --- |
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: `isinstance` on a `{list, str}` value folds to False; a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
-| [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
 | [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |
 | [177](177-integer-literals-past-int64-were-accepted-silently.md) | `0xFFFFFFFFFFFFFFFF` was silently `-1` and `99999999999999999999` silently INT64_MAX, even under `--strict`; now warned, or refused. othello2's 64-bit masks. |
-| [041](041-stdlib-shim-stubs-silently-wrong.md) | `hashlib` is a stub returning `""`. Shims must be real or raise. |
 | [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` is a real tuple since 2026-09-28. Residuals: `t[i] = x` mutates (blocked on 175's item-store check), and `zip`/`map`/`filter`/`reversed` are eager lists. |
 
 ### Typing and representation
@@ -70,6 +68,8 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [176](closed/176-int-and-float-of-an-invalid-string-do-not-raise.md) | `int()`/`float()` of a string validate the whole string and raise CPython's `ValueError` | — |
 | [125](closed/125-in-has-no-iterable-fallback.md) | `object.__contains__` is CPython's iterable fallback | — |
 | [111](closed/111-checks-embed-builtin-library-line-numbers.md) | the harness compares builtin-module line numbers as `N` | — |
+| [041](closed/041-stdlib-shim-stubs-silently-wrong.md) | audit repeated; `time.sleep` and `socket.gethostname` were stubs, now real | — |
+| [043](closed/043-slice-target-augmented-assignment-silently-wrong.md) | `o[i:j] op= x` reads the slice, applies the operator, writes back | — |
 
 ### Closed on 2026-10-03
 

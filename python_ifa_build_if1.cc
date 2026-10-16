@@ -3868,7 +3868,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       int op = n->children[1]->op;
       PyDAST *val_node = n->children[2];
       build_if1_pyda(val_node, ctx);
-      build_if1_pyda(tgt_node, ctx);
+      {
+        bool saved_aug = ctx.building_augassign_target;
+        ctx.building_augassign_target = true;
+        ctx.aug_slice_obj = nullptr;
+        build_if1_pyda(tgt_node, ctx);
+        ctx.building_augassign_target = saved_aug;
+      }
       PycAST *v = getAST(val_node, ctx);
       PycAST *t = getAST(tgt_node, ctx);
       if1_gen(if1, &ast->code, v->code);
@@ -3880,18 +3886,20 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_send(if1, &ast->code, 5, 1, sym_operator, t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))
             ->ast = ast;
       } else if (t->is_object_index) {
-        if (t->is_slice) {
-          // issues/025: slice augmented-assignment (`a[i:j] |= x`) still
-          // has the same silent-wrong-answer shape as the plain-index
-          // case below -- the value the operator sees isn't the current
-          // slice's contents, so `|=` acts like `=`. Not fixed here:
-          // no failing corpus example exercises it and __pyc_setslice__
-          // takes a whole replacement sequence, not a single value, so
-          // the read-compute-write shape needs its own translation.
-          if1_add_send_arg(if1, find_send(ast->code), v->rval);
-          emit_exc_check(&ast->code, t, ctx);  // issues/175
-          if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, (ast->rval = new_sym(ast)))
-              ->ast = ast;
+        if (t->is_slice && ctx.aug_slice_obj) {
+          // issues/043: CPython's order. The target lowering read the slice
+          // (t->rval, a new list) with the bounds evaluated once; apply the
+          // in-place operator to THAT, then write the result back over the
+          // same slice (its length may change). It used to store the RHS
+          // into the slice unread, so `a[1:3] += [10, 20]` acted like `=`.
+          Sym *result = new_sym(ast);
+          if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, result)->ast = ast;
+          call_method(&ast->code, ast, ctx.aug_slice_obj, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 4,
+                      ctx.aug_slice_l, ctx.aug_slice_u, ctx.aug_slice_s, result);
+          emit_exc_check(&ast->code, ast, ctx);  // issues/175
+          ctx.aug_slice_obj = nullptr;
+        } else if (t->is_slice) {
+          fail("error line %d: unsupported slice target for an augmented assignment (issues/043)", ctx.lineno);
         } else {
           // t->rval/t->sym are the object/index pair deferred by the
           // PY_power STORE-mode subscript branch above (not an
@@ -4866,6 +4874,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             if (store && ctx.building_del_target) {
               call_method(&ast->code, ast, cur_val, sym___pyc_delslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
               emit_exc_check(&ast->code, ast, ctx);
+            } else if (store && ctx.building_augassign_target) {
+              // issues/043: `o[i:j] op= x` reads the slice here; PY_augassign
+              // applies the operator to it and writes the result back.
+              call_method(&ast->code, ast, cur_val, sym___pyc_getslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
+              emit_exc_check(&ast->code, ast, ctx);
+              ctx.aug_slice_obj = cur_val, ctx.aug_slice_l = l, ctx.aug_slice_u = u, ctx.aug_slice_s = s;
             } else if (store)
               call_method(&ast->code, ast, cur_val, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
             else {

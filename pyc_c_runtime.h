@@ -1106,6 +1106,23 @@ inline char *_CG_locale_encoding(void) {
   return r;
 }
 
+// issues/041: time.sleep and socket.gethostname were stubs (a no-op, and a
+// constant "localhost"). Both are now the real calls.
+inline int64 _CG_sleep(double seconds) {
+  if (!(seconds > 0)) return 0;
+  struct timespec ts;
+  ts.tv_sec = (time_t)seconds;
+  ts.tv_nsec = (long)((seconds - (double)ts.tv_sec) * 1e9);
+  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+  return 0;
+}
+inline char *_CG_gethostname(void) {
+  char buf[256];
+  if (gethostname(buf, sizeof(buf)) != 0) buf[0] = 0;
+  buf[sizeof(buf) - 1] = 0;
+  return _CG_String(buf);
+}
+
 // 32 bits of OS entropy, for pyc_lib/random.py's seed on first use: CPython
 // seeds an unseeded `random` from os.urandom, and pyc's generator used to
 // start from an all-zero state, so random() returned 0.0 forever (minilight's

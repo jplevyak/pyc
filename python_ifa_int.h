@@ -100,6 +100,11 @@ class PycCompiler : public PycCallbacks {
   // of an empty list (which cannot express a strided delete: CPython
   // REMOVES the selected elements, where `o[::2] = []` is a ValueError).
   bool building_del_target = false;
+  // issues/043: building the target of `o[i:j] op= x`. The slice STORE
+  // then reads the slice instead of storing, and records where to write
+  // back, so the bounds are evaluated once.
+  bool building_augassign_target = false;
+  Sym *aug_slice_obj = nullptr, *aug_slice_l = nullptr, *aug_slice_u = nullptr, *aug_slice_s = nullptr;
   void *node;
   PycModule *mod, *package;
   Vec<PycModule *> *modules;

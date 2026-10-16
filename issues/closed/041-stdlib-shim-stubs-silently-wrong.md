@@ -1,5 +1,16 @@
 # 041 — stdlib shims must be real or refuse
 
+> **CLOSED 2026-10-15.** The audit below was repeated (stub comments, and
+> every `pyc_lib` function whose body only returns a constant). Its two
+> live hits are fixed: `time.sleep` was a no-op and now sleeps (nanosleep,
+> `_CG_sleep`) and raises `ValueError` for a negative length, and
+> `socket.gethostname` returned `"localhost"` and now calls gethostname(2).
+> `tests/time_sleep_and_hostname.py` matches CPython on both backends. The
+> remaining hits are not wrong answers: `sys.setrecursionlimit` (pyc has no
+> recursion limit to set), an infinite iterator's `__pyc_more__`, and the
+> socket repr. Corpus `check__default__d617c349+ae55c761`: no verdict change
+> (chaos's run timeout is load: 78 s alone, cap 120).
+
 **Status:** open, narrowed. Rewritten 2026-09-28; the per-module history
 is in git: `git show e3b44e2c:issues/041-stdlib-shim-stubs-silently-wrong.md`.
 `colorsys` (2026-08-08), `getopt`, `os`'s filesystem functions,

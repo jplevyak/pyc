@@ -1,5 +1,14 @@
 # 043 — `a[i:j] += x` acts like `a[i:j] = x` (silent wrong answer)
 
+> **CLOSED 2026-10-15.** `o[i:j] op= x` is lowered as CPython evaluates it:
+> the target reads the slice once (`__pyc_getslice__`, bounds evaluated
+> once, under `PycCompiler::building_augassign_target`), the in-place
+> operator applies to that list, and `__pyc_setslice__` writes the result
+> back, followed by its exception check. `tests/augassign_slice.py` (`+=`,
+> `*=`, a length change, negative bounds, a step, bounds evaluated once, a
+> member target) matches CPython on both backends; `list |= list` is still
+> refused. Corpus: see 041's note, same sweep.
+
 **Status:** open. Re-verified 2026-09-28. Rewritten; history in git:
 `git show e3b44e2c:issues/043-slice-target-augmented-assignment-silently-wrong.md`.
 

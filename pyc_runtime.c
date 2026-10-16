@@ -71,6 +71,8 @@ extern int64 _CG_int_pow(int64 b, int64 e);
 extern int64 _CG_errno(void);
 extern char *_CG_locale_encoding(void);
 extern int64 _CG_entropy32(void);
+extern int64 _CG_sleep(double seconds);  /* issues/041 */
+extern char *_CG_gethostname(void);
 extern int64 _CG_int_bit_count(int64 x);
 extern char *_CG_strerror(int64 e);
 extern char *_CG_char_from_string(void *s, int i);
