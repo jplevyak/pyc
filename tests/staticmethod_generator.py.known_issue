@@ -1,1 +1,0 @@
-issues/181 (181-staticmethod-generator-does-not-compile): pyc is wrong here; the .exec.check holds CPython's output, so this flips to PASS when the issue is fixed.

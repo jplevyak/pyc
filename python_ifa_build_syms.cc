@@ -1278,8 +1278,30 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           // scope; formals/locals re-derive as nesting_depth+1 at if1
           // finalization, which runs after this.
           def_ast->sym->nesting_depth -= 1;
+          // issues/181: a marker-method GENERATOR is installed as its
+          // wrapper, which creates the generator object (as a generator
+          // method's is, gen_method_wrapper above). The raw body returns the
+          // bare coroutine handle, so `for v in C.s():` found no __iter__.
+          // The wrapper is made here because the setter needs its value
+          // now; build_if1's PY_decorated fills its body. It carries the
+          // marker flags, since class-qualified calls and FA's
+          // receiver-less read look the member's function up and test them.
+          Sym *member_val = def_ast->sym;
+          bool gen_marker = false;
+          for (auto c : def->children.values())
+            if (pyda_contains_yield(c)) { gen_marker = true; break; }
+          if (gen_marker) {
+            Sym *w = new_fun(def_ast);
+            w->in = def_ast->sym->in;
+            w->nesting_depth = def_ast->sym->nesting_depth;
+            w->is_static_method = def_ast->sym->is_static_method;
+            w->is_class_method = def_ast->sym->is_class_method;
+            ctx.gen_def_wrapper.put(def_ast->sym, w);
+            def_ast->rval->alias = w;
+            member_val = w;
+          }
           if1_send(if1, &def_ast->code, 5, 1, sym_operator, ctx.cls()->self, sym_setter,
-                   if1_make_symbol(if1, def_ast->rval->name), def_ast->sym, new_sym(def_ast))
+                   if1_make_symbol(if1, def_ast->rval->name), member_val, new_sym(def_ast))
               ->ast = def_ast;
         } else {
           // issues/007: same split identity as the plain PY_funcdef

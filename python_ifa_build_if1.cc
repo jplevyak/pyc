@@ -3475,6 +3475,15 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           def_ast->sym->self = new_sym(def_ast);
           def_ast->sym->self->must_implement_and_specialize(closure_cls);
         }
+        // issues/181: a decorated GENERATOR gets what PY_funcdef gives an
+        // undecorated one -- the return/send cell (before the body is
+        // walked, since `return` and `x = yield` read it) and a wrapper that
+        // creates the generator object (after gen_fun_pyda). The decorators
+        // then apply to the wrapper, the function CPython's `def` produces.
+        // A capturing one is dispatched on its closure carrier, which stays
+        // the value decorated, as in PY_funcdef's closure branch.
+        bool dec_gen = def_ast->sym->is_generator;
+        if (dec_gen) ctx.gen_retcell.put(def_ast->sym, new_sym(def_ast));
         PyDAST *params = def->children[1];
         PyDAST *varargsl = (params->children.n > 0) ? params->children[0] : nullptr;
         if (varargsl)
@@ -3487,6 +3496,24 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         }
         gen_fun_pyda(def, def_ast, ctx);
         exit_scope(ctx);
+        Sym *gen_wrapper = nullptr;
+        if (dec_gen && closure_cls) {
+          Sym *wrapper = new_fun(def_ast);
+          wrapper->nesting_depth = def_ast->sym->nesting_depth;
+          Sym *dispatch0 = new_sym(def_ast);
+          dispatch0->must_implement_and_specialize(closure_cls);
+          build_generator_wrapper(wrapper, def_ast->sym, dispatch0, def_ast, ctx, def_ast->sym->self);
+        } else if (dec_gen) {
+          // A marker method's wrapper already exists: build_syms installed it
+          // as the class member.
+          gen_wrapper = ctx.gen_def_wrapper.get(def_ast->sym);
+          if (!gen_wrapper) {
+            gen_wrapper = new_fun(def_ast);
+            gen_wrapper->nesting_depth = def_ast->sym->nesting_depth;
+            ctx.gen_def_wrapper.put(def_ast->sym, gen_wrapper);
+          }
+          build_generator_wrapper(gen_wrapper, def_ast->sym, gen_wrapper, def_ast, ctx);
+        }
         // issues/007: actually APPLY the decorators. With split
         // identity (build_syms_pyda), the def's public name
         // (def_ast->rval) is an ordinary variable and the raw
@@ -3498,7 +3525,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // an argument list, applied as `d(args)(fn)`) are handled;
         // dotted names keep the historical silent no-op.
         Sym *carrier = closure_cls ? build_closure_instance_pyda(closure_cls, def_ast, &def_ast->code, ctx) : nullptr;
-        Sym *cur = carrier ? carrier : def_ast->sym;
+        Sym *cur = carrier ? carrier : gen_wrapper ? gen_wrapper : def_ast->sym;
         for (int i = n->children.n - 2; i >= 0; i--) {
           PyDAST *child = n->children[i];
           Vec<PyDAST *> decs;
@@ -3609,7 +3636,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // FIELD shape (rval->alias == sym, installed via the setter
         // emitted in build_syms_pyda) -- no variable binding, same rule
         // as PY_funcdef's fd_is_method.
-        if (!(def_ast->rval && def_ast->rval->alias == def_ast->sym))
+        if (!(def_ast->rval &&
+              (def_ast->rval->alias == def_ast->sym || (gen_wrapper && def_ast->rval->alias == gen_wrapper))))
           if1_move(if1, &def_ast->code, cur, def_ast->rval, ast);
         // issues/171 #12: the body reads its own name through the carrier
         // (maybe_synthesize_closure_pyda); give it the decorated value.
@@ -5672,13 +5700,14 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // coroutine's `sent` word -- was the old channel, an int64 that read 0
       // for None (an accommodation, now gone); it is no longer read.
       //
-      // A generator with no generator object has no cell. Only a
-      // `@staticmethod` generator is built that way, and it is not
-      // supported at all yet (it returns the bare coroutine handle).
+      // A generator with no generator object has no cell. Every def
+      // gets a wrapper that makes one (plain, method, capturing, decorated
+      // -- issues/181), so this is a backstop for a generator built
+      // some other way, which would return the bare coroutine handle.
       Sym *sendcell = ctx.fun()->is_generator ? ctx.gen_retcell.get(ctx.fun()) : nullptr;
       if (!sendcell)
-        fail("error line %d, the value of this yield expression has nowhere to come from: the generator has no "
-             "generator object (a @staticmethod generator is not supported) (issues/172)",
+        fail("error line %d, internal: the value of this yield expression has nowhere to come from: the generator "
+             "has no generator object (issues/172, 181)",
              ctx.lineno);
       Sym *yval = sym_nil;
       if (n->children.n > 0) {
@@ -5756,8 +5785,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
 
       Sym *val = new_sym(ast);
       if (!sendcell)
-        fail("error line %d, `yield from` needs a generator object to receive what is sent: a @staticmethod "
-             "generator is not supported (issues/172)",
+        fail("error line %d, internal: `yield from` needs a generator object to receive what is sent, and this "
+             "generator has none (issues/172, 181)",
              ctx.lineno);
       // issues/172: start the sub-generator with next(), as PEP 380 does,
       // not send(None). A send stores its value in the sub-generator's
