@@ -42,7 +42,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
-| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: `isinstance` on a `{list, str}` value folds to False; a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
+| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: ~~`isinstance` on a `{list, str}` value folds to False~~ (refused 2026-10-15); a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |
 | [177](177-integer-literals-past-int64-were-accepted-silently.md) | `0xFFFFFFFFFFFFFFFF` was silently `-1` and `99999999999999999999` silently INT64_MAX, even under `--strict`; now warned, or refused. othello2's 64-bit masks. |

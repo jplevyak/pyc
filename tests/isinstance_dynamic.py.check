@@ -1,0 +1,1 @@
+isinstance_dynamic.py:12: codegen: isinstance(x, list) cannot be decided at run time: x is {str, list}, and 'list' carries no class tag to test. pyc refuses it rather than fold the test to False (issues/173)

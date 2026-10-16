@@ -30,6 +30,31 @@ the question. Second, the test was folded. Either a class tag must be
 available to test (list and str are both heap objects), or the union must
 be refused like any other unrepresentable one. Folding it is never right.
 
+**FIXED 2026-10-15: refused.** The analysis was right (the result is
+`{True, False}`); the fold was codegen's. Both emitters build the
+run-time test as a compare of `x`'s class tag against the tagged
+implementors of the class, and when there were none (list has no tag) they
+wrote `0`. Splitting cannot help here: `v` is one heterogeneous list's
+element at one call site, so no contour separates the two. When `check` is
+called with one type per site it already splits, and each copy folds
+correctly.
+
+`cg_isinstance_tag_targets` (`ifa/codegen/codegen_common.cc`), shared by
+both emitters, now decides the test from the members of `x`'s type. Every
+member an instance gives True, none gives False, and a tag compare is used
+only when every member that IS an instance carries a tag. Otherwise it
+refuses: `isinstance(x, list) cannot be decided at run time: x is {str,
+list}, and 'list' carries no class tag to test`. That is the same refusal
+`len(v)` on this value already got. Membership goes through the member's
+tag family (a clone is not in its class's implementor set) and through the
+builtin's `meta_type` (the class operand of `isinstance(v, list)` is the
+meta Sym). `tests/isinstance_dynamic.py` is now a `.check_fail` pinning the
+diagnostic; `tests/isinstance_union_decided.py` pins the unions that are
+answered.
+Sweep `check__default__bf54cb21+bebed088`: every corpus verdict, warning
+count and contour count unchanged, so no corpus program reaches the
+refusal.
+
 ## 2. A class attribute read through a subclass after the base is mutated
 
 `tests/class_attr_mutation.py` (`.python.expect_fail`: its `.exec.check`
