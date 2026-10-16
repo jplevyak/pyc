@@ -59,7 +59,18 @@ that fails:
   triage.
 - `compile_rc=0` is not evidence of anything. Run the binaries.
 
-## Current state — sweep `check__default__520739fe+66a0b1e8` (2026-10-07)
+## Current state — sweep `check__default__6ac83790+4ec9875b` (2026-10-15)
+
+77 programs: **76 compile; 58 match CPython** (directly or through a check
+driver), **1 differs** (othello2: int64 against CPython's unbounded int,
+[177](177-integer-literals-past-int64-were-accepted-silently.md)), and **18
+are unverifiable** because CPython itself exceeds the sweep's 120 s run cap.
+The one that does not compile is othello3, which exceeds the compile cap
+([ifa/186](../ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)).
+21 compile with warnings, almost all int/float coercion. The per-program
+table below is from 2026-10-07 to 10-14 and is not re-derived here.
+
+### As of 2026-10-07 (`check__default__520739fe+66a0b1e8`)
 
 77 programs: **74 compile, 3 do not; 36 match CPython.** Fixed since the
 2026-09-28 sweep (`4b61e721+d7af0afe`, 24 not compiling, 20 matching):

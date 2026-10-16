@@ -1297,6 +1297,10 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       PycAST *a1 = getAST(pos_args[1], ctx);
       ast->rval = new_sym(ast);
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_int_base__"), ast->rval, 1, a1->rval);
+      // issues/176: __pyc_int_base__ raises ValueError on an invalid
+      // literal, and a builtin shortcut returns before the generic call
+      // path's check (issues/175's gap, for this send).
+      emit_exc_check(&ast->code, ast, ctx);
       return 1;
     }
   }

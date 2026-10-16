@@ -1,5 +1,14 @@
 # 125 — `x in y` has no iterable fallback
 
+> **CLOSED 2026-10-15.** `object.__contains__` is CPython's fallback,
+> verbatim (`__pyc__/00_runtime.py`), so `x in y` works for any class with
+> `__iter__` and consumes a self-iterator exactly as CPython does.
+> `tests/in_iterable_fallback.py` matches CPython on both backends. The three
+> hand-written copies were NOT deleted: `__pyc_iterator__`'s uses the
+> `__pyc_more__` protocol and `__dict_iter__`'s scans the dict's arrays
+> directly, so they are specialized overrides, not duplicates of this loop.
+> Corpus: see 176's closure note (same sweep), no verdict change.
+
 **Status:** open. Rewritten 2026-09-28; history in git:
 `git show e3b44e2c:issues/125-in-has-no-iterable-fallback.md`. Its two
 instances are fixed: `range.__contains__` (`4509936e`, arithmetic,
@@ -37,7 +46,7 @@ exhausted by `in` in CPython too. The only real hazard is a builtin whose
 `iter()` returns itself where CPython's does not. That is pyc's `range`
 (`__iter__` returns `self`, so `r = range(10); for ...; for ...` iterates
 once). That is a deviation in its own right, and it belongs on
-[171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s
+[171](171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s
 list: make `range.__iter__` return a fresh iterator. `range` has its own
 arithmetic `__contains__`, so it never reaches the fallback anyway.
 

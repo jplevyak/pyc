@@ -1,5 +1,19 @@
 # 176 — `int()` / `float()` of an invalid string return a number instead of raising
 
+> **CLOSED 2026-10-15.** `int(x)` / `float(x)` (and `map(int, ...)`) now
+> dispatch on the argument, through the synthesized `__coerce__`
+> (`python_ifa_build_syms.cc`): `x.__pyc_int__()` / `x.__pyc_float__()`.
+> `str` and `bytes` validate the WHOLE string (`_CG_str_int_ok`,
+> `_CG_str_float_ok` in `pyc_c_runtime.h`: whitespace, sign, a base prefix,
+> `_` only between digits, inf/nan, no hex floats) and raise CPython's
+> `ValueError`; `int(s, base)` too, and its builtin shortcut now carries the
+> exception check it lacked. Numbers and bool define their own; any other
+> object takes `__int__` / `__float__`. `tests/int_float_of_invalid_string.py`
+> matches CPython on both backends. Corpus `check__default__6ac83790+4ec9875b`
+> against `ea9a60bc+23598ae4`: every verdict and warning unchanged, compile
+> time 2414 → 2411 s, +463 EntrySets / +981 CreationSets (a floor of +5
+> CreationSets per program from the new library code).
+
 **Status:** open. Found 2026-10-09 while verifying the `try_stmt` parse fix
 (its test needed a `ValueError` from `int("q")`; it uses an explicit
 `raise` instead).

@@ -1,4 +1,11 @@
 class int:
+  # issues/176: int(x) / float(x) dispatch on x (the synthesized __coerce__).
+  # Not the coerce primitive: from Python, `int`/`float` as its target name
+  # C's 32-bit int and an undeclared `_CG_float`, not int64/float64.
+  def __pyc_int__(self):
+    return self
+  def __pyc_float__(self):
+    return self + 0.0
   # The number of one bits in abs(self), as CPython (othello2's bitboards).
   def bit_count(self):
     return __pyc_c_call__(int, "_CG_int_bit_count", int, self)
@@ -144,6 +151,11 @@ class int:
                           int, self, str, spec)
 
 class float:
+  # issues/176: see int's. Truncates toward zero, as CPython's int(float).
+  def __pyc_int__(self):
+    return __pyc_c_call__(int, "_CG_float_to_int64", float, self)
+  def __pyc_float__(self):
+    return self
   def __pyc_bytes_fmtarg__(self):
     return __pyc_bytes_fmtarg__(1, 0, self, b"")
   def __add__(self, x):

@@ -38,6 +38,12 @@ extern char *_CG_str_from_float(double d);
 extern double _CG_str_to_float64(char *s);
 extern int64 _CG_str_to_int64(char *s);
 extern int64 _CG_str_to_int64_base(char *s, int base);
+/* issues/176: whole-string validation for int() / float() of a str. */
+extern int64 _CG_str_int_ok(char *s, int64 base);
+extern int64 _CG_str_int_value(char *s, int64 base);
+extern int64 _CG_str_float_ok(char *s);
+extern double _CG_str_float_value(char *s);
+extern int64 _CG_float_to_int64(double x);
 extern char *_CG_group_digits(const char *core, char sep);
 extern char *_CG_pad_align(const char *core, int width, char align, char fill, int sign_len);
 extern void  _CG_parse_format_spec(const char *spec, _CG_FormatSpec *out);

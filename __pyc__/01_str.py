@@ -35,9 +35,19 @@ class str:
     for c in self:
       r.append(c)
     return r
-  # int(s, base) (python_ifa_build_if1.cc lowers it to this).
+  # int(s, base) (python_ifa_build_if1.cc lowers it to this), and int(s).
+  # issues/176: the WHOLE string must be a literal, or ValueError, as
+  # CPython; strtoll used to read a prefix and return 0 for none.
   def __pyc_int_base__(self, base):
-    return __pyc_c_call__(int, "_CG_str_to_int64_base", str, self, int, base)
+    if not __pyc_c_call__(int, "_CG_str_int_ok", str, self, int, base):
+      raise ValueError("invalid literal for int() with base " + str(base) + ": " + self.__repr__())
+    return __pyc_c_call__(int, "_CG_str_int_value", str, self, int, base)
+  def __pyc_int__(self):
+    return self.__pyc_int_base__(10)
+  def __pyc_float__(self):
+    if not __pyc_c_call__(int, "_CG_str_float_ok", str, self):
+      raise ValueError("could not convert string to float: " + self.__repr__())
+    return __pyc_c_call__(float, "_CG_str_float_value", str, self)
   def __pyc_ord__(self):
     return __pyc_c_call__(int, "_CG_ord", str, self)
   def __pyc_tobytes__(self):

@@ -108,7 +108,7 @@ description.
 - No new `has no type` warnings anywhere: `set_from_iterable` and
   `list_index_type_mismatch_salvage` stay clean, and `loop` stays at 0.
 - `minmax_3arg.py.check` needs re-blessing whenever `__pyc__` line
-  numbers shift ([issues/111](../111-checks-embed-builtin-library-line-numbers.md)).
+  numbers shift ([issues/111](111-checks-embed-builtin-library-line-numbers.md)).
 
 ## How shedskin handles it — and it renames this issue's blocker
 

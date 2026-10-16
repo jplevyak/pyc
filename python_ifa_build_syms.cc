@@ -3262,7 +3262,16 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     as.add(rhs);
     body = 0;
     Sym *t = new_sym(ast);
-    if1_send(if1, &body, 4, 1, sym_primitive, sym_coerce, cls, rhs, t)->ast = ast;
+    // issues/176: `int(x)` / `float(x)` (and `map(int, ...)`, which reaches
+    // the same function) dispatch on the ARGUMENT, `x.__pyc_int__()` /
+    // `x.__pyc_float__()`, so str and bytes can validate the whole string
+    // and raise ValueError (__pyc__/01_str.py). `object`'s defaults are the
+    // coerce primitive this used to emit, so every other type converts
+    // exactly as before. Other numeric kinds keep the bare primitive.
+    if (cls->num_kind == IF1_NUM_KIND_INT || cls->num_kind == IF1_NUM_KIND_FLOAT)
+      call_method(&body, ast, rhs, if1_make_symbol(if1, cls->num_kind == IF1_NUM_KIND_INT ? "__pyc_int__" : "__pyc_float__"), t, 0);
+    else
+      if1_send(if1, &body, 4, 1, sym_primitive, sym_coerce, cls, rhs, t)->ast = ast;
     if1_move(if1, &body, t, fn->ret);
     if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
     if1_closure(if1, fn, body, as.n, as.v);

@@ -1,5 +1,11 @@
 # 111 — COMPILE-OUT checks embed `__pyc__.py` line numbers
 
+> **CLOSED 2026-10-15.** `test_pyc.py`'s `diff_files` compares
+> `__pyc__.py:<N>` as `__pyc__.py:N`, so a builtin-library edit can no
+> longer break a check; a user program's own line numbers stay exact.
+> Verified: with a line inserted at the top of `__pyc__/00_runtime.py` the
+> whole suite still passes (470/0).
+
 **Status:** open, low priority. Re-checked 2026-10-14: NO `.check` embeds a `__pyc__.py:<N>` line any more (the last, `tests/empty_list_compare_via_dict.py.check`, went when that test started passing), but nothing prevents a new one, and every builtin-library edit would then pay the tax again.
 **Area:** test harness
 

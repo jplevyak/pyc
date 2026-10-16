@@ -46,10 +46,9 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
 | [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
 | [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |
-| [176](176-int-and-float-of-an-invalid-string-do-not-raise.md) | `int("q")` is `0`, `int("3.5")` is `3`, `float("x")` is `0.0`: C `strtol`/`strtod` semantics, no `ValueError`. |
 | [177](177-integer-literals-past-int64-were-accepted-silently.md) | `0xFFFFFFFFFFFFFFFF` was silently `-1` and `99999999999999999999` silently INT64_MAX, even under `--strict`; now warned, or refused. othello2's 64-bit masks. |
 | [041](041-stdlib-shim-stubs-silently-wrong.md) | `hashlib` is a stub returning `""`. Shims must be real or raise. |
-| [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` returns a list in every mode. The fix is built (`PYC_MAKESEQ`) and held on a copy-of-copy deepcopy blocker; re-test after the ifa deepcopy fixes. |
+| [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` is a real tuple since 2026-09-28. Residuals: `t[i] = x` mutates (blocked on 175's item-store check), and `zip`/`map`/`filter`/`reversed` are eager lists. |
 
 ### Typing and representation
 
@@ -57,14 +56,20 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | --- | --- |
 | [172](172-generator-send-channel-and-stopiteration-value.md) | a generator's `send` value travels as `int64` (gated by `PYC_YIELD_INT_SEND`; refused under `--strict`), and `StopIteration.value` reads the global exception slot. |
 | [048](048-none-int-field-pair-runtime-abort.md) | genuine scalar unions (`{None, int}`, `{None, float}`, `{int, float}` elements): strict refuses; permissive gets a flagged sentinel or widening. |
-| [125](125-in-has-no-iterable-fallback.md) | `x in y` has no iterable fallback; `object.__contains__` should be CPython's scan. |
 
 ### Diagnostics, crashes, performance, harness
 
 | issue | what |
 | --- | --- |
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | local classes are closure-converted (2026-10-14); residual: a captured value of a different TYPE per call is refused (one global prototype per class statement). |
-| [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
+
+### Closed on 2026-10-15
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [176](closed/176-int-and-float-of-an-invalid-string-do-not-raise.md) | `int()`/`float()` of a string validate the whole string and raise CPython's `ValueError` | — |
+| [125](closed/125-in-has-no-iterable-fallback.md) | `object.__contains__` is CPython's iterable fallback | — |
+| [111](closed/111-checks-embed-builtin-library-line-numbers.md) | the harness compares builtin-module line numbers as `N` | — |
 
 ### Closed on 2026-10-03
 

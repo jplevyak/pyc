@@ -104,8 +104,17 @@ class bytes:
       r.append(v)
     return r
   # int(b, base): CPython accepts bytes, and the buffer layout is str's.
+  # issues/176: validated as str's is, with CPython's bytes repr in the error.
   def __pyc_int_base__(self, base):
-    return __pyc_c_call__(int, "_CG_str_to_int64_base", bytes, self, int, base)
+    if not __pyc_c_call__(int, "_CG_str_int_ok", bytes, self, int, base):
+      raise ValueError("invalid literal for int() with base " + str(base) + ": " + self.__repr__())
+    return __pyc_c_call__(int, "_CG_str_int_value", bytes, self, int, base)
+  def __pyc_int__(self):
+    return self.__pyc_int_base__(10)
+  def __pyc_float__(self):
+    if not __pyc_c_call__(int, "_CG_str_float_ok", bytes, self):
+      raise ValueError("could not convert string to float: " + self.__repr__())
+    return __pyc_c_call__(float, "_CG_str_float_value", bytes, self)
   def __pyc_ord__(self):
     # ord(b"A") == 65: CPython takes a length-1 bytes as well as a str.
     if len(self) != 1:

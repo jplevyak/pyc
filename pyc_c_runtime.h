@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
+#include <strings.h>
 #include <errno.h>
 #include <math.h>
 #ifdef __cplusplus
@@ -918,6 +919,141 @@ inline char *_CG_str_from_float(double d) {
 inline double _CG_str_to_float64(char *s) { return strtod(s, 0); }
 inline int64 _CG_str_to_int64(char *s) { return (int64)strtoll(s, 0, 10); }
 inline int64 _CG_str_to_int64_base(char *s, int base) { return (int64)strtoll(s, 0, base); }
+// int(x) for a float x (__pyc__/02_numeric.py, issues/176): truncation.
+inline int64 _CG_float_to_int64(double x) { return (int64)x; }
+
+// issues/176: CPython's int()/float() of a string accept the WHOLE string
+// or raise ValueError; strtoll/strtod parse a prefix and return 0 for none.
+// `int(s)` and `float(s)` reach `str.__pyc_int__` / `__pyc_float__`
+// (__pyc__/01_str.py), which ask these for validity and raise there --
+// the runtime has no exception model of its own. A string is a
+// length-carrying char* that may hold NULs (ifa/070), so the length is
+// read, never strlen. Surrounding whitespace is allowed, and `_` only
+// between two digits, as in CPython's literal grammar.
+static inline int _CG_digit_value(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+  return 99;
+}
+static inline int _CG_is_space(char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+// The digits of an int literal in `base` (0 = from the prefix), copied
+// into `out` without sign, prefix or underscores. Returns the effective
+// base, or 0 when the string is not a valid literal.
+static inline int _CG_int_literal_digits(char *s, int64 base, char *out, int *neg) {
+  size_t n = _CG_string_len(s), i = 0, j = 0, k = 0;
+  if (base != 0 && (base < 2 || base > 36)) return 0;
+  while (i < n && _CG_is_space(s[i])) i++;
+  while (n > i && _CG_is_space(s[n - 1])) n--;
+  *neg = 0;
+  if (i < n && (s[i] == '+' || s[i] == '-')) *neg = s[i++] == '-';
+  int b = (int)base;
+  if (i + 1 < n && s[i] == '0') {
+    char p = s[i + 1] | 0x20;
+    int pb = p == 'x' ? 16 : p == 'o' ? 8 : p == 'b' ? 2 : 0;
+    if (pb && (b == 0 || b == pb)) {
+      b = pb;
+      i += 2;
+      if (i < n && s[i] == '_') i++;  // `0x_1f` is valid
+    }
+  }
+  if (b == 0) {
+    // Base 0 without a prefix is decimal, and a leading zero is legal only
+    // if every digit is zero (CPython: int("010", 0) raises).
+    b = 10;
+    if (i < n && s[i] == '0')
+      for (k = i; k < n; k++)
+        if (s[k] != '0' && s[k] != '_') return 0;
+  }
+  int prev_digit = 0;
+  for (; i < n; i++) {
+    if (s[i] == '_') {
+      if (!prev_digit || i + 1 >= n || _CG_digit_value(s[i + 1]) >= b) return 0;
+      prev_digit = 0;
+      continue;
+    }
+    if (_CG_digit_value(s[i]) >= b) return 0;
+    out[j++] = s[i];
+    prev_digit = 1;
+  }
+  out[j] = 0;
+  return j ? b : 0;
+}
+inline int64 _CG_str_int_ok(char *s, int64 base) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 1);
+  int neg;
+  int b = _CG_int_literal_digits(s, base, buf, &neg);
+  free(buf);
+  return b ? 1 : 0;
+}
+inline int64 _CG_str_int_value(char *s, int64 base) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 1);
+  int neg;
+  int b = _CG_int_literal_digits(s, base, buf, &neg);
+  uint64_t v = b ? strtoull(buf, 0, b) : 0;
+  free(buf);
+  return neg ? (int64)(0 - v) : (int64)v;
+}
+// A float literal: digits with `_` between digits, at most one `.`, an
+// optional exponent, or inf / infinity / nan in any case. Copies the
+// accepted text without underscores into `out` for strtod. (strtod also
+// takes hex floats, "0x1p3", which CPython's float() refuses.)
+static inline int _CG_float_literal_text(char *s, char *out) {
+  size_t n = _CG_string_len(s), i = 0, j = 0;
+  while (i < n && _CG_is_space(s[i])) i++;
+  while (n > i && _CG_is_space(s[n - 1])) n--;
+  if (i < n && (s[i] == '+' || s[i] == '-')) out[j++] = s[i++];
+  size_t rest = n - i;
+  static const char *words[] = {"inf", "infinity", "nan", 0};
+  for (int w = 0; words[w]; w++)
+    if (rest == strlen(words[w]) && !strncasecmp(s + i, words[w], rest)) {
+      memcpy(out + j, s + i, rest);
+      out[j + rest] = 0;
+      return 1;
+    }
+  int digits = 0, dot = 0, prev_digit = 0;
+  for (; i < n; i++) {
+    char c = s[i];
+    if (c >= '0' && c <= '9') { out[j++] = c; digits++; prev_digit = 1; continue; }
+    if (c == '_') {
+      if (!prev_digit || i + 1 >= n || s[i + 1] < '0' || s[i + 1] > '9') return 0;
+      prev_digit = 0;
+      continue;
+    }
+    if (c == '.' && !dot) { out[j++] = c; dot = 1; prev_digit = 0; continue; }
+    if ((c == 'e' || c == 'E') && digits) {
+      out[j++] = 'e';
+      i++;
+      if (i < n && (s[i] == '+' || s[i] == '-')) out[j++] = s[i++];
+      int edigits = 0;
+      prev_digit = 0;
+      for (; i < n; i++) {
+        if (s[i] >= '0' && s[i] <= '9') { out[j++] = s[i]; edigits++; prev_digit = 1; continue; }
+        if (s[i] == '_' && prev_digit && i + 1 < n && s[i + 1] >= '0' && s[i + 1] <= '9') { prev_digit = 0; continue; }
+        return 0;
+      }
+      if (!edigits) return 0;
+      break;
+    }
+    return 0;
+  }
+  out[j] = 0;
+  return digits > 0;
+}
+inline int64 _CG_str_float_ok(char *s) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 2);
+  int ok = _CG_float_literal_text(s, buf);
+  free(buf);
+  return ok ? 1 : 0;
+}
+inline double _CG_str_float_value(char *s) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 2);
+  double v = _CG_float_literal_text(s, buf) ? strtod(buf, 0) : 0.0;
+  free(buf);
+  return v;
+}
 // int.bit_count(): the number of one bits in abs(x), as CPython defines it
 // (othello2 counts the pieces on its bitboards with it).
 inline int64 _CG_int_bit_count(int64 x) {

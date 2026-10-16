@@ -120,6 +120,24 @@ class object:
     return self.__repr__()
   def __repr__(self):
     return "<object>"
+  # issues/125: `x in y` lowers to `y.__contains__(x)`. CPython falls back
+  # to the iterable protocol when y defines no __contains__, and this is
+  # that fallback, verbatim: iter(y), compare each item, consuming what
+  # iter() returns (as CPython does). Any class with its own __contains__
+  # overrides it; __pyc_iterator__, __pyc_generator__ and __dict_iter__
+  # keep their specialized loops.
+  def __contains__(self, item):
+    for x in self:
+      if x == item:
+        return True
+    return False
+  # issues/176: int(x) and float(x) dispatch on the argument (the frontend's
+  # synthesized `__coerce__`), so str and bytes can parse and RAISE. Numbers
+  # and bool define their own; any other object takes CPython's protocol.
+  def __pyc_int__(self):
+    return self.__int__()
+  def __pyc_float__(self):
+    return self.__float__()
   def __pyc_tobytes__(self):
     # bytes(x) (python_ifa_build_if1.cc) dispatches to __pyc_tobytes__,
     # not CPython's real __bytes__ -- bytes/str/list define their own
@@ -332,6 +350,15 @@ class __pyc_None_type__:
     return True
 
 class bool:
+  # issues/176: int(True) == 1, float(False) == 0.0.
+  def __pyc_int__(self):
+    if self:
+      return 1
+    return 0
+  def __pyc_float__(self):
+    if self:
+      return 1.0
+    return 0.0
   # bytes %-formatting reads a bool as the int it is (`b'%d' % True`).
   def __pyc_bytes_fmtarg__(self):
     if self:
