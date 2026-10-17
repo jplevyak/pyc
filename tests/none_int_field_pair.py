@@ -1,3 +1,6 @@
+# PASSES since ifa/191 (2026-10-17): the None is never read before the
+# overwrite, so it is not in the field's type. The text below describes
+# the failure this test was written for.
 # issues/048: two None-initialised instance fields that later hold ints.
 # pyc compiles this with ZERO diagnostics and the binary aborts with
 # "matching function not found"; CPython prints "1 2".

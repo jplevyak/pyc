@@ -1,1 +1,0 @@
-ifa/191 -- a None initial value that is always overwritten before any read stays in the field's (or element's) type, so the {None, int} use is refused (issues/183). CPython's output is the check file; this flips to PASS when the dominated initial store is killed.

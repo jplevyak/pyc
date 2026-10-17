@@ -1,3 +1,6 @@
+# PASSES since ifa/191 (2026-10-17): the None is never read before the
+# overwrite, so it is not in the field's type. The text below describes
+# the failure this test was written for.
 # issues/052 (LLVM) and issues/048 (C): a None-initialised field later
 # holding the int ZERO. The union {nil, int64} has no scalar
 # representation that can tell None from 0, and the two backends handle

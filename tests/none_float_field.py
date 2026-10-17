@@ -1,3 +1,6 @@
+# PASSES since ifa/191 (2026-10-17): the None is never read before the
+# overwrite, so it is not in the field's type. The text below describes
+# the failure this test was written for.
 # issues/048 family, third manifestation: a None-initialised field that
 # later holds a FLOAT. The field's C type is _CG_void (a pointer), and
 # unlike an int -- which casts to a pointer silently, compiles, and then

@@ -20,8 +20,8 @@ inference bug (AGENTS.md), filed under ifa/.
 | --- | --- | --- | --- | --- |
 | `{None, T*}` | `tests/nil_union_prealloc.py` | works: nullable pointer; a `None` that does arrive raises CPython's `TypeError` (`tests/none_receiver_raises.py`) | yes | ✓ (ifa/165, 2026-09-28) |
 | `{int, float}` element | `tests/list_mul_heterogeneous_element.py` (`n*[0]`, then `x[i] += 1.5`) | permissive: widened, prints `[1.5, 0.0, 0.0]`; CPython `[1.5, 0, 0]` | no | accommodation (ifa/145 gating ✓). Needs the 171 warning. Strict refuses ✓ |
-| `{None, int}` fields | `tests/none_int_field_pair.py`, `none_int_field_zero.py` | **refused at compile time** in every mode (2026-09-28): a method dispatched on a `{None, scalar}` receiver is a BOXING violation in FA, `expression has mixed basic types: (__pyc_None_type__ int64)`. An OPERATOR on one (`x + 5`, `x == 0`, `x is None`) is refused the same way since [183](closed/183-none-or-int-in-arithmetic-reads-none-as-zero.md), 2026-10-16; it used to compile and read None as 0 | no: every int64 bit pattern is a valid int | ✓ strict. Permissive: see below |
-| `{None, float}` field | `tests/none_float_field.py` | refused at the store/load guard with a named warning | no | ✓ strict; permissive: see below |
+| `{None, int}` fields | `tests/field_none_read_before_overwrite.py`, `none_or_int_operator_raises.py` (a `None` that IS read; `none_int_field_pair.py` and `none_int_field_zero.py` never read theirs and compile and match CPython since [ifa/191](../ifa/issues/191-FA-an-always-overwritten-initial-value-stays-in-the-field-type.md)) | **refused at compile time** in every mode (2026-09-28): a method dispatched on a `{None, scalar}` receiver is a BOXING violation in FA, `expression has mixed basic types: (__pyc_None_type__ int64)`. An OPERATOR on one (`x + 5`, `x == 0`, `x is None`) is refused the same way since [183](closed/183-none-or-int-in-arithmetic-reads-none-as-zero.md), 2026-10-16; it used to compile and read None as 0 | no: every int64 bit pattern is a valid int | ✓ strict. Permissive: see below |
+| `{None, float}` field | `tests/none_float_field.py` | compiles and matches CPython since ifa/191: its `None` is never read. A `{None, float}` that is read is refused like the `int` row | no | ✓ strict; permissive: see below |
 | `{bool, None}` return | `tests/bool_or_none_fallthrough.py` | refused (width) | **yes**: bool has spare codes | a representation, not an accommodation: [ifa/118](../ifa/issues/118-union-field-representation-and-polymorphic-field-offset.md) |
 | `{int, str}` branch merge | `tests/branch_merged_scalar_union.py` | refused | no | ✓ refused in every mode; no reasonable accommodation |
 
@@ -48,13 +48,18 @@ inference bug (AGENTS.md), filed under ifa/.
    precise fix is to keep it out of the type:
    [ifa/191](../ifa/issues/191-FA-an-always-overwritten-initial-value-stays-in-the-field-type.md)
    (filed 2026-10-17). This item and item 2 are for what 191 cannot prove.
+   **191's direction 2 landed 2026-10-17** and fixed `none_int_field_pair`,
+   `none_int_field_zero` and `none_float_field`: each is `self.a = None` in
+   `__init__` assigned by the caller before any read, so the `None` is not in
+   the field's type. What is left here is a `None` that IS read.
 
 ## Verification
 
 - `--strict`: every fixture in the table is refused with a diagnostic
   naming the union, except the ✓-exact rows, which pass.
-- Default: `none_int_field_pair` prints `1 2` with one warning (the
-  sentinel). `list_mul_heterogeneous_element` prints `[1.5, 0.0, 0.0]`
+- Default: a `{None, int}` field whose `None` IS read (as in
+  `field_none_read_before_overwrite`) prints CPython's answer with one
+  warning (the sentinel). `list_mul_heterogeneous_element` prints `[1.5, 0.0, 0.0]`
   with one warning (the widening). Keep the `.known_issue` sidecars:
   both still differ from CPython, and the check files hold CPython's
   answer.
