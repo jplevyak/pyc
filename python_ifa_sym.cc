@@ -81,7 +81,6 @@ void build_builtin_symbols() {
   init_default_builtin_types();
 
   new_builtin_global_variable(sym___main__, "__main__");
-  new_builtin_global_variable(sym_declare, "pyc__declare__");
 
   // override default sizes
   sym_int->alias = sym_int64;

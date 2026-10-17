@@ -40,7 +40,7 @@ python_ifa_main.cc           ← ast_to_if1 entry, primitive registration, build
 defs.h                       ← top-level includes
 pyc_symbols.h                ← S(name)/P(name)/B(name) macro list of pyc-specific syms
 pyc_c_runtime.h              ← runtime C helpers emitted alongside generated code
-pyc_compat.py                ← runnable-under-CPython shim for __pyc_declare__ etc.
+pyc_compat.py                ← runnable-under-CPython shim for @pyc_struct, @pyc_compare
 __pyc__/                     ← builtin Python module (str, int, list, ...) as 7 ordered files
 __pyc__.py                   ← legacy single-file builtin (fallback if __pyc__/ absent)
 ```
@@ -648,8 +648,7 @@ pyc exposes a small set of compiler directives. The Python-source forms
 
 | Source form | Effect |
 |---|---|
-| `from pyc_compat import __pyc_declare__` | No-op import (skipped by `build_import_syms`). |
-| `field = __pyc_declare__` (class attribute) | Declares the field and stores nothing: the marker Sym `sym_declare` has `is_fake = true`, so codegen emits no store. Compatibility only: demand splitting gives a polymorphic field one layout per type without it. |
+| `from pyc_compat import ...` | No-op import (skipped by `build_import_syms`). |
 | `__pyc_c_call__(ret_type, "fn_name", arg1, arg2, ...)` | Emits a raw C call. Transfer function `c_call_transfer_function` types the result. |
 | `__pyc_c_code__(...)` / `__pyc_insert_c_code__(...)` / `__pyc_insert_c_header__(...)` / `__pyc_include_c_header__(...)` | Inject raw C code/headers. Accumulated in `ctx.c_code` and emitted via `c_codegen_pre_file`. |
 | `__pyc_symbol__(name)` | Construct a user-level symbol Sym. |

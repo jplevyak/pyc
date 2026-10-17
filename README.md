@@ -60,9 +60,6 @@ them:
 
 A field that holds different types in different objects needs no declaration: a class whose
 `__init__` stores an `int` in one instance and a `str` in another gets one layout per type.
-The old `value = __pyc_declare__` class attribute is still accepted, and
-[`pyc_compat.py`](pyc_compat.py) defines it as `None` so such a program runs under `python3`,
-but it changes nothing in the compiled program.
 
 ## Requirements
 

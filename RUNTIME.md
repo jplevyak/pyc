@@ -34,7 +34,7 @@ programs can reference. The shim `pyc_compat.py` lets user programs
 ```
 pyc/
 ├── pyc_c_runtime.h          (413 lines) Self-contained C header, all macros / inlines / typedefs.
-├── pyc_compat.py            One line: __pyc_declare__ = None.
+├── pyc_compat.py            CPython no-op/equivalent shims: @pyc_struct, @pyc_compare.
 ├── pyc_symbols.h            Macro list S/P/B of frontend-known names.
 ├── __pyc__/                 Python builtin module (loaded as one concatenated module).
 │   ├── 00_runtime.py        __pyc_any_type__, object, __pyc_None_type__, bool, __base_iter__
@@ -403,36 +403,30 @@ LLVM.
 
 ## 5. The compat shim (`pyc_compat.py`)
 
+`pyc_compat.py` gives CPython a meaning for pyc-only names, so a program
+that uses them still runs under `python3`. It holds two decorators:
+`pyc_struct` (identity under CPython; under pyc it opts a class into
+value-type record codegen) and `pyc_compare` (field-wise `__eq__` and
+lexicographic `__lt__`, matching the comparison family pyc derives). A
+program writes:
+
 ```python
-__pyc_declare__ = None
+from pyc_compat import pyc_struct
 ```
 
-That's the whole file. Programs that use the `__pyc_declare__`
-marker write it as a class attribute:
-
-```python
-from pyc_compat import __pyc_declare__
-
-class C:
-    value = __pyc_declare__
-```
-
-Under CPython, `__pyc_declare__` is `None`, so this sets a harmless
-class attribute. It is a compatibility form only: it declares the
-field and nothing else, and a program compiles to the same layouts
-without it, because a field holding different types in different
-objects is split per type on demand (checked 2026-10-16 on
-`tests/pyc_declare.py`). Under pyc, the `from pyc_compat import` is
-recognised by
+Under pyc, the `from pyc_compat import` is recognised by
 `build_import_syms` and *skipped* (see
 [PYTHON_FRONTEND.md](PYTHON_FRONTEND.md) §6.5) — the import doesn't
-actually load `pyc_compat.py`. Instead, `__pyc_declare__` is
-resolved to the pyc-side `sym_declare` Sym (created in
-`build_builtin_symbols`).
+actually load `pyc_compat.py`; the names resolve to pyc's own handling.
+
+(`__pyc_declare__`, a class-attribute marker for a polymorphic field,
+lived here until 2026-10-16. It changed nothing in the compiled program,
+because a field holding different types in different objects is split
+per type on demand, and was removed.)
 
 This is the standard pattern for any pyc-only feature you want
 users to access via standard Python `import` syntax:
-1. Add the name to `pyc_compat.py` as a no-op constant.
+1. Give the name a CPython meaning in `pyc_compat.py` (a no-op or an equivalent).
 2. Recognise the import in `build_import_syms` and skip.
 3. Resolve the name in `build_environment` to a frontend-side Sym.
 4. Handle the SEND specially in `build_builtin_call_pyda` or

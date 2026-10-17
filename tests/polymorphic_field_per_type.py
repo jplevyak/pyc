@@ -1,7 +1,10 @@
-from pyc_compat import __pyc_declare__
+# A field holding a different type in each object needs no declaration:
+# C gets one layout per type stored in `value` (int, str, float, and the
+# C(C(...)) chain). This was tests/pyc_declare.py, whose
+# `value = __pyc_declare__` class attribute changed nothing and was removed
+# with the marker on 2026-10-16; closed issues cite it by its old name.
 
 class C:
-    value = __pyc_declare__
     def __init__(self, val):
         self.value = val
 

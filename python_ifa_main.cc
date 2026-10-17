@@ -36,8 +36,6 @@ static void build_environment(PycModule *mod, PycCompiler &ctx) {
   scope_sym(ctx, sym_uint8, "__pyc_char__");
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
-  scope_sym(ctx, sym_declare, "__pyc_declare__");
-  sym_declare->is_fake = true;
 #define P(_x) scope_sym(ctx, sym_##_x);
 #include "pyc_symbols.h"
   exit_scope(ctx);

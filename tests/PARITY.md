@@ -156,7 +156,7 @@ Mostly Bucket C (unimplemented LLVM primitives / typing):
 | `list_or_concat.py` | C | list primitive |
 | `list_reassign.py` | C | list primitive |
 | `list_slicing.py` | C | slice primitive |
-| `pyc_declare.py` | C | declare primitive |
+| `polymorphic_field_per_type.py` | C | one layout per field type |
 | `string_len.py` | C | string primitive |
 | `string_repr.py` | C | string primitive |
 

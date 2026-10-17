@@ -132,7 +132,7 @@ references. ~300-500 lines each.
   - `__pyc__/` directory (`00_runtime.py` … `06_bytearray.py`) — the
     builtin module; how concatenation works; ordering constraints (forward
     references).
-  - `pyc_compat.py` — the `from pyc_compat import __pyc_declare__` shim;
+  - `pyc_compat.py` — the `from pyc_compat import pyc_struct` shim;
     how to add a new directive.
   - `pyc_symbols.h` — the `S(...)` macro and what each builtin symbol means.
   - `defs.h` — common includes.
