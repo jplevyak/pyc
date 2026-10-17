@@ -140,7 +140,8 @@ the source: `touch tests/<test>.py.ignore`.
   a failure (not a skip).
 - `pyc_compat.py` is auto-copied into `tests/build/` so user programs
   that `from pyc_compat import __pyc_declare__` continue to import OK
-  under CPython.
+  under CPython. (The marker is accepted for compatibility and changes
+  nothing in the compiled program.)
 - The `empty` file is a 0-byte fixture used as the diff target for
   tests with no `.check` file. Don't delete it.
 - See [../PYTHON_FRONTEND.md](../PYTHON_FRONTEND.md) for the

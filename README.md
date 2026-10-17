@@ -51,7 +51,6 @@ them:
 
 | Name | Purpose |
 |---|---|
-| `__pyc_declare__` | Declare a class field as polymorphic (union type) |
 | `__pyc_c_call__(ret, fn, ...)` | Inline a raw C function call |
 | `__pyc_primitive__(sym, ...)` | Invoke a compiler primitive |
 | `__pyc_char__` | The `uint8` / C `char` type |
@@ -59,8 +58,11 @@ them:
 | `__pyc_insert_c_header__(h)` | Include a C header in the generated code |
 | `@vector("s")` | Annotate a class as a fixed-size value-type vector |
 
-[`pyc_compat.py`](pyc_compat.py) defines these names for CPython, so a program that uses
-`from pyc_compat import __pyc_declare__` still runs under `python3`.
+A field that holds different types in different objects needs no declaration: a class whose
+`__init__` stores an `int` in one instance and a `str` in another gets one layout per type.
+The old `value = __pyc_declare__` class attribute is still accepted, and
+[`pyc_compat.py`](pyc_compat.py) defines it as `None` so such a program runs under `python3`,
+but it changes nothing in the compiled program.
 
 ## Requirements
 
@@ -243,13 +245,13 @@ print(f(2))   # [1, 2]
 print(f(3))   # [1, 2, 3]
 ```
 
-### Polymorphic fields with `__pyc_declare__`
+### Polymorphic fields
+
+A field may hold a different type in each object. No declaration is needed: each type gets its
+own layout of `C`.
 
 ```python
-from pyc_compat import __pyc_declare__
-
 class C:
-    value = __pyc_declare__   # accepts int, str, float, …
     def __init__(self, val):
         self.value = val
 

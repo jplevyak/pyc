@@ -408,16 +408,22 @@ __pyc_declare__ = None
 ```
 
 That's the whole file. Programs that use the `__pyc_declare__`
-directive write:
+marker write it as a class attribute:
 
 ```python
 from pyc_compat import __pyc_declare__
-__pyc_declare__('field_name', SomeType)
+
+class C:
+    value = __pyc_declare__
 ```
 
-Under CPython, `__pyc_declare__` is `None` and the call no-ops with
-a TypeError (which the user catches or programs work around). Under
-pyc, the `from pyc_compat import` is recognised by
+Under CPython, `__pyc_declare__` is `None`, so this sets a harmless
+class attribute. It is a compatibility form only: it declares the
+field and nothing else, and a program compiles to the same layouts
+without it, because a field holding different types in different
+objects is split per type on demand (checked 2026-10-16 on
+`tests/pyc_declare.py`). Under pyc, the `from pyc_compat import` is
+recognised by
 `build_import_syms` and *skipped* (see
 [PYTHON_FRONTEND.md](PYTHON_FRONTEND.md) §6.5) — the import doesn't
 actually load `pyc_compat.py`. Instead, `__pyc_declare__` is
