@@ -44,6 +44,10 @@ inference bug (AGENTS.md), filed under ifa/.
    preallocation idiom, or an `__init__` default), prefer the edit that
    states the intent (`0`, or `0.0`, as the initial value) when it is a
    CPython no-op on every path that runs (PYC_CHANGES.md).
+   When the placeholder is never READ, the union is not genuine and the
+   precise fix is to keep it out of the type:
+   [ifa/191](../ifa/issues/191-FA-an-always-overwritten-initial-value-stays-in-the-field-type.md)
+   (filed 2026-10-17). This item and item 2 are for what 191 cannot prove.
 
 ## Verification
 
