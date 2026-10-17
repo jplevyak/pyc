@@ -106,9 +106,10 @@ jobs:
         # the production path; this step is the primary gate.
         run: make test
 
-      - name: V-language LLVM backend smoke (make test_llvm)
-        # Builds and runs a small V program through the LLVM
-        # backend end-to-end. Issue 012 (missing -lgc) was fixed
+      - name: V-language smoke, both backends (make test_llvm)
+        # Builds and runs a small V program through the LLVM and C
+        # backends end-to-end, and diffs each one's output against
+        # ifa/test_llvm.v.expected. Issue 012 (missing -lgc) was fixed
         # in the same commit that wired this step up; if this step
         # starts failing again, that's the first place to look.
         run: make -C ifa test_llvm

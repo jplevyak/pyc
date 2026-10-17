@@ -104,6 +104,8 @@ ifa/log/
 ifa/test_llvm
 ifa/test_llvm.ll
 ifa/test_llvm.o
+ifa/test_llvm.out
+ifa/test_llvm.v.c
 ifa/make_cast_code
 ifa/if1/make_cast_code
 ifa/make_prims
