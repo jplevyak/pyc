@@ -89,7 +89,7 @@ transient types should be revisited at convergence, not protected
 performance lever for the extra passes, not a precondition. The separation
 mechanisms that made start-merged viable have landed, all default-on:
 
-- arity in CS identity ([132](ifa/issues/132-arity-is-representation-not-provenance.md));
+- arity in CS identity ([132](ifa/issues/closed/132-arity-is-representation-not-provenance.md));
 - route 4 (`CS_DEF_PARTITION`), with a content channel for every CS shape;
 - the backtrack to the merged CS (closed/152);
 - the ES split as a means (`PYC_ESBLOCK=1`).
@@ -401,7 +401,7 @@ types ARE, or where the value CAME FROM?** The first is identity; the
 second is not. A third category exists and is legitimate — what the target
 language can REPRESENT (arity, member width, `None` in a union) — and that
 belongs behind `IFACallbacks`, not in the key and not in provenance. See
-[132](ifa/issues/132-arity-is-representation-not-provenance.md), whose
+[132](ifa/issues/closed/132-arity-is-representation-not-provenance.md), whose
 title is that distinction.
 
 **Corollary: a merge you cannot undo is not a reason to record provenance.**
