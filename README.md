@@ -129,15 +129,35 @@ executable named after the input with its extension stripped (`hello.py` → `he
 names one. The intermediate C is kept as `<file.py>.c`.
 
 `-D` names the directory holding pyc's builtin library (`__pyc__/`, `pyc_lib/` and the runtime).
-It defaults to the current directory, or to `$PYC_SYSTEM_DIRECTORY` when that is set, so pass
-`-D` whenever you compile from somewhere other than the pyc checkout.
+It defaults to `$PYC_SYSTEM_DIRECTORY` when that is set, else the current directory, and when the
+current directory has no `__pyc__/`, the directory of the `pyc` executable itself (through any
+symlink). So a `pyc` symlinked onto your `PATH` from the checkout works from anywhere.
+
+### Running a script directly
+
+```python
+#!/usr/bin/env -S pyc -x
+import sys
+print("hello", sys.argv[1:])
+```
+
+With that first line and the executable bit set, `./hello.py a b` compiles the script once and
+runs it, passing it `a b`. `-x` keeps the executable in `$XDG_CACHE_HOME/pyc` (default
+`~/.cache/pyc`), in a directory named after the script and a hash of its content, its path, the
+`pyc` binary and the options. The directory also holds a manifest of every source file the compile
+read (the script, its imports, `pyc_lib` modules and the builtin library) with their content
+hashes. A later run whose sources are all unchanged starts the cached executable directly, in a
+few milliseconds; if any changed, it recompiles. Nothing is written beside the script, its exit
+status is the program's, and `sys.argv[0]` is the script's path, as under CPython. Other options
+go before `-x`'s script, as in `#!/usr/bin/env -S pyc -b -x`.
 
 ### Options
 
 | Flag | Description |
 |---|---|
-| `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `.`, or `$PYC_SYSTEM_DIRECTORY`) |
+| `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `$PYC_SYSTEM_DIRECTORY`, else `.`, else the `pyc` executable's directory) |
 | `-o <path>`, `--output <path>` | Output binary path (default: input filename, extension stripped) |
+| `-x`, `--exec` | Compile (cached in `~/.cache/pyc`) and run; arguments after the script go to the program. For `#!` lines; see above |
 | `--strict` | CPython semantics or a compile error: every type violation is fatal, no accommodations |
 | `--permissive` | The default: named accommodations are allowed, each with a warning |
 | `--safe` | Permissive, and also zero-initialize locals that may be read before assignment |

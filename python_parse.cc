@@ -113,6 +113,10 @@ static PyDAST *dparse_buf_to_ast_impl(const char *label, char *buf, int len) {
   return ast;
 }
 
+// Every source file the compile reads, for `pyc -x`'s cache manifest: the
+// program, its imports, pyc_lib modules and the builtin library.
+Vec<cchar *> pyc_source_files;
+
 PyDAST *dparse_python_to_ast(const char *filename) {
   char *buf = 0;
   int len = 0;
@@ -121,6 +125,7 @@ PyDAST *dparse_python_to_ast(const char *filename) {
     fprintf(stderr, "dparse: unable to read '%s'\n", filename);
     return nullptr;
   }
+  pyc_source_files.add(dupstr(filename));
   return dparse_buf_to_ast_impl(filename, buf, len);
 }
 
@@ -155,6 +160,7 @@ PyDAST *dparse_builtin_dir(const char *dirname) {
     char *fbuf = nullptr;
     int flen = 0;
     if (buf_read(path, &fbuf, &flen) > 0) {
+      pyc_source_files.add(dupstr(path));  // pyc -x manifest
       flen = normalize_newlines(fbuf, fbuf, flen);  // issues/124
       file_bufs.add(fbuf);
       file_lens.add(flen);

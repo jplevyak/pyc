@@ -35,6 +35,8 @@ int dparse_python_file(const char *filename);
 
 // Parse a Python source file and return the root PyDAST*, or null on error.
 PyDAST *dparse_python_to_ast(const char *filename);
+// Every source file parsed so far (pyc -x's cache manifest); may repeat.
+extern Vec<cchar *> pyc_source_files;
 
 // Parse all *.py files from a directory (sorted order) as one concatenated module.
 PyDAST *dparse_builtin_dir(const char *dirname);
