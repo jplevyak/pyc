@@ -162,9 +162,11 @@ The build is a prerequisite, so a bare `make` first is optional (though
 (`PYC_FLAGS=-b ./test_pyc.py`), while `make -C ifa test_llvm` is the
 *V-language* smoke — different tests, same name, two Makefiles. The root
 alias for the second is `make test-ifa-llvm`. And `make test` does not
-re-run the pyc LLVM e2e separately, because `test-e2e` already runs it;
-CI splits it into its own step only to apply an `LLVM_BASELINE_PASS`
-floor instead of a hard pass/fail.
+re-run the pyc LLVM e2e separately, because `test-e2e` already runs it,
+as a hard gate on both backends. (CI used to run it again in its own step
+with an `LLVM_BASELINE_PASS` floor of 37; removed 2026-10-18, since the
+suite passes in full on LLVM and `make test` already fails on any LLVM
+failure.)
 
 **`make test` is the one that gets skipped, and it is the one that
 matters.** It chains its gates and `set -e`s out of the first failure,
@@ -180,9 +182,7 @@ rather than failing — easy to read as "fine". Two habits follow:
   `make test`'s exit code, which is the point of running it.
 
 Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed, 0
-known; `test_pyc.py` 0 failed on both backends, the LLVM one
-well above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml
-when a change lifts the count).
+known; `test_pyc.py` 0 failed on both backends.
 
 **Touched a header? `make clean` first, before you trust any of it.**
 Header dependencies are incomplete, so `make` alone happily links stale

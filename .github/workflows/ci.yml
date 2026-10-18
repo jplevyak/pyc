@@ -4,8 +4,11 @@
 # - Build pyc with USE_LLVM=1 so both backends are compiled in.
 # - Standard test suite (make test → ./ifa --test + IR fixtures + ./test_pyc.py).
 # - `make test_llvm` — the V-language LLVM backend smoke test.
-# - LLVM-backend pyc e2e via the PYC_FLAGS hook: floors the pass
-#   count at the current baseline (see step comment).
+#   test_pyc.py runs on BOTH backends there (test-e2e), as a hard gate.
+#   (A separate LLVM e2e step with an LLVM_BASELINE_PASS floor of 37
+#   was removed 2026-10-18: the suite passes 488 on LLVM, and make test
+#   already fails on any LLVM failure, so the floor caught nothing and
+#   cost a second full run.)
 # - DParser grammar validation.
 
 name: ci
@@ -117,32 +120,6 @@ jobs:
         # in the same commit that wired this step up; if this step
         # starts failing again, that's the first place to look.
         run: make -C ifa test_llvm
-
-      - name: LLVM-backend pyc e2e (PYC_FLAGS=-b ./test_pyc.py)
-        # PYC_FLAGS=-b prepends `-b` (the LLVM backend selector) to
-        # every pyc invocation inside test_pyc.py. The LLVM backend
-        # doesn't yet handle method dispatch through closures
-        # (phase 3.5 of ifa/codegen/CODEGEN_PLAN.md), so most pyc
-        # tests fail to compile. Rather than gate CI on parity that
-        # isn't achievable yet, we floor the pass count at the
-        # current baseline — CI fails if any *previously passing*
-        # LLVM test regresses.
-        #
-        # Update LLVM_BASELINE_PASS when a PR brings the count up.
-        run: |
-          LLVM_BASELINE_PASS=37
-          set -o pipefail
-          PYC_FLAGS=-b ./test_pyc.py 2>&1 | tee /tmp/llvm_e2e.log | tail -20 || true
-          passed=$(grep -E '^  passed' /tmp/llvm_e2e.log | awk '{print $2}')
-          echo "LLVM-backend pyc e2e: passed=${passed} (baseline=${LLVM_BASELINE_PASS})"
-          if [ -z "$passed" ]; then
-            echo "ERROR: could not parse pass count from test_pyc output" >&2
-            exit 1
-          fi
-          if [ "$passed" -lt "$LLVM_BASELINE_PASS" ]; then
-            echo "ERROR: LLVM pass count dropped below baseline (${passed} < ${LLVM_BASELINE_PASS})" >&2
-            exit 1
-          fi
 
       - name: DParser grammar validation (make test_dparse)
         run: make test_dparse

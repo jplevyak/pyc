@@ -3,8 +3,13 @@
 Snapshot of how the pyc-suite tests in this directory behave
 under each backend. This is the live audit referenced by
 `ifa/codegen/CG_IR_PLAN.md` §5.6 ("Stabilize the LLVM
-pyc-suite baseline") and the source of CI's
+pyc-suite baseline") and was the source of CI's
 `LLVM_BASELINE_PASS=37` floor.
+
+**Superseded (2026-10-18).** The matrix below is a historical snapshot. The
+whole suite now passes on the LLVM backend (488 passed, 14 known, 0 failed),
+`make test` runs it on both backends as a hard gate, and the CI floor step
+was removed.
 
 This file is a measurement artifact, refreshed when the parity
 shifts. Do not hand-edit individual entries — re-run the
@@ -167,13 +172,14 @@ post-clone). It also fails to compile under LLVM, which is
 consistent with the C-side behavior (both backends hit the same
 underlying limitation; only the failure surface differs).
 
-## CI floor
+## CI floor (removed 2026-10-18)
 
-`LLVM_BASELINE_PASS=37` is grounded in this audit: 37 is the
-*reproducible* pass count, not an aspirational moving target.
-The CG_IR_PLAN Phase 3 ratchet (§8.2) treats this floor as the
-post-PR-3.0 baseline; each subsequent PR must hold or improve
-it.
+`LLVM_BASELINE_PASS=37` was grounded in this audit: 37 was the
+*reproducible* pass count when the floor was set, and the CG_IR_PLAN
+Phase 3 ratchet (§8.2) treated it as the post-PR-3.0 baseline. It was never
+raised as the backend caught up; with the full suite passing on LLVM and
+`make test` gating both backends, the separate floor step caught nothing and
+was removed.
 
 ## When to re-audit
 
