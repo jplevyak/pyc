@@ -63,12 +63,16 @@ jobs:
           # packages resolve to LLVM 18 on ubuntu-24.04, which the
           # LLVM backend's coroutine codegen isn't compatible with).
           # `llvm-20-dev` ships the headers and `libLLVM*` archives.
+          # `lld-20`: the LLVM backend links its output with the runtime
+          # as LTO bitcode (pyc_runtime_lto.o) under `-fuse-ld=lld`, so the
+          # runtime helpers inline. Without lld it falls back to the archive.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             clang-20 \
             llvm-20 \
             llvm-20-dev \
+            lld-20 \
             libgc-dev \
             libpcre3-dev \
             python3 \

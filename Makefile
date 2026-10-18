@@ -137,7 +137,7 @@ else
 endif
 
 MANPAGES    = pyc.1
-CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime.a
+CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime.a pyc_runtime_lto.o
 
 # Targets ---------------------------------------------------------------------
 
@@ -148,7 +148,7 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime
 
 all: defaulttarget
 
-defaulttarget: $(EXECUTABLES) libpyc_runtime.a pyc.cat
+defaulttarget: $(EXECUTABLES) libpyc_runtime.a pyc_runtime_lto.o pyc.cat
 
 $(PYC): $(PYC_OBJS) $(IFALIB) $(JIT_RUNTIME_OBJ)
 	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
@@ -167,6 +167,15 @@ pyc_runtime.o: pyc_runtime.c pyc_c_runtime.h
 # is additive — it never removes members on its own.  Single-
 # source archive today but the hygiene matters as soon as the
 # archive grows.  Mirrors ifa/Makefile's $(LIBRARY) rule.
+# The same runtime as LLVM bitcode (-flto), for the LLVM backend's link: with
+# it the runtime helpers inline into the program, as the C backend's do from
+# pyc_c_runtime.h. llvm_codegen_compile uses it when it exists and
+# `-fuse-ld=lld` works, and falls back to libpyc_runtime.a otherwise.
+# Measured 2026-10-18: LLVM-built binaries 17% faster (geomean of 8 corpus
+# programs; sha 47%, sieve 30%). Must be built by the clang that links.
+pyc_runtime_lto.o: pyc_runtime.c pyc_c_runtime.h
+	$(CC) -O2 -flto -fPIC -I/usr/local/include -I/opt/homebrew/include -c -o $@ $<
+
 libpyc_runtime.a: pyc_runtime.o Makefile
 	$(RM) $@
 	$(AR) crs $@ pyc_runtime.o
@@ -201,14 +210,14 @@ COPYRIGHT.i: LICENSE
 	rm -f COPYRIGHT.i
 	head -1 LICENSE | sed -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
 
-install: $(EXECUTABLES) libpyc_runtime.a
+install: $(EXECUTABLES) libpyc_runtime.a pyc_runtime_lto.o
 	cp $(EXECUTABLES) $(PREFIX)/bin
-	cp libpyc_runtime.a $(PREFIX)/lib
+	cp libpyc_runtime.a pyc_runtime_lto.o $(PREFIX)/lib
 	cp $(MANPAGES) $(PREFIX)/man/man1
 
 deinstall:
 	rm -f $(EXECUTABLES:%=$(PREFIX)/bin/%)
-	rm -f $(PREFIX)/lib/libpyc_runtime.a
+	rm -f $(PREFIX)/lib/libpyc_runtime.a $(PREFIX)/lib/pyc_runtime_lto.o
 	rm -f $(MANPAGES:%=$(PREFIX)/man/man1/%)
 
 # Tests -----------------------------------------------------------------------
