@@ -554,7 +554,7 @@ class list:
     h = 0
     n = len(self)
     for k in range(n):
-      h = h * 1000003 + self[k].__hash__()
+      h = __pyc_c_call__(int, "_CG_hash_mix", int, h, int, self[k].__hash__())  # wraps; see pyc_c_runtime.h
     return h
   # ifa/issues/086: l.copy(), the same shallow copy as copy.copy(l).
   def copy(self):

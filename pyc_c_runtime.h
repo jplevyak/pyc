@@ -2370,6 +2370,15 @@ inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)!_CG
 // deterministic across runs (unlike CPython's SipHash with
 // PYTHONHASHSEED randomization) -- programs only rely on
 // self-consistency within one run.
+// The multiply-add step of the tuple/list hash (`h * 1000003 + x`), with
+// wraparound DEFINED: done in unsigned 64-bit arithmetic. The hash relies on
+// wrapping (four elements already overflow int64), and as plain int64
+// arithmetic that is signed overflow -- undefined in C, and poison under the
+// LLVM backend's `nsw`. The value is the same as the wrapped int64 one.
+inline long long _CG_hash_mix(long long h, long long x) {
+  return (long long)((unsigned long long)h * 1000003ull + (unsigned long long)x);
+}
+
 inline long long _CG_str_hash(const char *s) {
   size_t len = _CG_string_len(s);
   unsigned long long h = 14695981039346656037ULL;

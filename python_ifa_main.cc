@@ -922,8 +922,8 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
     const char *loop;  // the whole unconstrained body
   };
   static const OneOp ops[] = {
-      {"__hash__(self)", 1, "    h = 0\n", "    h = h * 1000003 + __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__hash__()\n", "    return h\n",
-       "    h = 0\n    for i in range(len(self)):\n      h = h * 1000003 + self[i].__hash__()\n    return h\n"},
+      {"__hash__(self)", 1, "    h = 0\n", "    h = __pyc_c_call__(int, \"_CG_hash_mix\", int, h, int, __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__hash__())\n", "    return h\n",
+       "    h = 0\n    for i in range(len(self)):\n      h = __pyc_c_call__(int, \"_CG_hash_mix\", int, h, int, self[i].__hash__())\n    return h\n"},
       // `in`, count and index compare each element by `==`; cross-type
       // `==` answers False, as in CPython.
       {"__contains__(self, item)", 2, "", "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) == item: return True\n", "    return False\n",

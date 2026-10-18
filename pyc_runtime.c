@@ -34,6 +34,7 @@ extern char *_CG_format_string_tagged(char *str, const char *tags, ...);
 extern char *_CG_fmt_grow(char *out, size_t *cap, size_t len, size_t need);
 extern const char *_CG_widen_int_convs(const char *fmt);
 extern char *_CG_str_from_int(int64 x);
+extern long long _CG_hash_mix(long long h, long long x);
 extern char *_CG_str_from_float(double d);
 extern double _CG_str_to_float64(char *s);
 extern int64 _CG_str_to_int64(char *s);
