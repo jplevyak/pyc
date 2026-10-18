@@ -82,7 +82,12 @@ follow every ES split, was removed 2026-09-08.)
 
 **A merge can be taken back.** `analyze_to_convergence` resets *before*
 every pass, so derived types are re-derived from bottom, and what persists
-is the DECISION (`av->cs_map`, the split ledger). So a decision taken on
+is the DECISIONS: CreationSets and each creation point's assignment to one
+(`av->cs_map`), EntrySets and each call edge's binding to one
+(`AEdge::to`), and the split ledger. ifa keeps decisions and rebuilds the
+structure each pass, as shedskin does; the difference is that shedskin
+re-derives its function contours every iteration and keeps only data-contour
+decisions ([ifa/111](ifa/issues/111-FA-selective-invalidation-per-pass.md)). So a decision taken on
 transient types should be revisited at convergence, not protected
 ([ifa/170](ifa/issues/170-FA-contours-minted-on-transient-types-are-never-remerged.md)).
 [ifa/111](ifa/issues/111-FA-selective-invalidation-per-pass.md) is a
