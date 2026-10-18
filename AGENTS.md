@@ -87,11 +87,13 @@ is the DECISIONS: CreationSets and each creation point's assignment to one
 (`AEdge::to`), and the split ledger. ifa keeps decisions and rebuilds the
 structure each pass, as shedskin does; the difference is that shedskin
 re-derives its function contours every iteration and keeps only data-contour
-decisions ([ifa/111](ifa/issues/111-FA-selective-invalidation-per-pass.md)). So a decision taken on
+decisions ([ifa/111](ifa/issues/closed/111-FA-selective-invalidation-per-pass.md)). So a decision taken on
 transient types should be revisited at convergence, not protected
 ([ifa/170](ifa/issues/170-FA-contours-minted-on-transient-types-are-never-remerged.md)).
-[ifa/111](ifa/issues/111-FA-selective-invalidation-per-pass.md) is a
-performance lever for the extra passes, not a precondition. The separation
+The extra passes are cheap: per-pass work falls after the first few and stays
+flat, and FA time is call matching in those first passes
+([ifa/111](ifa/issues/closed/111-FA-selective-invalidation-per-pass.md), closed
+2026-10-18). The separation
 mechanisms that made start-merged viable have landed, all default-on:
 
 - arity in CS identity ([132](ifa/issues/closed/132-arity-is-representation-not-provenance.md));
