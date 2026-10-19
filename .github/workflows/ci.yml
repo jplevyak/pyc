@@ -13,10 +13,18 @@
 
 name: ci
 
+# A push or PR that touches ONLY the website (built and deployed by
+# website.yml) skips this run; one that also touches anything else runs it.
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - 'website/**'
+      - '.github/workflows/website.yml'
   pull_request:
+    paths-ignore:
+      - 'website/**'
+      - '.github/workflows/website.yml'
 
 jobs:
   build-and-test:
