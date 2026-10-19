@@ -9,7 +9,8 @@ npm run dev      # http://localhost:3000
 npm run build    # static site in out/, ready for any static host
 ```
 
-`public/CNAME` names the domain, so `out/` deploys as-is to GitHub Pages. Netlify,
+`public/CNAME` names the domain. [`.github/workflows/website.yml`](../.github/workflows/website.yml)
+builds and deploys to GitHub Pages on every push to `main` that touches `website/`. Netlify,
 Cloudflare Pages or Vercel need only `npm run build` with `out` as the publish directory.
 
 ## Layout

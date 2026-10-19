@@ -1,0 +1,61 @@
+# Build website/ (Next.js static export) and publish it to GitHub Pages,
+# served at pyc-lang.org (website/public/CNAME). Runs only when the site
+# or this workflow changes; workflow_dispatch redeploys by hand.
+#
+# One-time setup: Settings → Pages → Source: "GitHub Actions", and DNS
+# for pyc-lang.org pointed at GitHub Pages.
+
+name: website
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; never cancel a deploy that is already running.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/out
+
+  deploy:
+    # Pull requests build (so a broken site fails review) but never deploy.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
