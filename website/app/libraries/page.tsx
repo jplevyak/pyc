@@ -66,7 +66,7 @@ export default function Libraries() {
               {MODULES.map((m) => (
                 <tr key={m.name}>
                   <td>
-                    <a href={repo(`blob/master/pyc_lib/${m.name}.py`)}>
+                    <a href={repo(`blob/main/pyc_lib/${m.name}.py`)}>
                       <code>{m.name}</code>
                     </a>
                   </td>
@@ -138,7 +138,7 @@ def floor(x): ...   # returns int, as in CPython 3
           </li>
         </ol>
         <p>
-          The runtime guide, <a href={repo('blob/master/RUNTIME.md')}>RUNTIME.md</a>, has
+          The runtime guide, <a href={repo('blob/main/RUNTIME.md')}>RUNTIME.md</a>, has
           recipes for adding new runtime support.
         </p>
       </DocLayout>

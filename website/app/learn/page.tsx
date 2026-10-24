@@ -301,8 +301,8 @@ Python source (.py)
           IFA is a standalone library under <code>ifa/</code>. pyc drives it through a callback
           interface that keeps everything Python-specific out of the analysis. The repository
           documents it in depth: start with{' '}
-          <a href={repo('blob/master/PIPELINE.md')}>PIPELINE.md</a> and{' '}
-          <a href={repo('blob/master/ifa/INDEX.md')}>ifa/INDEX.md</a>.
+          <a href={repo('blob/main/PIPELINE.md')}>PIPELINE.md</a> and{' '}
+          <a href={repo('blob/main/ifa/INDEX.md')}>ifa/INDEX.md</a>.
         </p>
       </DocLayout>
     </>

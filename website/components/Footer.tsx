@@ -48,7 +48,7 @@ export function Footer() {
               <a href={GITHUB}>GitHub</a>
             </li>
             <li>
-              <a href={repo('tree/master/issues')}>Issues</a>
+              <a href={repo('tree/main/issues')}>Issues</a>
             </li>
             <li>
               <Link href="/community/">Contributing</Link>

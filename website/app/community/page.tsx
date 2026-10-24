@@ -75,7 +75,7 @@ export default function Community() {
               a verification plan.
             </p>
             <p>
-              <a href={repo('tree/master/issues')}>Browse issues →</a>
+              <a href={repo('tree/main/issues')}>Browse issues →</a>
             </p>
           </div>
           <div className="card">
@@ -85,7 +85,7 @@ export default function Community() {
               Read the design rules below before changing it.
             </p>
             <p>
-              <a href={repo('blob/master/ifa/INDEX.md')}>ifa/INDEX.md →</a>
+              <a href={repo('blob/main/ifa/INDEX.md')}>ifa/INDEX.md →</a>
             </p>
           </div>
         </div>
@@ -107,7 +107,7 @@ $ diff expected.txt actual.txt
         <p>
           pyc has a short list of rules that every change is measured against. They are
           spelled out, with the history behind each one, in{' '}
-          <a href={repo('blob/master/AGENTS.md')}>AGENTS.md</a>.
+          <a href={repo('blob/main/AGENTS.md')}>AGENTS.md</a>.
         </p>
         <div className="table-wrap">
           <table>
@@ -137,19 +137,19 @@ $ make test
         <h2 id="docs">Further reading</h2>
         <ul>
           <li>
-            <a href={repo('blob/master/PIPELINE.md')}>PIPELINE.md</a>: from{' '}
+            <a href={repo('blob/main/PIPELINE.md')}>PIPELINE.md</a>: from{' '}
             <code>pyc file.py</code> to a binary, phase by phase
           </li>
           <li>
-            <a href={repo('blob/master/PYTHON_FRONTEND.md')}>PYTHON_FRONTEND.md</a>: the Python
+            <a href={repo('blob/main/PYTHON_FRONTEND.md')}>PYTHON_FRONTEND.md</a>: the Python
             lowering
           </li>
           <li>
-            <a href={repo('blob/master/RUNTIME.md')}>RUNTIME.md</a>: the C runtime and the
+            <a href={repo('blob/main/RUNTIME.md')}>RUNTIME.md</a>: the C runtime and the
             builtin library
           </li>
           <li>
-            <a href={repo('blob/master/ifa/INDEX.md')}>ifa/INDEX.md</a>: the analysis library
+            <a href={repo('blob/main/ifa/INDEX.md')}>ifa/INDEX.md</a>: the analysis library
           </li>
         </ul>
       </DocLayout>

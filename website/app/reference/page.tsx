@@ -194,21 +194,21 @@ def sqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
         <ul>
           <li>
             <code>**kwargs</code> and keyword-only parameters (
-            <a href={repo('blob/master/issues/182-kwargs-and-keyword-only-parameters.md')}>
+            <a href={repo('blob/main/issues/182-kwargs-and-keyword-only-parameters.md')}>
               issues/182
             </a>
             )
           </li>
           <li>
             Property setters and deleters (
-            <a href={repo('blob/master/issues/007-decorators-not-applied.md')}>issues/007</a>)
+            <a href={repo('blob/main/issues/007-decorators-not-applied.md')}>issues/007</a>)
           </li>
           <li>
             <code>complex</code>
           </li>
           <li>
             Attribute reads through <code>cls</code> in a <code>@classmethod</code> (
-            <a href={repo('blob/master/issues/184-classmethod-attribute-through-cls.md')}>
+            <a href={repo('blob/main/issues/184-classmethod-attribute-through-cls.md')}>
               issues/184
             </a>
             )
@@ -224,8 +224,8 @@ def sqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
         </ul>
         <p>
           The full list, including known wrong answers under repair, is in{' '}
-          <a href={repo('tree/master/issues')}>issues/</a> and{' '}
-          <a href={repo('tree/master/ifa/issues')}>ifa/issues/</a>.
+          <a href={repo('tree/main/issues')}>issues/</a> and{' '}
+          <a href={repo('tree/main/ifa/issues')}>ifa/issues/</a>.
         </p>
       </DocLayout>
     </>

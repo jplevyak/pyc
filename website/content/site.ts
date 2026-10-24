@@ -2,7 +2,7 @@ export const SITE_URL = 'https://pyc-lang.org';
 export const GITHUB = 'https://github.com/jplevyak/pyc';
 export const DPARSER = 'https://github.com/jplevyak/dparser';
 
-/** A link into the repository, e.g. repo('blob/master/README.md'). */
+/** A link into the repository, e.g. repo('blob/main/README.md'). */
 export function repo(path: string) {
   return `${GITHUB}/${path}`;
 }

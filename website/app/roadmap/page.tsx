@@ -44,8 +44,8 @@ export default function Roadmap() {
         ))}
         <p>
           Detailed work items, with symptoms, root causes and verification plans, live in the
-          repository&apos;s <a href={repo('tree/master/issues')}>issues/</a> and{' '}
-          <a href={repo('tree/master/ifa/issues')}>ifa/issues/</a> directories. To help, see{' '}
+          repository&apos;s <a href={repo('tree/main/issues')}>issues/</a> and{' '}
+          <a href={repo('tree/main/ifa/issues')}>ifa/issues/</a> directories. To help, see{' '}
           <Link href="/community/">Community</Link>.
         </p>
       </DocLayout>

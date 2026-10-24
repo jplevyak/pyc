@@ -209,7 +209,7 @@ $ pyc --strict counter.py
           Examples: widening an <code>int</code>/<code>float</code> slot to <code>float</code>,
           and wrapping a Python 2 string <code>raise</code> in an <code>Exception</code>. The
           complete audit is{' '}
-          <a href={repo('blob/master/issues/closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md')}>
+          <a href={repo('blob/main/issues/closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md')}>
             issues/171
           </a>
           .
