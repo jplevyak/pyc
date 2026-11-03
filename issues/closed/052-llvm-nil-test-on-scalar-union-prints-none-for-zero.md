@@ -70,7 +70,7 @@ emit `icmp eq ptr … null` — unless the selector is one of the
 truthiness ones. That converts a silent wrong answer into the same loud
 failure the C backend gives, which is the honest state of affairs until
 the representation gap ([048](../048-none-int-field-pair-runtime-abort.md),
-[030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md))
+[030](../../ifa/issues/closed/030-DISPATCH-polymorphic-dispatch-fat-pointers.md))
 is closed.
 
 Making it actually *work* on either backend needs the union to stop being

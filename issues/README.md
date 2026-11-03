@@ -42,6 +42,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
+| [185](185-list-eq-tuple-is-true.md) | `[1, 2] == (1, 2)` is True: `list.__eq__` never checks its argument is a list; an `isinstance` guard untyped the operand. Fix, or flag. |
 | [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: ~~`isinstance` on a `{list, str}` value folds to False~~ (refused 2026-10-15); a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
@@ -59,6 +60,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
+| [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class that defines a method twice is refused as an ambiguous call; CPython takes the last definition. |
 | [184](184-classmethod-attribute-through-cls.md) | an attribute read through `cls` in a `@classmethod` (`cls.base`, `cls.h()`) does not type; `cls(...)` works. |
 | [182](182-kwargs-and-keyword-only-parameters.md) | `**kwargs` parameters and keyword-only parameters (`def f(a, *, b)`). |
 

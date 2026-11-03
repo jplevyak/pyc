@@ -1,7 +1,7 @@
 # 123 — `str()`/`print()` do not fall back to a class's `__repr__`
 
 **Status:** **closed 2026-10-03** (fix as proposed below; see Resolution). Filed 2026-09-03. Found in the corpus `check` sweep
-taken for [ifa/124](../../ifa/issues/124-FA-refuse-imprecise-inference.md):
+taken for [ifa/124](../../ifa/issues/closed/124-FA-refuse-imprecise-inference.md):
 `go` began compiling and running for the first time, and its stdout
 still did not match CPython — for this reason, unrelated to that fix.
 **Area:** pyc builtin library (`__pyc__/00_runtime.py`), object protocol.
@@ -104,7 +104,7 @@ so the default rendering lives in `__repr__` (where CPython keeps it) and
 this way. More generally it is a **silent** wrong-answer class: nothing
 in the compile output hints at it, so `-m compile` and `-m run` sweeps
 are both blind to it and only `-m check` sees it — the argument
-[ifa/102](../../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
+[ifa/102](../../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md)
 makes for running `check`.
 
 ## Resolution (2026-10-03)

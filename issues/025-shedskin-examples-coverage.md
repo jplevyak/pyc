@@ -90,7 +90,7 @@ has a row in the blocker table below.
 | compared through a CHECK DRIVER (2), since 2026-10-09 | pygasus (`pygasus_check.py`: 1500 frames, state checksums every 100; matches CPython, 1.5 s vs 23 s) and webserver (`webserver_check.sh`: starts the server, sends requests, compares responses and server log; matches CPython). Both are endless by design; `corpus_sweep.sh` runs the driver in place of the program (its "check drivers" header). webserver also needed a type-error edit (`recv().decode()`, `send(.encode())`; CPython raised on its first request) and pyc's `socket.recv`/`send` now use `bytes`, as CPython does |
 | times out where CPython finishes (1) | dijkstra2 |
 | **compiles, then fails** (0) | genetic2 matches CPython since 2026-10-09 (except its timing values) on both backends: [174](closed/174-format-with-a-tuple-variable-skips-str-and-arity.md) |
-| **does not compile** (2) | othello3 (compile timeout), sunfish (compile timeout: 534 s and 3 GB alone, against the 400 s cap; [ifa/185](../ifa/issues/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md). Once compiled it matches CPython on both backends) |
+| **does not compile** (2) | othello3 (compile timeout), sunfish (compile timeout: 534 s and 3 GB alone, against the 400 s cap; [ifa/185](../ifa/issues/closed/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md). Once compiled it matches CPython on both backends) |
 
 **`life`, 2026-09-29 (issues/171 #5):** it compiled and then aborted
 (`matching function not found`, rc 134) until `itertools.product(repeat=)`
@@ -234,7 +234,7 @@ no longer applies.)
   (timed half 4.4 s C / 7.6 s LLVM vs 5.0 s), but takes 534 s and 3 GB to
   compile, so the sweep's 400 s cap records a compile timeout. FA does
   converge (47 passes); passes 1-13 cost ~375 s of it. Why it is slow:
-  [ifa/185](../ifa/issues/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md)
+  [ifa/185](../ifa/issues/closed/185-FA-merged-tuple-receiver-makes-the-arity-unroll-live.md)
   (a merged tuple receiver keeps the 64-step tuple-method unroll live).
 - **rubik (FIXED 2026-10-07: the multi-index subscript `key[a, b]` produced no index; it compiles and matches CPython): `None` reaches `key[1]` in `getCoords`**
   (`unresolved member '__getitem__' of class '__pyc_None_type__'`, 126

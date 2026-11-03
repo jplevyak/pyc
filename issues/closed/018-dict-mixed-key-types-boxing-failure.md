@@ -57,7 +57,7 @@ call site's literal `10` baked in). That is this issue's own mechanism,
 and no other open issue covers it — 048 is codegen,
 [075](../../ifa/issues/closed/075-FA-element-cs-method-split-idempotent-plan.md) is
 the container-method-per-element-CS plan, and
-[030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md) is
+[030](../../ifa/issues/closed/030-DISPATCH-polymorphic-dispatch-fat-pointers.md) is
 classtag dispatch for object receivers, which this doc already notes does
 not cover a raw `int`/`str` scalar union.
 
@@ -107,7 +107,7 @@ of [multiple element types]") for the object-key/NOTYPE flavor, and
 this issue is the basic-scalar-key/BOXING flavor of the identical
 mechanism — 075's CSM (clone container methods per element-CS)
 should fix both together. Also already informally paired with
-[ifa/issues/030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+[ifa/issues/030](../../ifa/issues/closed/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 elsewhere in the tree (`ifa/issues/073`, `ifa/issues/README.md` both
 say "the 018/030 heterogeneous-union boxing family") — 030's classtag
 dispatch is for object/class receivers though, so it doesn't directly
@@ -262,7 +262,7 @@ on whether the *specific* invalid clone this mechanism generates
 happens to produce C/IR that's still well-typed enough to build — not
 on anything more principled.
 
-This also answers a question [030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
+This also answers a question [030](../../ifa/issues/closed/030-DISPATCH-polymorphic-dispatch-fat-pointers.md)
 left implicit: classtag dispatch requires `cg_has_classtag`, which
 requires `type_kind == Type_RECORD` — `int64` and `str` are never
 `Type_RECORD`, so a call site whose receiver is a *raw scalar* union

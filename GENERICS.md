@@ -25,7 +25,7 @@ under the 400 s sweep cap.
 | | meaning | pyc today |
 | --- | --- | --- |
 | **parametric function** | the result type is a function of the argument types: `∀T. list[T] → T` | only primitives. `index_object`, `len`, `merge` and the other primitive transfer functions read the actual's own CreationSets, so they are parametric by construction. A Python-level `__pyc__` method is an ordinary function with one EntrySet until a demand splits it. |
-| **parametric data** | a container whose field types are parameters: `list[T]`, `__list_iter__[T]` | CreationSets start one per sym (`PYC_CSDCPA1=2`; tuples and arity excepted) and split on demand ([129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md)). There is no notion of a type parameter. |
+| **parametric data** | a container whose field types are parameters: `list[T]`, `__list_iter__[T]` | CreationSets start one per sym (`PYC_CSDCPA1=2`; tuples and arity excepted) and split on demand ([129](ifa/issues/closed/129-plan-demand-driven-creation-set-splitting.md)). There is no notion of a type parameter. |
 | **generic emission** | one C body for many instantiations (erasure) or one per instantiation (templates) | one C function per clone. Some erasure exists already: `_CG_list` is one runtime layout whatever the element type, and a classtag dispatch over classes that agree on layout up to the slot is now one slot call (ifa/186). |
 
 The first two are analysis questions and the subject of this document. The
@@ -51,7 +51,7 @@ The genericity is in the machinery, not the source. Eager CPA makes a
 template per tuple of argument types at every call, allocation sites get a
 contour per template, and codegen emits C++ templates (`list<T>`). That
 is splitting on a FACT ("this formal's type is a union"). pyc retired the
-same thing as `PYC_CPA` ([146](ifa/issues/146-remove-all-arbitrary-splitting.md)),
+same thing as `PYC_CPA` ([146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md)),
 and AGENTS.md's "Provenance is never the answer" explains why. So
 shedskin offers pyc no mechanism to copy here, only the observation that
 the type models themselves need no annotations.
@@ -281,9 +281,9 @@ internal containers), not as the othello3 fix.
    see through (C calls, generated code), and only checked.
 
 Related: [186](ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)
-(othello3), [129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md)
+(othello3), [129](ifa/issues/closed/129-plan-demand-driven-creation-set-splitting.md)
 (CreationSet splitting), [133](ifa/issues/closed/133-split-a-container-on-its-element-type.md)
 ("the demand is unobservable at the merge"),
 [134](ifa/issues/134-remove-the-frontend-forced-split-opt-in.md) (the
-annotations being removed), [146](ifa/issues/146-remove-all-arbitrary-splitting.md)
+annotations being removed), [146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md)
 (why CPA is out).

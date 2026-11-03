@@ -47,16 +47,17 @@ structure happened to split. Splitting driven by structure rather than
 by demand is a defect, however well it converges.
 
 **This keeps getting forgotten, so the audit is written down.**
-[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md) tracks it to
-completion. It holds the two-question test and the non-monotone diagnostic
-that identifies an arbitrary lever. It lists what has been removed and what
-is still in the tree, and gives a verdict for every off-by-default
-splitting lever in `fa_flags.cc`. As of 2026-10-13, no violation is known
+[ifa/146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md) tracked it to
+completion (closed 2026-11-03). It holds the two-question test and the
+non-monotone diagnostic that identifies an arbitrary lever, and lists what
+was removed with the measurement for each. The one default-path violation
+that remains, the SETTER stage nominating on a fact, is
+[ifa/196](ifa/issues/196-the-setter-stage-splits-on-a-fact.md). As of 2026-10-13, no violation is known
 to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
 test, now asks for a demand. On 2026-10-15 every off-by-default lever
 measured dead, non-monotone or inert was deleted, `PYC_SLOTARITY`,
 `PYC_TYPEMOVE` and `PYC_RETDEMAND` with them, so the inventory is empty.
-The writer split (ifa/178) has no known program that needs it.
+The writer split (closed/178) has no known program that needs it.
 **A dispatch that cannot resolve statically is a demand**: the goal is zero
 run-time dispatch.
 
@@ -70,8 +71,10 @@ structural by construction: on chess, 95 list CSs stood for 6 element
 types
 ([ifa/128](ifa/issues/closed/128-cs-identity-over-discriminates-vs-element-type.md)).
 The flip cut container CreationSets from 4.41 per shape to 3.19 per shape
-(sweep `4b61e721`). The plan, and what is still open, is
-[ifa/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md).
+(sweep `4b61e721`). The plan is
+[ifa/129](ifa/issues/closed/129-plan-demand-driven-creation-set-splitting.md)
+(landed, closed 2026-11-03); what is still open is
+[ifa/196](ifa/issues/196-the-setter-stage-splits-on-a-fact.md).
 
 The dependency runs one way only: an EntrySet is split **so that** a
 CreationSet split becomes possible, when a demand test has asked for one.
@@ -456,7 +459,7 @@ facts. **A demand is something OBSERVING a distinction and being unable to
 proceed**: a type violation, an irrepresentable union, a dispatch that
 cannot resolve. Reading a fact as a demand is how an arbitrary splitter
 passes the test, and it has happened twice in this repo — see
-[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s E and its
+[ifa/146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md)'s E and its
 note on the refinement.
 
 So `creation_point` keying on `(allocation site x contour)` was wrong (the
@@ -508,7 +511,7 @@ plausible and each was measured dead:
 
 The last one is the sharpest warning: a one-bit grouping key with no content
 information *looks* like arbitrary splitting by
-[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s first question,
+[ifa/146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md)'s first question,
 and removing it makes the corpus WORSE. 146's own diagnostic settles it —
 an arbitrary lever is **non-monotone**; a lever whose removal costs contours
 is earning its keep. Apply the diagnostic, not just the definition.

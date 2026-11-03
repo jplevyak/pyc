@@ -5,7 +5,7 @@ and the fixture had been failing for a DIFFERENT reason (see Resolution).
 Rewritten 2026-09-28; history in git:
 `git show e3b44e2c:issues/039-list-mul-shared-element-type-cross-contamination.md`.
 The mechanism belongs to
-[ifa/129](../../ifa/issues/129-plan-demand-driven-creation-set-splitting.md)
+[ifa/129](../../ifa/issues/closed/129-plan-demand-driven-creation-set-splitting.md)
 (B: a container with one creation point whose element takes two types).
 This file owns the fixture.
 

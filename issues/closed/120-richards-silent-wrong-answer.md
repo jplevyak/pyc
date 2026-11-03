@@ -8,7 +8,7 @@
 **Affects:** `shedskin_examples/richards/richards.py`; a polymorphic
 dispatch that resolves to nothing useful.
 **Severity:** silent. Exit 0, wrong output (it does emit 4 warnings, all named below) — the shape
-[ifa/102](../../ifa/issues/102-corpus-programs-compile-then-abort-at-runtime.md)
+[ifa/102](../../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md)
 is about, one step worse than the abort it replaced.
 
 ## Symptom
@@ -49,7 +49,7 @@ layout half either: `PYC_TUPLE_AS_LIST=0` and `=1` both print `False`.
 The two failures are almost certainly the same underlying defect —
 a polymorphic dispatch over a receiver union that has no runtime
 discriminator — seen from two sides. Compare
-[ifa/030](../../ifa/issues/030-DISPATCH-polymorphic-dispatch-fat-pointers.md), which is
+[ifa/030](../../ifa/issues/closed/030-DISPATCH-polymorphic-dispatch-fat-pointers.md), which is
 that exact shape.
 
 ## Why the sweep did not flag it
