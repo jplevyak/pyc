@@ -11,9 +11,8 @@ accommodation: each needs a fix or a refusal.
 
 ## 1. A class attribute read through a subclass after the base is mutated
 
-`tests/class_attr_mutation.py` (`.python.expect_fail`: its check bakes in
-pyc's answer, which is the wrong way round and should become a
-`.known_issue` with CPython's):
+`tests/class_attr_mutation.py` (`.known_issue`; its check holds CPython's
+output):
 
 ```python
 class A: n = 2

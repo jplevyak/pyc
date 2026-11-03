@@ -138,9 +138,7 @@ record an ACCEPTED divergence, and under rule 2 an accepted divergence is
 an accommodation that the table above must list. Re-check them: a marker
 whose test now matches CPython is silently inert. `raise_string`'s output
 matches only because its `except Exception` also catches CPython's
-`TypeError`; its accommodation is real. `class_attr_mutation`'s marker is
-the wrong way round (it bakes in pyc's answer) and should become a
-`.known_issue` under 173.
+`TypeError`; its accommodation is real.
 
 ## When a corpus-only bug should get a minimal test
 
