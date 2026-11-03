@@ -18,7 +18,7 @@ print(x + 5)
 
 It compiles clean, with no warning, even under `--strict`. The same shape
 through a field (`b.f = None` on one path, `b.f + 5`) behaves the same, and so
-does a generator's sent value ([172](../172-generator-send-channel-and-stopiteration-value.md)): a generator resumed by `next()`
+does a generator's sent value ([172](../172-stopiteration-value-reads-the-global-exception-slot.md)): a generator resumed by `next()`
 and also sent numbers prints `6` under `--strict` where CPython raises, with
 only issues/172's note.
 

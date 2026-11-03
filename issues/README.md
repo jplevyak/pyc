@@ -1,124 +1,104 @@
 # issues/
 
-Open work items for the pyc frontend and project-wide concerns:
-`pyc.cc`, the `python_ifa_*` lowering, the `python.g` grammar, the
-`__pyc__/` builtin module, `pyc_lib/`, the runtime (`pyc_c_runtime.h`),
-and the harness. For ifa-library issues see [`ifa/issues/`](../ifa/issues/),
-which uses the same conventions.
+Open work items for the pyc frontend and project-wide concerns: `pyc.cc`,
+the `python_ifa_*` lowering, the `python.g` grammar, the `__pyc__/`
+builtin module, `pyc_lib/`, the runtime (`pyc_c_runtime.h`) and the
+harness. ifa-library issues are in [`ifa/issues/`](../ifa/issues/), same
+conventions.
 
-*Consolidated 2026-09-28: 25 open → 17. Resolved issues were archived,
-overlapping ones merged, and every open issue was re-verified and rewritten
-to its current state. The previous README, with its full per-issue index
-history, is in git: `git show e3b44e2c:issues/README.md`.*
+*Reorganised 2026-11-03: every open file rewritten to its current state
+as an action item, one closed, one filed, two renamed to what they are
+now about. Consolidated before that on 2026-09-28 (25 → 17). The previous
+README, with the closure tables from 2026-09-28 to 2026-10-16, is in git:
+`git show 23cd789:issues/README.md`.*
 
 ## Read first: the two rules every pyc issue is judged by
 
 1. **CPython semantics or a compile error.** pyc compiles well-formed
    CPython 3 programs with the same semantics, for the subset typeable
-   without boxing (AGENTS.md). A silent wrong answer is the worst outcome:
-   worse than a crash, which is worse than a refusal. When pyc cannot do
-   something, it refuses and names the reason in CPython's terms.
-2. **Every Python accommodation is flagged and non-strict**
-   ([171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)).
-   Anything beyond CPython 3 or beyond static typing is an accommodation:
-   accepting `raise "string"`, widening `int` to `float`, a typed default
-   for an implicit `None`, a list where CPython returns a tuple. Each one
-   sits behind a named flag, is on under `--permissive` (the default), is
-   **off under `--strict`**, and warns when it fires. Generic ifa code gets
-   Python policy only through `IFACallbacks`. For corpus programs with an
-   actual type error, the alternative is a source edit; the policy is
+   without boxing (AGENTS.md). Outcomes, worst first: a silent wrong
+   answer, a crash, a run-time refusal, a compile-time refusal, a match.
+   When pyc cannot do something it refuses and names the reason in
+   CPython's terms.
+2. **Every accommodation is flagged and non-strict**
+   ([closed/171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)).
+   Anything beyond CPython 3 or beyond static typing sits behind a named
+   flag, is on under `--permissive` (the default), is **off under
+   `--strict`**, and warns when it fires. Generic ifa code gets Python
+   policy only through `IFACallbacks`. A corpus program with an actual
+   type error is edited instead, under
    [shedskin_examples/PYC_CHANGES.md](../shedskin_examples/PYC_CHANGES.md).
+   171's verification record (compile the suite with `--strict`, compare
+   with CPython, then the strict corpus sweep) is how a new one is checked.
+
+## The accommodations in the tree
+
+Every deviation the default mode makes, with its flag. A new one is added
+here when it lands; an item missing from this table is a bug under rule 2.
+
+| deviation | flag | warns | `--strict` |
+| --- | --- | --- | --- |
+| `raise "message"` wrapped in `Exception(...)` | `PYC_RAISE_STRING` | at each site | refused |
+| `{int, float}` widened to `float` (prints `1.0` for `1`) | `fruntime_errors` (ifa/145) | `show_numeric_coercions`, once per line | refused |
+| a 64-bit literal past int64 wraps | `PYC_INT_LITERAL_WRAP` | at the literal | refused |
+| a non-priming `next()` on a generator whose send cell is `{None, scalar}` delivers 0 | `PYC_SEND_NONE_ZERO` | at the `def` | refused |
+| locals possibly read before assignment are zero-filled | `--safe` | no | not set |
+| the implicit-`None` fall-off replaced by a typed default | `PYC_NO_IMPLICIT_NONE=1` (opt-in) | yes | ignored, with a warning |
+| `zip`/`map`/`filter`/`reversed` are eager lists (observable only through `len`, indexing or printing the object, which CPython rejects) | none: a documented representation, author's decision 2026-09-29 | no | same |
+| a write to a missing field discovers the field | `IFACallbacks::discovers_fields_by_write` | no: the Python-ism, not a deviation | same |
+
+## The plan
+
+Ordered by value against effort. Items in one row are independent.
+
+| order | do | why | unblocks |
+| --- | --- | --- | --- |
+| 1 | the silent wrong answers with a local fix: [185](185-list-eq-tuple-is-true.md), [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 1, [180](180-method-assigned-across-classes-crashes.md) | rule 1's worst outcome, each a day | |
+| 2 | exception flow along the call graph, once: [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 2 | three issues wait on it and the up-front check is measured too expensive | [172](172-stopiteration-value-reads-the-global-exception-slot.md), [179](179-sequence-index-out-of-range-does-not-raise.md), tuple `__setitem__`, ifa/165 |
+| 3 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 1 (operators, `ZeroDivisionError`) and [179](179-sequence-index-out-of-range-does-not-raise.md) | silent memory reads and a SIGFPE on the default path | |
+| 4 | the crashes: [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 3 (recursion limit), [187](187-self-import-overflows-the-frontend.md) | a crash beats a wrong answer but not by much | corpus `loop` |
+| 5 | the refusals of valid programs: [184](184-classmethod-attribute-through-cls.md), [186](186-duplicate-method-definitions-are-an-ambiguous-call.md), [182](182-kwargs-and-keyword-only-parameters.md), [007](007-decorators-not-applied.md) items 1–2 | each is a common idiom with a named cause | |
+| 6 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 2 through ifa/050's write-once globals | the mechanism belongs to FA | |
+| 7 | [177](177-int64-overflow-at-run-time-is-silent.md): measure the checked path | the one deviation `--strict` cannot see | othello2 under `--strict` says why it differs |
+| 8 | [048](048-none-int-field-pair-runtime-abort.md), [169](169-local-class-method-reading-enclosing-local-crashes.md): wait for a program that needs them | refusals, documented, no corpus witness | |
 
 ## Open issues
-
-### Policy and tracking
-
-| issue | what |
-| --- | --- |
-| [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) | **the rule and its audit** (closed 2026-09-29): every accommodation is flagged, warns, and is off under `--strict`. All thirteen items are gated, fixed, or documented. Its verification record (the strict-suite comparison and the strict corpus sweep) is how to check a new one. |
-| [025](025-shedskin-examples-coverage.md) | **the corpus**: per-program state from the latest `check` sweep, edit candidates, and the 2026-09-28 first-blocker triage (13 of 17 "has no type" failures are missing builtin surface). |
 
 ### Silent wrong answers (worst first)
 
 | issue | what |
 | --- | --- |
-| [185](185-list-eq-tuple-is-true.md) | `[1, 2] == (1, 2)` is True: `list.__eq__` never checks its argument is a list; an `isinstance` guard untyped the operand. Fix, or flag. |
+| [185](185-list-eq-tuple-is-true.md) | `[1, 2] == (1, 2)` is True: `list.__eq__` never checks its argument is a list. |
 | [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
-| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: ~~`isinstance` on a `{list, str}` value folds to False~~ (refused 2026-10-15); a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
-| [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
-| [177](177-integer-literals-past-int64-were-accepted-silently.md) | `0xFFFFFFFFFFFFFFFF` was silently `-1` and `99999999999999999999` silently INT64_MAX, even under `--strict`; now warned, or refused. othello2's 64-bit masks. |
-| [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` is a real tuple since 2026-09-28. Residuals: `t[i] = x` mutates (blocked on 175's item-store check), and `zip`/`map`/`filter`/`reversed` are eager lists. |
+| [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) | a raise inside an operator or `__getitem__` never reaches the handler; `7 // 0` is a SIGFPE; the item-subscript check costs +72 % compile time if emitted up front. |
+| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | a subclass does not see a mutated base attribute; a global read before its definition sees the later value; deep recursion overflows the C stack and `setrecursionlimit` is ignored. |
+| [180](180-method-assigned-across-classes-crashes.md) | `a.x = b.x` across unrelated classes compiles clean, then `a.x()` segfaults: a field holding a closure called as a method slot. |
+| [177](177-int64-overflow-at-run-time-is-silent.md) | run-time int64 overflow wraps silently in every mode (othello2); literals are warned or refused. |
 
-### Typing and representation
-
-| issue | what |
-| --- | --- |
-| [172](172-generator-send-channel-and-stopiteration-value.md) | ~~a generator's `send` value travels as `int64`~~ (typed per generator 2026-10-16; the `next(g); g.send(5)` idiom keeps a flagged permissive zero for None, `PYC_SEND_NONE_ZERO`), and `StopIteration.value` reads the global exception slot. |
-| [048](048-none-int-field-pair-runtime-abort.md) | genuine scalar unions (`{None, int}`, `{None, float}`, `{int, float}` elements): strict refuses; permissive gets a flagged sentinel or widening. |
-
-### Missing features (refused, not wrong)
+### Refused, not wrong
 
 | issue | what |
 | --- | --- |
-| [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class that defines a method twice is refused as an ambiguous call; CPython takes the last definition. |
-| [184](184-classmethod-attribute-through-cls.md) | an attribute read through `cls` in a `@classmethod` (`cls.base`, `cls.h()`) does not type; `cls(...)` works. |
-| [182](182-kwargs-and-keyword-only-parameters.md) | `**kwargs` parameters and keyword-only parameters (`def f(a, *, b)`). |
+| [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
+| [184](184-classmethod-attribute-through-cls.md) | `cls.base` and `cls.h()` inside a `@classmethod` have no type; `cls(...)` works. |
+| [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class defining a method twice is an ambiguous call; CPython takes the last. |
+| [182](182-kwargs-and-keyword-only-parameters.md) | `**kwargs` parameters and keyword-only parameters. |
+| [007](007-decorators-not-applied.md) | property setters and deleters, `property(GETTER)` with a non-trivial getter, class-based decorators. |
+| [048](048-none-int-field-pair-runtime-abort.md) | a genuinely read `{None, scalar}`: refused in every mode; the permissive sentinel is built only when a program needs it. |
+| [169](169-local-class-method-reading-enclosing-local-crashes.md) | a local class whose captured value has a different type per call (one prototype per class statement). |
 
-### Diagnostics, crashes, performance, harness
+### Crashes and tracking
 
 | issue | what |
 | --- | --- |
-| [180](180-method-assigned-across-classes-crashes.md) | `a.x = b.x` across unrelated classes compiles clean, then `a.x()` segfaults: it calls through the stored closure as if it were `A`'s method slot. |
-| [169](169-local-class-method-reading-enclosing-local-crashes.md) | local classes are closure-converted (2026-10-14); residual: a captured value of a different TYPE per call is refused (one global prototype per class statement). |
+| [187](187-self-import-overflows-the-frontend.md) | `import X` from `X.py` recurses without bound in the frontend. |
+| [025](025-shedskin-examples-coverage.md) | **the corpus**: 76 of 77 compile, 58 match, 18 unverifiable by the sweep and verified by hand, othello2 differs (177), othello3 exceeds the compile cap (ifa/186); the two edit candidates. |
 
-### Closed on 2026-10-16
-
-| closed | why | residual now in |
-| --- | --- | --- |
-| [183](closed/183-none-or-int-in-arithmetic-reads-none-as-zero.md) | a `{None, scalar}` operand of an operator is a demand like a method receiver: an invented union splits, a genuine one is refused; pisang edited (its None was unreachable) | — |
-| [181](closed/181-staticmethod-generator-does-not-compile.md) | every decorated generator (`@staticmethod`, `@classmethod`, any decorator) gets its return/send cell and generator-object wrapper | — |
-| [178](closed/178-dict-of-a-mapping-reads-it-as-pairs.md) | `dict(x)` / `d.update(x)` copy a mapping (any class with `keys`) and read anything else as pairs, by dispatch | — |
-
-### Closed on 2026-10-15
+### Closed on 2026-11-03
 
 | closed | why | residual now in |
 | --- | --- | --- |
-| [176](closed/176-int-and-float-of-an-invalid-string-do-not-raise.md) | `int()`/`float()` of a string validate the whole string and raise CPython's `ValueError` | — |
-| [125](closed/125-in-has-no-iterable-fallback.md) | `object.__contains__` is CPython's iterable fallback | — |
-| [111](closed/111-checks-embed-builtin-library-line-numbers.md) | the harness compares builtin-module line numbers as `N` | — |
-| [041](closed/041-stdlib-shim-stubs-silently-wrong.md) | audit repeated; `time.sleep` and `socket.gethostname` were stubs, now real | — |
-| [043](closed/043-slice-target-augmented-assignment-silently-wrong.md) | `o[i:j] op= x` reads the slice, applies the operator, writes back | — |
-| [168](closed/168-object-at-a-computed-format-s-prints-garbage.md) | a computed format converts each argument through `__str__` by dispatch; a format constant only after the analysis renders a number at `%s` | — |
-
-### Closed on 2026-10-03
-
-| closed | why | residual now in |
-| --- | --- | --- |
-| [123](closed/123-str-does-not-fall-back-to-repr.md) | `object.__str__` calls `__repr__`, as in CPython; `go` matches CPython | 173 (the default repr text) |
-
-### Closed on 2026-09-29 and 2026-09-30
-
-| closed | why | residual now in |
-| --- | --- | --- |
-| [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md) | every audited accommodation gated, fixed, or documented | 172, 173, 007, 128, ifa/156 |
-| [124](closed/124-crlf-source-not-newline-normalized.md) | universal newlines at read time; pinned by a harness-staged CRLF test (2026-09-30) | — |
-| [050](closed/050-pyc-string-builders-are-quadratic.md) | `join`/case maps/`replace`/substring in one allocation; `replace("", x)` fixed (2026-09-30) | — |
-| [039](closed/039-list-mul-shared-element-type-cross-contamination.md) | leak gone at convergence (setter split of `list.__mul__`); fixture was failing on a genuine union and now tests the leak | 128 (bh's transient promotion) |
-| [128](closed/128-cross-class-field-promotion.md) | field discovery behind a hook; promoted fields retracted at a fixed point; MIXED writes are a demand; no diagnostic for genuine unions | ifa/177 |
-
-### Closed on 2026-09-28
-
-| closed | why | residual now in |
-| --- | --- | --- |
-| [035](closed/035-list-element-cast-salvage-guard-and-set-item-union.md) | guard landed | 048 |
-| [042](closed/042-package-directory-import-resolution.md), [113](closed/113-package-imports.md) | package imports implemented | — |
-| [046](closed/046-default-arg-omitted-differently-silently-wrong.md) | fixed (prints `0`); stale sidecar removed | — |
-| [107](closed/107-undefined-names-warn-then-segfault.md) | refused in every position | 103 (wording) |
-| [112](closed/112-tuple-deepcopy-copy-of-copy-unresolved.md) | merged | 110 |
-| [117](closed/117-property-and-reflected-ordering.md) | trivial `property` and reflected ordering landed | 007 (descriptors) |
-| [120](closed/120-richards-silent-wrong-answer.md) | richards matches CPython (ifa/174) | — |
-| [162](closed/162-dict-insertion-is-quadratic.md) | hashed dict (closed/118) | — |
-| [103](closed/103-unknown-kwarg-silently-bound-positionally.md) | closed 2026-10-14: both refusals say what CPython says (`name 'X' is not defined`, `f() got an unexpected keyword argument 'k'`) | — |
+| [110](closed/110-tuple-from-iterable-returns-a-list.md) | `tuple(x)` is a real tuple in every mode since 2026-09-28 | 175 step 3 (`tuple.__setitem__`); the eager lists are in the table above |
 
 Every archived file starts with a dated closure note. The archive is
 [`closed/`](closed/).
@@ -126,21 +106,23 @@ Every archived file starts with a dated closure note. The archive is
 ## Conventions
 
 - Filenames: `NNN-short-slug.md`, NNN zero-padded and never reused; the
-  numbers are independent of `ifa/issues/`. One issue per file.
-  Cross-link with relative paths; `make test-links` checks them.
-- A status line at the top: `open`, or `closed` with a date or commit.
-  Closed issues move to `closed/` with a closure note saying why and where
-  any residual went.
+  numbers are independent of `ifa/issues/`. A number is cited from code
+  comments and sidecars, so a renamed slug keeps its number. One issue per
+  file. Cross-link with relative paths; `make test-links` checks them.
+- A status line at the top: `open`, or `closed` with a date. Closed issues
+  move to `closed/` with a closure note saying why and where any residual
+  went.
 - **Keep an open issue current, not chronological.** When a finding
-  supersedes a section, rewrite it, and cite the old text by
-  `git show <commit>:<path>`. A reader must be able to act on the file
-  as it stands.
+  supersedes a section, rewrite it and cite the old text by
+  `git show <commit>:<path>`. A reader must be able to act on the file as
+  it stands. Dead ends stay only as "do not re-run" rows with the
+  measurement that killed them.
 - Every issue carries a runnable repro (CPython's output beside pyc's),
-  the cause as far as measured, the fix, the dead ends with the
-  measurement that killed each, and verification.
-- **Re-verify before trusting a status.** Several issues here had been
-  fixed as a side effect of other work, and several "open" repros no
-  longer reproduced.
+  the mechanism as far as measured, the plan, the dead ends, and
+  verification.
+- **Re-verify before trusting a status.** Several issues here were fixed
+  as a side effect of other work, and several "open" repros no longer
+  reproduced.
 
 ## Marking a test as a known issue
 
@@ -148,42 +130,34 @@ A filed bug should have a test that fails on purpose. Put the issue
 reference in `tests/<name>.py.known_issue`, and write the check files to
 describe the **correct** behaviour (what CPython does). The run reports it
 as `KNOWN`, lists it with its issue, and does not fail the suite. The day
-the bug is fixed the test turns `PASS` by itself; then delete the sidecar
-(the harness does not flag a sidecar whose test already passes).
+the bug is fixed the test turns `PASS` by itself; then delete the sidecar.
+When an issue is closed or merged, repoint its sidecars.
 
 `.expect_fail` / `.python.expect_fail` (`XFAIL`) are different: they
 record an ACCEPTED divergence, and under rule 2 an accepted divergence is
-a permissive accommodation that 171 must list. Re-check them: a marker
-whose test now matches CPython is silently inert. On 2026-09-28 the four
-float-repr markers (`float_literal_precision`, `colorsys_module`,
-`str_builtin_call`, `minmax_3arg`) were stale and were deleted. CPython's
-float repr has landed. `raise_string`'s output matches only because its
-`except Exception` also catches CPython's `TypeError`; its accommodation
-is real (171 #1).
+an accommodation that the table above must list. Re-check them: a marker
+whose test now matches CPython is silently inert. `raise_string`'s output
+matches only because its `except Exception` also catches CPython's
+`TypeError`; its accommodation is real. `class_attr_mutation`'s marker is
+the wrong way round (it bakes in pyc's answer) and should become a
+`.known_issue` under 173.
 
 ## When a corpus-only bug should get a minimal test
 
-**Minimise when the bug has a local trigger.** 035, 039, 046 and 048 all
-reduced to 8-27 lines, and each reduction sharpened the diagnosis. The
-tell is that you can name the construct.
-
-**Do not minimise an emergent or stateful bug by guessing.** closed/045
-(tonyjpegdecoder's second `main()` hung) is the counter-example: the
-obvious reduction passed while the program still hung. Writing that test
-would have recorded a false negative under an issue number. Bisect the
-real program instead. If two successive cuts produce different
-diagnostics, that is the finding: stop minimising and record the
-full-program repro. For a convergence bug, assert the property with the
-probes (`PYC_DBG_STAGES`, `PYC_DBG_OSC`) rather than a reduction that
-cannot exist.
-
-**Always check a reduction fails for the SAME reason**: the same
-diagnostic at the same construct, or the same wrong output. A reduction
-that fails differently has found a different bug. File that separately.
+**Minimise when the bug has a local trigger**: the tell is that you can
+name the construct. **Do not minimise an emergent or stateful bug by
+guessing**: closed/045 (tonyjpegdecoder's second `main()` hung) is the
+counter-example, where the obvious reduction passed while the program
+still hung. Bisect the real program; if two successive cuts produce
+different diagnostics, that is the finding. For a convergence bug, assert
+the property with the probes (`PYC_DBG_STAGES`, `PYC_DBG_OSC`). **Always
+check a reduction fails for the SAME reason**: the same diagnostic at the
+same construct, or the same wrong output. One that fails differently has
+found a different bug; file that separately.
 
 ## When to file here vs fix now
 
 File when the fix is more than about an hour and does not block the
 current task, needs a design decision, or touches a subsystem the task is
-not auditing. Fix now when it blocks the task, or when it is a one-line fix
-whose test you are already writing.
+not auditing. Fix now when it blocks the task, or when it is a one-line
+fix whose test you are already writing.

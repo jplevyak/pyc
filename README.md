@@ -359,7 +359,7 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   compile; `cls(...)` does ([issues/184](issues/184-classmethod-attribute-through-cls.md)).
 - **Generators**: `StopIteration.value` read in
   an `except` clause is refused when the program raises `StopIteration` with more than one value
-  type ([issues/172](issues/172-generator-send-channel-and-stopiteration-value.md)).
+  type ([issues/172](issues/172-stopiteration-value-reads-the-global-exception-slot.md)).
 - **The standard library** is limited to the partial modules in `pyc_lib/`.
 - **Class attribute mutation through a subclass**: `A.n = 4` is not seen by `B.n` when `B`
   inherits `n` from `A`, because each class holds its own copy

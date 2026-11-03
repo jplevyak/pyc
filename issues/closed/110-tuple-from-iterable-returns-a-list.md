@@ -1,5 +1,14 @@
 # 110 — `tuple(iterable)` returns a list (a deviation in every mode)
 
+**Closed 2026-11-03.** The flip landed 2026-09-28 (`PYC_MAKESEQ=1`, `tuple(x)`
+is a real tuple in every mode) with tuple deepcopy and the FA Var-registration
+fix beneath it. Residual 1 (`t[i] = x` mutates; `tuple.__setitem__` cannot
+raise until item stores carry an exception check) is
+[175](../175-an-exception-raised-in-an-operator-method-does-not-propagate.md)
+step 3. Residual 2 (`zip`/`map`/`filter`/`reversed` are eager lists) is the
+author's documented decision, in the README's accommodation table. The body
+below is the historical record.
+
 **Status:** open for the residuals below. **The flip LANDED 2026-09-28:**
 `PYC_MAKESEQ=1` is the default, so `tuple(x)` is a real runtime-length
 tuple in every mode. `PYC_MAKESEQ=0` restores the old list. History in git:
@@ -17,7 +26,7 @@ print((0,) + tuple(x + 1 for x in row) + (0,))
 matches CPython byte for byte, so its `.python.expect_fail` is gone and its
 check was re-blessed; the only line that changed is `tuple([1, 2, 3])`.
 
-## What unblocked it: tuple deepcopy ([112](closed/112-tuple-deepcopy-copy-of-copy-unresolved.md))
+## What unblocked it: tuple deepcopy ([112](112-tuple-deepcopy-copy-of-copy-unresolved.md))
 
 `tuple` had no `__deepcopy__`. The any-type fallback was a SHALLOW copy,
 and that was wrong at the old default too: `deepcopy((T(),))` shared the
@@ -65,7 +74,7 @@ Tests: `tests/tuple_deepcopy_elements.py` (heterogeneous and nested),
 ## Residuals
 
 1. `t[i] = x` on a tuple mutates, where CPython raises `TypeError`.
-   **Blocked on [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)'s
+   **Blocked on [175](../175-an-exception-raised-in-an-operator-method-does-not-propagate.md)'s
    item-store half (2026-10-15).** Making `tuple.__setitem__` raise was
    tried: an item store `a[i] = v` carries no exception check (one after
    every item store cost hq2x 4.6× compile time), so FA saw the raise,
