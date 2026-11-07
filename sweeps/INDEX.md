@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `compile__PYC_LLVM_1__eb635d2a+4653f5e1` | 2026-11-06 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=18 cs/shapes=2670/798=3.35 pratio=2.27 n=76 |
+| `check__default__eb635d2a+23d143af` | 2026-11-06 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76 |
 | `check__default__dffcdab6+83753197` | 2026-10-18 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76  -- the LLVM-backend LTO, nsw/noundef and `_CG_hash_mix` commits (ba13dddc, dffcdab6). -R. Versus `check__default__4d1e5d39+4c13869d`: every compile, warning, run and stdout verdict identical; contours move by 1-5 ess / 0-1 css on 8 programs (adatron, dijkstra, mastermind2, rubik2, softrender, sudoku1, sudoku5, tictactoe), from the hash helper replacing inline arithmetic in list/tuple `__hash__`. |
 | `check__default__4d1e5d39+4c13869d` | 2026-10-17 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76  -- ifa/124: a primitive type clone takes its builtin's C name (`_CG_list`/`_CG_tuple`, was `_CG_any`). -R. Versus `check__default__d84aea97+38ad5631`: identical in all 77 rows and every column. |
 | `check__PYC_OVERWRITE_0__d84aea97+38ad5631` | 2026-10-17 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76  -- ifa/191 direction 2 OFF (same binary as the row below). -R. |
@@ -735,3 +737,5 @@ a layout violation has no permissive meaning — there is no runtime check
 to insert, only a program that reads one class's field through another's
 layout — so it is fatal in every mode rather than gated on
 `fruntime_errors`.
+| `compile__PYC_LLVM_1__eb635d2a` | 2026-11-06 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=18 cs/shapes=2670/798=3.35 pratio=2.27 n=76 |
+| `check__default__eb635d2a` | 2026-11-06 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76 |
