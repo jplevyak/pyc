@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_LLVM_1__966472ad+e55772bf` | 2026-11-07 | programs=77 compile_fail=2 run_fail=4 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/200 A6: first -b check sweep; compile columns = compile__PYC_LLVM_1__10c5f2f6+fcd91a5f; the 4 run-fails are rc=124 near the cap under contention (alone: bh 69s, chaos 110s, path_tracing 107s, rubik2 104s; HEAD -b bh 76s, chaos 114s) |
 | `compile__PYC_LLVM_1__10c5f2f6+fcd91a5f` | 2026-11-07 | programs=77 compile_fail=2 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=18 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/206 step 2 (concrete tags, tag-tested union reads): identical to eb635d2a+4653f5e1 per program; softrender compiles again |
 | `check__default__10c5f2f6+d9550405` | 2026-11-07 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/206 step 2: identical to eb635d2a+23d143af per program in every column (softrender back to compiles-and-matches; othello2 NO and othello3 refusal pre-existing) |
 | `compile__PYC_LLVM_1__10c5f2f6+3024dcfb` | 2026-11-07 | programs=77 compile_fail=3 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=17 cs/shapes=2670/798=3.35 pratio=2.27 n=76 |

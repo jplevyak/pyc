@@ -1,0 +1,1 @@
+int_into_float_list_element.py:9: warning: the elements of this list hold both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). The int comes from lines 10 and 11, the float from line 9; it widens 1 more expression, on line 14. Permissive numeric coercion, refused under --strict (issues/171)
