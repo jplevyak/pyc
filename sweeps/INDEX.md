@@ -47,6 +47,7 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__IFA_FA_INLINE_0__d57c13bb+fcb3e59c` | 2026-11-08 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2664/798=3.34 pratio=2.27 n=76 -- ifa/203: mid-FA inlining off; verdicts and ess/css totals identical to check__default__0b9265ba+0048dc1a (it makes 0 decisions) |
 | `check__PYC_LLVM_1__0b9265ba+7dffc5df` | 2026-11-08 | programs=77 compile_fail=2 run_fail=3 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2664/798=3.34 pratio=2.27 n=76 -- ifa/196 landed: verdicts identical to check__PYC_LLVM_1__4ab937b3+0205962a |
 | `check__default__0b9265ba+0048dc1a` | 2026-11-08 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2664/798=3.34 pratio=2.27 n=76 -- ifa/196 landed (demand-free SETTER splits declined, callee dispatch clause): identical to check__PYC_SETTERDEMAND_1__0b9265ba+361322cd in every column |
 | `check__default__0b9265ba+8bb88384` | 2026-11-08 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/196 same-binary baseline for the mode-6 A/B |
