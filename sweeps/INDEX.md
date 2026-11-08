@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_LLVM_1__90c9b3d0+d892b4c2` | 2026-11-07 | programs=77 compile_fail=2 run_fail=3 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/102 step 6 (convert_NOTYPE_to_void deleted): identical to check__PYC_LLVM_1__04baeca8+f4c07c87 per program in every column |
+| `check__default__90c9b3d0+f3d1ce25` | 2026-11-07 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/102 step 6 (convert_NOTYPE_to_void deleted): identical to check__default__87924498+01c0f4aa per program in every column |
 | `check__PYC_LLVM_1__04baeca8+f4c07c87` | 2026-11-07 | programs=77 compile_fail=2 run_fail=3 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/102 step 4 (LLVM stops emitting FA-dead regions): identical to check__PYC_LLVM_1__87924498+01c0f4aa per program in every column |
 | `check__PYC_LLVM_1__87924498+01c0f4aa` | 2026-11-07 | programs=77 compile_fail=2 run_fail=3 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/102 steps 1-2 (nine traps refused, C unresolved-if guard on live IFs): identical to check__PYC_LLVM_1__966472ad+e55772bf per program in every column but bh, rc=124 -> 0 (contention near the cap, as recorded there) |
 | `check__default__87924498+01c0f4aa` | 2026-11-07 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2670/798=3.35 pratio=2.27 n=76 -- ifa/102 steps 1-2: identical to check__default__10c5f2f6+d9550405 per program in every column |
