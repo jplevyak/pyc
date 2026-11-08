@@ -8,7 +8,7 @@
 **Affects:** `shedskin_examples/richards/richards.py`; a polymorphic
 dispatch that resolves to nothing useful.
 **Severity:** silent. Exit 0, wrong output (it does emit 4 warnings, all named below) — the shape
-[ifa/102](../../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md)
+[ifa/102](../../ifa/issues/closed/102-codegen-detected-conditions-are-refusals-or-demands.md)
 is about, one step worse than the abort it replaced.
 
 ## Symptom

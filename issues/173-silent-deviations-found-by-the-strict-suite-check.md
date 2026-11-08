@@ -65,7 +65,7 @@ thread with a large stack), and turn an overflow into CPython's
   compile where CPython raises. The eager lists are a documented
   representation by the author's decision (README accommodation table).
 - `list_tuple_union_method`: a `{list, tuple}` receiver,
-  [ifa/102](../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md).
+  [ifa/102](../ifa/issues/closed/102-codegen-detected-conditions-are-refusals-or-demands.md).
 
 ## Verification
 

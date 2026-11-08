@@ -62,7 +62,7 @@ happens to print a list of nested tuples.
 ## Severity
 
 Silent: zero warnings, exit 0, then an abort. That is the worst shape
-(see [ifa/102](../../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md)),
+(see [ifa/102](../../ifa/issues/closed/102-codegen-detected-conditions-are-refusals-or-demands.md)),
 and `print` of a nested tuple is an entirely ordinary thing to write.
 
 ## Verification plan

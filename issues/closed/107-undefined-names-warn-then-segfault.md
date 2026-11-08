@@ -102,7 +102,7 @@ Consistent with CPython, and taking advantage of pyc being static:
   an error is worth having, since it is almost always a bug.
 - **Never a segfault.** If codegen cannot emit a call whose target is
   unknown, that is the existing
-  [102](../../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md)
+  [102](../../ifa/issues/closed/102-codegen-detected-conditions-are-refusals-or-demands.md)
   problem (`cg.cc:2055` emits an abort stub rather than failing the
   build); an undefined name should not reach codegen at all.
 - **Say what is wrong.** `'X' has no type` and `expression has no type`
@@ -177,7 +177,7 @@ with exit code **1**.
 
 All three referenced CPython builtins pyc does not implement, and all
 three were already in
-[102](../../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md)'s
+[102](../../ifa/issues/closed/102-codegen-detected-conditions-are-refusals-or-demands.md)'s
 crash list. Turning those into compile-time diagnostics is exactly 102's
 stated goal, so the three exit-code changes are an improvement, not a
 regression. Unimplemented builtins get their own wording — the user did

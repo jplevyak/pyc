@@ -104,7 +104,7 @@ so the default rendering lives in `__repr__` (where CPython keeps it) and
 this way. More generally it is a **silent** wrong-answer class: nothing
 in the compile output hints at it, so `-m compile` and `-m run` sweeps
 are both blind to it and only `-m check` sees it — the argument
-[ifa/102](../../ifa/issues/102-codegen-detected-conditions-are-refusals-or-demands.md)
+[ifa/102](../../ifa/issues/closed/102-codegen-detected-conditions-are-refusals-or-demands.md)
 makes for running `check`.
 
 ## Resolution (2026-10-03)
