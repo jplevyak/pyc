@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__56c21a33+56b2ee1a` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/207 landed (hashed match cache, unchanged-dispatch memo, witness rule): every column equals check__default__5fa6edcc+a866b08f on 76 programs; othello3 now finishes FA and prints counts (n=77) but still hits the cap at -j32 |
+| `compile__IFA_DISPMEMO_2__56c21a33+56b2ee1a` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/207: witness check mode, 1 253 818 answers checked against the matcher, 0 mismatches |
 | `compile__GC_INITIAL_HEAP_SIZE_262144__5fa6edcc+a866b08f` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2664/798=3.34 pratio=2.27 n=76 |
 | `check__default__5fa6edcc+a866b08f` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2664/798=3.34 pratio=2.27 n=76 |
 | `check__IFA_FA_INLINE_0__d57c13bb+fcb3e59c` | 2026-11-08 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2664/798=3.34 pratio=2.27 n=76 -- ifa/203: mid-FA inlining off; verdicts and ess/css totals identical to check__default__0b9265ba+0048dc1a (it makes 0 decisions) |
