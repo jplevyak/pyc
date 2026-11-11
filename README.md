@@ -43,6 +43,9 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
   time. Partial implementations of common standard-library modules live in
   [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os`, `collections`, `heapq`,
   `copy`, `struct`, `string`, `socket` and parts of `re` and `itertools`. File I/O uses `open()`.
+- **C libraries**: a static subset of `ctypes`. Declare a function with `CDLL`, `argtypes` and
+  `restype` and it compiles to a direct call, with `Structure` and `POINTER` for C data. The same
+  file runs under CPython. See [Calling a C library](#calling-a-c-library).
 
 ### Language extensions
 
@@ -51,7 +54,7 @@ them:
 
 | Name | Purpose |
 |---|---|
-| `__pyc_c_call__(ret, fn, ...)` | Inline a raw C function call |
+| `__pyc_c_call__(ret, fn, ...)` | Inline a raw C function call (programs use `ctypes` instead) |
 | `__pyc_primitive__(sym, ...)` | Invoke a compiler primitive |
 | `__pyc_char__` | The `uint8` / C `char` type |
 | `__pyc_operator__` | Access C-level operators directly |
@@ -118,6 +121,36 @@ For an unoptimized build to step through in gdb, use `make clean && make OPTIMIZ
 The Makefiles track neither build flags nor all header dependencies. Run `make clean` after
 changing a flag or a header; otherwise stale objects can produce failures that look like real bugs.
 
+### Optional: a collector with a larger mark stack
+
+Large programs compile faster against a `libgc` built with a larger initial mark stack. The
+packaged library works and nothing requires this; on `shedskin_examples/othello3` it takes flow
+analysis from 126 s to 113 s.
+
+bdwgc starts its mark stack at 4096 entries and doubles it once per collection. The analysis
+graph of a large program needs over a million, and a mark that runs out re-scans the heap, so
+every collection until then is several times slower than it should be. The size is a build-time
+constant with no run-time setting
+([ifa/186](ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)).
+
+```sh
+git clone --depth 1 --branch v8.2.8 https://github.com/ivmai/bdwgc.git
+cd bdwgc
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DBUILD_SHARED_LIBS=ON -Denable_cplusplus=OFF -Dbuild_tests=OFF -Denable_docs=OFF \
+      -DCFLAGS_EXTRA="-DINITIAL_MARK_STACK_SIZE=4194304"
+cmake --build build -j
+sudo cmake --install build && sudo ldconfig
+```
+
+Then rebuild pyc from clean (`make clean && make`), since the installed headers changed.
+`ldd ./pyc | grep libgc` should name `/usr/local/lib/libgc.so.1`, and
+`GC_PRINT_STATS=1 ./pyc big.py 2>&1 | grep -c "Mark stack overflow"` should print 0.
+
+The stack is 64 MiB of address space, touched only as far as a mark reaches, so a small compile
+is no slower and no larger. `-Denable_cplusplus=OFF` leaves `libgccpp` to the distribution's
+package. Compiled programs link the same `libgc` and get the same stack.
+
 ## Usage
 
 ```sh
@@ -157,6 +190,8 @@ go before `-x`'s script, as in `#!/usr/bin/env -S pyc -b -x`.
 |---|---|
 | `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `$PYC_SYSTEM_DIRECTORY`, else `.`, else the `pyc` executable's directory) |
 | `-o <path>`, `--output <path>` | Output binary path (default: input filename, extension stripped) |
+| `--cflags <flags>` | Extra flags for compiling the generated program (also `$PYC_CFLAGS`) |
+| `--libs <flags>` | Extra flags for linking it, e.g. `--libs "-L/opt/lib -lfoo"` (also `$PYC_LIBS`) |
 | `-x`, `--exec` | Compile (cached in `~/.cache/pyc`) and run; arguments after the script go to the program. For `#!` lines; see above |
 | `--strict` | CPython semantics or a compile error: every type violation is fatal, no accommodations |
 | `--permissive` | The default: named accommodations are allowed, each with a warning |
@@ -277,6 +312,32 @@ print(C("hello").value)
 print(C(3.14).value)
 ```
 
+### Calling a C library
+
+Declare a C function the way CPython's `ctypes` asks. pyc reads the declarations at compile time,
+emits a direct call and links the library. The file runs unchanged under CPython.
+
+```python
+import ctypes
+import ctypes.util
+
+libm = ctypes.CDLL(ctypes.util.find_library("m"))
+libm.hypot.argtypes = [ctypes.c_double, ctypes.c_double]
+libm.hypot.restype = ctypes.c_double
+
+libc = ctypes.CDLL(None)
+libc.strlen.argtypes = [ctypes.c_char_p]
+libc.strlen.restype = ctypes.c_size_t
+
+print(libm.hypot(3.0, 4.0))    # 5.0
+print(libc.strlen(b"hello"))   # 5
+```
+
+An argument of the wrong type is a compile-time error, where CPython raises `ArgumentError` at
+run time. `Structure` with `_fields_`, `POINTER`, `byref` and `pointer` are supported too. For a
+library outside the default search path, pass `--cflags` and `--libs`. The supported subset, what
+is refused and what is not done yet are in [issues/188](issues/188-static-ctypes-subset.md).
+
 ## Testing
 
 ```sh
@@ -294,7 +355,7 @@ make test-links      # every relative Markdown link resolves (needs no build)
 ```
 
 The end-to-end suite compiles each `tests/*.py`, runs it, and compares its output with the
-expected output and with CPython's. When green it reports 488 passed and 14 known issues on each
+expected output and with CPython's. When green it reports 502 passed and 15 known issues on each
 backend. Tests carrying a `.known_issue` sidecar are filed bugs with CPython's answer as the
 expected output; they report `KNOWN` and flip to `PASS` once fixed. `make test` stops at the first
 failing group, so check its exit status rather than reading the tail of its output.
@@ -307,11 +368,13 @@ backend, while `make -C ifa test_llvm` is the V-language smoke (`make test-ifa-l
 [`shedskin_examples/`](shedskin_examples) holds shedskin's 77 example programs, pyc's larger
 benchmark. `./corpus_sweep.sh -m check` compiles and runs each one and compares its output with
 CPython's. Results are cached under [`sweeps/`](sweeps/INDEX.md), keyed on the source tree. As of
-2026-10-16:
+2026-11-10:
 
-- 76 of 77 programs compile. `othello3` exceeds the 400 s compile cap.
-- All 76 binaries run to completion.
-- 58 print output byte-identical to CPython's, and 1 (`othello2`) differs.
+- All 77 programs compile. The largest, `othello3`, takes about 170 s; it exceeded the 400 s
+  compile cap until call matching and the stages after flow analysis were made cheaper
+  ([ifa/207](ifa/issues/207-FA-call-matching-re-matches-a-whole-union-per-member.md), [ifa/186](ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)).
+- All 77 binaries run to completion.
+- 59 print output byte-identical to CPython's, and 1 (`othello2`) differs.
 - The other 17 can't be compared because CPython itself exceeds the 120 s run cap.
 
 ## Architecture
@@ -361,6 +424,10 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   an `except` clause is refused when the program raises `StopIteration` with more than one value
   type ([issues/172](issues/172-stopiteration-value-reads-the-global-exception-slot.md)).
 - **The standard library** is limited to the partial modules in `pyc_lib/`.
+- **`ctypes`** is a static subset: no callbacks (`CFUNCTYPE`), scalar out-parameters
+  (`byref(c_int())`), arrays, unions or `cast`, declarations must be at module top level, and a
+  program with foreign calls does not run under `--jit`
+  ([issues/188](issues/188-static-ctypes-subset.md)).
 - **Class attribute mutation through a subclass**: `A.n = 4` is not seen by `B.n` when `B`
   inherits `n` from `A`, because each class holds its own copy
   ([issues/173](issues/173-silent-deviations-found-by-the-strict-suite-check.md) #2).

@@ -42,6 +42,7 @@ here when it lands; an item missing from this table is a bug under rule 2.
 | `{int, float}` widened to `float` (prints `1.0` for `1`) | `fruntime_errors` (ifa/145) | `show_numeric_coercions`, once per line | refused |
 | a 64-bit literal past int64 wraps | `PYC_INT_LITERAL_WRAP` | at the literal | refused |
 | a non-priming `next()` on a generator whose send cell is `{None, scalar}` delivers 0 | `PYC_SEND_NONE_ZERO` | at the `def` | refused |
+| a `ctypes` `c_void_p` result or field is an `int`, NULL is 0 (CPython: `int` or `None`) | `PYC_FFI_VOIDP_INT` ([188](188-static-ctypes-subset.md)) | at each declaration | refused |
 | locals possibly read before assignment are zero-filled | `--safe` | no | not set |
 | the implicit-`None` fall-off replaced by a typed default | `PYC_NO_IMPLICIT_NONE=1` (opt-in) | yes | ignored, with a warning |
 | `zip`/`map`/`filter`/`reversed` are eager lists (observable only through `len`, indexing or printing the object, which CPython rejects) | none: a documented representation, author's decision 2026-09-29 | no | same |
@@ -92,7 +93,8 @@ Ordered by value against effort. Items in one row are independent.
 | issue | what |
 | --- | --- |
 | [187](187-self-import-overflows-the-frontend.md) | `import X` from `X.py` recurses without bound in the frontend. |
-| [025](025-shedskin-examples-coverage.md) | **the corpus**: 76 of 77 compile, 58 match, 18 unverifiable by the sweep and verified by hand, othello2 differs (177), othello3 exceeds the compile cap (ifa/186); the two edit candidates. |
+| [188](188-static-ctypes-subset.md) | **foreign calls**: the static `ctypes` subset landed 2026-11-11; callbacks, out-parameters, arrays, unions and `--jit` are not done. |
+| [025](025-shedskin-examples-coverage.md) | **the corpus**: all 77 compile since 2026-11-10 (othello3 in about 170 s, ifa/207 and ifa/186), 59 match, 17 unverifiable by the sweep and verified by hand, othello2 differs (177); the two edit candidates. |
 
 ### Closed on 2026-11-03
 
