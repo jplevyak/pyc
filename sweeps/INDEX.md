@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__0b55bb75+ae4581cf` | 2026-11-10 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/207 verdict-key collapse in find_best_matches: every column equals check__default__56c21a33+56b2ee1a on 76 programs; othello3 compiles (352 s), runs and matches CPython for the first time |
+| `compile__IFA_VKCOLLAPSE_2__0b55bb75+ae4581cf` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/207: collapse check mode, 776 467 full matches compared with the old key, 0 mismatches (othello3 reaches the cap in this mode) |
 | `check__default__56c21a33+56b2ee1a` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/207 landed (hashed match cache, unchanged-dispatch memo, witness rule): every column equals check__default__5fa6edcc+a866b08f on 76 programs; othello3 now finishes FA and prints counts (n=77) but still hits the cap at -j32 |
 | `compile__IFA_DISPMEMO_2__56c21a33+56b2ee1a` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/207: witness check mode, 1 253 818 answers checked against the matcher, 0 mismatches |
 | `compile__GC_INITIAL_HEAP_SIZE_262144__5fa6edcc+a866b08f` | 2026-11-10 | programs=77 compile_fail=1 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2664/798=3.34 pratio=2.27 n=76 |

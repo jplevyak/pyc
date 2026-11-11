@@ -620,7 +620,8 @@ CPython at `nproc/4`, and CPython results are cached in
 11 minutes, validated at 76-of-77 programs byte-identical to the serial
 script on one tree and one binary; the 77th is `score4`, which straddles
 the 120 s cap and flips on repeats of a single build. The remaining floor
-is `othello3`, which takes 317 s **on its own** to fail to compile.
+is `othello3`: since 2026-11-10 it compiles inside the 400 s cap, in about
+350 s (ifa/207).
 
 Two things follow from the cache. CPython's answer changes only when the
 corpus does, so the key is the corpus tree hash + uncommitted `**/*.py` +

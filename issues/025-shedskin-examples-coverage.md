@@ -55,7 +55,7 @@ not shedskin's answers (AGENTS.md). For a corpus program that fails:
 | **match CPython**, 58 | directly, or through a check driver (dijkstra, minpng, sudoku3, sudoku5, voronoi2, tictactoe, mandelbrot2, pystone, circle, sieve, minilight, rdb, rsync, pygasus, webserver) |
 | **unverifiable by the sweep**, 18: CPython exceeds its 120 s cap | ac_encode, adatron, bh, chaos, chess, chull, kmeanspp, mao, oliva2, path_tracing, pisang, pygmy, richards, rubik2, score4, timsort, yopyra were verified by hand on 2026-10-12 (CPython under a 1-hour cap, binaries from `eeff80e2`): stdout and every written file byte-identical apart from each program's own `TIME` line |
 | **differs**, 1 | othello2: 64-bit bitboards in an int64 ([177](177-int64-overflow-at-run-time-is-silent.md)); its four mask literals warn, and `--strict` refuses it |
-| **does not compile**, 1 | othello3: exceeds the compile cap ([ifa/186](../ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)) |
+| **does not compile**, 1 | othello3: exceeds the compile cap ([ifa/186](../ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)). Since sweep `check__default__0b55bb75+ae4581cf` (2026-11-10) it compiles in 352 s and matches CPython. |
 
 21 programs compile with warnings, almost all the int-to-float widening
 (README accommodation table); the rest are othello2's literals and the
