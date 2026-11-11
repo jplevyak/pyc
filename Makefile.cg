@@ -48,5 +48,9 @@ ifdef DEBUG
   CFLAGS += -g
 endif
 
+# pyc --cflags / --libs, and the foreign libraries the program names.
+CFLAGS += $(EXTRA_CFLAGS)
+LIBS += $(EXTRA_LIBS)
+
 all: $(CG_FILES)
 	@$(CC) $(CFLAGS) $(LDFLAGS) -o $(CG_TARGET) $(CG_FILES) $(CG_ROOT)/pyc_runtime.o $(CG_ROOT)/ifa/libifa_gc.a $(LIBS)

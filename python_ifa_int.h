@@ -297,6 +297,8 @@ enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 // From python_ifa_util.cc:
 cchar *cannonicalize_string(cchar *s);
 bool decorator_name_is(cchar *s, cchar *want);
+bool pyc_is_setter_name(cchar *name);   // issues/188 (python_ifa_main.cc)
+void pyc_add_setter_name(cchar *name);
 bool pyc_is_property_name(cchar *name);  // issues/171 #13 (python_ifa_main.cc)
 // ifa/185: dispatch constraints on a formal of a GENERATED method, keyed on
 // the parameter's PyDAST. Python annotations are dropped by the grammar, so
@@ -338,6 +340,10 @@ PycModule *get_module(cchar *name, PycCompiler &ctx);
 cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
 // Parse every module reachable by import from mods[1..] ahead of
 // build_syms (ASTs appended to `out`, and reused by import_file).
+// python_ifa_ctypes.cc: lower the static ctypes subset to pyc Python plus a C
+// shim, before build_syms. pyc_ffi_shim is the shim's text, or null.
+void lower_ctypes(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);
+extern cchar *pyc_ffi_shim;
 void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out);
 int build_syms(PycModule *x, PycCompiler &ctx);
 void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name = 0);

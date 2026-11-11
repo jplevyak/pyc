@@ -527,6 +527,14 @@ inline char *_CG_String_n(const void *x, size_t len) {
   return str;
 }
 
+// Foreign calls (the ctypes subset, python_ifa_ctypes.cc). A foreign address
+// is a machine word on the pyc side; these convert between it and bytes.
+// _CG_ffi_buf is a C-layout struct's storage: collected, zeroed and SCANNED,
+// so a pointer stored into a struct field keeps its target alive.
+inline _CG_int64 _CG_ffi_bytes_addr(char *b) { return (_CG_int64)(intptr_t)b; }
+inline char *_CG_ffi_cstr(_CG_int64 p) { return _CG_String((const void *)(intptr_t)p); }
+inline char *_CG_ffi_buf(_CG_int64 n) { return _CG_string_alloc((size_t)n); }
+
 // Real process argv (ifa/issues -- pyc_lib/sys.py used to hardcode
 // `argv = ["pyc"]`, a compile-time Python list literal FA constant-
 // folds through: any `if len(sys.argv) > 1: ...` collapsed to its

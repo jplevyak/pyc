@@ -1,0 +1,1 @@
+fail: error ctypes_dynamic_refused.py:4: ctypes: this use of ctypes.c_int is outside the static subset pyc compiles (issues/188)

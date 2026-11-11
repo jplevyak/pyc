@@ -222,6 +222,10 @@ static ArgumentDescription arg_desc[] = {
     {"no-optimize", ' ', "Compile the generated C without optimization (-O0, for debugging)", "f", &codegen_optimize,
      "PYC_NO_OPTIMIZE", NULL},
     {"output", 'o', "Output File", "S511", codegen_output, "PYC_OUTPUT", NULL},
+    {"cflags", ' ', "Extra flags for compiling the generated program (e.g. \"$(pkg-config --cflags glib-2.0)\")",
+     "S2047", codegen_extra_cflags, "PYC_CFLAGS", NULL},
+    {"libs", ' ', "Extra flags for linking the generated program (e.g. \"-L/opt/lib -lfoo\")", "S2047",
+     codegen_extra_libs, "PYC_LIBS", NULL},
     {"exec", 'x',
      "Compile (cached in ~/.cache/pyc by name and source hash) and run; for `#!/usr/bin/env -S pyc -x`. "
      "Arguments after the source file go to the program",
@@ -340,6 +344,8 @@ void compile(cchar *fn) {
       ifa_phase("write-llvm-ir");
       { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
       if (codegen_jit) {
+        if (codegen_extra_source || codegen_link_libs.n)
+          fail("foreign (ctypes) calls are not supported under --jit: the shim and the library are linked, not loaded");
         if (llvm_jit_execute()) fail("JIT execution failed");
       } else {
         if (llvm_codegen_compile(fn)) fail("compilation failure");
@@ -404,7 +410,7 @@ int main(int argc, char *argv[]) {
   int exec_script = -1;
   {
     bool saw_x = false;
-    static cchar *takes_value[] = {"-o", "-D", "-l", "--output", "--system-directory", "--log", "--fa-inline",
+    static cchar *takes_value[] = {"-o", "-D", "-l", "--output", "--system-directory", "--log", "--cflags", "--libs", "--fa-inline",
                                    "--narrow", "--dump-ir-after", nullptr};
     for (int i = 1; i < argc; i++) {
       cchar *a = argv[i];

@@ -118,7 +118,7 @@ VERSIONCFLAGS = -DMAJOR_VERSION=$(MAJOR) -DMINOR_VERSION=$(MINOR) \
 
 PYC_DEPEND_SRCS = pyc.cc repl.cc python_ifa_util.cc python_ifa_sym.cc \
                   python_ifa_build_syms.cc python_ifa_build_if1.cc \
-                  python_ifa_main.cc python_parse.cc version.cc
+                  python_ifa_main.cc python_ifa_ctypes.cc python_parse.cc version.cc
 PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc python.g.d_parser.cc
 # Note: under USE_LLVM, the LLVM codegen sources (codegen/llvm.cc,
 # codegen/llvm_codegen.cc, codegen/llvm_primitives.cc) are already

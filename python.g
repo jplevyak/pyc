@@ -900,6 +900,7 @@ Ldone:;
     static const char *names[] = {
       "invalid", "module",
       "funcdef", "classdef", "decorated", "decorator",
+      "async_funcdef", "async_for_stmt", "async_with_stmt", "await_expr",
       "suite",
       "expr_stmt", "assign", "augassign",
       "del_stmt", "pass_stmt",
@@ -912,6 +913,7 @@ Ldone:;
       "while_stmt", "for_stmt",
       "try_stmt", "except_clause", "except_handler", "finally_clause",
       "with_stmt", "with_item",
+      "match_stmt", "case_block", "case_guard", "match_kw", "case_kw",
       "ternary", "bool_or", "bool_and", "bool_not",
       "compare", "cmp_op", "binop", "unaryop",
       "call", "attribute", "subscript", "power",

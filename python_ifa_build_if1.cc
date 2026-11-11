@@ -2925,6 +2925,23 @@ Sym *pyc_read_captured(PycScope *scope, Sym *s, Code **code, PycAST *ast, PycCom
 // target `tgt`, emitting into `code`. Handles simple names,
 // attribute targets (`self.x`), subscript targets (`a[i]`), and
 // arbitrarily nested tuple/list targets, recursing on each element.
+// A member store `obj.ATTR = val`. For a name some class gives a setter
+// (pyc_is_setter_name: today a ctypes Structure field, issues/188) it is the
+// call `obj.__pyc_set_ATTR__(val)`, and dispatch on obj's class picks that
+// setter or the default one, which stores the field -- the store-side twin
+// of the @property read. `at` is the target, whose origin exempts the
+// default accessors' own `self.ATTR = v`.
+static void emit_member_store(Code **code, PycAST *ast, PyDAST *at, Sym *obj, Sym *attr, Sym *val, Sym *result) {
+  if (attr && attr->name && pyc_is_setter_name(attr->name) &&
+      !(at && at->filename && !strcmp(at->filename, "<property_accessors>"))) {
+    char acc[512];
+    snprintf(acc, sizeof(acc), "__pyc_set_%s__", attr->name);
+    call_method(code, ast, obj, make_symbol(acc), result, 1, val);
+    return;
+  }
+  if1_send(if1, code, 5, 1, sym_operator, obj, sym_setter, attr, val, result)->ast = ast;
+}
+
 static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *ast, PycCompiler &ctx) {
   PycAST *a = getAST(tgt, ctx);
   if (tgt->kind == PY_star_expr)
@@ -3010,8 +3027,7 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
   } else {
     if1_gen(if1, code, a->code);
     if (a->is_member)
-      if1_send(if1, code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, val, (ast->rval = new_sym(ast)))
-          ->ast = ast;
+      emit_member_store(code, ast, tgt, a->rval, a->sym, val, (ast->rval = new_sym(ast)));
     else if (a->is_object_index) {
       // issues/175: a slice store is a method send that can raise
       // (bytearray's length check). Its send was built with the target's
@@ -3847,8 +3863,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       PycAST *a = getAST(tgt, ctx);
       if1_gen(if1, &ast->code, a->code);
       if (a->is_member) {
-        if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
-                 new_sym(ast));
+        emit_member_store(&ast->code, ast, tgt, a->rval, a->sym, v->rval, new_sym(ast));
       } else if (a->is_object_index) {
         if (a->is_slice) {
           if1_add_send_arg(if1, find_send(a->code), v->rval);
@@ -3873,8 +3888,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         PycAST *a = getAST(tgt, ctx);
         if1_gen(if1, &ast->code, a->code);
         if (a->is_member) {
-          if1_send(if1, &ast->code, 5, 1, sym_operator, a->rval, sym_setter, a->sym, v->rval,
-                   new_sym(ast));
+          emit_member_store(&ast->code, ast, tgt, a->rval, a->sym, v->rval, new_sym(ast));
         } else if (a->is_object_index) {
           if (a->is_slice) {
             if1_add_send_arg(if1, find_send(a->code), v->rval);
@@ -3909,10 +3923,18 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_gen(if1, &ast->code, t->code);
       if (t->is_member) {
         Sym *tmp = new_sym(ast), *tmp2 = new_sym(ast);
-        if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, tmp2)->ast = ast;
+        // The read half goes through the getter for a property name, as a
+        // plain `obj.ATTR` read does.
+        bool accessor = t->sym && t->sym->name && pyc_is_property_name(t->sym->name) &&
+                        !(tgt_node->filename && !strcmp(tgt_node->filename, "<property_accessors>"));
+        if (accessor) {
+          char acc[512];
+          snprintf(acc, sizeof(acc), "__pyc_get_%s__", t->sym->name);
+          call_method(&ast->code, ast, t->rval, make_symbol(acc), tmp2, 0);
+        } else
+          if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, tmp2)->ast = ast;
         if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), tmp2, v->rval, tmp)->ast = ast;
-        if1_send(if1, &ast->code, 5, 1, sym_operator, t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))
-            ->ast = ast;
+        emit_member_store(&ast->code, ast, tgt_node, t->rval, t->sym, tmp, (ast->rval = new_sym(ast)));
       } else if (t->is_object_index) {
         if (t->is_slice && ctx.aug_slice_obj) {
           // issues/043: CPython's order. The target lowering read the slice

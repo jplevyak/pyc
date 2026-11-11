@@ -37,6 +37,7 @@ python_ifa_sym.cc            ← Sym creation, scope mgmt, builtin syms (~359 li
 python_ifa_build_syms.cc     ← symbol-table-building pass (~725 lines, pyda-only)
 python_ifa_build_if1.cc      ← IF1-code-generation pass (~1249 lines, pyda-only)
 python_ifa_main.cc           ← ast_to_if1 entry, primitive registration, build_environment
+python_ifa_ctypes.cc         ← the static ctypes subset: an AST rewrite before build_syms (§11.1)
 defs.h                       ← top-level includes
 pyc_symbols.h                ← S(name)/P(name)/B(name) macro list of pyc-specific syms
 pyc_c_runtime.h              ← runtime C helpers emitted alongside generated code
@@ -665,6 +666,22 @@ either:
   `add_primitive_transfer_functions`, OR
 - Handle it as a special case in `build_builtin_call_pyda`
   (`python_ifa_build_if1.cc:246`).
+
+### 11.1 Foreign calls: the static `ctypes` subset
+
+`__pyc_c_call__` is the internal primitive. What a program writes is
+CPython's `ctypes` (`CDLL`, `argtypes`, `restype`, `Structure`, `POINTER`,
+`byref`, `pointer`), and `lower_ctypes` (`python_ifa_ctypes.cc`) rewrites
+those declarations, on the AST and before `build_syms`, into generated
+classes whose methods call `__pyc_c_call__` on a generated C shim. It runs
+first in `ast_to_if1`, ahead of `inject_property_accessors`, because the
+classes it generates carry `@property` getters. `PYC_DBG_CTYPES=1` prints
+the generated Python.
+
+The shim's text reaches the C backend through `ctx.c_code` and the LLVM
+backend through `codegen_extra_source`; the libraries a program names go to
+`codegen_link_libs`. Design, limits and the list of what is refused:
+[issues/188](issues/188-static-ctypes-subset.md).
 
 ---
 

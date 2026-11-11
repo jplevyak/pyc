@@ -1,0 +1,9 @@
+ctypes_arg_type_refused.py:5: error: unresolved member '__pyc_ffi_int__' of class 'float64'
+    libc.abs.argtypes = [ctypes.c_int]
+    ^
+  called from ctypes_arg_type_refused.py:6
+ctypes_arg_type_refused.py:5: error: expression has no type
+    libc.abs.argtypes = [ctypes.c_int]
+    ^
+  called from ctypes_arg_type_refused.py:6
+fail: program does not type

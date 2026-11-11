@@ -664,6 +664,7 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
   PycCompiler *ctx = bl.ctx;
   Code *code = bl.code;
   ctx->modules = &all_mods;
+  if (pyc_ffi_shim) ctx->c_code.add(pyc_ffi_shim);  // issues/188: after the runtime header
   // Snapshot n: build_syms may add imported modules to all_mods via import_file.
   // Those are processed lazily by build_import_if1; we must not double-process them.
   int n_user = all_mods.n;
@@ -1179,6 +1180,24 @@ bool pyc_is_property_name(cchar *name) {
   return false;
 }
 
+// The store side (issues/188): names some class gives a `__pyc_set_NAME__`.
+// A store `o.NAME = v` becomes `o.__pyc_set_NAME__(v)` (emit_member_store),
+// and every builtin class gets a default that stores the field. Today only
+// the ctypes lowering registers any, for a Structure's C-layout fields;
+// `@NAME.setter` is still refused below.
+static Vec<cchar *> pyc_setter_names;
+
+bool pyc_is_setter_name(cchar *name) {
+  if (!name) return false;
+  for (cchar *p : pyc_setter_names)
+    if (!strcmp(p, name)) return true;
+  return false;
+}
+
+void pyc_add_setter_name(cchar *name) {
+  if (!pyc_is_setter_name(name)) pyc_setter_names.add(dupstr(name));
+}
+
 static cchar *decorated_single_decorator_name(PyDAST *d) {
   // The one PY_decorator of a PY_decorated node, if there is exactly one.
   if (!d || d->kind != PY_decorated || d->children.n != 2) return nullptr;
@@ -1245,7 +1264,7 @@ static void inject_property_accessors(Vec<PycModule *> &mods, Vec<PyDAST *> &imp
     refuse_property_setters(a);
     scan_properties(a, nullptr);
   }
-  if (!pyc_property_names.n) return;
+  if (!pyc_property_names.n && !pyc_setter_names.n) return;
   // One throwaway class of default accessors per builtin class, parsed at
   // once; each builtin class takes its own copy's funcdefs.
   Vec<PyDAST *> targets;
@@ -1258,6 +1277,8 @@ static void inject_property_accessors(Vec<PycModule *> &mods, Vec<PyDAST *> &imp
     fprintf(f, "class __pyc_prop_acc_%d__:\n", k);
     for (cchar *pname : pyc_property_names)
       fprintf(f, "  def __pyc_get_%s__(self):\n    return self.%s\n", pname, pname);
+    for (cchar *pname : pyc_setter_names)
+      fprintf(f, "  def __pyc_set_%s__(self, v):\n    self.%s = v\n", pname, pname);
   }
   fclose(f);
   PyDAST *gen = dparse_python_buf_to_ast("<property_accessors>", buf, (int)sz);
@@ -1285,6 +1306,7 @@ int ast_to_if1(Vec<PycModule *> &mods) {
   // Pre-scanned once: import_file reuses these ASTs.
   Vec<PyDAST *> imported;
   prescan_imported_modules(mods, *make_search_path(), imported);
+  lower_ctypes(mods, imported);  // issues/188: before the property scan, which reads the classes it generates
   inject_property_accessors(mods, imported);  // issues/171 #13: @property getters
   Vec<PyDAST *> asts;
   for (PycModule *m : mods) asts.add(m->pymod);
