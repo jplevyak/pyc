@@ -287,6 +287,7 @@ void compile(cchar *fn) {
   // issue 011: Fun::calls (built by clone(), inside ifa_analyze())
   // now exists -- compute the precise, post-FA can-raise bit before
   // any codegen consumes it.
+  ifa_phase("analyze-tail");
   compute_fun_can_raise();
   // issue 011 (Tier 2 continued): fold each provably-safe exception
   // check's condition to FA's own canonical true_type constant --
@@ -312,10 +313,13 @@ void compile(cchar *fn) {
   // NOT redundant with native FA integration; it addresses a
   // different, general property of mark_live_code's design.
   mark_exc_checks_constant(fa);
+  ifa_phase("can-raise");
   if (ifa_optimize() < 0) fail("unable to optimize program");
   ifa_dbg_bodies("after-optimize");  // ifa/issues/112
   { extern void sum_audit_check(cchar *); sum_audit_check("after-optimize"); }  // ifa/120
+  ifa_phase("optimize-tail");
   { extern void compute_clone_equivalence(FA *); compute_clone_equivalence(pdb->fa); }  // ifa/121
+  ifa_phase("clone-equivalence");
   if (fgraph) ifa_graph(fn);
   if (fdump_html) {
     char mktree_dir[512];
@@ -333,18 +337,22 @@ void compile(cchar *fn) {
       // cg_v2_emit_llvm_module (see llvm.cc:155 — old direct
       // emitter was retired in issue 014).
       llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
+      ifa_phase("write-llvm-ir");
       { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
       if (codegen_jit) {
         if (llvm_jit_execute()) fail("JIT execution failed");
       } else {
         if (llvm_codegen_compile(fn)) fail("compilation failure");
+        ifa_phase("llvm-compile");
       }
     } else
 #endif
     {
       c_codegen_write_c(pdb->fa, if1->top->fun, fn);
+      ifa_phase("write-c");
       { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
       if (c_codegen_compile(fn)) fail("compilation failure");
+      ifa_phase("cc");
     }
   }
   return;
@@ -384,6 +392,7 @@ int main(int argc, char *argv[]) {
     }
   }
   MEM_INIT();
+  ifa_phase("start");
   // The C backend optimizes by default, as the LLVM backend always has
   // (clang -O2): at -O0 the generated C ran 2-4x slower (brainfuck 100s vs
   // 26s, slower than CPython) and every C-vs-LLVM timing compared optimized
