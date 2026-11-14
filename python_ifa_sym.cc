@@ -131,6 +131,24 @@ void build_builtin_symbols() {
   if (getenv("PYC_TUPELEM") ? atoi(getenv("PYC_TUPELEM")) : 1) sym_tuple->element = new_sym();
 }
 
+// A def's default expressions, keyed by the formal position of the
+// parameter each belongs to. The parameters are the LAST formals of `fn`
+// (after the callee and any hidden formal), in source order. issues/182: a
+// default need not be in the tail -- `def f(a, b=2, *args, k=3, **kw)`.
+static void put_default_args(Sym *fn, PyDAST *varargslist, PycAST *a) {
+  Vec<int> index;
+  int nparams = param_indices_pyda(varargslist, index);
+  int base = fn->has.n - nparams;
+  assert(base >= 0);
+  for (int i = 0; i < varargslist->children.n; i++) {
+    PyDAST *c = varargslist->children[i];
+    if (c->kind != PY_arg_default) continue;
+    MPosition p;
+    p.push(base + index[i] + 1);
+    fn->fun->default_args.put(cannonicalize_mposition(p), getAST(c->children[1], a));
+  }
+}
+
 static void finalize_function(Fun *f) {
   Sym *fn = f->sym;
   if (!f->ast) return;  // __main__
@@ -151,19 +169,7 @@ static void finalize_function(Fun *f) {
           PyDAST *params = init_funcnode->children[1];
           if (params->children.n > 0) varargslist = params->children[0];
         }
-        if (!varargslist) return;
-        Vec<PycAST *> defaults;
-        for (auto c : varargslist->children.values())
-          if (c->kind == PY_arg_default) defaults.add(getAST(c->children[1], init_ast));
-        if (!defaults.n) return;
-        int skip = fn->has.n - defaults.n;
-        assert(skip >= 0);
-        MPosition p;
-        p.push(skip + 1);
-        for (int i = 0; i < defaults.n; i++) {
-          fn->fun->default_args.put(cannonicalize_mposition(p), defaults[i]);
-          p.inc();
-        }
+        if (varargslist) put_default_args(fn, varargslist, init_ast);
       }
       return;
     }
@@ -175,29 +181,24 @@ static void finalize_function(Fun *f) {
       if (funcnode->children.n > 0 && funcnode->children[0]->kind == PY_varargslist)
         varargslist = funcnode->children[0];
     }
-    if (!varargslist) return;
-    Vec<PycAST *> defaults;
-    for (auto c : varargslist->children.values())
-      if (c->kind == PY_arg_default) defaults.add(getAST(c->children[1], a));
-    if (!defaults.n) return;
-    int skip = fn->has.n - defaults.n;
-    assert(skip >= 0);
-    MPosition p;
-    p.push(skip + 1);
-    for (int i = 0; i < defaults.n; i++) {
-      fn->fun->default_args.put(cannonicalize_mposition(p), defaults[i]);
-      p.inc();
-    }
+    if (varargslist) put_default_args(fn, varargslist, a);
     return;
   }
 }
 
 void PycCompiler::finalize_functions() {
   for (auto fun : pdb->funs.values()) {
-    // ROADMAP 6.1: a def with `*args` (its LAST formal; `**kwargs` after it
-    // is not supported) takes any number of surplus positionals. The
-    // matcher accepts them for an is_varargs Fun and builds a rest_wrapper.
-    if (fun && fun->sym && fun->sym->has.n && star_formals.set_in(fun->sym->has.last())) fun->is_varargs = 1;
+    // ROADMAP 6.1, issues/182: where a def's `*args`, keyword-only and
+    // `**kw` formals are. The matcher routes each call of a function with
+    // `*args` or `**kw` through a signature_wrapper.
+    if (fun && fun->sym)
+      for (int i = 0; i < fun->sym->has.n; i++) {
+        Sym *a = fun->sym->has[i];
+        if (star_formals.set_in(a)) fun->rest_pos = i + 1;
+        if (dstar_formals.set_in(a)) fun->kw_pos = i + 1;
+        if (kwonly_formals.set_in(a) && !fun->kwonly_pos) fun->kwonly_pos = i + 1;
+      }
+    if (fun && (fun->rest_pos || fun->kw_pos)) fun->is_varargs = 1;
     finalize_function(fun);
   }
 }
@@ -247,8 +248,11 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   send->ast = ast;
   for (int i = 0; i < f->sym->has.n; i++) {
     MPosition *cp = cannonicalize_mposition(pos);
+    // issues/182: a keyword-only formal takes no positional actual, so this
+    // send names the ones it passes.
+    cchar *kwname = f->kwonly_pos && i + 1 >= f->kwonly_pos ? f->sym->has[i]->name : nullptr;
     if (defaults_set.set_in(cp)) {
-      if1_add_send_arg(if1, send, ((PycAST *)f->default_args.get(cp))->sym);
+      if1_add_send_arg(if1, send, ((PycAST *)f->default_args.get(cp))->sym, kwname);
     } else {
       Sym *a = new_sym(ast);
       // Inherit clone_for_constants from the wrapped formal:
@@ -272,7 +276,7 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
         a->name = orig->name;
       }
       as.add(a);
-      if1_add_send_arg(if1, send, a);
+      if1_add_send_arg(if1, send, a, kwname);
     }
     pos.inc();
   }
@@ -284,46 +288,93 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   return fn->fun;
 }
 
-// ROADMAP 6.1: `*args`. A call of `def f(a, b, *args)` with `nactuals`
-// top-level positional actuals (position 1 is the callee itself, as in
-// every wrapper here) is routed by the matcher (pattern.cc Matcher::build)
-// to this wrapper, which takes exactly those actuals, packs the ones from
-// the rest position on into a tuple, and calls `f` with the fixed ones plus
-// that tuple. The tuple's sym is marked `is_rest`: the matcher binds a call
-// whose rest-position actual is such a tuple directly, so this wrapper's own
-// call does not wrap again -- while a user passing an ordinary tuple (or a
-// `*args` formal) in that position is still wrapped, as CPython packs it.
-Fun *PycCompiler::rest_wrapper(Fun *f, int nactuals) {
+// ROADMAP 6.1, issues/182: `*args` and `**kw`. A call of a function that
+// has either is routed by the matcher (pattern.cc Matcher::build) to this
+// wrapper, one per call shape: `npositional` positional actuals (the callee
+// is the first, as in every wrapper here), then one keyword actual per name
+// in `keywords`. The wrapper takes exactly those and binds them as CPython
+// does: positionals to the plain formals in order, the surplus into the
+// `*args` tuple, each keyword to the formal of that name, the keywords no
+// formal has into the `**kw` dict, and a default for whatever is left. It
+// then calls `f` with one positional actual per formal. The tuple's and the
+// dict's syms are marked `is_rest`, which is how the matcher knows that call
+// from one that still needs wrapping -- a user passing an ordinary tuple in
+// the rest position is wrapped, as CPython packs it.
+//
+// A call CPython raises TypeError for has no wrapper: too many positionals
+// with no `*args`, a keyword no formal has with no `**kw`, two values for one
+// formal, or a formal left with neither a value nor a default.
+Fun *PycCompiler::signature_wrapper(Fun *f, int npositional, Vec<cchar *> &keywords) {
   PycAST *ast = (PycAST *)f->ast;
-  int nrest = f->sym->has.n;  // 1-based position of the rest formal
-  if (nactuals < nrest - 1) return nullptr;
+  int n = f->sym->has.n;
+  int star = f->star_pos();
+  int nplain = star ? star - 1 : n;  // the formals a positional can bind, callee included
+  auto is_plain_or_kwonly = [&](int i) { return i + 1 != f->rest_pos && i + 1 != f->kw_pos; };
+  Vec<Sym *> as, bound, surplus, extra_vals;
+  Vec<cchar *> extra_names;
+  bound.fill(n);
+  for (int i = 0; i < npositional; i++) {
+    Sym *a = new_sym(ast);
+    as.add(a);
+    if (i < nplain) {
+      a->clone_for_constants = f->sym->has[i]->clone_for_constants;
+      a->name = f->sym->has[i]->name;
+      bound[i] = a;
+    } else if (f->rest_pos)
+      surplus.add(a);
+    else
+      return nullptr;
+  }
+  for (cchar *k : keywords.values()) {
+    Sym *a = new_sym(ast);
+    as.add(a);
+    int at = -1;
+    for (int i = 1; i < n && at < 0; i++)
+      if (is_plain_or_kwonly(i) && f->sym->has[i]->name == k) at = i;
+    if (at >= 0) {
+      if (bound[at]) return nullptr;
+      a->clone_for_constants = f->sym->has[at]->clone_for_constants;
+      bound[at] = a;
+    } else if (f->kw_pos) {
+      extra_names.add(k);
+      extra_vals.add(a);
+    } else
+      return nullptr;
+  }
+  Code *body = 0;
+  for (int i = 1; i < n; i++) {
+    if (bound[i]) continue;
+    if (i + 1 == f->rest_pos) {
+      Sym *tup = bound[i] = new_sym(ast);
+      tup->is_rest = 1;
+      Code *mk = if1_send1(if1, &body, ast);
+      if1_add_send_arg(if1, mk, sym_primitive);
+      if1_add_send_arg(if1, mk, sym_make);
+      if1_add_send_arg(if1, mk, sym_tuple);
+      for (Sym *a : surplus.values()) if1_add_send_arg(if1, mk, a);
+      if1_add_send_result(if1, mk, tup);
+    } else if (i + 1 == f->kw_pos) {
+      // Marked on a copy of the reference: a marked actual binds only a
+      // `**kw` formal, and the dict is first the receiver of __setitem__.
+      Sym *d = emit_kwargs_dict(*this, ast, &body, extra_names, extra_vals);
+      bound[i] = new_sym(ast);
+      bound[i]->is_rest = 1;
+      if1_move(if1, &body, d, bound[i], ast);
+    } else {
+      MPosition p;
+      p.push(i + 1);
+      PycAST *d = (PycAST *)f->default_args.get(cannonicalize_mposition(p));
+      if (!d) return nullptr;
+      bound[i] = d->sym;
+    }
+  }
   Sym *fn = new_fun(ast);
   fn->nesting_depth = f->sym->nesting_depth;
   fn->clone_methods_per_cs = f->sym->clone_methods_per_cs;
-  Vec<Sym *> as;
-  for (int i = 0; i < nactuals; i++) {
-    Sym *a = new_sym(ast);
-    if (i < nrest - 1) {
-      Sym *orig = f->sym->has[i];
-      a->clone_for_constants = orig->clone_for_constants;
-      a->name = orig->name;
-    }
-    as.add(a);
-  }
-  Code *body = 0;
-  Sym *tup = new_sym(ast);
-  tup->is_rest = 1;
-  Code *mk = if1_send1(if1, &body, ast);
-  if1_add_send_arg(if1, mk, sym_primitive);
-  if1_add_send_arg(if1, mk, sym_make);
-  if1_add_send_arg(if1, mk, sym_tuple);
-  for (int i = nrest - 1; i < nactuals; i++) if1_add_send_arg(if1, mk, as[i]);
-  if1_add_send_result(if1, mk, tup);
   Sym *ret = new_sym(ast);
   Code *send = if1_send(if1, &body, 0, 1, ret);
   send->ast = ast;
-  for (int i = 0; i < nrest - 1; i++) if1_add_send_arg(if1, send, as[i]);
-  if1_add_send_arg(if1, send, tup);
+  for (int i = 0; i < n; i++) if1_add_send_arg(if1, send, bound[i]);
   if1_move(if1, &body, ret, fn->ret, ast);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
   if1_closure(if1, fn, body, as.n, as.v);

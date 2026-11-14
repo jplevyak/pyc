@@ -81,12 +81,15 @@ parameters: LP varargslist? RP {
 };
 varargsarg: fpdef '=' test { $$.ast = new_pyast(PY_arg_default, &$n, $0.ast, $2.ast); }
            | fpdef { $$.ast = $0.ast; };
-star_arg: '*' NAME (':' test)? { $$.ast = new_pyast(PY_star_arg, &$n, $1.ast); };
+// issues/182: a bare `*` is a PY_star_arg with no child. The parameters
+// after either form of `*` are keyword-only.
+star_arg: '*' NAME (':' test)? { $$.ast = new_pyast(PY_star_arg, &$n, $1.ast); }
+        | '*' { $$.ast = new_pyast(PY_star_arg, &$n); };
 dstar_arg: '**' NAME (':' test)? { $$.ast = new_pyast(PY_dstar_arg, &$n, $1.ast); };
-varargslist: varargsarg (',' varargsarg)* (',' (star_arg (',' dstar_arg)? | dstar_arg))? ','? {
+varargslist: varargsarg (',' varargsarg)* (',' (star_arg (',' varargsarg)* (',' dstar_arg)? | dstar_arg))? ','? {
   $$.ast = new_pyast_collect(PY_varargslist, &$n);
 }
-| star_arg (',' dstar_arg)? ','? {
+| star_arg (',' varargsarg)* (',' dstar_arg)? ','? {
   $$.ast = new_pyast_collect(PY_varargslist, &$n);
 }
 | dstar_arg ','? {
@@ -552,10 +555,14 @@ classdef: 'class' NAME (LP testlist? RP)? ':' suite [
 };
 
 arglist: (argument ',')* (argument ','?
-             | '*' test (',' argument)* (',' '**' test)?
-             | '**' test) {
+             | call_star_arg (',' argument)* (',' call_dstar_arg)?
+             | call_dstar_arg) {
   $$.ast = new_pyast_collect(PY_arglist, &$n);
 };
+// issues/182: `f(*t)` and `f(**d)`. Unmarked, the operand was collected as
+// one more positional argument.
+call_star_arg: '*' test { $$.ast = new_pyast(PY_star_arg, &$n, $1.ast); };
+call_dstar_arg: '**' test { $$.ast = new_pyast(PY_dstar_arg, &$n, $1.ast); };
 argument: test comp_for? {
     /* positional or with comp_for (generator in call) */
     $$.ast = pass_or_collect(1, PY_genexpr, &$n, $0.ast);

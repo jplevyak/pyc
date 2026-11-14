@@ -401,7 +401,7 @@ requires empty stderr).
 
 **2026-07 update:** confirmed this is very likely the same
 underlying mechanism as
-[issue 007](../007-decorators-not-applied.md)'s "Finding 2"
+[issue 007](007-decorators-not-applied.md)'s "Finding 2"
 (self-referential reassignment of a Sym that already has
 `if1_closure` attached directly to it breaks FA's dispatch) —
 see issue 007's re-check notes for a controlled experiment isolating
@@ -558,7 +558,7 @@ fails loudly with a source location instead of a bare `Aborted`.
 - The most common Python closure pattern (`functools.partial`-
   style adapters, factory functions returning configured
   callables, decorators that wrap with captured state) —
-  including, notably, [issue 007](../007-decorators-not-applied.md)'s
+  including, notably, [issue 007](007-decorators-not-applied.md)'s
   most common decorator shape (`def double(f): def wrapper(x): ...
   return wrapper`), which was confirmed blocked directly on this
   issue's assertion during that investigation. (Note: 007's own

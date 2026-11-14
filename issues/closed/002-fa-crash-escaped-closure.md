@@ -283,7 +283,7 @@ a concrete closure shape at all.
 Properly fixing this means extending FA's global-Sym handling to
 correctly propagate and refine closure shapes through
 `GLOBAL_CONTOUR` — genuine, non-trivial FA work, comparable in scope
-to [007-decorators-not-applied.md](../007-decorators-not-applied.md)'s
+to [007-decorators-not-applied.md](007-decorators-not-applied.md)'s
 polymorphic-dispatch investigation, not a quick patch. Deferring
 further work on this specific remainder pending direction on whether
 it's worth the investment now — the two `simple_inlining` crashes

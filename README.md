@@ -26,9 +26,10 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
 
 - **Classes**: inheritance, `super()`, class attributes, operator overloading (`__add__`,
   `__getitem__`, `__eq__`, …), `__str__`/`__repr__`, `__iter__`/`__next__`, `__enter__`/`__exit__`,
-  read-only `@property`.
+  `@property` with setters and deleters, `property(...)`.
 - **Functions**: closures, `nonlocal`/`global`, lambdas, default and mutable default
-  arguments, `*args`, nested functions, local classes.
+  arguments, `*args`, `**kwargs`, keyword-only parameters, `f(*t)` / `f(**d)` forwarding,
+  nested functions, local classes.
 - **Exceptions**: `try`/`except`/`else`/`finally`, `raise`, user exception hierarchies, and
   CPython's built-in exceptions raised by the runtime (`ValueError` from `int("x")`,
   `IndexError`, `KeyError`, `StopIteration`, …).
@@ -413,10 +414,12 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
 - **Dynamic features**: `eval`, `exec`, and runtime reflection are not supported.
 - **Values that need boxing.** A variable, field or container element that genuinely holds two
   unrelated types over time (`{int, str}`, `{None, int}`) has no representation and is refused.
-- **Parameters**: `**kwargs` and keyword-only parameters (`def f(a, *, b)`) are not supported
-  ([issues/182](issues/182-kwargs-and-keyword-only-parameters.md)).
-- **Properties**: only read-only `@property` getters. Setters and deleters are refused
-  ([issues/007](issues/007-decorators-not-applied.md)).
+- **Argument unpacking**: `f(*t)` and `f(**d)` work when the callee takes `*args` / `**kwargs`;
+  unpacking into named parameters is refused, as is a `**kwargs` whose values have different
+  types in one call ([issues/189](issues/189-unpacking-into-named-parameters.md)).
+- **Decorators**: a `@property` under another decorator, `@x.getter`, and a decorated method
+  that takes `*args` or uses `super()` are refused
+  ([issues/007](issues/closed/007-decorators-not-applied.md)).
 - **`complex`** is not supported.
 - **`@classmethod`**: reading an attribute through `cls` (`cls.base`, `cls.other()`) does not
   compile; `cls(...)` does ([issues/184](issues/184-classmethod-attribute-through-cls.md)).

@@ -285,7 +285,17 @@ static void run_compile_jit(const char *tmpfile, const char *cache_path) {
   mods.add(user);
   fruntime_errors = runtime_errors;
   fauto_init_unbound = auto_init_unbound;
-  if (ast_to_if1_extend(mods, s_baseline) < 0) exit(1);
+  if (pyc_needs_whole_program_frontend(mods)) {
+    // issues/007: a property (or a decorated method) reshapes the builtin
+    // module, which the baseline has already built. Compile this input
+    // as a file is compiled, from a fresh builtin module.
+    PycModule *b = load_builtin_mod();
+    if (!b) exit(1);
+    mods.v[0] = b;
+    ifa_reset();  // drop the baseline this child inherited
+    if (ast_to_if1(mods) < 0) exit(1);
+  } else if (ast_to_if1_extend(mods, s_baseline) < 0)
+    exit(1);
   compile(tmpfile);  // FA → codegen → llvm_jit_execute (writes cache, forks for exit() safety)
   exit(0);
 }

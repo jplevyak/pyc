@@ -1,0 +1,13 @@
+keyword_only_missing_refused.py:6:41: error: illegal call argument type expression illegal: int64 
+    print(h(2, 3))
+                  ^
+keyword_only_missing_refused.py:6:41: error: illegal call argument type expression illegal: h 
+    print(h(2, 3))
+                  ^
+keyword_only_missing_refused.py:6:41: error: expression has no type
+    print(h(2, 3))
+                  ^
+keyword_only_missing_refused.py:6:35: error: expression has no type
+    print(h(2, 3))
+                  ^
+fail: program does not type

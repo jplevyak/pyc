@@ -58,7 +58,7 @@ Ordered by value against effort. Items in one row are independent.
 | 2 | exception flow along the call graph, once: [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 2 | three issues wait on it and the up-front check is measured too expensive | [172](172-stopiteration-value-reads-the-global-exception-slot.md), [179](179-sequence-index-out-of-range-does-not-raise.md), tuple `__setitem__`, ifa/165 |
 | 3 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 1 (operators, `ZeroDivisionError`) and [179](179-sequence-index-out-of-range-does-not-raise.md) | silent memory reads and a SIGFPE on the default path | |
 | 4 | the crashes: [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 3 (recursion limit), [187](187-self-import-overflows-the-frontend.md) | a crash beats a wrong answer but not by much | corpus `loop` |
-| 5 | the refusals of valid programs: [184](184-classmethod-attribute-through-cls.md), [186](186-duplicate-method-definitions-are-an-ambiguous-call.md), [182](182-kwargs-and-keyword-only-parameters.md), [007](007-decorators-not-applied.md) items 1–2 | each is a common idiom with a named cause | |
+| 5 | the refusals of valid programs: [184](184-classmethod-attribute-through-cls.md), [186](186-duplicate-method-definitions-are-an-ambiguous-call.md), [189](189-unpacking-into-named-parameters.md) | each is a common idiom with a named cause | |
 | 6 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 2 through ifa/050's write-once globals | the mechanism belongs to FA | |
 | 7 | [177](177-int64-overflow-at-run-time-is-silent.md): measure the checked path | the one deviation `--strict` cannot see | othello2 under `--strict` says why it differs |
 | 8 | [048](048-none-int-field-pair-runtime-abort.md), [169](169-local-class-method-reading-enclosing-local-crashes.md): wait for a program that needs them | refusals, documented, no corpus witness | |
@@ -83,8 +83,7 @@ Ordered by value against effort. Items in one row are independent.
 | [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
 | [184](184-classmethod-attribute-through-cls.md) | `cls.base` and `cls.h()` inside a `@classmethod` have no type; `cls(...)` works. |
 | [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class defining a method twice is an ambiguous call; CPython takes the last. |
-| [182](182-kwargs-and-keyword-only-parameters.md) | `**kwargs` parameters and keyword-only parameters. |
-| [007](007-decorators-not-applied.md) | property setters and deleters, `property(GETTER)` with a non-trivial getter, class-based decorators. |
+| [189](189-unpacking-into-named-parameters.md) | `f(*t)` / `f(**d)` into named parameters (the forwarding decorator), and `**kw` with mixed value types. |
 | [048](048-none-int-field-pair-runtime-abort.md) | a genuinely read `{None, scalar}`: refused in every mode; the permissive sentinel is built only when a program needs it. |
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | a local class whose captured value has a different type per call (one prototype per class statement). |
 
@@ -101,6 +100,13 @@ Ordered by value against effort. Items in one row are independent.
 | closed | why | residual now in |
 | --- | --- | --- |
 | [110](closed/110-tuple-from-iterable-returns-a-list.md) | `tuple(x)` is a real tuple in every mode since 2026-09-28 | 175 step 3 (`tuple.__setitem__`); the eager lists are in the table above |
+
+### Closed on 2026-11-13
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [007](closed/007-decorators-not-applied.md) | property setters and deleters, `property(...)` with any getter, class-based decorators, and decorators on methods (which were being dropped) all work | the file's own Residuals list, each a named refusal; 173 item 1 |
+| [182](closed/182-kwargs-and-keyword-only-parameters.md) | keyword-only parameters, `**kw`, named parameters after `*args`, and `f(*t)` / `f(**d)` into a `*args` / `**kw` callee all work; a call-site `*t` was being passed as one argument | [189](189-unpacking-into-named-parameters.md) |
 
 Every archived file starts with a dated closure note. The archive is
 [`closed/`](closed/).

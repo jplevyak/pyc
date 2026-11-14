@@ -297,6 +297,9 @@ class dict:
   # fell back to the copy primitive's one-level struct clone: the clone
   # shared _keys/_vals/_index with the original, so writing an existing
   # key through the copy changed the original too.
+  # issues/182: the value `f(**self)` gives the callee's `**kw`.
+  def __pyc_star_kwargs__(self):
+    return self.copy()
   def copy(self):
     r = dict()
     r._keys = self._keys.__pyc_copy__()

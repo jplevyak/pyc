@@ -980,6 +980,13 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       if (arg->kind == PY_keyword_arg) {
         kw_keys.add(arg->children[0]);
         kw_vals.add(arg->children[1]);
+      } else if (arg->kind == PY_star_arg || arg->kind == PY_dstar_arg) {
+        // issues/182: unpacking is bound by the callee's signature, which a
+        // compiler-level builtin does not have.
+        if (f && builtin_functions.set_in(f))
+          fail("error line %d: '*' and '**' unpacking in a call of the builtin '%s' is not supported (issues/182)",
+               ctx.lineno, f->name ? f->name : "?");
+        return 0;
       } else
         pos_args.add(arg);
     }
@@ -1489,6 +1496,16 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
   } else
     fail("unimplemented builtin '%s'", f->name);
   return 1;
+}
+
+// issues/182: the dict a `**kw` formal receives, built in a signature
+// wrapper (python_ifa_sym.cc) from the keywords no formal is named for.
+Sym *emit_kwargs_dict(PycCompiler &ctx, PycAST *ast, Code **code, Vec<cchar *> &names, Vec<Sym *> &vals) {
+  if (!ctx.kwargs_dict_cls) fail("'dict' type not found for a **kwargs parameter (is __pyc__/07_dict.py loaded?)");
+  Sym *d = emit_make_dict(ctx, ast, code, ctx.kwargs_dict_cls);
+  for (int i = 0; i < names.n; i++)
+    call_method(code, ast, d, sym___setitem__, new_sym(ast), 2, make_string(names[i]), vals[i]);
+  return d;
 }
 
 // Like call_method, but takes a runtime-determined argument list rather
@@ -2931,12 +2948,14 @@ Sym *pyc_read_captured(PycScope *scope, Sym *s, Code **code, PycAST *ast, PycCom
 // setter or the default one, which stores the field -- the store-side twin
 // of the @property read. `at` is the target, whose origin exempts the
 // default accessors' own `self.ATTR = v`.
-static void emit_member_store(Code **code, PycAST *ast, PyDAST *at, Sym *obj, Sym *attr, Sym *val, Sym *result) {
-  if (attr && attr->name && pyc_is_setter_name(attr->name) &&
+static void emit_member_store(Code **code, PycAST *ast, PyDAST *at, Sym *obj, Sym *attr, Sym *val, Sym *result,
+                              PycCompiler &ctx) {
+  if (attr && attr->name && pyc_is_setter_name(attr->name) && !(at && at->is_raw_field) &&
       !(at && at->filename && !strcmp(at->filename, "<property_accessors>"))) {
     char acc[512];
     snprintf(acc, sizeof(acc), "__pyc_set_%s__", attr->name);
     call_method(code, ast, obj, make_symbol(acc), result, 1, val);
+    emit_exc_check(code, ast, ctx);  // a user setter can raise; a missing one does
     return;
   }
   if1_send(if1, code, 5, 1, sym_operator, obj, sym_setter, attr, val, result)->ast = ast;
@@ -3027,7 +3046,7 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
   } else {
     if1_gen(if1, code, a->code);
     if (a->is_member)
-      emit_member_store(code, ast, tgt, a->rval, a->sym, val, (ast->rval = new_sym(ast)));
+      emit_member_store(code, ast, tgt, a->rval, a->sym, val, (ast->rval = new_sym(ast)), ctx);
     else if (a->is_object_index) {
       // issues/175: a slice store is a method send that can raise
       // (bytearray's length check). Its send was built with the target's
@@ -3079,7 +3098,8 @@ static void emit_assign_to_target(PyDAST *tgt, Sym *val, Code **code, PycAST *as
 // through -- and retires the empty literal, whose element channel
 // asserted (falsely) that `[]`'s element type flows into the receiver.
 //
-// `del name` and `del o.attr` stay no-ops. Neither has an effect a
+// `del name` and `del o.attr` stay no-ops (but for a property's deleter,
+// issues/007). Neither has an effect a
 // compiled program can observe without a runtime binding model, and
 // CPython's own observable effect -- a later NameError/AttributeError --
 // is not modelled either.
@@ -3099,6 +3119,15 @@ static void emit_del_target(PyDAST *tgt, PycAST *ast, PycCompiler &ctx) {
   PycAST *a = getAST(tgt, ctx);
   if (!a->is_object_index) {
     if1_gen(if1, &ast->code, a->code);
+    // issues/007: `del o.NAME` for a name some class makes a property is
+    // the call `o.__pyc_del_NAME__()`; dispatch picks that class's deleter
+    // or the default, which does nothing (as `del o.attr` does below).
+    if (a->is_member && a->sym && a->sym->name && pyc_is_deleter_name(a->sym->name) && !tgt->is_raw_field) {
+      char acc[512];
+      snprintf(acc, sizeof(acc), "__pyc_del_%s__", a->sym->name);
+      call_method(&ast->code, ast, a->rval, make_symbol(acc), new_sym(ast), 0);
+      emit_exc_check(&ast->code, ast, ctx);
+    }
     return;
   }
   if (a->is_slice) {
@@ -3258,12 +3287,9 @@ static Sym *find_class_method_fn(Sym *cls, cchar *name) {
 // site against body_fn's real formal pattern. Fresh Syms (not
 // body_fn's own) because a formal Sym is tied to the Fun it was built
 // for; sharing identity across two Funs wasn't risked here.
-// *args/**kwargs/defaults/keyword-only are not handled -- has[i] with
-// i>0 is assumed to be a plain positional formal for every i (true for
-// the shape get_syms_args_pyda builds today; see its PY_star_arg /
-// PY_dstar_arg / PY_arg_default handling for what a fuller version of
-// this would need to mirror). For a METHOD that includes `self`, which
-// is an ordinary positional formal and forwards like any other.
+// issues/182: the wrapper's formals mirror the body's names and kinds
+// (`*args`, keyword-only, `**kw`), so a call binds as CPython binds it. For
+// a METHOD that includes `self`, which forwards like any other formal.
 // `carrier`: for a capturing generator, the body's formal that receives
 // the closure carrier; the wrapper's own dispatch formal (dispatch0, the
 // carrier the call site called) is forwarded into it.
@@ -3289,6 +3315,9 @@ static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, 
   Vec<Sym *> wrapper_formals;
   Code *call_send = if1_send1(if1, &wbody, ast);
   if1_add_send_arg(if1, call_send, body_fn);
+  bool body_starred = false;
+  for (Sym *h : body_fn->has.values())
+    if (ctx.star_formals.set_in(h) || ctx.dstar_formals.set_in(h)) body_starred = true;
   for (int i = 1; i < body_fn->has.n; i++) {
     if (body_fn->has[i] == retcell) {
       if1_add_send_arg(if1, call_send, gen_inst);
@@ -3298,9 +3327,19 @@ static void build_generator_wrapper(Sym *wrapper, Sym *body_fn, Sym *dispatch0, 
       if1_add_send_arg(if1, call_send, dispatch0);
       continue;
     }
-    Sym *wf = new_sym(ast);
+    // issues/182: the wrapper is what a call of the generator binds, so it
+    // has the body's signature: each formal's name (for a keyword
+    // argument) and its kind. Its own `*args` and `**kw` formals are marked
+    // is_rest, since they already hold the packed tuple and dict, and the
+    // body is then called with one positional actual per formal. Otherwise
+    // a keyword-only formal is passed by name, as it must be.
+    Sym *bf = body_fn->has[i];
+    Sym *wf = new_sym(ast, bf->name);
+    if (ctx.star_formals.set_in(bf)) ctx.star_formals.set_add(wf), wf->is_rest = 1;
+    if (ctx.dstar_formals.set_in(bf)) ctx.dstar_formals.set_add(wf), wf->is_rest = 1;
+    if (ctx.kwonly_formals.set_in(bf)) ctx.kwonly_formals.set_add(wf);
     wrapper_formals.add(wf);
-    if1_add_send_arg(if1, call_send, wf);
+    if1_add_send_arg(if1, call_send, wf, !body_starred && ctx.kwonly_formals.set_in(bf) ? bf->name : nullptr);
   }
   Sym *handle_result = new_sym(ast);
   if1_add_send_result(if1, call_send, handle_result);
@@ -3542,6 +3581,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // dotted names keep the historical silent no-op.
         Sym *carrier = closure_cls ? build_closure_instance_pyda(closure_cls, def_ast, &def_ast->code, ctx) : nullptr;
         Sym *cur = carrier ? carrier : gen_wrapper ? gen_wrapper : def_ast->sym;
+        Sym *undecorated = cur;
         for (int i = n->children.n - 2; i >= 0; i--) {
           PyDAST *child = n->children[i];
           Vec<PyDAST *> decs;
@@ -3655,6 +3695,17 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if (!(def_ast->rval &&
               (def_ast->rval->alias == def_ast->sym || (gen_wrapper && def_ast->rval->alias == gen_wrapper))))
           if1_move(if1, &def_ast->code, cur, def_ast->rval, ast);
+        // issues/007: a METHOD is found by dispatch on its function, so the
+        // value a decorator makes of it never reaches a call: it was bound
+        // to a class-body variable nothing reads, leaving the method
+        // undecorated with no diagnostic. hoist_decorated_method
+        // (python_ifa_main.cc) gives the common case a slot; what is left
+        // here is what it could not move out of the class.
+        if (cur != undecorated && ctx.in_class() && ctx.cls()->type_kind == Type_RECORD)
+          fail("error line %d: the decorator on method '%s' cannot be applied: the method takes *args or "
+               "keyword-only parameters, uses super() or a __private name, or its class is not at module "
+               "level; pyc refuses rather than ignore it (issues/007)",
+               n->line, def_ast->rval->name ? def_ast->rval->name : "?");
         // issues/171 #12: the body reads its own name through the carrier
         // (maybe_synthesize_closure_pyda); give it the decorated value.
         if (carrier && closure_cls->has.in(def_ast->rval))
@@ -3863,7 +3914,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       PycAST *a = getAST(tgt, ctx);
       if1_gen(if1, &ast->code, a->code);
       if (a->is_member) {
-        emit_member_store(&ast->code, ast, tgt, a->rval, a->sym, v->rval, new_sym(ast));
+        emit_member_store(&ast->code, ast, tgt, a->rval, a->sym, v->rval, new_sym(ast), ctx);
       } else if (a->is_object_index) {
         if (a->is_slice) {
           if1_add_send_arg(if1, find_send(a->code), v->rval);
@@ -3888,7 +3939,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         PycAST *a = getAST(tgt, ctx);
         if1_gen(if1, &ast->code, a->code);
         if (a->is_member) {
-          emit_member_store(&ast->code, ast, tgt, a->rval, a->sym, v->rval, new_sym(ast));
+          emit_member_store(&ast->code, ast, tgt, a->rval, a->sym, v->rval, new_sym(ast), ctx);
         } else if (a->is_object_index) {
           if (a->is_slice) {
             if1_add_send_arg(if1, find_send(a->code), v->rval);
@@ -3934,7 +3985,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         } else
           if1_send(if1, &ast->code, 4, 1, sym_operator, t->rval, sym_period, t->sym, tmp2)->ast = ast;
         if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), tmp2, v->rval, tmp)->ast = ast;
-        emit_member_store(&ast->code, ast, tgt_node, t->rval, t->sym, tmp, (ast->rval = new_sym(ast)));
+        emit_member_store(&ast->code, ast, tgt_node, t->rval, t->sym, tmp, (ast->rval = new_sym(ast)), ctx);
       } else if (t->is_object_index) {
         if (t->is_slice && ctx.aug_slice_obj) {
           // issues/043: CPython's order. The target lowering read the slice
@@ -4716,20 +4767,51 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           // Collect positional and keyword args
           Vec<PyDAST *> pos_args;
           Vec<PyDAST *> kw_keys, kw_vals;
+          // issues/182: `*t` and `**d`. Each is passed as ONE actual, after
+          // the positionals and after the keywords, marked Sym::is_rest: it
+          // is the callee's whole `*args` tuple or `**kw` dict, and binds
+          // nothing else. A list unpacks to a tuple, and the dict is copied,
+          // as CPython does.
+          PyDAST *star_arg = nullptr, *dstar_arg = nullptr;
           if (trailer->children.n > 0) {
             PyDAST *arglist = trailer->children[0];
             for (auto arg : arglist->children.values()) {
               if (arg->kind == PY_keyword_arg) {
                 kw_keys.add(arg->children[0]);
                 kw_vals.add(arg->children[1]);
-              } else
+              } else if (arg->kind == PY_star_arg)
+                star_arg = arg->children[0];
+              else if (arg->kind == PY_dstar_arg)
+                dstar_arg = arg->children[0];
+              else if (star_arg)
+                fail("error line %d: a positional argument after '*' unpacking is not supported (issues/182)",
+                     ctx.lineno);
+              else
                 pos_args.add(arg);
             }
           }
           for (auto a : pos_args.values()) build_if1_pyda(a, ctx);
+          if (star_arg) build_if1_pyda(star_arg, ctx);
           for (auto a : kw_vals.values()) build_if1_pyda(a, ctx);
+          if (dstar_arg) build_if1_pyda(dstar_arg, ctx);
           for (auto a : pos_args.values()) if1_gen(if1, &ast->code, getAST(a, ctx)->code);
+          if (star_arg) if1_gen(if1, &ast->code, getAST(star_arg, ctx)->code);
           for (auto a : kw_vals.values()) if1_gen(if1, &ast->code, getAST(a, ctx)->code);
+          if (dstar_arg) if1_gen(if1, &ast->code, getAST(dstar_arg, ctx)->code);
+          Sym *star_val = nullptr, *dstar_val = nullptr;
+          if (star_arg) {
+            star_val = new_sym(ast);
+            star_val->is_rest = 1;
+            call_method(&ast->code, ast, getAST(star_arg, ctx)->rval, make_symbol("__pyc_star_args__"), star_val, 0);
+          }
+          if (dstar_arg) {
+            dstar_val = new_sym(ast);
+            dstar_val->is_rest = 1;
+            call_method(&ast->code, ast, getAST(dstar_arg, ctx)->rval, make_symbol("__pyc_star_kwargs__"), dstar_val, 0);
+          }
+          if ((star_val || dstar_val) && pending_member && qual_fn)
+            fail("error line %d: '*' and '**' unpacking in a call of a classmethod is not supported (issues/182)",
+                 ctx.lineno);
           // Check for builtin call (only for direct name invocations, no pending member)
           if (!pending_member && build_builtin_call_pyda(atom_ast, trailer, ast, ctx)) {
             cur_val = ast->rval;
@@ -4824,8 +4906,10 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           // bare identifier; only its string is read (never resolved as a
           // variable, which would spuriously globalize it like the
           // attribute-name bug).
+          if (star_val) if1_add_send_arg(if1, send, star_val);
           for (int ki = 0; ki < kw_vals.n; ki++)
             if1_add_send_arg(if1, send, getAST(kw_vals[ki], ctx)->rval, cannonicalize_string(kw_keys[ki]->str_val));
+          if (dstar_val) if1_add_send_arg(if1, send, dstar_val);
           ast->rval = new_sym(ast);
           if1_add_send_result(if1, send, ast->rval);
           cur_val = ast->rval;

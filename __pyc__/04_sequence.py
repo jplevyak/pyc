@@ -557,6 +557,9 @@ class list:
       h = __pyc_c_call__(int, "_CG_hash_mix", int, h, int, self[k].__hash__())  # wraps; see pyc_c_runtime.h
     return h
   # ifa/issues/086: l.copy(), the same shallow copy as copy.copy(l).
+  # issues/182: the value `f(*self)` gives the callee's `*args`.
+  def __pyc_star_args__(self):
+    return tuple(self)
   def copy(self):
     return self.__pyc_copy__()
   def __pyc_copy__(self):
@@ -604,6 +607,8 @@ class tuple:
   # whatever its layout (a runtime-length tuple from tuple(list) or a slice
   # is list layout and was passed to the format as ONE pointer). CPython's
   # two count errors, in its words.
+  def __pyc_star_args__(self):
+    return self
   def __pyc_fmtargs__(self, n):
     if len(self) < n:
       raise TypeError("not enough arguments for format string")

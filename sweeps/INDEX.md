@@ -47,6 +47,9 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__328f0b12+ccf15f37` | 2026-11-14 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__PYC_LLVM_1__328f0b12+ccf15f37` | 2026-11-14 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__default__328f0b12+d7246212` | 2026-11-13 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
 | `compile__IFA_STANDING_2__a5860b47+69628639` | 2026-11-11 | programs=77 compile_fail=0 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/207 standing dispatch check mode with the unused-send cutoff: 65 682 predictions, 0 mismatches |
 | `compile__IFA_ARGINVERT_2__a5860b47+69628639` | 2026-11-11 | programs=77 compile_fail=0 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/208 item 2 check mode: 280 597 inverted calls, 243 184 388 members compared with the walk, 0 mismatches |
 | `compile__IFA_ARGINVERT_0_IFA_STANDING_0__a5860b47+69628639` | 2026-11-11 | programs=77 compile_fail=0 run_fail=0 stdout_differs=0 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 -- ifa/208 item 2, both off on the same binary: generated C byte-identical to the default on all 77 programs |

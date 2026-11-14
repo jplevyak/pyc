@@ -26,7 +26,7 @@ creation. CPython looks an unset class attribute up through the MRO at
 read time. Fix: a subclass does not copy an inherited class attribute it
 never assigns; its read goes to the base's prototype. The same gap
 refuses a decorator stored on a class after its definition
-([007](007-decorators-not-applied.md)).
+([007](closed/007-decorators-not-applied.md)).
 
 ## 2. A global read before its definition sees the later value
 

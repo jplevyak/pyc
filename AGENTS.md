@@ -180,7 +180,7 @@ rather than failing — easy to read as "fine". Two habits follow:
 - Running `./test_pyc.py` alone is NOT the gate. It is one of the four
   things `test-core` does, which is itself one of four things `test`
   does. `make test` is what CI runs.
-- `test-ir` covers **16 phases**, and `./ifa-test --phase <name>` prints
+- `test-ir` covers **17 phases**, and `./ifa-test --phase <name>` prints
   a per-phase summary. Reading the tail of `make test-ir` shows you the
   LAST phase only. Check every phase's `failed:` line, or just trust
   `make test`'s exit code, which is the point of running it.

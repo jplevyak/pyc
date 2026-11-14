@@ -171,7 +171,7 @@ static void c_call_codegen(FILE *fp, PNode *n, Fun *f) {
     bool mismatch = c_call_arg_type_mismatch(n->rvals[i - 1]->sym, n->rvals[i]->type);
     if (mismatch) {
       if (!fruntime_errors) fail("argument type mismatch at C call '%s'", name ? name : "?");
-      // write_c_prim's P_prim_primitive case (this function's only
+      // cg.cc's c_prim_primitive (this function's only
       // caller) already wrote the "lval = " prefix -- or, if the
       // result is dead, just "  " -- before invoking this cgfn, so
       // this has to complete a valid C EXPRESSION, not a standalone
@@ -1154,102 +1154,449 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   }
 }
 
-// issues/171 #13, issues/007: `@property` getters. A descriptor is
-// TYPE-DIRECTED -- `o.NAME` calls the getter when o's class defines the
-// property and reads a field otherwise (voronoi2 has both for one name) --
-// so the choice is left to ordinary method dispatch:
+// issues/171 #13, issues/007: properties. A descriptor is TYPE-DIRECTED --
+// `o.NAME` calls the getter when o's class defines the property and reads a
+// field otherwise (voronoi2 has both for one name) -- so the choice is left
+// to ordinary method dispatch, for the read, the store and the delete alike:
 //
-//  - each `@property def NAME(self)` is renamed `__pyc_get_NAME__` (its
-//    decorator dropped), so the class has an accessor METHOD;
-//  - every builtin class gets a default `__pyc_get_NAME__` that reads the
-//    field (`return self.NAME`); user classes inherit it through `object`;
-//  - build_if1 lowers every attribute READ of NAME to
-//    `o.__pyc_get_NAME__()` (pyc_is_property_name).
+//  - a class's property NAME becomes three accessor METHODS on it,
+//    `__pyc_get_NAME__`, `__pyc_set_NAME__` and `__pyc_del_NAME__`. Each is
+//    the user's function renamed (`@property`, `@NAME.setter`,
+//    `@NAME.deleter`), a call of the function `property(...)` names, or,
+//    where the property has no such function, a raise of CPython's
+//    AttributeError;
+//  - every builtin class gets default accessors that read, store and
+//    (as `del o.attr` always has here) ignore the field; user classes
+//    inherit them through `object`;
+//  - build_if1 lowers every attribute read, store and delete of NAME to
+//    the accessor call (pyc_is_property_name / _setter_name / _deleter_name).
 //
 // Only the names are global; which accessor runs is decided per receiver
 // class by dispatch, like any method. Runs before the builtin module is
 // built, which is why it is a pre-scan over the program's modules (as
 // inject_tuple_methods is), including every module reached by import
-// (prescan_imported_modules). Setters are refused.
+// (prescan_imported_modules).
 static Vec<cchar *> pyc_property_names;
+static Vec<cchar *> pyc_setter_names;  // also a ctypes Structure's fields (issues/188)
+static Vec<cchar *> pyc_deleter_names;
 
-bool pyc_is_property_name(cchar *name) {
+static bool name_in(Vec<cchar *> &v, cchar *name) {
   if (!name) return false;
-  for (cchar *p : pyc_property_names)
+  for (cchar *p : v)
     if (!strcmp(p, name)) return true;
   return false;
 }
 
-// The store side (issues/188): names some class gives a `__pyc_set_NAME__`.
-// A store `o.NAME = v` becomes `o.__pyc_set_NAME__(v)` (emit_member_store),
-// and every builtin class gets a default that stores the field. Today only
-// the ctypes lowering registers any, for a Structure's C-layout fields;
-// `@NAME.setter` is still refused below.
-static Vec<cchar *> pyc_setter_names;
-
-bool pyc_is_setter_name(cchar *name) {
-  if (!name) return false;
-  for (cchar *p : pyc_setter_names)
-    if (!strcmp(p, name)) return true;
-  return false;
-}
+bool pyc_is_property_name(cchar *name) { return name_in(pyc_property_names, name); }
+bool pyc_is_setter_name(cchar *name) { return name_in(pyc_setter_names, name); }
+bool pyc_is_deleter_name(cchar *name) { return name_in(pyc_deleter_names, name); }
+bool pyc_has_property_names() { return pyc_property_names.n || pyc_setter_names.n || pyc_deleter_names.n; }
 
 void pyc_add_setter_name(cchar *name) {
   if (!pyc_is_setter_name(name)) pyc_setter_names.add(dupstr(name));
 }
 
-static cchar *decorated_single_decorator_name(PyDAST *d) {
-  // The one PY_decorator of a PY_decorated node, if there is exactly one.
-  if (!d || d->kind != PY_decorated || d->children.n != 2) return nullptr;
-  PyDAST *dec = d->children[0];
-  if (dec->kind == PY_suite) {
-    if (dec->children.n != 1) return nullptr;
-    dec = dec->children[0];
+// One property of one class, as the scan of its body finds it. `defines`:
+// the class builds the descriptor itself (`@property`, `property(...)`),
+// so an accessor it lacks is one the property does not have. Without it
+// the class only extends an inherited property (`@Base.NAME.setter`) and
+// inherits the other accessors with it.
+struct ClassProp {
+  cchar *name;
+  bool get, set, del, defines;
+  bool is_field;  // a public name for a field, not an accessor (public_name_for_field)
+  int line;
+};
+
+static ClassProp *class_prop(Vec<ClassProp> &props, cchar *name, int line) {
+  for (int i = 0; i < props.n; i++)
+    if (!strcmp(props.v[i].name, name)) return &props.v[i];
+  props.add(ClassProp{dupstr(name), false, false, false, false, false, line});
+  return &props.v[props.n - 1];
+}
+
+static cchar *accessor_name(cchar *kind, cchar *pname) {
+  char buf[512];
+  snprintf(buf, sizeof(buf), "__pyc_%s_%s__", kind, pname);
+  return dupstr(buf);
+}
+
+// A decorator's dotted name without the trailing whitespace DParser can
+// leave on it (decorator_name_is), or nullptr for one called with arguments.
+static char *plain_decorator_name(PyDAST *dec) {
+  if (!dec || dec->kind != PY_decorator || dec->children.n != 1 || !dec->children[0]->str_val) return nullptr;
+  char *s = dupstr(dec->children[0]->str_val);
+  for (int n = (int)strlen(s); n > 0 && isspace((unsigned char)s[n - 1]); n--) s[n - 1] = 0;
+  return s;
+}
+
+static void relocate(PyDAST *n, cchar *filename, int line) {
+  n->filename = filename;
+  n->line = line;
+  for (PyDAST *c : n->children) relocate(c, filename, line);
+}
+
+// Parse `text`, the methods of a throwaway class, and append them to
+// `body`, located at `line` of the class they join.
+static void add_generated_methods(PyDAST *body, std::string &text, int line) {
+  std::string src = "class __pyc_prop__:\n" + text;
+  PyDAST *gen = dparse_python_buf_to_ast("<property>", src.c_str(), (int)src.size());
+  if (!gen || !gen->children.n) fail("internal error: property accessor generation failed to parse");
+  for (PyDAST *meth : gen->children[0]->children.last()->children)
+    if (meth->kind == PY_funcdef) {
+      relocate(meth, body->filename, line);
+      body->add(meth);
+    }
+}
+
+static bool class_body_defines(PyDAST *body, cchar *fname) {
+  for (PyDAST *d0 : body->children) {
+    PyDAST *d = d0->kind == PY_decorated ? d0->children.last() : d0;
+    if (d->kind == PY_funcdef && d->children.n && d->children[0]->str_val && !strcmp(d->children[0]->str_val, fname))
+      return true;
   }
-  if (dec->kind != PY_decorator || dec->children.n != 1) return nullptr;
-  return dec->children[0]->str_val;
+  return false;
 }
 
-static bool is_property_decorated_def(PyDAST *d) {
-  cchar *nm = decorated_single_decorator_name(d);
-  return nm && decorator_name_is(nm, "property") && d->children.last()->kind == PY_funcdef;
+// `NAME = property(fget, fset, fdel, doc)` in a class body: the functions
+// it names (nullptr for an absent or None one), or false when an argument
+// is not a plain name, which leaves the statement to be refused as the
+// unimplemented builtin it then is.
+static bool property_call_args(PyDAST *stmt, cchar *&pname, cchar *fn[3]) {
+  if (stmt->kind != PY_assign || stmt->children.n != 2) return false;
+  PyDAST *tgt = stmt->children[0], *val = stmt->children[1];
+  if (tgt->kind != PY_name || !tgt->str_val) return false;
+  if (!(val->kind == PY_power && val->children.n == 2 && val->children[0]->kind == PY_name &&
+        val->children[0]->str_val && !strcmp(val->children[0]->str_val, "property") &&
+        val->children[1]->kind == PY_call))
+    return false;
+  pname = tgt->str_val;
+  fn[0] = fn[1] = fn[2] = nullptr;
+  if (!val->children[1]->children.n) return true;
+  PyDAST *args = val->children[1]->children[0];
+  Vec<PyDAST *> as;
+  if (args->kind == PY_arglist)
+    for (PyDAST *c : args->children) as.add(c);
+  else
+    as.add(args);
+  static cchar *kw[] = {"fget", "fset", "fdel"};
+  for (int i = 0; i < as.n; i++) {
+    PyDAST *a = as[i];
+    int slot = i;
+    if (a->kind == PY_keyword_arg) {
+      if (a->children.n != 2 || !a->children[0]->str_val) return false;
+      if (!strcmp(a->children[0]->str_val, "doc")) continue;
+      for (slot = 0; slot < 3 && strcmp(a->children[0]->str_val, kw[slot]); slot++);
+      a = a->children[1];
+    } else if (slot == 3)
+      continue;  // doc
+    if (slot >= 3 || a->kind != PY_name || !a->str_val) return false;
+    if (strcmp(a->str_val, "None")) fn[slot] = a->str_val;
+  }
+  return true;
 }
 
-static void scan_properties(PyDAST *n, cchar *filename) {
-  if (!n) return;
-  if (n->kind == PY_classdef && n->children.n) {
-    PyDAST *body = n->children.last();
-    Vec<PyDAST *> *stmts = body->kind == PY_suite ? &body->children : nullptr;
-    auto visit = [&](PyDAST *&stmt) {
-      if (!is_property_decorated_def(stmt)) return;
-      PyDAST *def = stmt->children.last();
-      cchar *pname = def->children[0]->str_val;
-      if (!pyc_is_property_name(pname)) pyc_property_names.add(dupstr(pname));
-      char buf[512];
-      snprintf(buf, sizeof(buf), "__pyc_get_%s__", pname);
-      def->children[0]->str_val = dupstr(buf);
-      stmt = def;  // the decorator is consumed
-    };
-    if (stmts)
-      for (int i = 0; i < stmts->n; i++) visit(stmts->v[i]);
+static bool mentions_class_cell(PyDAST *n) {
+  // `super()` and `__class__` read the class the def is lexically in, and
+  // `__name` is mangled with it; none survives leaving the class body.
+  if (n->kind == PY_name && n->str_val) {
+    cchar *s = n->str_val;
+    size_t len = strlen(s);
+    if (!strcmp(s, "super") || !strcmp(s, "__class__")) return true;
+    if (len > 2 && s[0] == '_' && s[1] == '_' && !(s[len - 1] == '_' && s[len - 2] == '_')) return true;
+  }
+  for (PyDAST *c : n->children)
+    if (mentions_class_cell(c)) return true;
+  return false;
+}
+
+// issues/007: a decorator on a METHOD. A method is found by dispatch on its
+// function, so the value a decorator makes of it has no slot to live in.
+// For a module-level class it gets one: the decorated def moves out in
+// front of the class under a private name, where decoration is the
+// ordinary `name = d(f)`, and the method becomes a call of that value,
+//
+//     @d                          @d
+//     def m(self, a, b=1): ...    def __pyc_dec_C_m__(self, a, b=1): ...
+//                                 class C:
+//                                   def m(self, a, b):
+//                                     return __pyc_dec_C_m__(self, a, b)
+//
+// which is what CPython's `C.m = d(m)` does on `c.m(a, b)`. The signature a
+// caller sees in CPython is the WRAPPER's, which is not known here, so the
+// method takes every parameter of the original and none of its defaults
+// (those stay with the function the decorator receives): a call that
+// leans on a wrapper's own defaults is a compile error, not a guess. The
+// decorators run just before the class statement instead of inside it. A def this cannot
+// express (`*args`, `super()`, a nested class) is left for build_if1 to
+// refuse.
+static void hoist_decorated_method(cchar *cname, PyDAST *body, int i, Vec<PyDAST *> &hoist) {
+  PyDAST *stmt = body->children[i];
+  if (stmt->kind != PY_decorated || stmt->children.n < 2 || stmt->children.last()->kind != PY_funcdef) return;
+  PyDAST *def = stmt->children.last();
+  if (def->children.n < 3 || def->children[1]->kind != PY_parameters) return;
+  for (int k = 0; k < stmt->children.n - 1; k++) {
+    Vec<PyDAST *> decs;
+    if (stmt->children[k]->kind == PY_suite)
+      for (PyDAST *c : stmt->children[k]->children) decs.add(c);
     else
-      visit(n->children.v[n->children.n - 1]);
+      decs.add(stmt->children[k]);
+    for (PyDAST *d : decs) {
+      char *dn = plain_decorator_name(d);
+      if (dn && (!strcmp(dn, "staticmethod") || !strcmp(dn, "classmethod") || !strcmp(dn, "property"))) return;
+    }
   }
-  for (PyDAST *c : n->children) scan_properties(c, filename);
+  PyDAST *params = def->children[1];
+  PyDAST *formals = params->children.n ? params->children[0] : nullptr;
+  if (params->children.n > 1 || (formals && formals->kind != PY_varargslist)) return;
+  std::string names;
+  if (formals)
+    for (PyDAST *f : formals->children) {
+      PyDAST *nm = f->kind == PY_arg_default && f->children.n == 2 ? f->children[0] : f;
+      if (nm->kind != PY_name || !nm->str_val) return;
+      names += (names.size() ? ", " : "") + std::string(nm->str_val);
+    }
+  if (mentions_class_cell(def)) return;
+  cchar *mname = def->children[0]->str_val;
+  std::string priv = std::string("__pyc_dec_") + cname + "_" + mname + "__";
+  std::string text = std::string("  def ") + mname + "(" + names + "):\n    return " + priv + "(" + names + ")\n";
+  std::string src = "class __pyc_prop__:\n" + text;
+  PyDAST *gen = dparse_python_buf_to_ast("<property>", src.c_str(), (int)src.size());
+  if (!gen || !gen->children.n) fail("internal error: decorated method forwarder failed to parse");
+  PyDAST *cbody = gen->children[0]->children.last();
+  PyDAST *fwd = cbody->kind == PY_funcdef ? cbody : cbody->children[0];
+  relocate(fwd, def->filename, def->line);
+  def->children[0]->str_val = dupstr(priv.c_str());
+  fwd->parent = body;
+  body->children.v[i] = fwd;
+  hoist.add(stmt);
 }
 
-// A `@NAME.setter` / `@NAME.deleter` needs a store/delete dispatch that does
-// not exist; refuse it rather than leave the decorator unapplied.
-static void refuse_property_setters(PyDAST *n) {
-  if (!n) return;
-  if (n->kind == PY_decorator && n->children.n && n->children[0]->str_val) {
-    cchar *s = n->children[0]->str_val;
-    cchar *dot = strrchr(s, '.');
-    if (dot && (decorator_name_is(dot + 1, "setter") || decorator_name_is(dot + 1, "deleter")))
-      fail("error line %d: property %s (@%s) are not supported; only read-only @property getters are "
-           "(issues/007)", n->line, decorator_name_is(dot + 1, "setter") ? "setters" : "deleters", s);
+// issues/117: `NAME = property(GETTER)` whose getter's whole body is
+// `return self.FIELD` is nothing but a public name for a private field.
+// Renaming that field to NAME inside the class makes `obj.NAME` an
+// ordinary field read, with no accessor call (voronoi2's SiteList.xmin).
+// The rename only reaches the class body, so it is taken only when no
+// other place in the program names FIELD: a subclass or an outside
+// function storing `o.FIELD` would otherwise write a different field.
+static Vec<PyDAST *> property_scan_roots;
+
+static int count_attr(PyDAST *n, cchar *attr) {
+  int c = n->kind == PY_attribute && n->children.n && n->children[0]->str_val &&
+          !strcmp(n->children[0]->str_val, attr);
+  for (PyDAST *k : n->children) c += count_attr(k, attr);
+  return c;
+}
+
+static int count_self_attr(PyDAST *n, cchar *attr) {
+  int c = n->kind == PY_power && n->children.n >= 2 && n->children[0]->kind == PY_name && n->children[0]->str_val &&
+          !strcmp(n->children[0]->str_val, "self") && n->children[1]->kind == PY_attribute &&
+          n->children[1]->children.n && n->children[1]->children[0]->str_val &&
+          !strcmp(n->children[1]->children[0]->str_val, attr);
+  for (PyDAST *k : n->children) c += count_self_attr(k, attr);
+  return c;
+}
+
+// `self.FROM` -> `self.TO`, marked as the field itself.
+static void rename_self_attr(PyDAST *n, cchar *from, cchar *to) {
+  if (n->kind == PY_power && n->children.n >= 2 && n->children[0]->kind == PY_name && n->children[0]->str_val &&
+      !strcmp(n->children[0]->str_val, "self") && n->children[1]->kind == PY_attribute &&
+      n->children[1]->children.n && n->children[1]->children[0]->str_val &&
+      !strcmp(n->children[1]->children[0]->str_val, from)) {
+    n->children[1]->children[0]->str_val = to;
+    if (n->children.n == 2) n->is_raw_field = 1;
   }
-  for (PyDAST *c : n->children) refuse_property_setters(c);
+  for (PyDAST *c : n->children) rename_self_attr(c, from, to);
+}
+
+// `return self.ATTR` as the getter's entire body -> ATTR, else nullptr.
+static cchar *trivial_getter_field(PyDAST *fdef) {
+  PyDAST *body = fdef->children.last();
+  if (body->kind == PY_suite) {
+    if (body->children.n != 1) return nullptr;
+    body = body->children[0];
+  }
+  if (body->kind != PY_return_stmt || body->children.n != 1) return nullptr;
+  PyDAST *r = body->children[0];
+  if (!(r->kind == PY_power && r->children.n == 2 && r->children[0]->kind == PY_name && r->children[0]->str_val &&
+        !strcmp(r->children[0]->str_val, "self") && r->children[1]->kind == PY_attribute &&
+        r->children[1]->children.n && r->children[1]->children[0]->str_val))
+    return nullptr;
+  return r->children[1]->children[0]->str_val;
+}
+
+static cchar *public_name_for_field(PyDAST *body, cchar *pname, cchar *fn[3]) {
+  if (!fn[0] || fn[1] || fn[2]) return nullptr;
+  cchar *field = nullptr;
+  for (PyDAST *d : body->children)
+    if (d->kind == PY_funcdef && d->children.n && d->children[0]->str_val && !strcmp(d->children[0]->str_val, fn[0]))
+      field = trivial_getter_field(d);
+  if (!field || !strcmp(field, pname)) return nullptr;
+  int inside = count_attr(body, field), everywhere = 0;
+  for (PyDAST *r : property_scan_roots) everywhere += count_attr(r, field);
+  // ... and every one in it must be a `self.FIELD`, which the rename reaches.
+  if (inside != everywhere || inside != count_self_attr(body, field)) return nullptr;
+  return field;
+}
+
+static void scan_class_properties(PyDAST *cls, Vec<PyDAST *> *hoist) {
+  cchar *cname = cls->children[0]->str_val;
+  PyDAST *body = cls->children.last();
+  if (body->kind != PY_suite) {  // `class C: STMT`
+    PyDAST *suite = new PyDAST();
+    suite->kind = PY_suite;
+    suite->filename = body->filename;
+    suite->line = body->line;
+    suite->add(body);
+    suite->parent = cls;
+    cls->children.v[cls->children.n - 1] = body = suite;
+  }
+  Vec<ClassProp> props;
+  std::string gen;
+  int nstmts = body->children.n;
+  for (int i = 0; i < nstmts; i++) {
+    PyDAST *stmt = body->children[i];
+    // The accessors a class writes out itself (the ctypes lowering does).
+    if (stmt->kind == PY_funcdef && stmt->children.n && stmt->children[0]->str_val) {
+      cchar *f = stmt->children[0]->str_val;
+      size_t len = strlen(f);
+      if (len > 12 && !strncmp(f, "__pyc_", 6) && f[9] == '_' && !strcmp(f + len - 2, "__")) {
+        char *pn = dupstr(f + 10);
+        pn[len - 12] = 0;
+        if (!strncmp(f + 6, "get", 3)) class_prop(props, pn, stmt->line)->get = true;
+        else if (!strncmp(f + 6, "set", 3)) class_prop(props, pn, stmt->line)->set = true;
+        else if (!strncmp(f + 6, "del", 3)) class_prop(props, pn, stmt->line)->del = true;
+      }
+      continue;
+    }
+    cchar *pname = nullptr, *fn[3];
+    if (property_call_args(stmt, pname, fn)) {
+      ClassProp *p = class_prop(props, pname, stmt->line);
+      p->defines = true;
+      p->get = p->set = p->del = false;  // the assignment replaces the descriptor
+      if (cchar *field = public_name_for_field(body, pname, fn)) {
+        // Reads stay field reads: NAME is the field now. The class still
+        // gets the raising setter and deleter, which its own stores to
+        // the field (is_raw_field) do not go through.
+        rename_self_attr(body, field, dupstr(pname));
+        p->get = p->is_field = true;
+        stmt->kind = PY_pass_stmt;
+        stmt->children.clear();
+        continue;
+      }
+      static cchar *kinds[] = {"get", "set", "del"};
+      for (int k = 0; k < 3; k++) {
+        if (!fn[k]) continue;
+        // The property holds the FUNCTION, so the call is not virtual: a
+        // subclass redefining it does not change the property.
+        std::string callee = class_body_defines(body, fn[k]) ? std::string(cname) + "." + fn[k] : std::string(fn[k]);
+        gen += std::string("  def ") + accessor_name(kinds[k], pname) + (k == 1 ? "(self, v):\n" : "(self):\n");
+        gen += std::string(k == 0 ? "    return " : "    ") + callee + (k == 1 ? "(self, v)\n" : "(self)\n");
+        (k == 0 ? p->get : k == 1 ? p->set : p->del) = true;
+      }
+      stmt->kind = PY_pass_stmt;  // `property` itself is never evaluated
+      stmt->children.clear();
+      continue;
+    }
+    if (stmt->kind != PY_decorated || stmt->children.n < 2 || stmt->children.last()->kind != PY_funcdef) continue;
+    do {
+      // Only the OUTERMOST decorator can be the property: it is applied last,
+      // to whatever the ones under it made of the function, and those stay.
+      PyDAST *first = stmt->children[0];
+      Vec<PyDAST *> *holder = &stmt->children;
+      if (first->kind == PY_suite) {
+        if (!first->children.n) break;
+        holder = &first->children;
+        first = first->children[0];
+      }
+      char *dn = plain_decorator_name(first);
+      if (!dn) break;
+      PyDAST *def = stmt->children.last();
+      cchar *fname = def->children[0]->str_val;
+      cchar *kind = nullptr;
+      char *dot = strrchr(dn, '.');
+      if (!strcmp(dn, "property"))
+        kind = "get";
+      else if (dot && (!strcmp(dot + 1, "setter") || !strcmp(dot + 1, "deleter") || !strcmp(dot + 1, "getter"))) {
+        // `@P.setter def F`: CPython binds F to a copy of P with the new
+        // function. That is P itself only when F is P's name.
+        *dot = 0;
+        cchar *base = strrchr(dn, '.') ? strrchr(dn, '.') + 1 : dn;
+        if (strcmp(base, fname))
+          fail("%s:%d: error: @%s.%s on a function named '%s' makes a second property; name the function '%s' "
+               "(issues/007)", stmt->filename ? stmt->filename : "?", first->line, dn, dot + 1, fname, base);
+        if (!strcmp(dot + 1, "getter"))
+          fail("%s:%d: error: @%s.getter is not supported; define the getter with @property (issues/007)",
+               stmt->filename ? stmt->filename : "?", first->line, dn);
+        kind = !strcmp(dot + 1, "setter") ? "set" : "del";
+      } else
+        break;
+      bool inherited = kind[0] != 'g' && strchr(dn, '.');  // `@Base.NAME.setter`
+      ClassProp *p = class_prop(props, fname, first->line);
+      if (kind[0] == 'g') {
+        p->defines = p->get = true;
+        p->set = p->del = false;  // a new @property replaces the descriptor
+      } else {
+        if (!inherited && !p->defines)
+          fail("%s:%d: error: @%s.%s: '%s' is not a property defined earlier in class '%s' (issues/007)",
+               stmt->filename ? stmt->filename : "?", first->line, dn, dot + 1, dn, cname);
+        (kind[0] == 's' ? p->set : p->del) = true;
+      }
+      def->children[0]->str_val = accessor_name(kind, fname);
+      // Consume the decorator; the node stays while others remain under it.
+      if (holder->n == 1 && (holder == &stmt->children || stmt->children.n == 2)) {
+        def->parent = body;
+        body->children.v[i] = def;
+      } else {
+        Vec<PyDAST *> rest;
+        for (int k = 1; k < holder->n; k++) rest.add(holder->v[k]);
+        holder->clear();
+        for (PyDAST *r : rest) holder->add(r);
+      }
+      } while (0);
+    if (hoist) hoist_decorated_method(cname, body, i, *hoist);
+  }
+  for (int i = 0; i < props.n; i++) {
+    ClassProp &p = props.v[i];
+    if (!p.is_field && !name_in(pyc_property_names, p.name)) pyc_property_names.add(p.name);
+    if (!name_in(pyc_setter_names, p.name)) pyc_setter_names.add(p.name);
+    if (!name_in(pyc_deleter_names, p.name)) pyc_deleter_names.add(p.name);
+    if (!p.defines) continue;
+    // What the property lacks raises, as CPython's descriptor does.
+    static cchar *kinds[] = {"get", "set", "del"}, *what[] = {"getter", "setter", "deleter"};
+    bool has[] = {p.get, p.set, p.del};
+    for (int k = 0; k < 3; k++) {
+      if (has[k]) continue;
+      gen += std::string("  def ") + accessor_name(kinds[k], p.name) + (k == 1 ? "(self, v):\n" : "(self):\n");
+      gen += std::string("    raise AttributeError(\"property '") + p.name + "' of '" + cname + "' object has no " +
+             what[k] + "\")\n";
+    }
+  }
+  if (gen.size()) add_generated_methods(body, gen, cls->line);
+}
+
+// `hoist`: where a module-level class's decorated methods go
+// (hoist_decorated_method); null inside any other statement.
+static void scan_properties(PyDAST *n, Vec<PyDAST *> *hoist = nullptr) {
+  if (!n) return;
+  if (n->kind == PY_classdef && n->children.n >= 2 && n->children[0]->str_val) scan_class_properties(n, hoist);
+  if (n->kind == PY_module) {
+    for (int i = 0; i < n->children.n; i++) {
+      Vec<PyDAST *> hoisted;
+      scan_properties(n->children[i], &hoisted);
+      if (!hoisted.n) continue;
+      Vec<PyDAST *> rest;
+      for (int k = i; k < n->children.n; k++) rest.add(n->children[k]);
+      n->children.n = i;
+      for (PyDAST *h : hoisted) n->add(h);
+      for (PyDAST *r : rest) n->children.add(r);
+      i += hoisted.n;
+    }
+    return;
+  }
+  // A class decorator leaves the class a module-level statement.
+  bool through = hoist && n->kind == PY_decorated;
+  for (PyDAST *c : n->children) scan_properties(c, through && c == n->children.last() ? hoist : nullptr);
 }
 
 // `imported` is the pre-parsed ASTs of every module `mods` imports
@@ -1257,14 +1604,11 @@ static void refuse_property_setters(PyDAST *n) {
 // the getters renamed here are the ones build_syms later sees.
 static void inject_property_accessors(Vec<PycModule *> &mods, Vec<PyDAST *> &imported) {
   for (int i = 1; i < mods.n; i++) {
-    refuse_property_setters(mods[i]->pymod);
-    scan_properties(mods[i]->pymod, mods[i]->filename);
+    property_scan_roots.add(mods[i]->pymod);
   }
-  for (PyDAST *a : imported) {
-    refuse_property_setters(a);
-    scan_properties(a, nullptr);
-  }
-  if (!pyc_property_names.n && !pyc_setter_names.n) return;
+  for (PyDAST *a : imported) property_scan_roots.add(a);
+  for (PyDAST *r : property_scan_roots) scan_properties(r);
+  if (!pyc_has_property_names()) return;
   // One throwaway class of default accessors per builtin class, parsed at
   // once; each builtin class takes its own copy's funcdefs.
   Vec<PyDAST *> targets;
@@ -1279,6 +1623,9 @@ static void inject_property_accessors(Vec<PycModule *> &mods, Vec<PyDAST *> &imp
       fprintf(f, "  def __pyc_get_%s__(self):\n    return self.%s\n", pname, pname);
     for (cchar *pname : pyc_setter_names)
       fprintf(f, "  def __pyc_set_%s__(self, v):\n    self.%s = v\n", pname, pname);
+    // `del o.attr` on a plain field has no effect a compiled program can
+    // observe (emit_del_target), so the default deleter has none either.
+    for (cchar *pname : pyc_deleter_names) fprintf(f, "  def __pyc_del_%s__(self):\n    pass\n", pname);
   }
   fclose(f);
   PyDAST *gen = dparse_python_buf_to_ast("<property_accessors>", buf, (int)sz);
@@ -1291,6 +1638,52 @@ static void inject_property_accessors(Vec<PycModule *> &mods, Vec<PyDAST *> &imp
     for (PyDAST *meth : gcls->children.last()->children)
       if (meth->kind == PY_funcdef) body->children.add(meth);
   }
+}
+
+// The REPL builds the builtin module ONCE, before any input exists, so it
+// cannot carry the default accessors a property needs on every builtin
+// class. An input with a class that inject_property_accessors would
+// rewrite (a property, or a decorated method) is compiled by the
+// whole-program path instead, builtin module included: slower, and the
+// same answer as a file.
+static bool class_wants_accessors(PyDAST *n) {
+  if (n->kind == PY_classdef && n->children.n >= 2) {
+    PyDAST *body = n->children.last();
+    Vec<PyDAST *> stmts;
+    if (body->kind == PY_suite)
+      for (PyDAST *c : body->children) stmts.add(c);
+    else
+      stmts.add(body);
+    cchar *pname, *fn[3];
+    for (PyDAST *stmt : stmts) {
+      if (property_call_args(stmt, pname, fn)) return true;
+      if (stmt->kind != PY_decorated || stmt->children.last()->kind != PY_funcdef) continue;
+      for (int k = 0; k < stmt->children.n - 1; k++) {
+        Vec<PyDAST *> decs;
+        if (stmt->children[k]->kind == PY_suite)
+          for (PyDAST *c : stmt->children[k]->children) decs.add(c);
+        else
+          decs.add(stmt->children[k]);
+        for (PyDAST *d : decs) {
+          char *dn = plain_decorator_name(d);
+          if (!dn || (strcmp(dn, "staticmethod") && strcmp(dn, "classmethod"))) return true;
+        }
+      }
+    }
+  }
+  for (PyDAST *c : n->children)
+    if (class_wants_accessors(c)) return true;
+  return false;
+}
+
+bool pyc_needs_whole_program_frontend(Vec<PycModule *> &mods) {
+  Vec<PyDAST *> imported;
+  prescan_imported_modules(mods, *make_search_path(), imported);
+  for (int i = 1; i < mods.n; i++)
+    if (class_wants_accessors(mods[i]->pymod)) return true;
+  for (PyDAST *a : imported)
+    if (class_wants_accessors(a)) return true;
+  return false;
 }
 
 void inject_tuple_methods(Vec<PycModule *> &mods, int min_arity) {

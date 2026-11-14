@@ -39,8 +39,8 @@ const OPTIONS: [string, string][] = [
 ];
 
 const SUPPORTED: [string, string][] = [
-  ['Classes', 'Inheritance, super(), class attributes, operator overloading, __str__/__repr__, __iter__/__next__, __enter__/__exit__, read-only @property, @staticmethod, @classmethod (cls(...))'],
-  ['Functions', 'Closures, nonlocal/global, lambdas, default and mutable default arguments, *args, nested functions, local classes'],
+  ['Classes', 'Inheritance, super(), class attributes, operator overloading, __str__/__repr__, __iter__/__next__, __enter__/__exit__, @property (getters, setters, deleters), @staticmethod, @classmethod (cls(...))'],
+  ['Functions', 'Closures, nonlocal/global, lambdas, default and mutable default arguments, *args, **kwargs, keyword-only parameters, nested functions, local classes'],
   ['Exceptions', 'try/except/else/finally, raise, user hierarchies, built-in exceptions raised by the runtime'],
   ['Generators', 'yield, yield from, send(), return values'],
   ['async / await', "Compiled to coroutines and run on pyc's own event loop (no asyncio module yet)"],
@@ -193,9 +193,9 @@ def sqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
         <p>Not yet supported, each tracked by an issue:</p>
         <ul>
           <li>
-            <code>**kwargs</code> and keyword-only parameters (
-            <a href={repo('blob/main/issues/182-kwargs-and-keyword-only-parameters.md')}>
-              issues/182
+            <code>f(*t)</code> and <code>f(**d)</code> unpacked into named parameters (
+            <a href={repo('blob/main/issues/189-unpacking-into-named-parameters.md')}>
+              issues/189
             </a>
             )
           </li>

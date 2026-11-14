@@ -194,6 +194,13 @@ class PycCompiler : public PycCallbacks {
   // finalize_function marks its Fun `is_varargs`; the matcher then routes
   // each call through rest_wrapper.
   Vec<Sym *> star_formals;
+  // issues/182: the keyword-only formals (those after `*` or `*args`) and
+  // the `**kw` formal of every def, and the `dict` class a `**kw` dict is
+  // made from. finalize_functions turns them into Fun::rest_pos /
+  // kwonly_pos / kw_pos.
+  Vec<Sym *> kwonly_formals;
+  Vec<Sym *> dstar_formals;
+  Sym *kwargs_dict_cls = nullptr;
 
   // issue 011 (exception handling, option C):
   Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)
@@ -217,7 +224,7 @@ class PycCompiler : public PycCallbacks {
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
-  Fun *rest_wrapper(Fun *, int nactuals);
+  Fun *signature_wrapper(Fun *, int npositional, Vec<cchar *> &keywords);
   Fun *order_wrapper(Fun *, Map<MPosition *, MPosition *> &substitutions);
   bool reanalyze(Vec<ATypeViolation *> &type_violations);
   bool retract_derived_state();  // issues/128 step 2
@@ -299,6 +306,8 @@ cchar *cannonicalize_string(cchar *s);
 bool decorator_name_is(cchar *s, cchar *want);
 bool pyc_is_setter_name(cchar *name);   // issues/188 (python_ifa_main.cc)
 void pyc_add_setter_name(cchar *name);
+bool pyc_is_deleter_name(cchar *name);  // issues/007
+bool pyc_has_property_names();
 bool pyc_is_property_name(cchar *name);  // issues/171 #13 (python_ifa_main.cc)
 // ifa/185: dispatch constraints on a formal of a GENERATED method, keyed on
 // the parameter's PyDAST. Python annotations are dropped by the grammar, so
@@ -354,6 +363,9 @@ void call_method(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...);
 Sym *make_symbol(cchar *name);
 // pyda path (from python_ifa_build_syms.cc):
 void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCompiler &ctx);
+int param_indices_pyda(PyDAST *varargslist, Vec<int> &index);
+// issues/182: a new dict {names[i]: vals[i]}, the value of a `**kw` formal.
+Sym *emit_kwargs_dict(PycCompiler &ctx, PycAST *ast, Code **code, Vec<cchar *> &names, Vec<Sym *> &vals);
 void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx, char *vector_size = nullptr, bool derive_compare = false);

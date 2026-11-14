@@ -527,6 +527,10 @@ print(set([1, 2, 2, 3]))        # {1, 2, 3}  (requires Phase 1.2)
 
 ### Phase 6.1 — *args in function definitions (~2 h) — DONE 2026-09-27
 
+*(2026-11-13: `rest_wrapper` is now `signature_wrapper`, which also binds
+keyword-only and `**kw` parameters; see
+[issues/182](issues/closed/182-kwargs-and-keyword-only-parameters.md).)*
+
 **How it landed.** Not at the call site: the callee is generally not known
 statically. The frontend records each `*args` formal
 (`PycCompiler::star_formals`), `finalize_functions` marks its Fun

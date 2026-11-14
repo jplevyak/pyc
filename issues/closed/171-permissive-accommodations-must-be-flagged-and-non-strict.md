@@ -4,7 +4,7 @@
 gated, fixed, or a documented representation. The residuals went to
 [172](../172-stopiteration-value-reads-the-global-exception-slot.md),
 [173](../173-silent-deviations-found-by-the-strict-suite-check.md),
-[007](../007-decorators-not-applied.md), [128](128-cross-class-field-promotion.md)
+[007](007-decorators-not-applied.md), [128](128-cross-class-field-promotion.md)
 and ifa/156 ("What remains"). The RULE stays in force: every new
 accommodation must meet it. Filed 2026-09-28 from the author's directive:
 *"all python specific features are under flags … all such accommodations
@@ -57,7 +57,7 @@ compile error.**
 | 10 | a type violation compiled with a runtime check instead of refused | `fruntime_errors`, `convert_NOTYPE_to_void` | ✓ gated. `PYC_STRICTVIOL=1` (closed ifa/158) currently makes every violation fatal in every mode anyway | ✓ consistent. Note that permissive currently refuses too. |
 | 11 | `range` is its own iterator (`__iter__` returns `self`), so a range iterates once | `__pyc__/05_builtins.py` | **DONE** (already in the tree at `16a380f5`): `range.__iter__` returns a fresh `__range_iter__` | ✓ `tests/range_reiterable.py`. |
 | 12 | a recursive call inside a decorated function calls the UNDECORATED function | `def_internal_fn` (`python_ifa_build_syms.cc`) | **FIXED 2026-09-29**, every mode | ✓ A decorated def is no longer linked in `def_internal_fn`, so the name reads the decorated binding (`tests/decorator_recursion.py`). Finding: a NESTED decorated def skipped closure conversion, and FA aborted when it captured a local (`tests/decorator_nested_capture.py`). Its own name is now a carrier field written after decoration, and a later rebinding is refused. |
-| 13 | an unhandled decorator (`@property`, dotted names) is ignored | `PY_decorated`, `inject_property_accessors` | **FIXED 2026-09-29**, every mode | ✓ `@property` getters work, dispatched per receiver class (`tests/property_getter.py`). Dotted decorators are applied (`tests/decorator_dotted.py`). Setters, and any decorator that cannot be resolved, are refused (`tests/property_setter_refused.py`). Residuals: [007](../007-decorators-not-applied.md. |
+| 13 | an unhandled decorator (`@property`, dotted names) is ignored | `PY_decorated`, `inject_property_accessors` | **FIXED 2026-09-29**, every mode | ✓ `@property` getters work, dispatched per receiver class (`tests/property_getter.py`). Dotted decorators are applied (`tests/decorator_dotted.py`). Setters, and any decorator that cannot be resolved, are refused (`tests/property_setter_refused.py`). Residuals: [007](007-decorators-not-applied.md. |
 
 Accommodations that are **representations, not deviations**, and so are
 not listed: `{None, T*}` as a nullable pointer (CPython-faithful while the
@@ -115,7 +115,7 @@ left is tracked elsewhere:
   split `{int, float}` where a split exists, and coerce last (#3).
 - [128](128-cross-class-field-promotion.md steps 2-4: promoted fields as
   derived state (#8's other half).
-- [007](../007-decorators-not-applied.md: property setters, and a property
+- [007](007-decorators-not-applied.md: property setters, and a property
   pyc cannot pre-scan.
 - [173](../173-silent-deviations-found-by-the-strict-suite-check.md: silent
   wrong answers found by the verification below.

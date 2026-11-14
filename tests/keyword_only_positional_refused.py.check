@@ -1,0 +1,13 @@
+keyword_only_positional_refused.py:6:35: error: illegal call argument type expression illegal: int64 
+    print(g(1, 2, 3))
+                     ^
+keyword_only_positional_refused.py:6:35: error: illegal call argument type expression illegal: g 
+    print(g(1, 2, 3))
+                     ^
+keyword_only_positional_refused.py:6:35: error: expression has no type
+    print(g(1, 2, 3))
+                     ^
+keyword_only_positional_refused.py:6:29: error: expression has no type
+    print(g(1, 2, 3))
+                     ^
+fail: program does not type

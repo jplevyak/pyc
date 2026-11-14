@@ -1,0 +1,13 @@
+kwargs_duplicate_refused.py:6:34: error: illegal call argument type expression illegal: int64 
+    print(f(1, a=3))
+                    ^
+kwargs_duplicate_refused.py:6:34: error: illegal call argument type expression illegal: f 
+    print(f(1, a=3))
+                    ^
+kwargs_duplicate_refused.py:6:34: error: expression has no type
+    print(f(1, a=3))
+                    ^
+kwargs_duplicate_refused.py:6:28: error: expression has no type
+    print(f(1, a=3))
+                    ^
+fail: program does not type
