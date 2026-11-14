@@ -414,9 +414,11 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
 - **Dynamic features**: `eval`, `exec`, and runtime reflection are not supported.
 - **Values that need boxing.** A variable, field or container element that genuinely holds two
   unrelated types over time (`{int, str}`, `{None, int}`) has no representation and is refused.
-- **Argument unpacking**: `f(*t)` and `f(**d)` work when the callee takes `*args` / `**kwargs`;
-  unpacking into named parameters is refused, as is a `**kwargs` whose values have different
-  types in one call ([issues/189](issues/189-unpacking-into-named-parameters.md)).
+- **Argument unpacking**: `f(*t)` binds a tuple's elements to any parameters, and `f(**d)` works
+  when the callee takes `**kwargs`. Refused: `*` of a list or of tuples of different lengths into
+  named parameters, `**d` into named parameters (so the forwarding decorator `fn(*a, **kw)`), and
+  a `**kwargs` whose values have different types in one call
+  ([issues/189](issues/189-unpacking-into-named-parameters.md)).
 - **Decorators**: a `@property` under another decorator, `@x.getter`, and a decorated method
   that takes `*args` or uses `super()` are refused
   ([issues/007](issues/closed/007-decorators-not-applied.md)).

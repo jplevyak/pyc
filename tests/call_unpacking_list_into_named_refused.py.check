@@ -1,0 +1,10 @@
+call_unpacking_list_into_named_refused.py:6:25: error: '*' unpacking into the named parameters of f() needs a tuple of one length known at compile time; a list, or tuples of different lengths, are not supported (issues/189)
+    print(f(*[1, 2]))
+                     ^
+call_unpacking_list_into_named_refused.py:6:25: error: expression has no type
+    print(f(*[1, 2]))
+                     ^
+call_unpacking_list_into_named_refused.py:6:19: error: expression has no type
+    print(f(*[1, 2]))
+                     ^
+fail: program does not type

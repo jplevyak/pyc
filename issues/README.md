@@ -83,7 +83,7 @@ Ordered by value against effort. Items in one row are independent.
 | [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
 | [184](184-classmethod-attribute-through-cls.md) | `cls.base` and `cls.h()` inside a `@classmethod` have no type; `cls(...)` works. |
 | [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class defining a method twice is an ambiguous call; CPython takes the last. |
-| [189](189-unpacking-into-named-parameters.md) | `f(*t)` / `f(**d)` into named parameters (the forwarding decorator), and `**kw` with mixed value types. |
+| [189](189-unpacking-into-named-parameters.md) | `f(**d)` into named parameters (the forwarding decorator), `f(*xs)` of a list into them, and `**kw` with mixed value types. `f(*t)` of a tuple works (2026-11-14). |
 | [048](048-none-int-field-pair-runtime-abort.md) | a genuinely read `{None, scalar}`: refused in every mode; the permissive sentinel is built only when a program needs it. |
 | [169](169-local-class-method-reading-enclosing-local-crashes.md) | a local class whose captured value has a different type per call (one prototype per class statement). |
 

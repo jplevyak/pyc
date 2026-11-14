@@ -383,6 +383,59 @@ Fun *PycCompiler::signature_wrapper(Fun *f, int npositional, Vec<cchar *> &keywo
   return fn->fun;
 }
 
+// issues/189: `f(*t)` where `t` binds named parameters, not (only) the
+// callee's whole `*args`. The matcher routes such a call here, one wrapper
+// per shape and tuple arity. The wrapper takes the call's actuals as they
+// are -- positionals, the tuple, keywords, a `**d` -- reads the tuple's
+// `arity` elements, and calls again with them in the tuple's place. That
+// call is an ordinary one: its positionals bind named formals, then
+// `*args`; defaults fill the rest; one left unbound is CPython's
+// TypeError, reported there. The `**d` actual keeps its mark, so it still
+// binds only a `**kw` formal.
+Fun *PycCompiler::unpack_wrapper(Fun *f, int star_at, int arity, Vec<cchar *> &names) {
+  PycAST *ast = (PycAST *)f->ast;
+  Vec<Sym *> as, inner;
+  Vec<cchar *> inner_names;
+  Code *body = 0;
+  for (int i = 0; i < names.n; i++) {
+    Sym *a = new_sym(ast);
+    as.add(a);
+    if (i + 1 == star_at) {
+      for (int j = 0; j < arity; j++) {
+        Sym *e = new_sym(ast);
+        call_method(&body, ast, a, sym___getitem__, e, 1, int64_constant(j));
+        inner.add(e);
+        inner_names.add(nullptr);
+      }
+    } else if (names[i]) {
+      inner.add(a);
+      inner_names.add(names[i]);
+    } else if (i + 1 > star_at) {
+      Sym *d = new_sym(ast);  // the `**d` dict, after the keywords
+      d->is_rest = 1;
+      if1_move(if1, &body, a, d, ast);
+      inner.add(d);
+      inner_names.add(nullptr);
+    } else {
+      inner.add(a);
+      inner_names.add(nullptr);
+    }
+  }
+  Sym *fn = new_fun(ast);
+  fn->nesting_depth = f->sym->nesting_depth;
+  fn->clone_methods_per_cs = f->sym->clone_methods_per_cs;
+  Sym *ret = new_sym(ast);
+  Code *send = if1_send(if1, &body, 0, 1, ret);
+  send->ast = ast;
+  for (int i = 0; i < inner.n; i++) if1_add_send_arg(if1, send, inner[i], inner_names[i]);
+  if1_move(if1, &body, ret, fn->ret, ast);
+  if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
+  if1_closure(if1, fn, body, as.n, as.v);
+  install_new_fun(fn);
+  fn->fun->wraps = f;
+  return fn->fun;
+}
+
 // ifa/issues/087: out-of-order keyword arguments (`f(high=9, low=2)`
 // against `def f(low, high)`) matched fine all the way through
 // pattern.cc's Matcher (find_all_matches/find_best_cs_match/

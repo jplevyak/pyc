@@ -1,0 +1,10 @@
+call_unpacking_dict_into_named_refused.py:6:25: error: '**' unpacking binds only a '**kw' parameter; into named parameters (a forwarding decorator's `fn(*a, **kw)`, or `f(**d)`) it is not supported (issues/189)
+    print(f(**{"a": 1, "b": 2}))
+                            ^
+call_unpacking_dict_into_named_refused.py:6:25: error: expression has no type
+    print(f(**{"a": 1, "b": 2}))
+                            ^
+call_unpacking_dict_into_named_refused.py:6:19: error: expression has no type
+    print(f(**{"a": 1, "b": 2}))
+                      ^
+fail: program does not type

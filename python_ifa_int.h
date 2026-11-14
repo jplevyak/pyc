@@ -225,6 +225,7 @@ class PycCompiler : public PycCallbacks {
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
   Fun *signature_wrapper(Fun *, int npositional, Vec<cchar *> &keywords);
+  Fun *unpack_wrapper(Fun *, int star_at, int arity, Vec<cchar *> &names);
   Fun *order_wrapper(Fun *, Map<MPosition *, MPosition *> &substitutions);
   bool reanalyze(Vec<ATypeViolation *> &type_violations);
   bool retract_derived_state();  // issues/128 step 2

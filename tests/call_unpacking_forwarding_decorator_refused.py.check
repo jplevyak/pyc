@@ -1,0 +1,27 @@
+call_unpacking_forwarding_decorator_refused.py:5:29: error: expression has no type
+            return fn(*a, **kw)
+                               ^
+  called from call_unpacking_forwarding_decorator_refused.py:4
+call_unpacking_forwarding_decorator_refused.py:4:11: error: expression has no type
+        def inner(*a, **kw):
+              ^
+  called from call_unpacking_forwarding_decorator_refused.py:12
+call_unpacking_forwarding_decorator_refused.py:5:35: error: expression has no type
+            return fn(*a, **kw)
+                               ^
+  called from call_unpacking_forwarding_decorator_refused.py:4
+call_unpacking_forwarding_decorator_refused.py:9:61: error: '**' unpacking binds only a '**kw' parameter; into named parameters (a forwarding decorator's `fn(*a, **kw)`, or `f(**d)`) it is not supported (issues/189)
+    def g(x, y):
+                ^
+  called from call_unpacking_forwarding_decorator_refused.py:5
+call_unpacking_forwarding_decorator_refused.py:9:61: error: expression has no type
+    def g(x, y):
+                ^
+  called from call_unpacking_forwarding_decorator_refused.py:5
+call_unpacking_forwarding_decorator_refused.py:12:86: error: expression has no type
+    print(g(5, 2))
+                  ^
+call_unpacking_forwarding_decorator_refused.py:12:80: error: expression has no type
+    print(g(5, 2))
+                  ^
+fail: program does not type

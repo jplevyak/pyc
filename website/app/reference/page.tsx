@@ -193,7 +193,8 @@ def sqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
         <p>Not yet supported, each tracked by an issue:</p>
         <ul>
           <li>
-            <code>f(*t)</code> and <code>f(**d)</code> unpacked into named parameters (
+            <code>f(**d)</code> unpacked into named parameters, which a forwarding decorator does, and{' '}
+            <code>f(*xs)</code> of a list into them (
             <a href={repo('blob/main/issues/189-unpacking-into-named-parameters.md')}>
               issues/189
             </a>
