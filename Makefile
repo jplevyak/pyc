@@ -129,7 +129,14 @@ endif
 LIB_SEARCH = /opt/homebrew/lib /usr/local/lib \
              $(subst :, ,$(shell $(CXX) -print-search-dirs 2>/dev/null | sed -n 's/^libraries: =//p'))
 static_lib = $(firstword $(wildcard $(addsuffix /lib$(1).a,$(LIB_SEARCH))))
-shared_lib = $(if $(wildcard $(addsuffix /lib$(1).so,$(LIB_SEARCH))),-l$(1),-l:lib$(1).so.1)
+# The dynamic fallback: -l<name>, or on Linux, when there is no development
+# symlink, the soname itself (-l:libzstd.so.1). macOS links its own
+# libraries by name (-lz is the SDK's zlib).
+ifeq ($(OS_TYPE),Darwin)
+  shared_lib = -l$(1)
+else
+  shared_lib = $(if $(wildcard $(addsuffix /lib$(1).so,$(LIB_SEARCH))),-l$(1),-l:lib$(1).so.1)
+endif
 need_static_lib = $(or $(call static_lib,$(1)),$(error no static lib$(1).a in $(LIB_SEARCH)))
 ifneq ($(OS_TYPE),Darwin)
   STATIC_GROUP_BEGIN = -Wl,--start-group
