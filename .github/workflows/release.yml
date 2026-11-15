@@ -3,9 +3,9 @@
 # On a pushed tag vX.Y.Z: build `make PORTABLE=1 dist` on Linux x86-64 and
 # arm64, smoke-test each tarball in a clean container that has only a
 # compiler (dist_smoke.sh), and publish both as a GitHub release with their
-# SHA-256 sums. Run by hand (workflow_dispatch) it builds and tests the
-# tarballs and keeps them as workflow artifacts, without publishing, so the
-# pipeline can be tried before a tag.
+# SHA-256 sums. Run by hand (workflow_dispatch) it builds, tests, collects
+# and checksums the tarballs and keeps them as workflow artifacts, without
+# publishing, so the pipeline can be tried before a tag.
 #
 # The toolchain is CI's (ci.yml): LLVM 20 throughout, versioned packages.
 # pyc links LLVM 20 statically, and its runtime bitcode is built by clang-20,
@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Checkout pyc
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # `git describe` names the version from the tags (Makefile,
           # "Version stamp"), so it needs the history and the tags.
@@ -87,20 +87,21 @@ jobs:
             /src/dist_smoke.sh /src/dist/pyc-*.tar.gz /src/tests'
 
       - name: Keep the tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pyc-${{ matrix.arch }}
           path: dist/*.tar.gz
           if-no-files-found: error
 
   publish:
-    name: publish the release
+    # Collects and checksums the tarballs on every run, so a manual run
+    # exercises this job too; only a tag publishes.
+    name: collect, and publish on a tag
     needs: dist
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - name: Collect the tarballs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -112,6 +113,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Create the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

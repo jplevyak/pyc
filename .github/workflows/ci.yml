@@ -63,7 +63,7 @@ jobs:
 
     steps:
       - name: Checkout pyc
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install system packages
         run: |
