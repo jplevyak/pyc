@@ -129,6 +129,17 @@ jobs:
         if: runner.os == 'macOS'
         run: ./dist_smoke.sh dist/pyc-*.tar.gz tests
 
+      - name: Diagnose a macOS failure
+        # Temporary, while the macOS port is brought up: a backtrace of the
+        # static pyc, and whether the dynamically linked pyc does the same.
+        if: failure() && runner.os == 'macOS'
+        run: |
+          printf 'print(1 + 2)\n' > /tmp/h.py
+          lldb --batch -o run -o bt -o "register read" -- ./pyc-static -D "$PWD" /tmp/h.py 2>&1 | head -80 || true
+          make -j"$(getconf _NPROCESSORS_ONLN)" pyc > /tmp/dyn.log 2>&1 || tail -20 /tmp/dyn.log
+          ./pyc -D "$PWD" /tmp/h.py && /tmp/h || echo "dynamic pyc: rc=$?"
+          lldb --batch -o run -o bt -- ./pyc -D "$PWD" /tmp/h.py 2>&1 | tail -40 || true
+
       - name: Keep the tarball
         uses: actions/upload-artifact@v7
         with:
