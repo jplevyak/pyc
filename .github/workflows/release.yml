@@ -136,6 +136,7 @@ jobs:
         run: |
           printf 'print(1 + 2)\n' > /tmp/h.py
           cd /tmp
+          set +e
           for how in none default -x -S -u; do
             cp "$GITHUB_WORKSPACE/pyc-static" p-$how
             case $how in none) ;; default) strip p-$how ;; *) strip $how p-$how ;; esac
