@@ -33,6 +33,8 @@ pyc.cat
 
 # Compiled binaries / driver outputs
 /pyc
+/pyc-static
+/dist/
 /hello_world
 /hello_world.py.c
 /hello_world.py.s

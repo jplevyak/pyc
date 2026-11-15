@@ -7,12 +7,24 @@ OS_TYPE = $(shell uname -s | \
 ifdef NO_GC
   CFLAGS += -DPYC_NO_GC=1
 endif
-CFLAGS += -DUSE_GC=1 -I$(CG_ROOT) -I$(CG_ROOT)/../ifa -I$(CG_ROOT)/ifa/common -I/usr/local/include/gc -I/usr/local/include -I/opt/homebrew/include -I/opt/homebrew/include/gc -Wno-deprecated
+# CG_ROOT is pyc's library directory: the source tree, or <prefix>/lib/pyc
+# once installed. An installed pyc may carry its own static Boehm GC in
+# CG_ROOT/gc (`make dist BUNDLE_GC=1`); when it does, the program is
+# compiled against those headers and links that archive, so it needs no
+# libgc on the machine that builds or runs it. Otherwise the system's.
+GC_BUNDLE = $(wildcard $(CG_ROOT)/gc/lib/libgc.a)
+ifneq ($(GC_BUNDLE),)
+  CFLAGS += -I$(CG_ROOT)/gc/include -I$(CG_ROOT)/gc/include/gc
+  GC_LIBS = $(CG_ROOT)/gc/lib/libgc.a
+else
+  GC_LIBS = -lgc
+endif
+CFLAGS += -DUSE_GC=1 -I$(CG_ROOT) -I/usr/local/include/gc -I/usr/local/include -I/opt/homebrew/include -I/opt/homebrew/include/gc -Wno-deprecated
 
-LIBS = -L/opt/homebrew/lib -L/usr/local/lib -lm -lgc -lpcre
+LIBS = -L/opt/homebrew/lib -L/usr/local/lib -lm $(GC_LIBS)
 
 ifeq ($(OS_TYPE),Linux)
-  LIBS += -ldl -lrt
+  LIBS += -ldl -lrt -lpthread
 endif
 
 # PYC_CXX overrides the compiler, as PYC_LLVM_CXX does for the LLVM
@@ -53,4 +65,4 @@ CFLAGS += $(EXTRA_CFLAGS)
 LIBS += $(EXTRA_LIBS)
 
 all: $(CG_FILES)
-	@$(CC) $(CFLAGS) $(LDFLAGS) -o $(CG_TARGET) $(CG_FILES) $(CG_ROOT)/pyc_runtime.o $(CG_ROOT)/ifa/libifa_gc.a $(LIBS)
+	@$(CC) $(CFLAGS) $(LDFLAGS) -o $(CG_TARGET) $(CG_FILES) $(CG_ROOT)/pyc_runtime.o $(LIBS)

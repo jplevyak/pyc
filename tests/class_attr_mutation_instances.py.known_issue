@@ -1,0 +1,1 @@
+issues/173 item 1: an instance or subclass copies a class attribute when it is made, so a later store through the class (A.n = 9, C.k += 1) is not seen through it; CPython looks it up at read time. The .exec.check holds CPython's output, so this flips to PASS when the issue is fixed.

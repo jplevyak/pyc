@@ -701,6 +701,36 @@ first diagnostic) is still the right tool for *triaging* what is broken;
 `corpus_sweep.sh` is for *comparing two trees* and for the run/output
 status. `ifa/issues/runstatus.sh` predates both.
 
+## Release builds: `make PORTABLE=1 dist`, then `dist_smoke.sh`
+
+A pyc for someone else's machine is `make clean && make PORTABLE=1 dist`.
+It produces `dist/pyc-<version>-<os>-<arch>.tar.gz`, a relocatable
+install: `bin/pyc` linked statically (LLVM, Boehm GC, dparser, the C++
+runtime; only libc and zstd stay dynamic), and `lib/pyc/` holding the
+library, the runtime and a static Boehm GC that the programs pyc builds
+link. pyc finds `lib/pyc` from its own location, so the tarball unpacks
+anywhere. The user needs `clang++` (any recent version) and `make`.
+
+Three things that are easy to get wrong:
+
+- **`PORTABLE=1` and a clean tree.** Without it every object is built
+  with `-march=native` and the binary can die on an older CPU. make does
+  not track flags, so a tree already built without it keeps those
+  objects; `dist` refuses to run without `PORTABLE=1`.
+- **Test it where nothing else is.** `dist_smoke.sh TARBALL` compiles a
+  fixed set of suite programs from a fresh directory on both backends,
+  plus the JIT, and compares with their `.exec.check`. On the build host
+  it proves little, because every library is installed there. Run it in
+  a clean container (its header has the `docker run` line): that is what
+  found the LLVM backend handing its IR to the user's older clang, fixed
+  by writing the object in process (ifa/CODEGEN_LLVM.md §11).
+- **The LLVM version is the release's, not the user's.** pyc carries its
+  LLVM, so nothing it produces may need the user's LLVM to read it: no
+  `.ll` or bitcode handed to the system compiler. The runtime bitcode
+  `pyc_runtime_lto.o` must be built by a clang no newer than the LLVM pyc
+  links (`make CC=clang-20 CXX=clang++-20 LLVM_CONFIG=...` together), or
+  pyc cannot read it and falls back to `libpyc_runtime.a`, slower.
+
 ## Do not check in build artifacts
 
 Never `git add` compiled binaries, object files, generated IR, or

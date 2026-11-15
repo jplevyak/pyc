@@ -26,13 +26,30 @@ sub-generator's own `__pyc_return_value__()`.
 
 ## Fix
 
-Exception flow along the call graph: which raises can reach which
-handler, so a handler reads the union of the raises that reach it rather
-than of every raise in the program. It is the same change that makes a
-`None`-receiver check catchable ([ifa/165](../ifa/issues/165-none-reaching-an-operation-is-silently-accepted.md)
-residual 1) and that [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)
-needs to prune checks before FA pays for them, so land it once, for all
-three.
+Exception VALUE flow along the call graph: a handler reads the union of
+the raises that can reach it, not of every raise in the program. That
+means the pending exception travels like a return value: a per-contour
+"exception out" channel in FA, flowing from a callee to the handlers of
+its callers, in place of the one global slot. The frontend's 21 uses of
+`__pyc_exc__` (`python_ifa_build_if1.cc`) and the generator protocol
+(`__pyc__/09_generator.py`) move with it. It is a new channel through
+FA, so it must also say whether it creates splitting demands.
+
+**Not the same change as [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)
+step 2** (corrected 2026-11-14; this section used to say "land it once,
+for all three"). 175 and
+[ifa/165](../ifa/issues/165-none-reaching-an-operation-is-silently-accepted.md)
+residual 1 need exception LIVENESS: a check whose exceptional arm FA
+does not analyse until a resolved callee can raise. That leaves the
+slot's type the whole program's union, so this refusal stays. Value flow
+would give liveness too, but liveness is the cheaper half and is where
+the silent wrong answers are (179, 175), so it comes first; this waits
+until value flow is wanted for its own sake, such as precise
+`except X as e` typing in general.
+
+Priority: low. A compile-time refusal of an uncommon idiom (`e.value`
+read in an explicit handler, in a program whose generators return two
+value types), already a `.known_issue`.
 
 ## Verification
 

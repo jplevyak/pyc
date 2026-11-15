@@ -45,8 +45,18 @@ CFLAGS += -std=c++23 -Wall -MMD -MP -D__PYC__=1 -Wno-register
 ifdef DEBUG
   CFLAGS += -g -DDEBUG=1
 endif
+# PORTABLE=1 (a release build, `make dist`): no -march=native, so the
+# binary runs on any CPU of its architecture, not only the build host's.
+# Passed down to ifa/ too. Changing it needs `make clean` (make does not
+# track flags).
+ifdef PORTABLE
+  MARCH =
+  export PORTABLE
+else
+  MARCH = -march=native
+endif
 ifdef OPTIMIZE
-  CFLAGS += -O3 -march=native
+  CFLAGS += -O3 $(MARCH)
 endif
 ifdef PROFILE
   CFLAGS += -pg
@@ -59,7 +69,7 @@ endif
 # Bridge CFLAGS into CPPFLAGS so the implicit rule sees them.
 CPPFLAGS += $(CFLAGS)
 
-LIBS += -lm -lpcre
+LIBS += -lm
 
 ifneq ($(OS_TYPE),Darwin)
 ifneq ($(OS_TYPE),CYGWIN)
@@ -105,6 +115,35 @@ ifdef USE_LLVM
 endif
 
 
+# Static link (`pyc-static`, which `make dist` installs) -------------------------
+#
+# A pyc to hand to someone else: LLVM, Boehm GC, dparser and the C++
+# runtime linked in, so it needs only the platform's C library (and a C++
+# compiler, to compile the programs it writes). Each archive is found by
+# name in the usual library directories and the compiler's own; a missing
+# one is an error here rather than a silent fallback to the shared library.
+# LLVM needs zlib and zstd (its compression support; the libxml2 it also
+# names is never referenced). Each is linked statically when an archive
+# exists (CI installs zlib1g-dev and libzstd-dev), otherwise dynamically,
+# by its soname when there is no development symlink.
+LIB_SEARCH = /opt/homebrew/lib /usr/local/lib \
+             $(subst :, ,$(shell $(CXX) -print-search-dirs 2>/dev/null | sed -n 's/^libraries: =//p'))
+static_lib = $(firstword $(wildcard $(addsuffix /lib$(1).a,$(LIB_SEARCH))))
+shared_lib = $(if $(wildcard $(addsuffix /lib$(1).so,$(LIB_SEARCH))),-l$(1),-l:lib$(1).so.1)
+need_static_lib = $(or $(call static_lib,$(1)),$(error no static lib$(1).a in $(LIB_SEARCH)))
+ifneq ($(OS_TYPE),Darwin)
+  STATIC_GROUP_BEGIN = -Wl,--start-group
+  STATIC_GROUP_END   = -Wl,--end-group
+  STATIC_LDFLAGS     = -static-libstdc++ -static-libgcc -Wl,--dynamic-list=pyc_jit_exports.list
+  STATIC_NO_RDYNAMIC = -rdynamic
+endif
+# The Boehm GC pyc links, and the one `make dist BUNDLE_GC=1` ships for the
+# programs pyc builds: its headers are taken from the same prefix as the
+# archive (/usr/lib/<multiarch>/libgc.a -> /usr/include), never mixed.
+GC_STATIC_LIB = $(call static_lib,gc)
+GC_PREFIX     = $(shell echo $(realpath $(GC_STATIC_LIB)) | sed 's|/lib/.*||')
+GC_INCLUDE   ?= $(GC_PREFIX)/include
+
 # Version stamp ---------------------------------------------------------------
 
 BUILD_VERSION = $(shell git show-ref 2> /dev/null | head -1 | cut -d ' ' -f 1)
@@ -137,11 +176,11 @@ else
 endif
 
 MANPAGES    = pyc.1
-CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime.a pyc_runtime_lto.o
+CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime.a pyc_runtime_lto.o pyc-static
 
 # Targets ---------------------------------------------------------------------
 
-.PHONY: all defaulttarget install deinstall clean realclean clean-tests \
+.PHONY: all defaulttarget install deinstall dist clean realclean clean-tests \
         test test-core test-e2e test-unit test-ir test-dparse test_dparse \
         test-links test_links test_llvm test-ifa-llvm test_ifa_llvm \
         $(IFALIB) pullifa pushifa diffifa show-sweep
@@ -210,15 +249,71 @@ COPYRIGHT.i: LICENSE
 	rm -f COPYRIGHT.i
 	head -1 LICENSE | sed -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
 
-install: $(EXECUTABLES) libpyc_runtime.a pyc_runtime_lto.o
-	cp $(EXECUTABLES) $(PREFIX)/bin
-	cp libpyc_runtime.a pyc_runtime_lto.o $(PREFIX)/lib
-	cp $(MANPAGES) $(PREFIX)/man/man1
+# The static pyc (see "Static link" above).
+pyc-static: $(PYC_OBJS) $(IFALIB) $(JIT_RUNTIME_OBJ) pyc_jit_exports.list
+	$(CXX) $(CFLAGS) $(filter-out $(STATIC_NO_RDYNAMIC),$(LDFLAGS)) $(STATIC_LDFLAGS) -o $@ $(PYC_OBJS) $(JIT_RUNTIME_OBJ) \
+	  $(STATIC_GROUP_BEGIN) $(IFALIB) $(call need_static_lib,dparse_gc) $(call need_static_lib,gccpp) \
+	  $(call need_static_lib,gc) $(wildcard $(shell $(LLVM_CONFIG) --link-static --libfiles)) $(STATIC_GROUP_END) \
+	  $(foreach l,z zstd,$(or $(call static_lib,$(l)),$(call shared_lib,$(l)))) -lpthread -ldl -lm \
+	  $(if $(filter Darwin,$(OS_TYPE)),,-lrt)
+
+# Install ---------------------------------------------------------------------
+#
+#   <prefix>/bin/pyc
+#   <prefix>/lib/pyc/        pyc's library directory (pyc finds it from its
+#                            own location: <exe>/../lib/pyc), holding
+#     __pyc__/  pyc_lib/     the builtin module and the Python library
+#     pyc_c_runtime.h  Makefile.cg  pyc_runtime.o      the C backend's
+#     libpyc_runtime.a  pyc_runtime_lto.o              the LLVM backend's
+#     gc/include  gc/lib     with BUNDLE_GC=1: a static Boehm GC that the
+#                            programs pyc builds link, so they need no libgc
+#   <prefix>/share/man/man1/pyc.1
+#
+# PYC_INSTALL_BIN picks the binary (pyc, or pyc-static for `make dist`);
+# INSTALL_STRIP=-s strips it (dist does: the debug info is most of its size).
+# DESTDIR is honoured, for packagers.
+PYC_INSTALL_BIN ?= $(PYC)
+INSTALL_LIBDIR   = $(DESTDIR)$(PREFIX)/lib/pyc
+
+install: $(PYC_INSTALL_BIN) libpyc_runtime.a pyc_runtime_lto.o pyc_runtime.o
+	install -d $(DESTDIR)$(PREFIX)/bin $(INSTALL_LIBDIR) $(DESTDIR)$(PREFIX)/share/man/man1
+	install -m 755 $(INSTALL_STRIP) $(PYC_INSTALL_BIN) $(DESTDIR)$(PREFIX)/bin/$(PYC)
+	install -m 644 pyc_c_runtime.h Makefile.cg pyc_runtime.o libpyc_runtime.a pyc_runtime_lto.o $(INSTALL_LIBDIR)
+	rm -rf $(INSTALL_LIBDIR)/__pyc__ $(INSTALL_LIBDIR)/pyc_lib
+	tar -cf - --exclude=__pycache__ --exclude='*.pyc' __pyc__ pyc_lib | tar -xf - -C $(INSTALL_LIBDIR)
+	install -m 644 $(MANPAGES) $(DESTDIR)$(PREFIX)/share/man/man1
+ifdef BUNDLE_GC
+	@test -n "$(GC_STATIC_LIB)" || { echo "BUNDLE_GC: no static libgc.a in $(LIB_SEARCH)"; exit 1; }
+	@test -f "$(GC_INCLUDE)/gc.h" || { echo "BUNDLE_GC: no gc.h in $(GC_INCLUDE) (set GC_INCLUDE)"; exit 1; }
+	install -d $(INSTALL_LIBDIR)/gc/lib $(INSTALL_LIBDIR)/gc/include
+	install -m 644 $(GC_STATIC_LIB) $(INSTALL_LIBDIR)/gc/lib
+	$(if $(call static_lib,gccpp),install -m 644 $(call static_lib,gccpp) $(INSTALL_LIBDIR)/gc/lib)
+	install -m 644 $(GC_INCLUDE)/gc.h $(INSTALL_LIBDIR)/gc/include
+	cp -R $(GC_INCLUDE)/gc $(INSTALL_LIBDIR)/gc/include/
+endif
 
 deinstall:
-	rm -f $(EXECUTABLES:%=$(PREFIX)/bin/%)
-	rm -f $(PREFIX)/lib/libpyc_runtime.a $(PREFIX)/lib/pyc_runtime_lto.o
-	rm -f $(MANPAGES:%=$(PREFIX)/man/man1/%)
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(PYC) $(DESTDIR)$(PREFIX)/share/man/man1/pyc.1
+	rm -rf $(INSTALL_LIBDIR)
+
+# Distribution tarball (`make PORTABLE=1 dist` in a clean tree) ---------------
+#
+# A relocatable install of pyc-static with the GC bundled, under
+# dist/pyc-<version>-<os>-<arch>/, and its .tar.gz. Unpack it anywhere: pyc
+# finds its library beside itself. Needs PORTABLE=1 so no object was built
+# with -march=native; since make does not track flags, build it in a clean
+# tree (`make clean`).
+DIST_VERSION ?= $(MAJOR).$(MINOR)
+DIST_NAME    ?= pyc-$(DIST_VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
+DIST_ROOT     = dist/$(DIST_NAME)
+
+dist:
+	@test -n "$(PORTABLE)" || { echo "make dist needs PORTABLE=1 (and a clean tree): see the Makefile"; exit 1; }
+	$(MAKE) pyc-static libpyc_runtime.a pyc_runtime_lto.o pyc_runtime.o pyc.cat
+	rm -rf $(DIST_ROOT) dist/$(DIST_NAME).tar.gz
+	$(MAKE) install PYC_INSTALL_BIN=pyc-static INSTALL_STRIP=-s BUNDLE_GC=1 PREFIX=$(abspath $(DIST_ROOT)) DESTDIR=
+	tar -czf dist/$(DIST_NAME).tar.gz -C dist $(DIST_NAME)
+	@echo "dist/$(DIST_NAME).tar.gz"
 
 # Tests -----------------------------------------------------------------------
 #
@@ -348,6 +443,7 @@ clean: clean-tests
 	rm -f *.o *.d core *.core *.gmon $(EXECUTABLES) LICENSE.i COPYRIGHT.i $(CLEAN_FILES)
 	rm -f *.py.c *.py.s *.out *.bak *.ll *.txt *.log *.ir out_class out_dyn out_mc baseline
 	rm -f *.g.d_parser.cc *.g.d_parser.h *.g.d_parser.d
+	rm -rf dist
 	rm -rf *.dSYM
 	@# Stale binaries from one-off runs in root and shedskin: any executable with a .py twin.
 	@for f in * shedskin_examples/*/*; do \

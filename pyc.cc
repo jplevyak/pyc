@@ -12,6 +12,9 @@
 #include <ftw.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include <set>
 #include <string>
 
@@ -375,6 +378,49 @@ cchar *mod_name_from_filename(cchar *n) {
   return dupstr(start, end);
 }
 
+// The directory of the running executable, through any symlink, or "" when
+// the platform cannot say.
+static std::string executable_dir() {
+  char self[PATH_MAX];
+#ifdef __APPLE__
+  uint32_t size = sizeof(self);
+  if (_NSGetExecutablePath(self, &size) != 0) return "";
+  char real[PATH_MAX];
+  if (!realpath(self, real)) return "";
+  strcpy(self, real);
+#else
+  ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+  if (n <= 0) return "";
+  self[n] = 0;
+#endif
+  char *slash = strrchr(self, '/');
+  if (!slash) return "";
+  *slash = 0;
+  return self;
+}
+
+// The library directory: `__pyc__/`, `pyc_lib/`, the runtime header and
+// objects, `Makefile.cg`. In order:
+//   - `-D DIR` or PYC_SYSTEM_DIRECTORY, as given;
+//   - "." when it holds `__pyc__` (the source tree, the test harness);
+//   - the executable's own directory when it does (a source-tree build run
+//     from elsewhere, or a `#!/usr/bin/env -S pyc -x` script);
+//   - `<exe>/../lib/pyc`, the installed layout (`make install`, `make dist`).
+// It is made absolute: generated C includes the runtime header by this path.
+static void resolve_system_dir() {
+  bool explicit_dir = strcmp(system_dir, ".") != 0;
+  if (!explicit_dir && !is_directory("./__pyc__")) {
+    std::string exe = executable_dir();
+    for (std::string cand : {exe, exe + "/../lib/pyc"}) {
+      if (exe.empty() || !is_directory((cand + "/__pyc__").c_str())) continue;
+      if (cand.size() < sizeof(system_dir)) strcpy(system_dir, cand.c_str());
+      break;
+    }
+  }
+  char real[PATH_MAX];
+  if (realpath(system_dir, real) && strlen(real) < sizeof(system_dir)) strcpy(system_dir, real);
+}
+
 int main(int argc, char *argv[]) {
   // Raise the stack soft limit toward the hard limit before any deep
   // work. FA's matcher/dispatch (if1/pattern.cc, analysis/fa.cc) and
@@ -434,23 +480,7 @@ int main(int argc, char *argv[]) {
     pyc_argv[argc] = nullptr;
   }
   process_args(&arg_state, argc, pyc_argv);
-  // The library directory (-D / PYC_SYSTEM_DIRECTORY) defaults to ".", which
-  // only works from the source tree. Left at that default with no __pyc__
-  // here, use the directory of the pyc executable itself (through any
-  // symlink), so `pyc` on PATH -- and a `#!/usr/bin/env -S pyc -x` script run
-  // from anywhere -- finds its library.
-  if (!strcmp(system_dir, ".") && !is_directory("./__pyc__")) {
-    char self[PATH_MAX];
-    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
-    if (n > 0) {
-      self[n] = 0;
-      if (char *slash = strrchr(self, '/')) {
-        *slash = 0;
-        std::string lib = std::string(self) + "/__pyc__";
-        if (is_directory(lib.c_str()) && strlen(self) < sizeof(system_dir)) strcpy(system_dir, self);
-      }
-    }
-  }
+  resolve_system_dir();
 #ifdef USE_LLVM
   // The JIT runs only on the LLVM backend (compile() consults codegen_jit
   // inside the codegen_llvm branch), so `-j` alone used to be ignored
@@ -539,6 +569,14 @@ int main(int argc, char *argv[]) {
         pymod = dparse_builtin_dir(fn);
       } else {
         strcat(fn, ".py");
+        if (access(fn, R_OK) != 0) {
+          fprintf(stderr,
+                  "pyc: cannot find its library (__pyc__/) in '%s'.\n"
+                  "Pass -D DIR or set PYC_SYSTEM_DIRECTORY. pyc also looks beside its executable "
+                  "and, installed, in <prefix>/lib/pyc.\n",
+                  system_dir);
+          exit(2);
+        }
         filename = dupstr(fn);
         pymod = dparse_python_to_ast(filename);
       }

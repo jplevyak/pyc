@@ -50,10 +50,11 @@ that measurement.
    Either place the check only after FA resolves the callee to one that
    can raise (a post-FA insertion, the inverse of the fold), or give FA a
    check whose exceptional arm is not analysed until a resolved callee
-   can raise. This is the exception-flow change
-   [172](172-stopiteration-value-reads-the-global-exception-slot.md) and
+   can raise. This is exception LIVENESS, which
    [ifa/165](../ifa/issues/165-none-reaching-an-operation-is-silently-accepted.md)
-   also need; land it once.
+   residual 1 also needs. [172](172-stopiteration-value-reads-the-global-exception-slot.md)
+   needs exception VALUE flow, a bigger change this does not give
+   (corrected 2026-11-14).
 3. **Then the two stores that wait on it:** `tuple.__setitem__` raising
    `TypeError` (today `t[i] = x` mutates; making it raise without an item
    store check killed everything after the store and the program printed

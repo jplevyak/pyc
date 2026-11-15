@@ -54,8 +54,8 @@ Ordered by value against effort. Items in one row are independent.
 
 | order | do | why | unblocks |
 | --- | --- | --- | --- |
-| 1 | the silent wrong answers with a local fix: [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 1. ([185](closed/185-list-eq-tuple-is-true.md) closed 2026-11-14; [180](180-method-assigned-across-classes-crashes.md) has been a compile-time refusal since 2026-11-07, so it is now a row 5 item) | rule 1's worst outcome, each a day | |
-| 2 | exception flow along the call graph, once: [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 2 | three issues wait on it and the up-front check is measured too expensive | [172](172-stopiteration-value-reads-the-global-exception-slot.md), [179](179-sequence-index-out-of-range-does-not-raise.md), tuple `__setitem__`, ifa/165 |
+| 1 | the silent wrong answers with a local fix: none left. [185](closed/185-list-eq-tuple-is-true.md) closed 2026-11-14; [180](180-method-assigned-across-classes-crashes.md) has been a compile-time refusal since 2026-11-07, so it is a row 5 item; [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 1 turned out to be a representation change (2026-11-14: instances copy class attributes too; two designs in the issue), so it is a decision, not a day | rule 1's worst outcome | |
+| 2 | exception liveness along the call graph: [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 2 | the silent wrong answers on the exception side wait on it, and the up-front check is measured too expensive | [179](179-sequence-index-out-of-range-does-not-raise.md), tuple `__setitem__`, ifa/165. Not [172](172-stopiteration-value-reads-the-global-exception-slot.md), which needs exception VALUE flow (corrected 2026-11-14) |
 | 3 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 1 (operators, `ZeroDivisionError`) and [179](179-sequence-index-out-of-range-does-not-raise.md) | silent memory reads and a SIGFPE on the default path | |
 | 4 | the crashes: [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 3 (recursion limit), [187](187-self-import-overflows-the-frontend.md) | a crash beats a wrong answer but not by much | corpus `loop` |
 | 5 | the refusals of valid programs: [184](184-classmethod-attribute-through-cls.md), [186](186-duplicate-method-definitions-are-an-ambiguous-call.md), [189](189-unpacking-into-named-parameters.md) | each is a common idiom with a named cause | |
@@ -71,7 +71,7 @@ Ordered by value against effort. Items in one row are independent.
 | --- | --- |
 | [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) | a raise inside an operator or `__getitem__` never reaches the handler; `7 // 0` is a SIGFPE; the item-subscript check costs +72 % compile time if emitted up front. |
-| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | a subclass does not see a mutated base attribute; a global read before its definition sees the later value; deep recursion overflows the C stack and `setrecursionlimit` is ignored. |
+| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | a subclass or an instance does not see a class attribute stored through the class after it was made (`C.k += 1; self.k`); a global read before its definition sees the later value; deep recursion overflows the C stack and `setrecursionlimit` is ignored. |
 | [180](180-method-assigned-across-classes-crashes.md) | `a.x = b.x` across unrelated classes compiles clean, then `a.x()` segfaults: a field holding a closure called as a method slot. |
 | [177](177-int64-overflow-at-run-time-is-silent.md) | run-time int64 overflow wraps silently in every mode (othello2); literals are warned or refused. |
 
