@@ -13,6 +13,11 @@
 #      /src/dist_smoke.sh /src/dist/pyc-*.tar.gz /src/tests'
 # The only things the image provides are a C++ compiler, lld and make: no
 # LLVM development package, no Boehm GC, no dparser.
+#
+# Every binary it checks -- pyc, and each program pyc builds -- must load
+# only the operating system's libraries (/lib, /usr/lib, /System on macOS).
+# That is the self-containment test where a clean machine is not available
+# (a macOS runner keeps Homebrew's libraries installed).
 set -u
 TARBALL=$(realpath "$1")
 TESTS=$(realpath "${2:-$(dirname "$0")/tests}")
@@ -30,7 +35,20 @@ cd "$WORK" || exit 1
 echo "pyc: $PYC"
 "$PYC" --version | head -1
 
+# The shared libraries a binary loads, one path per line.
+deps() {
+  if [ "$(uname -s)" = Darwin ]; then otool -L "$1" | tail -n +2 | awk '{print $1}'
+  else ldd "$1" | awk '/=>/ {print $3} !/=>/ {print $1}'; fi
+}
+# Fail (print) any that is not the system's.
+check_deps() {
+  local bad
+  bad=$(deps "$1" | grep -vE '^(/lib|/usr/lib|/System/|linux-vdso|/lib64)' | grep -v '^$')
+  if [ -n "$bad" ]; then echo "FAIL [deps] $2 loads non-system libraries:"; echo "$bad" | sed 's/^/    /'; return 1; fi
+}
+
 fail=0
+check_deps "$PYC" pyc && echo "ok   [deps] pyc" || fail=1
 for flags in "" "-b"; do
   for p in $PROGRAMS; do
     cp "$TESTS/$p.py" .
@@ -42,6 +60,7 @@ for flags in "" "-b"; do
     else
       echo "FAIL [${flags:-C}] $p: output differs from $p.py.exec.check"; fail=1
     fi
+    check_deps "./$p" "[${flags:-C}] $p" || fail=1
     rm -f "$p" "$p.py.c" "$p.ll" "$p.o"
   done
 done

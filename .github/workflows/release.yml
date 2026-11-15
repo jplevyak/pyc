@@ -1,16 +1,18 @@
 # Release tarballs (AGENTS.md, "Release builds").
 #
 # On a pushed tag vX.Y.Z: build `make PORTABLE=1 dist` on Linux x86-64 and
-# arm64, smoke-test each tarball in a clean container that has only a
-# compiler (dist_smoke.sh), and publish both as a GitHub release with their
-# SHA-256 sums. Run by hand (workflow_dispatch) it builds, tests, collects
+# arm64 and macOS arm64 and x86-64, smoke-test each tarball (dist_smoke.sh;
+# on Linux in a clean container that has only a compiler), and publish them
+# as a GitHub release with their SHA-256 sums. Run by hand (workflow_dispatch) it builds, tests, collects
 # and checksums the tarballs and keeps them as workflow artifacts, without
 # publishing, so the pipeline can be tried before a tag.
 #
-# The toolchain is CI's (ci.yml): LLVM 20 throughout, versioned packages.
-# pyc links LLVM 20 statically, and its runtime bitcode is built by clang-20,
-# which that LLVM can read. The tarball runs on any glibc at least as new as
-# the runner's (Ubuntu 24.04: 2.39).
+# The toolchain is LLVM 20 throughout. Linux: CI's versioned packages
+# (ci.yml). macOS: Homebrew's llvm@20 for the static LLVM and for the runtime
+# bitcode, which pyc's LLVM 20 must be able to read, and Xcode's clang++ for
+# pyc itself, as for the programs pyc builds. A Linux tarball runs on any
+# glibc at least as new as the runner's (Ubuntu 24.04: 2.39); a macOS one on
+# the runner's macOS version or newer.
 
 name: release
 
@@ -33,14 +35,13 @@ jobs:
             runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
+          - arch: macos-arm64
+            runner: macos-15
+          - arch: macos-x86_64
+            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     env:
       USE_LLVM: 1
-      CC: clang-20
-      CXX: clang++-20
-      LLVM_CONFIG: /usr/bin/llvm-config-20
-      PYC_LLVM_CXX: clang++-20
-      PYC_CXX: clang++-20
 
     steps:
       - name: Checkout pyc
@@ -50,7 +51,40 @@ jobs:
           # "Version stamp"), so it needs the history and the tags.
           fetch-depth: 0
 
-      - name: Install system packages
+      - name: Toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          {
+            echo CC=clang-20
+            echo CXX=clang++-20
+            echo LLVM_CONFIG=/usr/bin/llvm-config-20
+            echo PYC_LLVM_CXX=clang++-20
+            echo PYC_CXX=clang++-20
+          } >> "$GITHUB_ENV"
+
+      - name: Toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # bdw-gc's static archives and headers are what the tarball bundles;
+          # zstd's archive is linked into pyc. CPATH / LIBRARY_PATH let
+          # dparser's build find the GC without editing its Makefile.
+          brew install llvm@20 bdw-gc zstd
+          LLVM=$(brew --prefix llvm@20)
+          {
+            echo CC=$LLVM/bin/clang
+            echo CXX=clang++
+            echo AR=$LLVM/bin/llvm-ar
+            echo LLVM_CONFIG=$LLVM/bin/llvm-config
+            echo PYC_LLVM_CXX=clang++
+            echo PYC_CXX=clang++
+            echo CPATH=$(brew --prefix)/include
+            echo LIBRARY_PATH=$(brew --prefix)/lib
+          } >> "$GITHUB_ENV"
+          clang++ --version | head -1
+          $LLVM/bin/llvm-config --version
+
+      - name: Install system packages (Linux)
+        if: runner.os == 'Linux'
         run: |
           # The static archives the release links: LLVM 20's (llvm-20-dev),
           # Boehm GC's (libgc-dev: libgc.a, libgccpp.a and the headers it
@@ -66,25 +100,34 @@ jobs:
           git clone --depth 1 https://github.com/jplevyak/dparser.git /tmp/dparser
           make -C /tmp/dparser D_USE_GC=1
           sudo make -C /tmp/dparser D_USE_GC=1 install
-          sudo ldconfig
+          if [ "$RUNNER_OS" = Linux ]; then sudo ldconfig; fi
 
       - name: Build the tarball (make PORTABLE=1 dist)
         run: |
           make clean
-          make -j"$(nproc)" PORTABLE=1 dist
+          make -j"$(getconf _NPROCESSORS_ONLN)" PORTABLE=1 dist
           ls -la dist
 
       - name: What the static pyc still loads
-        run: ldd pyc-static
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then otool -L pyc-static; else ldd pyc-static; fi
 
-      - name: Smoke test in a clean container (dist_smoke.sh)
+      - name: Smoke test in a clean container (dist_smoke.sh, Linux)
         # Only a compiler, lld and make: no LLVM development package, no
         # libgc-dev, no dparser. Both backends and the JIT.
+        if: runner.os == 'Linux'
         run: |
           docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c '
             apt-get update -qq >/dev/null &&
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clang lld make >/dev/null &&
             /src/dist_smoke.sh /src/dist/pyc-*.tar.gz /src/tests'
+
+      - name: Smoke test (dist_smoke.sh, macOS)
+        # On the runner itself, which keeps Homebrew installed: dist_smoke.sh
+        # fails any binary (pyc, or a program it builds) that loads a library
+        # outside /usr/lib and /System, which is the self-containment check.
+        if: runner.os == 'macOS'
+        run: ./dist_smoke.sh dist/pyc-*.tar.gz tests
 
       - name: Keep the tarball
         uses: actions/upload-artifact@v7
