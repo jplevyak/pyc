@@ -130,21 +130,17 @@ jobs:
         run: ./dist_smoke.sh dist/pyc-*.tar.gz tests
 
       - name: Diagnose a macOS failure
-        # Temporary, while the macOS port is brought up.
+        # Temporary, while the macOS port is brought up: which strip breaks
+        # the static pyc's initializers.
         if: failure() && runner.os == 'macOS'
         run: |
           printf 'print(1 + 2)\n' > /tmp/h.py
           cd /tmp
-          echo "== static, plain"; "$GITHUB_WORKSPACE/pyc-static" -D "$GITHUB_WORKSPACE" h.py; echo "rc=$?"
-          echo "== static, GC_DONT_GC=1"; GC_DONT_GC=1 "$GITHUB_WORKSPACE/pyc-static" -D "$GITHUB_WORKSPACE" h.py; echo "rc=$?"
-          echo "== static, --version"; "$GITHUB_WORKSPACE/pyc-static" --version 2>&1 | head -1; echo "rc=$?"
-          echo "== static under lldb, ASLR on"
-          lldb --batch -o "settings set target.disable-aslr false" -o run -o bt -o "register read pc sp" \
-            -- "$GITHUB_WORKSPACE/pyc-static" -D "$GITHUB_WORKSPACE" h.py 2>&1 | head -60 || true
-          echo "== crash reports"
-          ls -t ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -3
-          f=$(ls -t ~/Library/Logs/DiagnosticReports/pyc* 2>/dev/null | head -1)
-          [ -n "$f" ] && head -c 6000 "$f" || true
+          for how in none default -x -S -u; do
+            cp "$GITHUB_WORKSPACE/pyc-static" p-$how
+            case $how in none) ;; default) strip p-$how ;; *) strip $how p-$how ;; esac
+            ./p-$how -D "$GITHUB_WORKSPACE" h.py >/dev/null 2>&1; echo "strip $how: compile rc=$? size $(stat -f %z p-$how)"
+          done
 
       - name: Keep the tarball
         uses: actions/upload-artifact@v7
