@@ -129,7 +129,14 @@ endif
 LIB_SEARCH = /opt/homebrew/lib /usr/local/lib \
              $(subst :, ,$(shell $(CXX) -print-search-dirs 2>/dev/null | sed -n 's/^libraries: =//p'))
 static_lib = $(firstword $(wildcard $(addsuffix /lib$(1).a,$(LIB_SEARCH))))
-shared_lib = $(if $(wildcard $(addsuffix /lib$(1).so,$(LIB_SEARCH))),-l$(1),-l:lib$(1).so.1)
+# The dynamic fallback: -l<name>, or on Linux, when there is no development
+# symlink, the soname itself (-l:libzstd.so.1). macOS links its own
+# libraries by name (-lz is the SDK's zlib).
+ifeq ($(OS_TYPE),Darwin)
+  shared_lib = -l$(1)
+else
+  shared_lib = $(if $(wildcard $(addsuffix /lib$(1).so,$(LIB_SEARCH))),-l$(1),-l:lib$(1).so.1)
+endif
 need_static_lib = $(or $(call static_lib,$(1)),$(error no static lib$(1).a in $(LIB_SEARCH)))
 ifneq ($(OS_TYPE),Darwin)
   STATIC_GROUP_BEGIN = -Wl,--start-group
@@ -323,11 +330,26 @@ DIST_VERSION ?= $(PYC_VERSION)
 DIST_NAME    ?= pyc-$(DIST_VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
 DIST_ROOT     = dist/$(DIST_NAME)
 
+# Strip the installed pyc, but keep the symbols it exports: the JIT finds the
+# runtime's (_CG_*, GC_*) in the running pyc by name. On Linux `install -s`
+# keeps the dynamic symbol table (pyc_jit_exports.list). On macOS a full
+# strip removes the exported globals too, and the stripped pyc segfaulted in
+# its static initializers before main; `strip -x` removes local symbols only.
+ifeq ($(OS_TYPE),Darwin)
+  DIST_INSTALL_STRIP =
+  DIST_STRIP_AFTER   = strip -x $(DIST_ROOT)/bin/$(PYC)
+else
+  DIST_INSTALL_STRIP = -s
+  DIST_STRIP_AFTER   =
+endif
+
 dist:
 	@test -n "$(PORTABLE)" || { echo "make dist needs PORTABLE=1 (and a clean tree): see the Makefile"; exit 1; }
 	$(MAKE) pyc-static libpyc_runtime.a pyc_runtime_lto.o pyc_runtime.o pyc.cat
 	rm -rf $(DIST_ROOT) dist/$(DIST_NAME).tar.gz
-	$(MAKE) install PYC_INSTALL_BIN=pyc-static INSTALL_STRIP=-s BUNDLE_GC=1 PREFIX=$(abspath $(DIST_ROOT)) DESTDIR=
+	$(MAKE) install PYC_INSTALL_BIN=pyc-static INSTALL_STRIP=$(DIST_INSTALL_STRIP) BUNDLE_GC=1 \
+	  PREFIX=$(abspath $(DIST_ROOT)) DESTDIR=
+	$(DIST_STRIP_AFTER)
 	tar -czf dist/$(DIST_NAME).tar.gz -C dist $(DIST_NAME)
 	@echo "dist/$(DIST_NAME).tar.gz"
 

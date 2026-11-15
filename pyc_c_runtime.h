@@ -45,6 +45,9 @@
 #endif
 #include <sys/time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/random.h>  // getentropy (glibc declares it in unistd.h)
+#endif
 #include <sys/socket.h>
 #include <poll.h>
 #include <arpa/inet.h>

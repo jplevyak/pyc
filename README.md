@@ -70,26 +70,30 @@ A field that holds different types in different objects needs no declaration: a 
 ## Install
 
 Each [release](https://github.com/jplevyak/pyc/releases) has a self-contained build for Linux
-x86-64 and arm64. Unpack it anywhere and put its `bin/` on your `PATH`:
+(x86-64, arm64) and macOS (Apple silicon, Intel). Unpack it anywhere and put its `bin/` on your
+`PATH`:
 
 ```sh
-curl -LO https://github.com/jplevyak/pyc/releases/download/v0.1.0/pyc-0.1.0-linux-x86_64.tar.gz
-tar xzf pyc-0.1.0-linux-x86_64.tar.gz
-export PATH="$PWD/pyc-0.1.0-linux-x86_64/bin:$PATH"
+curl -LO https://github.com/jplevyak/pyc/releases/download/v0.1.1/pyc-0.1.1-linux-x86_64.tar.gz
+tar xzf pyc-0.1.1-linux-x86_64.tar.gz
+export PATH="$PWD/pyc-0.1.1-linux-x86_64/bin:$PATH"
 pyc hello.py && ./hello
 ```
 
-(For arm64, `linux-aarch64`. Each release lists the `SHA256SUMS` of its tarballs.)
+(For Linux on arm64, `linux-aarch64`; for macOS, `darwin-arm64` or `darwin-x86_64`. Each release
+lists the `SHA256SUMS` of its tarballs.)
 
 The tarball holds `bin/pyc`, with LLVM and the Boehm GC linked in, and `lib/pyc/`, pyc's library,
 which pyc finds beside itself. It needs:
 
 - **`clang++` and `make`**, any recent version (pyc compiles the C it generates with them, and
-  links its LLVM output with `clang++`). On Ubuntu: `apt-get install clang make`.
-- **glibc 2.39 or newer** (Ubuntu 24.04, Debian 13, Fedora 40 and later).
+  links its LLVM output with `clang++`). On Ubuntu: `apt-get install clang make`. On macOS, the
+  Xcode Command Line Tools: `xcode-select --install`.
+- **Linux: glibc 2.39 or newer** (Ubuntu 24.04, Debian 13, Fedora 40 and later). **macOS: 15
+  (Sequoia) or newer.**
 
 The programs pyc builds link a static Boehm GC from the tarball, so they need nothing installed to
-run. macOS and older Linux distributions build from source for now.
+run. Older Linux distributions build from source for now.
 
 ## Requirements
 

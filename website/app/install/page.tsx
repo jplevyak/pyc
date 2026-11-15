@@ -2,11 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Code } from '@/components/Code';
 import { Callout, DocLayout, PageHero } from '@/components/DocPage';
-import { DPARSER, GITHUB, RELEASE, RELEASES, releaseTarball } from '@/content/site';
+import { DPARSER, GITHUB, RELEASES, releaseName, releaseTarball } from '@/content/site';
 
 export const metadata: Metadata = {
   title: 'Install',
-  description: 'Download a pyc release for Linux, or build it from source, and compile your first program.',
+  description: 'Download a pyc release for Linux or macOS, or build it from source, and compile your first program.',
 };
 
 const TOC = [
@@ -24,8 +24,8 @@ export default function Install() {
   return (
     <>
       <PageHero title="Install pyc">
-        Download a release for Linux x86-64 or arm64 and put it on your <code>PATH</code>, or
-        build it from source with clang, LLVM, the Boehm garbage collector and DParser.
+        Download a release for Linux or macOS and put it on your <code>PATH</code>, or build it
+        from source with clang, LLVM, the Boehm garbage collector and DParser.
       </PageHero>
       <DocLayout toc={TOC}>
         <h2 id="download">Download a release</h2>
@@ -34,14 +34,20 @@ export default function Install() {
           LLVM and the Boehm GC linked in, and <code>lib/pyc/</code>, its library, which pyc finds
           beside itself. Unpack it anywhere:
         </p>
-        <Code lang="shell">{`
-$ curl -LO ${releaseTarball('x86_64')}
-$ tar xzf pyc-${RELEASE}-linux-x86_64.tar.gz
-$ export PATH="$PWD/pyc-${RELEASE}-linux-x86_64/bin:$PATH"
+        <Code lang="shell" title="Linux x86-64">{`
+$ curl -LO ${releaseTarball('linux', 'x86_64')}
+$ tar xzf ${releaseName('linux', 'x86_64')}.tar.gz
+$ export PATH="$PWD/${releaseName('linux', 'x86_64')}/bin:$PATH"
+`}</Code>
+        <Code lang="shell" title="macOS, Apple silicon">{`
+$ curl -LO ${releaseTarball('darwin', 'arm64')}
+$ tar xzf ${releaseName('darwin', 'arm64')}.tar.gz
+$ export PATH="$PWD/${releaseName('darwin', 'arm64')}/bin:$PATH"
 `}</Code>
         <p>
-          For arm64, use <code>linux-aarch64</code>. Each release lists the{' '}
-          <code>SHA256SUMS</code> of its tarballs. It needs:
+          For Linux on arm64 use <code>linux-aarch64</code>, and for an Intel Mac{' '}
+          <code>darwin-x86_64</code>. Each release lists the <code>SHA256SUMS</code> of its
+          tarballs. It needs:
         </p>
         <ul>
           <li>
@@ -49,15 +55,17 @@ $ export PATH="$PWD/pyc-${RELEASE}-linux-x86_64/bin:$PATH"
               <code>clang++</code> and <code>make</code>
             </strong>
             , any recent version: pyc compiles the C it generates with them, and links its LLVM
-            output with <code>clang++</code>. On Ubuntu, <code>sudo apt-get install clang make</code>.
+            output with <code>clang++</code>. On Ubuntu, <code>sudo apt-get install clang make</code>;
+            on macOS, the Xcode Command Line Tools (<code>xcode-select --install</code>).
           </li>
           <li>
-            <strong>glibc 2.39 or newer</strong>: Ubuntu 24.04, Debian 13, Fedora 40 and later.
+            On Linux, <strong>glibc 2.39 or newer</strong>: Ubuntu 24.04, Debian 13, Fedora 40 and
+            later. On macOS, <strong>macOS 15 (Sequoia) or newer</strong>.
           </li>
         </ul>
         <p>
           The programs pyc builds link a static Boehm GC from the tarball, so they need nothing
-          installed to run. On macOS or an older Linux, build from source.
+          installed to run. On an older Linux, build from source.
         </p>
 
         <h2 id="requirements">Build from source: requirements</h2>

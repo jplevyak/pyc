@@ -115,6 +115,24 @@ static void exec_program(const std::string &exe, char **prog_argv) {
 }
 
 // Where -x keeps `script`'s executable: fills *dir, *exe, *manifest.
+// The running executable's path, through any symlink, or "" when the platform
+// cannot say (Linux: /proc/self/exe; macOS: _NSGetExecutablePath).
+static std::string executable_path() {
+  char self[PATH_MAX];
+#ifdef __APPLE__
+  uint32_t size = sizeof(self);
+  if (_NSGetExecutablePath(self, &size) != 0) return "";
+  char real[PATH_MAX];
+  if (!realpath(self, real)) return "";
+  return real;
+#else
+  ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+  if (n <= 0) return "";
+  self[n] = 0;
+  return self;
+#endif
+}
+
 static void exec_cache_paths(cchar *script, int argc_opts, char **argv, std::string *dir, std::string *exe,
                              std::string *manifest, std::string *name) {
   cchar *base = strrchr(script, '/');
@@ -129,9 +147,15 @@ static void exec_cache_paths(cchar *script, int argc_opts, char **argv, std::str
   char real[PATH_MAX];
   if (realpath(script, real)) h = fnv64(real, strlen(real), h);
   struct stat st;
-  if (stat("/proc/self/exe", &st) == 0) {  // the compiler's identity
+  // The compiler's identity. (stat of /proc/self/exe failed silently on
+  // macOS, so a rebuilt pyc reused programs the old one had cached.)
+  if (stat(executable_path().c_str(), &st) == 0) {
     h = fnv64(&st.st_size, sizeof(st.st_size), h);
+#ifdef __APPLE__
+    h = fnv64(&st.st_mtimespec, sizeof(st.st_mtimespec), h);
+#else
     h = fnv64(&st.st_mtim, sizeof(st.st_mtim), h);
+#endif
   }
   for (int i = 1; i < argc_opts; i++) h = fnv64(argv[i], strlen(argv[i]) + 1, h);  // the pyc options
   std::string root;
@@ -381,22 +405,9 @@ cchar *mod_name_from_filename(cchar *n) {
 // The directory of the running executable, through any symlink, or "" when
 // the platform cannot say.
 static std::string executable_dir() {
-  char self[PATH_MAX];
-#ifdef __APPLE__
-  uint32_t size = sizeof(self);
-  if (_NSGetExecutablePath(self, &size) != 0) return "";
-  char real[PATH_MAX];
-  if (!realpath(self, real)) return "";
-  strcpy(self, real);
-#else
-  ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
-  if (n <= 0) return "";
-  self[n] = 0;
-#endif
-  char *slash = strrchr(self, '/');
-  if (!slash) return "";
-  *slash = 0;
-  return self;
+  std::string self = executable_path();
+  size_t slash = self.rfind('/');
+  return slash == std::string::npos ? "" : self.substr(0, slash);
 }
 
 // The library directory: `__pyc__/`, `pyc_lib/`, the runtime header and
