@@ -480,8 +480,6 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
 - **Cross-class method assignment**: `a.x = b.x`, where `a` and `b` are instances of unrelated
   classes, is refused at compile time
   ([issues/180](issues/180-method-assigned-across-classes-crashes.md)).
-- **`-j` and generators**: the JIT aborts on a program with a generator; compile it instead
-  ([ifa/211](ifa/issues/211-jit-aborts-on-a-generator.md)).
 - **A known silent wrong answer** under repair: an out-of-range sequence index does not raise
   `IndexError` ([issues/179](issues/179-sequence-index-out-of-range-does-not-raise.md)).
 

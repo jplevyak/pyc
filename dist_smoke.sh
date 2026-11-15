@@ -64,7 +64,8 @@ for flags in "" "-b"; do
     rm -f "$p" "$p.py.c" "$p.ll" "$p.o"
   done
 done
-printf 'd = {"a": [1, 2]}\nprint(1 + 2, sorted(d), "x".join(["p", "q"]))\n' > jit.py
-if [ "$("$PYC" -j jit.py 2>&1)" = "3 ['a'] pxq" ]; then echo "ok   [JIT] jit"; else echo "FAIL [JIT] jit"; fail=1; fi
+# A generator too: the JIT once aborted on any (ifa/211).
+printf 'd = {"a": [1, 2]}\ndef g(n):\n    for i in range(n):\n        yield i\nprint(1 + 2, sorted(d), "x".join(["p", "q"]), sum(g(4)))\n' > jit.py
+if [ "$("$PYC" -j jit.py 2>&1)" = "3 ['a'] pxq 6" ]; then echo "ok   [JIT] jit"; else echo "FAIL [JIT] jit"; fail=1; fi
 [ $fail = 0 ] && echo "dist smoke: PASS" || echo "dist smoke: FAIL"
 exit $fail

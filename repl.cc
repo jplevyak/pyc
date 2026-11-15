@@ -265,10 +265,14 @@ static bool                s_baseline_built = false;
 // Runs in the fork child: parses, analyses, JIT-executes tmpfile.
 // Stage-2 cache path: if cache_path is non-empty, try bitcode first.
 // Stage-3 path (cache miss): ast_to_if1_extend() instead of ast_to_if1().
+// sys.argv in the REPL: [''], as in an interactive CPython.
+static char repl_argv0[] = "";
+static char *repl_argv[] = {repl_argv0, nullptr};
+
 static void run_compile_jit(const char *tmpfile, const char *cache_path) {
   // Stage-2 cache-hit: skip FA + codegen entirely.
   if (cache_path[0] && llvm_jit_read_cache(cache_path)) {
-    if (llvm_jit_execute() != 0) exit(1);
+    if (llvm_jit_execute(1, repl_argv) != 0) exit(1);
     exit(0);
   }
   // Cache miss: tell jit.cc to write bitcode on success.

@@ -314,6 +314,9 @@ static void init_system() {
 }
 
 void compile(cchar *fn) {
+  // The program's sys.argv[0] under -j: the script, or '' in the REPL, as in
+  // an interactive CPython (its input is compiled from a temporary file).
+  cchar *script = do_repl ? "" : fn;
   if (ifa_analyze(fn) < 0) fail("program does not type");
   // issue 011: Fun::calls (built by clone(), inside ifa_analyze())
   // now exists -- compute the precise, post-FA can-raise bit before
@@ -373,7 +376,11 @@ void compile(cchar *fn) {
       if (codegen_jit) {
         if (codegen_extra_source || codegen_link_libs.n)
           fail("foreign (ctypes) calls are not supported under --jit: the shim and the library are linked, not loaded");
-        if (llvm_jit_execute()) fail("JIT execution failed");
+        // sys.argv is [script], as under CPython: the JIT called main(0,
+        // NULL), so len(sys.argv) was 0 and every program that derives a
+        // run-time value from it computed something else.
+        char *jit_argv[] = {(char *)script, nullptr};
+        if (llvm_jit_execute(1, jit_argv)) fail("JIT execution failed");
       } else {
         if (llvm_codegen_compile(fn)) fail("compilation failure");
         ifa_phase("llvm-compile");
