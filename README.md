@@ -74,9 +74,9 @@ Each [release](https://github.com/jplevyak/pyc/releases) has a self-contained bu
 `PATH`:
 
 ```sh
-curl -LO https://github.com/jplevyak/pyc/releases/download/v0.1.1/pyc-0.1.1-linux-x86_64.tar.gz
-tar xzf pyc-0.1.1-linux-x86_64.tar.gz
-export PATH="$PWD/pyc-0.1.1-linux-x86_64/bin:$PATH"
+curl -LO https://github.com/jplevyak/pyc/releases/download/v0.1.2/pyc-0.1.2-linux-x86_64.tar.gz
+tar xzf pyc-0.1.2-linux-x86_64.tar.gz
+export PATH="$PWD/pyc-0.1.2-linux-x86_64/bin:$PATH"
 pyc hello.py && ./hello
 ```
 

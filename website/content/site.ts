@@ -4,7 +4,7 @@ export const DPARSER = 'https://github.com/jplevyak/dparser';
 export const RELEASES = 'https://github.com/jplevyak/pyc/releases';
 
 /** The current release: the v* tag the release workflow published. */
-export const RELEASE = '0.1.1';
+export const RELEASE = '0.1.2';
 /** A release tarball's name, for os linux or darwin and its arch. */
 export function releaseName(os: string, arch: string) {
   return `pyc-${RELEASE}-${os}-${arch}`;
