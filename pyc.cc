@@ -157,7 +157,7 @@ static void help(ArgumentState *arg_state, char *arg_unused) {
 }
 
 static void version(ArgumentState *arg_state, char *arg_unused) {
-  char ver[30];
+  char ver[128];
   get_version(ver);
   fprintf(stderr, "PYC Version %s ", ver);
   fprintf(stderr,

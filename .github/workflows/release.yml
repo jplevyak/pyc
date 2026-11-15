@@ -1,0 +1,119 @@
+# Release tarballs (AGENTS.md, "Release builds").
+#
+# On a pushed tag vX.Y.Z: build `make PORTABLE=1 dist` on Linux x86-64 and
+# arm64, smoke-test each tarball in a clean container that has only a
+# compiler (dist_smoke.sh), and publish both as a GitHub release with their
+# SHA-256 sums. Run by hand (workflow_dispatch) it builds and tests the
+# tarballs and keeps them as workflow artifacts, without publishing, so the
+# pipeline can be tried before a tag.
+#
+# The toolchain is CI's (ci.yml): LLVM 20 throughout, versioned packages.
+# pyc links LLVM 20 statically, and its runtime bitcode is built by clang-20,
+# which that LLVM can read. The tarball runs on any glibc at least as new as
+# the runner's (Ubuntu 24.04: 2.39).
+
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dist:
+    name: dist (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      USE_LLVM: 1
+      CC: clang-20
+      CXX: clang++-20
+      LLVM_CONFIG: /usr/bin/llvm-config-20
+      PYC_LLVM_CXX: clang++-20
+      PYC_CXX: clang++-20
+
+    steps:
+      - name: Checkout pyc
+        uses: actions/checkout@v4
+        with:
+          # `git describe` names the version from the tags (Makefile,
+          # "Version stamp"), so it needs the history and the tags.
+          fetch-depth: 0
+
+      - name: Install system packages
+        run: |
+          # The static archives the release links: LLVM 20's (llvm-20-dev),
+          # Boehm GC's (libgc-dev: libgc.a, libgccpp.a and the headers it
+          # bundles for the programs pyc builds), and zlib's and zstd's,
+          # which LLVM needs.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang-20 llvm-20 llvm-20-dev lld-20 \
+            libgc-dev zlib1g-dev libzstd-dev python3 make
+
+      - name: Build and install DParser (libdparse_gc + make_dparser)
+        run: |
+          git clone --depth 1 https://github.com/jplevyak/dparser.git /tmp/dparser
+          make -C /tmp/dparser D_USE_GC=1
+          sudo make -C /tmp/dparser D_USE_GC=1 install
+          sudo ldconfig
+
+      - name: Build the tarball (make PORTABLE=1 dist)
+        run: |
+          make clean
+          make -j"$(nproc)" PORTABLE=1 dist
+          ls -la dist
+
+      - name: What the static pyc still loads
+        run: ldd pyc-static
+
+      - name: Smoke test in a clean container (dist_smoke.sh)
+        # Only a compiler, lld and make: no LLVM development package, no
+        # libgc-dev, no dparser. Both backends and the JIT.
+        run: |
+          docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c '
+            apt-get update -qq >/dev/null &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clang lld make >/dev/null &&
+            /src/dist_smoke.sh /src/dist/pyc-*.tar.gz /src/tests'
+
+      - name: Keep the tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyc-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: dist
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Collect the tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "pyc ${GITHUB_REF_NAME#v}" --generate-notes

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "defs.h"
 
-void get_version(char *v) {
-  v += sprintf(v, "%d.%d", MAJOR_VERSION, MINOR_VERSION);
-  if (strcmp("", BUILD_VERSION)) v += sprintf(v, ".%s", BUILD_VERSION);
-}
+// PYC_VERSION is set by the Makefile: the release tag, or MAJOR.MINOR and
+// the commit (see "Version stamp" there).
+void get_version(char *v) { strcpy(v, PYC_VERSION); }

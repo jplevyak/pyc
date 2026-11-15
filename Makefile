@@ -146,12 +146,23 @@ GC_INCLUDE   ?= $(GC_PREFIX)/include
 
 # Version stamp ---------------------------------------------------------------
 
-BUILD_VERSION = $(shell git show-ref 2> /dev/null | head -1 | cut -d ' ' -f 1)
-ifeq ($(BUILD_VERSION),)
-  BUILD_VERSION = $(shell cat BUILD_VERSION)
+# `pyc --version`, and the name of a `make dist` tarball. A tagged commit
+# (vX.Y.Z) is X.Y.Z; past a tag, `git describe` says how far
+# (0.1.0-3-g1da76bb1); with no tag yet, MAJOR.MINOR and the commit
+# (0.0-g1da76bb1). `-dirty` when the tree has uncommitted changes. Outside a
+# git checkout, the BUILD_VERSION file. version.stamp holds it, rewritten
+# only when it changes, so version.o follows it (make does not track flags).
+GIT_DESCRIBE := $(shell git describe --tags --match 'v[0-9]*' --dirty 2>/dev/null)
+GIT_COMMIT   := $(shell git describe --always --dirty 2>/dev/null)
+ifneq ($(GIT_DESCRIBE),)
+  PYC_VERSION := $(patsubst v%,%,$(GIT_DESCRIBE))
+else ifneq ($(GIT_COMMIT),)
+  PYC_VERSION := $(MAJOR).$(MINOR)-g$(GIT_COMMIT)
+else
+  PYC_VERSION := $(MAJOR).$(MINOR)-$(shell cat BUILD_VERSION 2>/dev/null)
 endif
-VERSIONCFLAGS = -DMAJOR_VERSION=$(MAJOR) -DMINOR_VERSION=$(MINOR) \
-                -DBUILD_VERSION=\"$(BUILD_VERSION)\"
+VERSIONCFLAGS = -DPYC_VERSION=\"$(PYC_VERSION)\"
+
 
 # Sources / objects -----------------------------------------------------------
 
@@ -176,7 +187,8 @@ else
 endif
 
 MANPAGES    = pyc.1
-CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime.a pyc_runtime_lto.o pyc-static
+CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime.a pyc_runtime_lto.o pyc-static \
+              version.stamp
 
 # Targets ---------------------------------------------------------------------
 
@@ -206,12 +218,13 @@ pyc_runtime.o: pyc_runtime.c pyc_c_runtime.h
 # is additive — it never removes members on its own.  Single-
 # source archive today but the hygiene matters as soon as the
 # archive grows.  Mirrors ifa/Makefile's $(LIBRARY) rule.
-# The same runtime as LLVM bitcode (-flto), for the LLVM backend's link: with
-# it the runtime helpers inline into the program, as the C backend's do from
-# pyc_c_runtime.h. llvm_codegen_compile uses it when it exists and
-# `-fuse-ld=lld` works, and falls back to libpyc_runtime.a otherwise.
-# Measured 2026-10-18: LLVM-built binaries 17% faster (geomean of 8 corpus
-# programs; sha 47%, sieve 30%). Must be built by the clang that links.
+# The same runtime as LLVM bitcode (-flto), for the LLVM backend: pyc links
+# it into the program's module before optimizing (llvm_emit_object), so the
+# runtime helpers inline as the C backend's do from pyc_c_runtime.h, and
+# falls back to libpyc_runtime.a when it is missing or unreadable. Measured
+# 2026-10-18: LLVM-built binaries 17% faster (geomean of 8 corpus programs;
+# sha 47%, sieve 30%). Must be built by a clang NO NEWER than the LLVM pyc
+# links (CC and LLVM_CONFIG of one version), or pyc cannot read it.
 pyc_runtime_lto.o: pyc_runtime.c pyc_c_runtime.h
 	$(CC) -O2 -flto -fPIC -I/usr/local/include -I/opt/homebrew/include -c -o $@ $<
 
@@ -222,7 +235,10 @@ libpyc_runtime.a: pyc_runtime.o Makefile
 # Per-target override (uses CPPFLAGS because that's what the implicit rule
 # sees); keeps -MMD -MP dependency generation active.
 version.o: CPPFLAGS += $(VERSIONCFLAGS)
-version.o: Makefile
+version.o: Makefile version.stamp
+.PHONY: FORCE
+version.stamp: FORCE
+	@echo '$(PYC_VERSION)' | cmp -s - $@ || echo '$(PYC_VERSION)' > $@
 
 # pyc.cc embeds these via #include.
 pyc.o: LICENSE.i COPYRIGHT.i
@@ -303,7 +319,7 @@ deinstall:
 # finds its library beside itself. Needs PORTABLE=1 so no object was built
 # with -march=native; since make does not track flags, build it in a clean
 # tree (`make clean`).
-DIST_VERSION ?= $(MAJOR).$(MINOR)
+DIST_VERSION ?= $(PYC_VERSION)
 DIST_NAME    ?= pyc-$(DIST_VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
 DIST_ROOT     = dist/$(DIST_NAME)
 
