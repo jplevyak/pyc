@@ -130,15 +130,21 @@ jobs:
         run: ./dist_smoke.sh dist/pyc-*.tar.gz tests
 
       - name: Diagnose a macOS failure
-        # Temporary, while the macOS port is brought up: a backtrace of the
-        # static pyc, and whether the dynamically linked pyc does the same.
+        # Temporary, while the macOS port is brought up.
         if: failure() && runner.os == 'macOS'
         run: |
           printf 'print(1 + 2)\n' > /tmp/h.py
-          lldb --batch -o run -o bt -o "register read" -- ./pyc-static -D "$PWD" /tmp/h.py 2>&1 | head -80 || true
-          make -j"$(getconf _NPROCESSORS_ONLN)" pyc > /tmp/dyn.log 2>&1 || tail -20 /tmp/dyn.log
-          ./pyc -D "$PWD" /tmp/h.py && /tmp/h || echo "dynamic pyc: rc=$?"
-          lldb --batch -o run -o bt -- ./pyc -D "$PWD" /tmp/h.py 2>&1 | tail -40 || true
+          cd /tmp
+          echo "== static, plain"; "$GITHUB_WORKSPACE/pyc-static" -D "$GITHUB_WORKSPACE" h.py; echo "rc=$?"
+          echo "== static, GC_DONT_GC=1"; GC_DONT_GC=1 "$GITHUB_WORKSPACE/pyc-static" -D "$GITHUB_WORKSPACE" h.py; echo "rc=$?"
+          echo "== static, --version"; "$GITHUB_WORKSPACE/pyc-static" --version 2>&1 | head -1; echo "rc=$?"
+          echo "== static under lldb, ASLR on"
+          lldb --batch -o "settings set target.disable-aslr false" -o run -o bt -o "register read pc sp" \
+            -- "$GITHUB_WORKSPACE/pyc-static" -D "$GITHUB_WORKSPACE" h.py 2>&1 | head -60 || true
+          echo "== crash reports"
+          ls -t ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -3
+          f=$(ls -t ~/Library/Logs/DiagnosticReports/pyc* 2>/dev/null | head -1)
+          [ -n "$f" ] && head -c 6000 "$f" || true
 
       - name: Keep the tarball
         uses: actions/upload-artifact@v7
