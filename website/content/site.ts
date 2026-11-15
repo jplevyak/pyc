@@ -27,8 +27,8 @@ export const FACTS = {
   corpusCompile: 77,
   corpusRun: 77,
   corpusMatch: 59,
-  // README.md "Testing": test_pyc.py on each backend (2026-11-14)
-  e2ePass: 523,
+  // README.md "Testing": test_pyc.py on each backend (2026-11-15)
+  e2ePass: 524,
   // pyc_lib/*.py
   libModules: 22,
 };
