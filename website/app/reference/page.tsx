@@ -34,7 +34,7 @@ const OPTIONS: [string, string][] = [
   ['--no-optimize', 'Compile the generated C at -O0, for debugging.'],
   ['-g, --debug-info', 'Emit debug information.'],
   ['--html', 'Emit an HTML view of the type-annotated program.'],
-  ['-D <dir>, --system-directory <dir>', "pyc's library directory. Default: $PYC_SYSTEM_DIRECTORY, else ., else the pyc executable's directory."],
+  ['-D <dir>, --system-directory <dir>', "pyc's library directory. Default: $PYC_SYSTEM_DIRECTORY, else ., else beside the pyc executable, else ../lib/pyc from it (the installed layout)."],
   ['-v, --verbose / -d, --debug', 'More output; repeat for more. --help also lists the development options.'],
 ];
 
@@ -201,8 +201,12 @@ def sqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
             )
           </li>
           <li>
-            Property setters and deleters (
-            <a href={repo('blob/main/issues/007-decorators-not-applied.md')}>issues/007</a>)
+            A class attribute stored through the class after an instance or subclass was made
+            (<code>C.k += 1</code> then <code>self.k</code>): the instance keeps the old value (
+            <a href={repo('blob/main/issues/173-silent-deviations-found-by-the-strict-suite-check.md')}>
+              issues/173
+            </a>
+            )
           </li>
           <li>
             <code>complex</code>

@@ -2,15 +2,16 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Code } from '@/components/Code';
 import { Callout, DocLayout, PageHero } from '@/components/DocPage';
-import { DPARSER, GITHUB } from '@/content/site';
+import { DPARSER, GITHUB, RELEASE, RELEASES, releaseTarball } from '@/content/site';
 
 export const metadata: Metadata = {
   title: 'Install',
-  description: 'Build pyc from source on Linux or macOS and compile your first program.',
+  description: 'Download a pyc release for Linux, or build it from source, and compile your first program.',
 };
 
 const TOC = [
-  { id: 'requirements', label: 'Requirements' },
+  { id: 'download', label: 'Download a release' },
+  { id: 'requirements', label: 'Build from source: requirements' },
   { id: 'build', label: 'Build from source' },
   { id: 'path', label: 'Put pyc on your PATH' },
   { id: 'first', label: 'Your first program' },
@@ -23,11 +24,43 @@ export default function Install() {
   return (
     <>
       <PageHero title="Install pyc">
-        pyc is built from source. It needs clang, LLVM, the Boehm garbage collector and DParser.
-        A full build takes a few minutes.
+        Download a release for Linux x86-64 or arm64 and put it on your <code>PATH</code>, or
+        build it from source with clang, LLVM, the Boehm garbage collector and DParser.
       </PageHero>
       <DocLayout toc={TOC}>
-        <h2 id="requirements">Requirements</h2>
+        <h2 id="download">Download a release</h2>
+        <p>
+          Each <a href={RELEASES}>release</a> has a self-contained build: <code>bin/pyc</code>, with
+          LLVM and the Boehm GC linked in, and <code>lib/pyc/</code>, its library, which pyc finds
+          beside itself. Unpack it anywhere:
+        </p>
+        <Code lang="shell">{`
+$ curl -LO ${releaseTarball('x86_64')}
+$ tar xzf pyc-${RELEASE}-linux-x86_64.tar.gz
+$ export PATH="$PWD/pyc-${RELEASE}-linux-x86_64/bin:$PATH"
+`}</Code>
+        <p>
+          For arm64, use <code>linux-aarch64</code>. Each release lists the{' '}
+          <code>SHA256SUMS</code> of its tarballs. It needs:
+        </p>
+        <ul>
+          <li>
+            <strong>
+              <code>clang++</code> and <code>make</code>
+            </strong>
+            , any recent version: pyc compiles the C it generates with them, and links its LLVM
+            output with <code>clang++</code>. On Ubuntu, <code>sudo apt-get install clang make</code>.
+          </li>
+          <li>
+            <strong>glibc 2.39 or newer</strong>: Ubuntu 24.04, Debian 13, Fedora 40 and later.
+          </li>
+        </ul>
+        <p>
+          The programs pyc builds link a static Boehm GC from the tarball, so they need nothing
+          installed to run. On macOS or an older Linux, build from source.
+        </p>
+
+        <h2 id="requirements">Build from source: requirements</h2>
         <ul>
           <li>
             <strong>clang / clang++</strong> with C++23 support, and <code>llvm-ar</code>
@@ -40,9 +73,6 @@ export default function Install() {
             <strong>Boehm GC</strong> (<code>libgc</code>, <code>libgccpp</code>)
           </li>
           <li>
-            <strong>PCRE</strong> (<code>libpcre</code>)
-          </li>
-          <li>
             <strong>
               <a href={DPARSER}>DParser</a>
             </strong>
@@ -50,10 +80,10 @@ export default function Install() {
           </li>
         </ul>
         <Code lang="shell" title="Ubuntu / Debian">{`
-$ sudo apt-get install clang-20 llvm-20-dev libgc-dev libpcre3-dev
+$ sudo apt-get install clang-20 llvm-20-dev libgc-dev
 `}</Code>
         <Code lang="shell" title="Fedora / RHEL">{`
-$ sudo dnf install clang llvm-devel gc-devel pcre-devel
+$ sudo dnf install clang llvm-devel gc-devel
 `}</Code>
         <Callout title="Use LLVM 20.">
           <p>
@@ -92,14 +122,17 @@ $ make
         <h2 id="path">Put pyc on your PATH</h2>
         <p>
           pyc finds its builtin library (<code>__pyc__/</code>, <code>pyc_lib/</code> and the
-          runtime) next to its own executable, following symlinks. A symlink from the checkout
-          is enough:
+          runtime) next to its own executable, following symlinks, or in{' '}
+          <code>../lib/pyc</code> from it, the installed layout. A symlink from the checkout is
+          enough:
         </p>
         <Code lang="shell">{`
 $ ln -s "$PWD/pyc" ~/.local/bin/pyc
 `}</Code>
         <p>
-          You can also name the directory explicitly with <code>-D &lt;dir&gt;</code> or{' '}
+          Or install it: <code>make install PREFIX=$HOME/.local</code> puts <code>pyc</code> in{' '}
+          <code>bin/</code> and its library in <code>lib/pyc/</code>. You can also name the
+          library directory explicitly with <code>-D &lt;dir&gt;</code> or{' '}
           <code>$PYC_SYSTEM_DIRECTORY</code>.
         </p>
 

@@ -1,5 +1,7 @@
 # pyc — Python Compiler
 
+**Website: [pyc-lang.org](https://pyc-lang.org)** · [Releases](https://github.com/jplevyak/pyc/releases)
+
 **pyc** is a whole-program, statically typed compiler for Python 3. It infers a type for every
 value in the program with interprocedural flow analysis (IFA), then emits C (or LLVM IR) and
 compiles it to a stand-alone native binary with no Python runtime dependency.
@@ -65,25 +67,50 @@ them:
 A field that holds different types in different objects needs no declaration: a class whose
 `__init__` stores an `int` in one instance and a `str` in another gets one layout per type.
 
+## Install
+
+Each [release](https://github.com/jplevyak/pyc/releases) has a self-contained build for Linux
+x86-64 and arm64. Unpack it anywhere and put its `bin/` on your `PATH`:
+
+```sh
+curl -LO https://github.com/jplevyak/pyc/releases/download/v0.1.0/pyc-0.1.0-linux-x86_64.tar.gz
+tar xzf pyc-0.1.0-linux-x86_64.tar.gz
+export PATH="$PWD/pyc-0.1.0-linux-x86_64/bin:$PATH"
+pyc hello.py && ./hello
+```
+
+(For arm64, `linux-aarch64`. Each release lists the `SHA256SUMS` of its tarballs.)
+
+The tarball holds `bin/pyc`, with LLVM and the Boehm GC linked in, and `lib/pyc/`, pyc's library,
+which pyc finds beside itself. It needs:
+
+- **`clang++` and `make`**, any recent version (pyc compiles the C it generates with them, and
+  links its LLVM output with `clang++`). On Ubuntu: `apt-get install clang make`.
+- **glibc 2.39 or newer** (Ubuntu 24.04, Debian 13, Fedora 40 and later).
+
+The programs pyc builds link a static Boehm GC from the tarball, so they need nothing installed to
+run. macOS and older Linux distributions build from source for now.
+
 ## Requirements
+
+To build from source:
 
 - **clang/clang++** (C++23) and **llvm-ar**
 - **LLVM** development libraries (`llvm-config` must be on `PATH`); the LLVM backend is always
   built
 - **Boehm GC** (`libgc`, `libgccpp`)
-- **PCRE** (`libpcre`)
 - **[dparser](https://github.com/jplevyak/dparser)**, built with GC support and installed
 
 On Ubuntu / Debian:
 
 ```sh
-apt-get install clang llvm-dev libgc-dev libpcre3-dev
+apt-get install clang llvm-dev libgc-dev
 ```
 
 On Fedora / RHEL:
 
 ```sh
-dnf install clang llvm-devel gc-devel pcre-devel
+dnf install clang llvm-devel gc-devel
 ```
 
 CI uses clang/LLVM **20** on Ubuntu 24.04. The unversioned packages there are LLVM 18, whose
@@ -107,7 +134,9 @@ cd pyc
 make
 ```
 
-`make` builds `ifa/libifa_gc.a`, the runtime and the `pyc` compiler binary.
+`make` builds `ifa/libifa_gc.a`, the runtime and the `pyc` compiler binary. `pyc` runs from the
+checkout as it is (it finds its library beside itself), or `make install PREFIX=/usr/local`
+installs `bin/pyc` and its library in `lib/pyc/` (`DESTDIR` is honoured).
 
 ### Build options
 
@@ -116,6 +145,12 @@ make
 | `DEBUG=1` | Adds `-g -DDEBUG` (default) |
 | `OPTIMIZE=1` | Builds pyc itself with `-O3 -march=native` (default; `OPTIMIZE=` turns it off) |
 | `PROFILE=1` | Enable profiling with `-pg` |
+| `PORTABLE=1` | No `-march=native`, so the binary runs on any CPU of its architecture (release builds) |
+
+`make PORTABLE=1 dist`, in a clean tree, builds the release tarball: a statically linked `pyc` and
+its library, under `dist/`. `./dist_smoke.sh dist/pyc-*.tar.gz` checks it compiles and runs
+programs on both backends from a fresh directory. The release workflow
+(`.github/workflows/release.yml`) does both on every `v*` tag.
 
 For an unoptimized build to step through in gdb, use `make clean && make OPTIMIZE=`.
 
@@ -155,17 +190,17 @@ package. Compiled programs link the same `libgc` and get the same stack.
 ## Usage
 
 ```sh
-pyc -D <pyc-dir> [options] <file.py>
+pyc [options] <file.py>
 ```
 
 pyc reads `<file.py>` and everything it imports, analyzes the whole program, and writes a native
 executable named after the input with its extension stripped (`hello.py` → `hello`), unless `-o`
 names one. The intermediate C is kept as `<file.py>.c`.
 
-`-D` names the directory holding pyc's builtin library (`__pyc__/`, `pyc_lib/` and the runtime).
-It defaults to `$PYC_SYSTEM_DIRECTORY` when that is set, else the current directory, and when the
-current directory has no `__pyc__/`, the directory of the `pyc` executable itself (through any
-symlink). So a `pyc` symlinked onto your `PATH` from the checkout works from anywhere.
+pyc finds its builtin library (`__pyc__/`, `pyc_lib/` and the runtime) by itself: in
+`-D <dir>` or `$PYC_SYSTEM_DIRECTORY` when given, else the current directory if it has
+`__pyc__/`, else beside the `pyc` executable (through any symlink, so a checkout's `pyc` symlinked
+onto your `PATH` works), else in `../lib/pyc` from the executable, the installed layout.
 
 ### Running a script directly
 
@@ -189,7 +224,7 @@ go before `-x`'s script, as in `#!/usr/bin/env -S pyc -b -x`.
 
 | Flag | Description |
 |---|---|
-| `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `$PYC_SYSTEM_DIRECTORY`, else `.`, else the `pyc` executable's directory) |
+| `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `$PYC_SYSTEM_DIRECTORY`, else `.`, beside the executable, or `../lib/pyc` from it) |
 | `-o <path>`, `--output <path>` | Output binary path (default: input filename, extension stripped) |
 | `--cflags <flags>` | Extra flags for compiling the generated program (also `$PYC_CFLAGS`) |
 | `--libs <flags>` | Extra flags for linking it, e.g. `--libs "-L/opt/lib -lfoo"` (also `$PYC_LIBS`) |
@@ -356,7 +391,7 @@ make test-links      # every relative Markdown link resolves (needs no build)
 ```
 
 The end-to-end suite compiles each `tests/*.py`, runs it, and compares its output with the
-expected output and with CPython's. When green it reports 502 passed and 15 known issues on each
+expected output and with CPython's. When green it reports 523 passed and 16 known issues on each
 backend. Tests carrying a `.known_issue` sidecar are filed bugs with CPython's answer as the
 expected output; they report `KNOWN` and flip to `PASS` once fixed. `make test` stops at the first
 failing group, so check its exit status rather than reading the tail of its output.
@@ -433,12 +468,16 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   (`byref(c_int())`), arrays, unions or `cast`, declarations must be at module top level, and a
   program with foreign calls does not run under `--jit`
   ([issues/188](issues/188-static-ctypes-subset.md)).
-- **Class attribute mutation through a subclass**: `A.n = 4` is not seen by `B.n` when `B`
-  inherits `n` from `A`, because each class holds its own copy
-  ([issues/173](issues/173-silent-deviations-found-by-the-strict-suite-check.md) #2).
+- **Class attributes stored through the class after it is used**: an instance or a subclass keeps
+  the value the class had when the instance or subclass was made, so `C.k += 1` is not seen
+  through `self.k`, nor `A.n = 4` through `B.n`. CPython looks the attribute up when it is read.
+  A silent difference ([issues/173](issues/173-silent-deviations-found-by-the-strict-suite-check.md)
+  item 1).
 - **Cross-class method assignment**: `a.x = b.x`, where `a` and `b` are instances of unrelated
-  classes, is not supported; it currently compiles and crashes at run time
+  classes, is refused at compile time
   ([issues/180](issues/180-method-assigned-across-classes-crashes.md)).
+- **`-j` and generators**: the JIT aborts on a program with a generator; compile it instead
+  ([ifa/211](ifa/issues/211-jit-aborts-on-a-generator.md)).
 - **A known silent wrong answer** under repair: an out-of-range sequence index does not raise
   `IndexError` ([issues/179](issues/179-sequence-index-out-of-range-does-not-raise.md)).
 
