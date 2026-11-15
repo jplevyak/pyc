@@ -35,6 +35,17 @@ bool pyc_program_has_raise = false;
 
 PycCallbacks::~PycCallbacks() {}
 
+// issues/185: `if x:` is `x.__pyc_to_bool__()` (and a user class's
+// `__bool__` under it), which keep x's truth; `not x` is `x.__not__()`,
+// which inverts it. Any other zero-argument method (`it.__next__()`, a
+// loop's `__pyc_more__`) is not a wrapper of the operand's truth.
+int PycCallbacks::narrowing_wrapper_polarity(Sym *selector) {
+  if (!selector) return 0;
+  if (selector == if1_make_symbol(if1, "__not__")) return -1;
+  if (selector == if1_make_symbol(if1, "__pyc_to_bool__") || selector == if1_make_symbol(if1, "__bool__")) return 1;
+  return 0;
+}
+
 PycSymbol::PycSymbol() : filename(0), previous(0) {}
 
 void PycCompiler::init() {

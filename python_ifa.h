@@ -29,6 +29,7 @@ class PycCallbacks : public IFACallbacks {
   cchar *narrowing_isinstance_name() { return "isinstance"; }
   cchar *narrowing_is_none_name() { return "__is__"; }
   cchar *narrowing_is_not_none_name() { return "__nis__"; }
+  int narrowing_wrapper_polarity(Sym *selector);
 };
 
 class PycSymbol : public IFASymbol {

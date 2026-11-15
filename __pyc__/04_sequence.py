@@ -247,6 +247,8 @@ class list:
     return self
 #  @must_specialize("l:list")
   def __eq__(self, l):
+    if not isinstance(l, list):
+      return False
     ll = len(l)
     lself = len(self)
     if lself != ll:
