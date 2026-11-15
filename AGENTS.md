@@ -710,6 +710,11 @@ runtime; only libc and zstd stay dynamic), and `lib/pyc/` holding the
 library, the runtime and a static Boehm GC that the programs pyc builds
 link. pyc finds `lib/pyc` from its own location, so the tarball unpacks
 anywhere. The user needs `clang++` (any recent version) and `make`.
+The release workflow builds it on Linux (x86-64, arm64) and macOS (arm64,
+x86-64); on macOS from Homebrew's llvm@20 and bdw-gc, with Xcode's
+`clang++` for pyc itself. A macOS `pyc` is stripped with `strip -x`, never
+a full strip: that removes the globals the binary exports, and the stripped
+pyc segfaulted in its static initializers before `main`.
 
 Three things that are easy to get wrong:
 
@@ -719,9 +724,11 @@ Three things that are easy to get wrong:
   objects; `dist` refuses to run without `PORTABLE=1`.
 - **Test it where nothing else is.** `dist_smoke.sh TARBALL` compiles a
   fixed set of suite programs from a fresh directory on both backends,
-  plus the JIT, and compares with their `.exec.check`. On the build host
-  it proves little, because every library is installed there. Run it in
-  a clean container (its header has the `docker run` line): that is what
+  plus the JIT, and compares with their `.exec.check`, and it fails any
+  binary that loads a library outside the OS's own directories. That
+  last check is the self-containment test where no clean machine exists
+  (macOS runners keep Homebrew). On Linux, also run it in a clean
+  container (its header has the `docker run` line): that is what
   found the LLVM backend handing its IR to the user's older clang, fixed
   by writing the object in process (ifa/CODEGEN_LLVM.md §11).
 - **The LLVM version is the release's, not the user's.** pyc carries its
