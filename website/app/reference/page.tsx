@@ -212,9 +212,9 @@ def sqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
             <code>complex</code>
           </li>
           <li>
-            Attribute reads through <code>cls</code> in a <code>@classmethod</code> (
-            <a href={repo('blob/main/issues/184-classmethod-attribute-through-cls.md')}>
-              issues/184
+            A class&apos;s <code>__name__</code> (
+            <a href={repo('blob/main/issues/190-class-name-attribute.md')}>
+              issues/190
             </a>
             )
           </li>

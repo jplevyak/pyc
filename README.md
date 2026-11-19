@@ -462,8 +462,8 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   that takes `*args` or uses `super()` are refused
   ([issues/007](issues/closed/007-decorators-not-applied.md)).
 - **`complex`** is not supported.
-- **`@classmethod`**: reading an attribute through `cls` (`cls.base`, `cls.other()`) does not
-  compile; `cls(...)` does ([issues/184](issues/184-classmethod-attribute-through-cls.md)).
+- **`__name__`** on a class (`C.__name__`, `cls.__name__`) is refused
+  ([issues/190](issues/190-class-name-attribute.md)).
 - **Generators**: `StopIteration.value` read in
   an `except` clause is refused when the program raises `StopIteration` with more than one value
   type ([issues/172](issues/172-stopiteration-value-reads-the-global-exception-slot.md)).

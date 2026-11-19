@@ -58,7 +58,7 @@ Ordered by value against effort. Items in one row are independent.
 | 2 | exception liveness along the call graph: [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 2 | the silent wrong answers on the exception side wait on it, and the up-front check is measured too expensive | [179](179-sequence-index-out-of-range-does-not-raise.md), tuple `__setitem__`, ifa/165. Not [172](172-stopiteration-value-reads-the-global-exception-slot.md), which needs exception VALUE flow (corrected 2026-11-14) |
 | 3 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 1 (operators, `ZeroDivisionError`) and [179](179-sequence-index-out-of-range-does-not-raise.md) | silent memory reads and a SIGFPE on the default path | |
 | 4 | the crashes: [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 3 (recursion limit), [187](187-self-import-overflows-the-frontend.md) | a crash beats a wrong answer but not by much | corpus `loop` |
-| 5 | the refusals of valid programs: [184](184-classmethod-attribute-through-cls.md), [186](186-duplicate-method-definitions-are-an-ambiguous-call.md), [189](189-unpacking-into-named-parameters.md) | each is a common idiom with a named cause | |
+| 5 | the refusals of valid programs: [190](190-class-name-attribute.md), [186](186-duplicate-method-definitions-are-an-ambiguous-call.md), [189](189-unpacking-into-named-parameters.md) | each is a common idiom with a named cause | |
 | 6 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 2 through ifa/050's write-once globals | the mechanism belongs to FA | |
 | 7 | [177](177-int64-overflow-at-run-time-is-silent.md): measure the checked path | the one deviation `--strict` cannot see | othello2 under `--strict` says why it differs |
 | 8 | [048](048-none-int-field-pair-runtime-abort.md), [169](169-local-class-method-reading-enclosing-local-crashes.md): wait for a program that needs them | refusals, documented, no corpus witness | |
@@ -80,7 +80,7 @@ Ordered by value against effort. Items in one row are independent.
 | issue | what |
 | --- | --- |
 | [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
-| [184](184-classmethod-attribute-through-cls.md) | `cls.base` and `cls.h()` inside a `@classmethod` have no type; `cls(...)` works. |
+| [190](190-class-name-attribute.md) | A class has no `__name__` (`C.__name__`, `cls.__name__`). |
 | [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class defining a method twice is an ambiguous call; CPython takes the last. |
 | [189](189-unpacking-into-named-parameters.md) | `f(**d)` into named parameters (the forwarding decorator), `f(*xs)` of a list into them, and `**kw` with mixed value types. `f(*t)` of a tuple works (2026-11-14). |
 | [048](048-none-int-field-pair-runtime-abort.md) | a genuinely read `{None, scalar}`: refused in every mode; the permissive sentinel is built only when a program needs it. |
