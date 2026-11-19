@@ -94,6 +94,7 @@ Ordered by value against effort. Items in one row are independent.
 | --- | --- |
 | [187](187-self-import-overflows-the-frontend.md) | `import X` from `X.py` recurses without bound in the frontend. |
 | [188](188-static-ctypes-subset.md) | **foreign calls**: the static `ctypes` subset landed 2026-11-11; callbacks, out-parameters, arrays, unions and `--jit` are not done. |
+| [196](196-compiling-shedskin-with-pyc.md) | **compiling shedskin itself**: `ast` (CPython's parser and node classes), `getattr` with a computed name, about 15 standard-library modules, `NamedTuple`. |
 | [025](025-shedskin-examples-coverage.md) | **the corpus**: all 77 compile since 2026-11-10 (othello3 in about 170 s, ifa/207 and ifa/186), 59 match, 17 unverifiable by the sweep and verified by hand, othello2 differs (177); the two edit candidates. |
 
 ### Closed on 2026-11-03

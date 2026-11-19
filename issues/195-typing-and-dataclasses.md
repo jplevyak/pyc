@@ -3,7 +3,7 @@
 **Status:** open for its residuals. `typing`, `__future__` and `@dataclass`
 landed 2026-11-19. Found compiling shedskin's own source, which imports
 `typing` in every module and keeps its compiler state in dataclasses
-(`state/*.py`). Its next stop is `typing.NamedTuple` (below).
+(`state/*.py`). Its next stop is `typing.NamedTuple` (below); the rest of the way is tracked in [196](196-compiling-shedskin-with-pyc.md).
 
 ## typing
 
