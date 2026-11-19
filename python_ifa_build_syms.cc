@@ -588,13 +588,40 @@ static bool pyda_class_body_has_method(PyDAST *cdef, cchar *name) {
 // PY_classdef does BEFORE the body -- unlike `sym->implements`, which
 // inherits_add only fills afterwards. A null entry means an unresolved
 // base; check_base reports that later, so tolerate it here.
+Sym *pyc_module_member(Sym *mod, cchar *attr, PycCompiler &ctx) {
+  PycModule *mm = mod && mod->is_module ? ctx.module_syms.get(mod) : nullptr;
+  if (!mm) return nullptr;
+  PycScope *ms = mm->ctx->saved_scopes.get(mm->pymod);
+  PycSymbol *member = ms ? ms->map.get(cannonicalize_string(attr)) : nullptr;
+  if ((intptr_t)member <= (intptr_t)NONLOCAL_DEF) return nullptr;
+  return member->sym;
+}
+
+// The Sym a class base names: a name, or a module member reached through
+// modules (`class C(m.B)`, `class C(pkg.m.B)`). Modules are compile-time
+// namespaces, so this is the same lookup `m.B` gets as an expression
+// (PY_power in build_if1). Null for any other expression.
+static Sym *pyda_base_sym(PyDAST *b, PycCompiler &ctx) {
+  if (b->kind != PY_power) return getAST(b, ctx)->sym;
+  Sym *cur = getAST(b->children[0], ctx)->sym;
+  for (int i = 1; i < b->children.n; i++) {
+    PyDAST *t = b->children[i];
+    if (t->kind != PY_attribute || !cur || !cur->is_module) return nullptr;
+    cchar *attr = t->children[0]->str_val;
+    Sym *m = pyc_module_member(cur, attr, ctx);
+    if (!m) fail("error line %d, module '%s' has no attribute '%s'", b->line, ctx.module_syms.get(cur)->name, attr);
+    cur = m;
+  }
+  return cur;
+}
+
 static void pyda_class_base_syms(PyDAST *cdef, PycCompiler &ctx, Vec<Sym *> &out) {
   for (int i = 1; i < cdef->children.n - 1; i++) {
     PyDAST *b = cdef->children[i];
     if (b->kind == PY_tuple)
-      for (int j = 0; j < b->children.n; j++) out.add(getAST(b->children[j], ctx)->sym);
+      for (int j = 0; j < b->children.n; j++) out.add(pyda_base_sym(b->children[j], ctx));
     else
-      out.add(getAST(b, ctx)->sym);
+      out.add(pyda_base_sym(b, ctx));
   }
 }
 
@@ -1615,13 +1642,13 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
         PyDAST *base_ast = cdef->children[i];
         if (base_ast->kind == PY_tuple) {
           for (int j = 0; j < base_ast->children.n; j++) {
-            Sym *base = getAST(base_ast->children[j], ctx)->sym;
+            Sym *base = pyda_base_sym(base_ast->children[j], ctx);
             check_base(base);
             cdef_ast->sym->inherits_add(base);
             any_base = true;
           }
         } else {
-          Sym *base = getAST(base_ast, ctx)->sym;
+          Sym *base = pyda_base_sym(base_ast, ctx);
           check_base(base);
           cdef_ast->sym->inherits_add(base);
           any_base = true;

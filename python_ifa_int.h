@@ -347,6 +347,9 @@ int report_import_errors(PycCompiler &ctx);
 
 // From python_ifa_build_syms.cc:
 PycModule *get_module(cchar *name, PycCompiler &ctx);
+// `M.attr` where M is a module marker (`Sym::is_module`): the member's Sym,
+// or null when M is not a module or has no such name.
+Sym *pyc_module_member(Sym *mod, cchar *attr, PycCompiler &ctx);
 // issues/113: PEP 328 -- turn a dot-prefixed relative module name into
 // an absolute dotted one, against the importing module's package.
 cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);

@@ -107,6 +107,14 @@ Ordered by value against effort. Items in one row are independent.
 | [007](closed/007-decorators-not-applied.md) | property setters and deleters, `property(...)` with any getter, class-based decorators, and decorators on methods (which were being dropped) all work | the file's own Residuals list, each a named refusal; 173 item 1 |
 | [182](closed/182-kwargs-and-keyword-only-parameters.md) | keyword-only parameters, `**kw`, named parameters after `*args`, and `f(*t)` / `f(**d)` into a `*args` / `**kw` callee all work; a call-site `*t` was being passed as one argument | [189](189-unpacking-into-named-parameters.md) |
 
+### Closed on 2026-11-19
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [191](closed/191-base-class-named-through-a-module.md) | a base class named through a module (`class C(m.B)`) resolves like `m.B` in an expression | |
+| [192](closed/192-multi-line-parenthesized-import.md) | `from m import (...)` across lines parses | |
+| [193](closed/193-zero-argument-super.md) | zero-argument `super()` works; it asserted in every method | |
+
 Every archived file starts with a dated closure note. The archive is
 [`closed/`](closed/).
 

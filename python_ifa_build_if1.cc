@@ -1363,7 +1363,9 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       ast->rval = new_sym(ast);
       ast->rval->aspect = ctx.cls();
       super_aspect_syms.add(ast->rval);
-      if1_move(if1, &ast->code, ctx.fun()->self, ast->rval);
+      // issues/193: `super()` is `super(__class__, <first argument>)`.
+      // `ctx.fun()->self` is not that: it is null in an ordinary method.
+      if1_move(if1, &ast->code, fun_has[0], ast->rval);
     } else if (n == 1) {
       PycAST *cls_ast = getAST(pos_args[0], ctx);
       if (!cls_ast->sym || cls_ast->sym->type_kind != Type_RECORD) fail("non-constant super() class");
@@ -3639,10 +3641,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               }
               for (seg = strtok(nullptr, "."); v && seg; seg = strtok(nullptr, ".")) {
                 if (v->is_module) {
-                  PycModule *mm = ctx.module_syms.get(v);
-                  PycScope *ms = mm ? mm->ctx->saved_scopes.get(mm->pymod) : nullptr;
-                  PycSymbol *member = ms ? ms->map.get(cannonicalize_string(seg)) : nullptr;
-                  v = (intptr_t)member > (intptr_t)NONLOCAL_DEF ? member->sym : nullptr;
+                  v = pyc_module_member(v, seg, ctx);
                   continue;
                 }
                 if (v->self && v->type_kind == Type_RECORD) {
@@ -4688,11 +4687,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             PycModule *mm = ctx.module_syms.get(cur_val);
             if (mm) {
               cchar *attr = trailer->children[0]->str_val;
-              PycScope *ms = mm->ctx->saved_scopes.get(mm->pymod);
-              PycSymbol *member = ms ? ms->map.get(cannonicalize_string(attr)) : nullptr;
-              if ((intptr_t)member <= (intptr_t)NONLOCAL_DEF)
-                fail("error line %d, module '%s' has no attribute '%s'", ctx.lineno, mm->name, attr);
-              cur_val = member->sym;
+              Sym *member = pyc_module_member(cur_val, attr, ctx);
+              if (!member) fail("error line %d, module '%s' has no attribute '%s'", ctx.lineno, mm->name, attr);
+              cur_val = member;
               // A STORE to it (`m.G = v`) assigns that module global itself:
               // the target is the variable, as for a plain name. It used to
               // leave ast->sym unset, and the assignment's if1_move asserted
