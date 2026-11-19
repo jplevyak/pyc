@@ -251,7 +251,7 @@ $ pyc --strict counter.py
             <div className="card">
               <h3>The roadmap</h3>
               <p>
-                <code>**kwargs</code>, property setters, <code>complex</code>, a wider{' '}
+                <code>**kwargs</code>, <code>complex</code>, a wider{' '}
                 <code>re</code>, packaging, and the tooling that turns a compiler into a
                 language.
               </p>

@@ -154,9 +154,21 @@ export const TRACKS: Track[] = [
     summary: 'Make pyc easy to get, and use what it knows about your program in your editor.',
     milestones: [
       {
-        title: 'Getting pyc',
+        title: 'Releases',
+        state: 'done',
+        items: [
+          'Versioned releases, built and smoke-tested by CI on every tag',
+          'Self-contained downloads for Linux (x86-64, arm64) and macOS (Apple silicon, Intel)',
+        ],
+      },
+      {
+        title: 'Getting pyc, more ways',
         state: 'planned',
-        items: ['Versioned releases', 'Binary packages for Linux and macOS', 'A container image'],
+        items: [
+          'pipx install pyc-lang, and a Homebrew tap',
+          'Linux downloads for distributions older than glibc 2.39',
+          'A container image',
+        ],
       },
       {
         title: 'Working with pyc',

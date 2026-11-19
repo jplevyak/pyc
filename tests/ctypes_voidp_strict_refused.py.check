@@ -1,0 +1,1 @@
+fail: error ctypes_voidp_strict_refused.py:7: ctypes: result of type c_void_p has no static representation: CPython yields an int, or None for NULL. Use POINTER(<Structure subclass>), or permissive mode's PYC_FFI_VOIDP_INT accommodation

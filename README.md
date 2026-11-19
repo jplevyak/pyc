@@ -1,5 +1,7 @@
 # pyc — Python Compiler
 
+**Website: [pyc-lang.org](https://pyc-lang.org)** · [Releases](https://github.com/jplevyak/pyc/releases)
+
 **pyc** is a whole-program, statically typed compiler for Python 3. It infers a type for every
 value in the program with interprocedural flow analysis (IFA), then emits C (or LLVM IR) and
 compiles it to a stand-alone native binary with no Python runtime dependency.
@@ -26,9 +28,10 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
 
 - **Classes**: inheritance, `super()`, class attributes, operator overloading (`__add__`,
   `__getitem__`, `__eq__`, …), `__str__`/`__repr__`, `__iter__`/`__next__`, `__enter__`/`__exit__`,
-  read-only `@property`.
+  `@property` with setters and deleters, `property(...)`.
 - **Functions**: closures, `nonlocal`/`global`, lambdas, default and mutable default
-  arguments, `*args`, nested functions, local classes.
+  arguments, `*args`, `**kwargs`, keyword-only parameters, `f(*t)` / `f(**d)` forwarding,
+  nested functions, local classes.
 - **Exceptions**: `try`/`except`/`else`/`finally`, `raise`, user exception hierarchies, and
   CPython's built-in exceptions raised by the runtime (`ValueError` from `int("x")`,
   `IndexError`, `KeyError`, `StopIteration`, …).
@@ -43,6 +46,9 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
   time. Partial implementations of common standard-library modules live in
   [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os`, `collections`, `heapq`,
   `copy`, `struct`, `string`, `socket` and parts of `re` and `itertools`. File I/O uses `open()`.
+- **C libraries**: a static subset of `ctypes`. Declare a function with `CDLL`, `argtypes` and
+  `restype` and it compiles to a direct call, with `Structure` and `POINTER` for C data. The same
+  file runs under CPython. See [Calling a C library](#calling-a-c-library).
 
 ### Language extensions
 
@@ -51,7 +57,7 @@ them:
 
 | Name | Purpose |
 |---|---|
-| `__pyc_c_call__(ret, fn, ...)` | Inline a raw C function call |
+| `__pyc_c_call__(ret, fn, ...)` | Inline a raw C function call (programs use `ctypes` instead) |
 | `__pyc_primitive__(sym, ...)` | Invoke a compiler primitive |
 | `__pyc_char__` | The `uint8` / C `char` type |
 | `__pyc_operator__` | Access C-level operators directly |
@@ -61,25 +67,54 @@ them:
 A field that holds different types in different objects needs no declaration: a class whose
 `__init__` stores an `int` in one instance and a `str` in another gets one layout per type.
 
+## Install
+
+Each [release](https://github.com/jplevyak/pyc/releases) has a self-contained build for Linux
+(x86-64, arm64) and macOS (Apple silicon, Intel). Unpack it anywhere and put its `bin/` on your
+`PATH`:
+
+```sh
+curl -LO https://github.com/jplevyak/pyc/releases/download/v0.1.2/pyc-0.1.2-linux-x86_64.tar.gz
+tar xzf pyc-0.1.2-linux-x86_64.tar.gz
+export PATH="$PWD/pyc-0.1.2-linux-x86_64/bin:$PATH"
+pyc hello.py && ./hello
+```
+
+(For Linux on arm64, `linux-aarch64`; for macOS, `darwin-arm64` or `darwin-x86_64`. Each release
+lists the `SHA256SUMS` of its tarballs.)
+
+The tarball holds `bin/pyc`, with LLVM and the Boehm GC linked in, and `lib/pyc/`, pyc's library,
+which pyc finds beside itself. It needs:
+
+- **`clang++` and `make`**, any recent version (pyc compiles the C it generates with them, and
+  links its LLVM output with `clang++`). On Ubuntu: `apt-get install clang make`. On macOS, the
+  Xcode Command Line Tools: `xcode-select --install`.
+- **Linux: glibc 2.39 or newer** (Ubuntu 24.04, Debian 13, Fedora 40 and later). **macOS: 15
+  (Sequoia) or newer.**
+
+The programs pyc builds link a static Boehm GC from the tarball, so they need nothing installed to
+run. Older Linux distributions build from source for now.
+
 ## Requirements
+
+To build from source:
 
 - **clang/clang++** (C++23) and **llvm-ar**
 - **LLVM** development libraries (`llvm-config` must be on `PATH`); the LLVM backend is always
   built
 - **Boehm GC** (`libgc`, `libgccpp`)
-- **PCRE** (`libpcre`)
 - **[dparser](https://github.com/jplevyak/dparser)**, built with GC support and installed
 
 On Ubuntu / Debian:
 
 ```sh
-apt-get install clang llvm-dev libgc-dev libpcre3-dev
+apt-get install clang llvm-dev libgc-dev
 ```
 
 On Fedora / RHEL:
 
 ```sh
-dnf install clang llvm-devel gc-devel pcre-devel
+dnf install clang llvm-devel gc-devel
 ```
 
 CI uses clang/LLVM **20** on Ubuntu 24.04. The unversioned packages there are LLVM 18, whose
@@ -103,7 +138,9 @@ cd pyc
 make
 ```
 
-`make` builds `ifa/libifa_gc.a`, the runtime and the `pyc` compiler binary.
+`make` builds `ifa/libifa_gc.a`, the runtime and the `pyc` compiler binary. `pyc` runs from the
+checkout as it is (it finds its library beside itself), or `make install PREFIX=/usr/local`
+installs `bin/pyc` and its library in `lib/pyc/` (`DESTDIR` is honoured).
 
 ### Build options
 
@@ -112,26 +149,62 @@ make
 | `DEBUG=1` | Adds `-g -DDEBUG` (default) |
 | `OPTIMIZE=1` | Builds pyc itself with `-O3 -march=native` (default; `OPTIMIZE=` turns it off) |
 | `PROFILE=1` | Enable profiling with `-pg` |
+| `PORTABLE=1` | No `-march=native`, so the binary runs on any CPU of its architecture (release builds) |
+
+`make PORTABLE=1 dist`, in a clean tree, builds the release tarball: a statically linked `pyc` and
+its library, under `dist/`. `./dist_smoke.sh dist/pyc-*.tar.gz` checks it compiles and runs
+programs on both backends from a fresh directory. The release workflow
+(`.github/workflows/release.yml`) does both on every `v*` tag.
 
 For an unoptimized build to step through in gdb, use `make clean && make OPTIMIZE=`.
 
 The Makefiles track neither build flags nor all header dependencies. Run `make clean` after
 changing a flag or a header; otherwise stale objects can produce failures that look like real bugs.
 
+### Optional: a collector with a larger mark stack
+
+Large programs compile faster against a `libgc` built with a larger initial mark stack. The
+packaged library works and nothing requires this; on `shedskin_examples/othello3` it takes flow
+analysis from 126 s to 113 s.
+
+bdwgc starts its mark stack at 4096 entries and doubles it once per collection. The analysis
+graph of a large program needs over a million, and a mark that runs out re-scans the heap, so
+every collection until then is several times slower than it should be. The size is a build-time
+constant with no run-time setting
+([ifa/186](ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)).
+
+```sh
+git clone --depth 1 --branch v8.2.8 https://github.com/ivmai/bdwgc.git
+cd bdwgc
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DBUILD_SHARED_LIBS=ON -Denable_cplusplus=OFF -Dbuild_tests=OFF -Denable_docs=OFF \
+      -DCFLAGS_EXTRA="-DINITIAL_MARK_STACK_SIZE=4194304"
+cmake --build build -j
+sudo cmake --install build && sudo ldconfig
+```
+
+Then rebuild pyc from clean (`make clean && make`), since the installed headers changed.
+`ldd ./pyc | grep libgc` should name `/usr/local/lib/libgc.so.1`, and
+`GC_PRINT_STATS=1 ./pyc big.py 2>&1 | grep -c "Mark stack overflow"` should print 0.
+
+The stack is 64 MiB of address space, touched only as far as a mark reaches, so a small compile
+is no slower and no larger. `-Denable_cplusplus=OFF` leaves `libgccpp` to the distribution's
+package. Compiled programs link the same `libgc` and get the same stack.
+
 ## Usage
 
 ```sh
-pyc -D <pyc-dir> [options] <file.py>
+pyc [options] <file.py>
 ```
 
 pyc reads `<file.py>` and everything it imports, analyzes the whole program, and writes a native
 executable named after the input with its extension stripped (`hello.py` → `hello`), unless `-o`
 names one. The intermediate C is kept as `<file.py>.c`.
 
-`-D` names the directory holding pyc's builtin library (`__pyc__/`, `pyc_lib/` and the runtime).
-It defaults to `$PYC_SYSTEM_DIRECTORY` when that is set, else the current directory, and when the
-current directory has no `__pyc__/`, the directory of the `pyc` executable itself (through any
-symlink). So a `pyc` symlinked onto your `PATH` from the checkout works from anywhere.
+pyc finds its builtin library (`__pyc__/`, `pyc_lib/` and the runtime) by itself: in
+`-D <dir>` or `$PYC_SYSTEM_DIRECTORY` when given, else the current directory if it has
+`__pyc__/`, else beside the `pyc` executable (through any symlink, so a checkout's `pyc` symlinked
+onto your `PATH` works), else in `../lib/pyc` from the executable, the installed layout.
 
 ### Running a script directly
 
@@ -155,8 +228,10 @@ go before `-x`'s script, as in `#!/usr/bin/env -S pyc -b -x`.
 
 | Flag | Description |
 |---|---|
-| `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `$PYC_SYSTEM_DIRECTORY`, else `.`, else the `pyc` executable's directory) |
+| `-D <dir>`, `--system-directory <dir>` | pyc's library directory (default `$PYC_SYSTEM_DIRECTORY`, else `.`, beside the executable, or `../lib/pyc` from it) |
 | `-o <path>`, `--output <path>` | Output binary path (default: input filename, extension stripped) |
+| `--cflags <flags>` | Extra flags for compiling the generated program (also `$PYC_CFLAGS`) |
+| `--libs <flags>` | Extra flags for linking it, e.g. `--libs "-L/opt/lib -lfoo"` (also `$PYC_LIBS`) |
 | `-x`, `--exec` | Compile (cached in `~/.cache/pyc`) and run; arguments after the script go to the program. For `#!` lines; see above |
 | `--strict` | CPython semantics or a compile error: every type violation is fatal, no accommodations |
 | `--permissive` | The default: named accommodations are allowed, each with a warning |
@@ -277,6 +352,32 @@ print(C("hello").value)
 print(C(3.14).value)
 ```
 
+### Calling a C library
+
+Declare a C function the way CPython's `ctypes` asks. pyc reads the declarations at compile time,
+emits a direct call and links the library. The file runs unchanged under CPython.
+
+```python
+import ctypes
+import ctypes.util
+
+libm = ctypes.CDLL(ctypes.util.find_library("m"))
+libm.hypot.argtypes = [ctypes.c_double, ctypes.c_double]
+libm.hypot.restype = ctypes.c_double
+
+libc = ctypes.CDLL(None)
+libc.strlen.argtypes = [ctypes.c_char_p]
+libc.strlen.restype = ctypes.c_size_t
+
+print(libm.hypot(3.0, 4.0))    # 5.0
+print(libc.strlen(b"hello"))   # 5
+```
+
+An argument of the wrong type is a compile-time error, where CPython raises `ArgumentError` at
+run time. `Structure` with `_fields_`, `POINTER`, `byref` and `pointer` are supported too. For a
+library outside the default search path, pass `--cflags` and `--libs`. The supported subset, what
+is refused and what is not done yet are in [issues/188](issues/188-static-ctypes-subset.md).
+
 ## Testing
 
 ```sh
@@ -294,7 +395,7 @@ make test-links      # every relative Markdown link resolves (needs no build)
 ```
 
 The end-to-end suite compiles each `tests/*.py`, runs it, and compares its output with the
-expected output and with CPython's. When green it reports 488 passed and 14 known issues on each
+expected output and with CPython's. When green it reports 524 passed and 16 known issues on each
 backend. Tests carrying a `.known_issue` sidecar are filed bugs with CPython's answer as the
 expected output; they report `KNOWN` and flip to `PASS` once fixed. `make test` stops at the first
 failing group, so check its exit status rather than reading the tail of its output.
@@ -307,11 +408,13 @@ backend, while `make -C ifa test_llvm` is the V-language smoke (`make test-ifa-l
 [`shedskin_examples/`](shedskin_examples) holds shedskin's 77 example programs, pyc's larger
 benchmark. `./corpus_sweep.sh -m check` compiles and runs each one and compares its output with
 CPython's. Results are cached under [`sweeps/`](sweeps/INDEX.md), keyed on the source tree. As of
-2026-10-16:
+2026-11-10:
 
-- 76 of 77 programs compile. `othello3` exceeds the 400 s compile cap.
-- All 76 binaries run to completion.
-- 58 print output byte-identical to CPython's, and 1 (`othello2`) differs.
+- All 77 programs compile. The largest, `othello3`, takes about 170 s; it exceeded the 400 s
+  compile cap until call matching and the stages after flow analysis were made cheaper
+  ([ifa/207](ifa/issues/207-FA-call-matching-re-matches-a-whole-union-per-member.md), [ifa/186](ifa/issues/186-FA-pass-one-confluence-through-shared-builtins.md)).
+- All 77 binaries run to completion.
+- 59 print output byte-identical to CPython's, and 1 (`othello2`) differs.
 - The other 17 can't be compared because CPython itself exceeds the 120 s run cap.
 
 ## Architecture
@@ -350,22 +453,32 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
 - **Dynamic features**: `eval`, `exec`, and runtime reflection are not supported.
 - **Values that need boxing.** A variable, field or container element that genuinely holds two
   unrelated types over time (`{int, str}`, `{None, int}`) has no representation and is refused.
-- **Parameters**: `**kwargs` and keyword-only parameters (`def f(a, *, b)`) are not supported
-  ([issues/182](issues/182-kwargs-and-keyword-only-parameters.md)).
-- **Properties**: only read-only `@property` getters. Setters and deleters are refused
-  ([issues/007](issues/007-decorators-not-applied.md)).
+- **Argument unpacking**: `f(*t)` binds a tuple's elements to any parameters, and `f(**d)` works
+  when the callee takes `**kwargs`. Refused: `*` of a list or of tuples of different lengths into
+  named parameters, `**d` into named parameters (so the forwarding decorator `fn(*a, **kw)`), and
+  a `**kwargs` whose values have different types in one call
+  ([issues/189](issues/189-unpacking-into-named-parameters.md)).
+- **Decorators**: a `@property` under another decorator, `@x.getter`, and a decorated method
+  that takes `*args` or uses `super()` are refused
+  ([issues/007](issues/closed/007-decorators-not-applied.md)).
 - **`complex`** is not supported.
-- **`@classmethod`**: reading an attribute through `cls` (`cls.base`, `cls.other()`) does not
-  compile; `cls(...)` does ([issues/184](issues/184-classmethod-attribute-through-cls.md)).
+- **`__name__`** on a class (`C.__name__`, `cls.__name__`) is refused
+  ([issues/190](issues/190-class-name-attribute.md)).
 - **Generators**: `StopIteration.value` read in
   an `except` clause is refused when the program raises `StopIteration` with more than one value
-  type ([issues/172](issues/172-generator-send-channel-and-stopiteration-value.md)).
+  type ([issues/172](issues/172-stopiteration-value-reads-the-global-exception-slot.md)).
 - **The standard library** is limited to the partial modules in `pyc_lib/`.
-- **Class attribute mutation through a subclass**: `A.n = 4` is not seen by `B.n` when `B`
-  inherits `n` from `A`, because each class holds its own copy
-  ([issues/173](issues/173-silent-deviations-found-by-the-strict-suite-check.md) #2).
+- **`ctypes`** is a static subset: no callbacks (`CFUNCTYPE`), scalar out-parameters
+  (`byref(c_int())`), arrays, unions or `cast`, declarations must be at module top level, and a
+  program with foreign calls does not run under `--jit`
+  ([issues/188](issues/188-static-ctypes-subset.md)).
+- **Class attributes stored through the class after it is used**: an instance or a subclass keeps
+  the value the class had when the instance or subclass was made, so `C.k += 1` is not seen
+  through `self.k`, nor `A.n = 4` through `B.n`. CPython looks the attribute up when it is read.
+  A silent difference ([issues/173](issues/173-silent-deviations-found-by-the-strict-suite-check.md)
+  item 1).
 - **Cross-class method assignment**: `a.x = b.x`, where `a` and `b` are instances of unrelated
-  classes, is not supported; it currently compiles and crashes at run time
+  classes, is refused at compile time
   ([issues/180](issues/180-method-assigned-across-classes-crashes.md)).
 - **A known silent wrong answer** under repair: an out-of-range sequence index does not raise
   `IndexError` ([issues/179](issues/179-sequence-index-out-of-range-does-not-raise.md)).

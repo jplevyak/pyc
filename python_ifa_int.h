@@ -194,6 +194,13 @@ class PycCompiler : public PycCallbacks {
   // finalize_function marks its Fun `is_varargs`; the matcher then routes
   // each call through rest_wrapper.
   Vec<Sym *> star_formals;
+  // issues/182: the keyword-only formals (those after `*` or `*args`) and
+  // the `**kw` formal of every def, and the `dict` class a `**kw` dict is
+  // made from. finalize_functions turns them into Fun::rest_pos /
+  // kwonly_pos / kw_pos.
+  Vec<Sym *> kwonly_formals;
+  Vec<Sym *> dstar_formals;
+  Sym *kwargs_dict_cls = nullptr;
 
   // issue 011 (exception handling, option C):
   Vec<PycTryFrame> try_stack;  // enclosing trys (see PycTryFrame)
@@ -217,7 +224,8 @@ class PycCompiler : public PycCallbacks {
   void finalize_functions();
   Sym *new_Sym(cchar *name = 0);
   Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults);
-  Fun *rest_wrapper(Fun *, int nactuals);
+  Fun *signature_wrapper(Fun *, int npositional, Vec<cchar *> &keywords);
+  Fun *unpack_wrapper(Fun *, int star_at, int arity, Vec<cchar *> &names);
   Fun *order_wrapper(Fun *, Map<MPosition *, MPosition *> &substitutions);
   bool reanalyze(Vec<ATypeViolation *> &type_violations);
   bool retract_derived_state();  // issues/128 step 2
@@ -297,6 +305,11 @@ enum PYC_SCOPINGS { PYC_USE, PYC_LOCAL, PYC_GLOBAL, PYC_NONLOCAL };
 // From python_ifa_util.cc:
 cchar *cannonicalize_string(cchar *s);
 bool decorator_name_is(cchar *s, cchar *want);
+bool pyc_is_setter_name(cchar *name);   // issues/188 (python_ifa_main.cc)
+void pyc_add_setter_name(cchar *name);
+void pyc_add_property_name(cchar *name);
+bool pyc_is_deleter_name(cchar *name);  // issues/007
+bool pyc_has_property_names();
 bool pyc_is_property_name(cchar *name);  // issues/171 #13 (python_ifa_main.cc)
 // ifa/185: dispatch constraints on a formal of a GENERATED method, keyed on
 // the parameter's PyDAST. Python annotations are dropped by the grammar, so
@@ -338,6 +351,10 @@ PycModule *get_module(cchar *name, PycCompiler &ctx);
 cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
 // Parse every module reachable by import from mods[1..] ahead of
 // build_syms (ASTs appended to `out`, and reused by import_file).
+// python_ifa_ctypes.cc: lower the static ctypes subset to pyc Python plus a C
+// shim, before build_syms. pyc_ffi_shim is the shim's text, or null.
+void lower_ctypes(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);
+extern cchar *pyc_ffi_shim;
 void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out);
 int build_syms(PycModule *x, PycCompiler &ctx);
 void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name = 0);
@@ -348,6 +365,9 @@ void call_method(Code **code, PycAST *ast, Sym *o, Sym *m, Sym *r, int n, ...);
 Sym *make_symbol(cchar *name);
 // pyda path (from python_ifa_build_syms.cc):
 void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCompiler &ctx);
+int param_indices_pyda(PyDAST *varargslist, Vec<int> &index);
+// issues/182: a new dict {names[i]: vals[i]}, the value of a `**kw` formal.
+Sym *emit_kwargs_dict(PycCompiler &ctx, PycAST *ast, Code **code, Vec<cchar *> &names, Vec<Sym *> &vals);
 void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx, char *vector_size = nullptr, bool derive_compare = false);

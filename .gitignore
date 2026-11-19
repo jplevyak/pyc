@@ -33,6 +33,9 @@ pyc.cat
 
 # Compiled binaries / driver outputs
 /pyc
+/pyc-static
+/version.stamp
+/dist/
 /hello_world
 /hello_world.py.c
 /hello_world.py.s
@@ -81,6 +84,8 @@ tests/*.py.json
 tests/*.py_pass_*.js
 tests/*.py_pass_*.json
 tests/*.py.s
+# the LLVM backend's foreign-call shim (codegen_extra_source), written beside the program
+tests/*.ffi.cc
 tests/*.ll
 tests/*.o
 tests/*.bak

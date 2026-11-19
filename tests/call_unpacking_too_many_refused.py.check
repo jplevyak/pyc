@@ -1,0 +1,10 @@
+call_unpacking_too_many_refused.py:6:25: error: f() takes 2 positional arguments but 3 were given
+    print(f(*(1, 2, 3)))
+                        ^
+call_unpacking_too_many_refused.py:6:25: error: expression has no type
+    print(f(*(1, 2, 3)))
+                        ^
+call_unpacking_too_many_refused.py:6:19: error: expression has no type
+    print(f(*(1, 2, 3)))
+                      ^
+fail: program does not type

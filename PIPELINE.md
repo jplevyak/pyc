@@ -183,6 +183,8 @@ Useful environment / flag knobs:
   runtime check, CPython-faithful implicit `None`). See `README.md`.
 - `PYTHONPATH` — searched by `build_search_path` for imports.
 - `IFA_SYSTEM_DIRECTORY` / `PYC_SYSTEM_DIRECTORY` — where `__pyc__/` lives.
+  Unset, pyc looks in `.`, beside its executable, then in
+  `<exe>/../lib/pyc` (the installed layout; RUNTIME.md §11).
 
 ---
 

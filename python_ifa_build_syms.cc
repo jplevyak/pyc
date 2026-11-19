@@ -437,7 +437,6 @@ static void collect_prebind_targets(PyDAST *n, Vec<cchar *> &out, Vec<cchar *> &
 
 // Pre-bind whole-function local targets. Runs after the parameters are
 // bound and before the body is walked (PY_funcdef).
-static void rewrite_class_properties(PyDAST *cdef);  // issues/117, defined below
 
 static void prebind_function_locals(PyDAST *body, PycCompiler &ctx) {
   Vec<cchar *> targets, excluded;
@@ -1093,19 +1092,37 @@ static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx, bool de
 // Extract parameter syms from PY_varargslist into has[]
 void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCompiler &ctx) {
   if (!varargslist) return;
+  // issues/182: every parameter after `*` or `*args` is keyword-only. The
+  // formals stay in source order; a bare `*` adds none.
+  bool kwonly = false;
   for (auto c : varargslist->children.values()) {
     if (c->kind == PY_star_arg || c->kind == PY_dstar_arg) {
+      if (c->kind == PY_star_arg) kwonly = true;
+      if (!c->children.n) continue;
       Sym *s = getAST(c->children[0], ctx)->sym;
       if (s) has.add(s);
       if (s && c->kind == PY_star_arg) ctx.star_formals.set_add(s);
-    } else if (c->kind == PY_arg_default) {
-      Sym *s = getAST(c->children[0], ctx)->sym;
-      if (s) has.add(s);
+      if (s && c->kind == PY_dstar_arg) {
+        ctx.dstar_formals.set_add(s);
+        if (!ctx.kwargs_dict_cls)
+          if (PycSymbol *ds = make_PycSymbol(ctx, "dict", PYC_USE)) ctx.kwargs_dict_cls = ds->sym;
+      }
     } else {
-      Sym *s = getAST(c, ctx)->sym;
+      Sym *s = getAST(c->kind == PY_arg_default ? c->children[0] : c, ctx)->sym;
       if (s) has.add(s);
+      if (s && kwonly) ctx.kwonly_formals.set_add(s);
     }
   }
+}
+
+// issues/182: the 0-based index among a def's parameters of each child of
+// its PY_varargslist, or -1 for a bare `*`, which is not a parameter.
+// Returns the number of parameters.
+int param_indices_pyda(PyDAST *varargslist, Vec<int> &index) {
+  int n = 0;
+  for (auto c : varargslist->children.values())
+    index.add(c->kind == PY_star_arg && !c->children.n ? -1 : n++);
+  return n;
 }
 
 static void build_import_syms_name_pyda(PyDAST *n, PycCompiler &ctx);
@@ -1225,13 +1242,14 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           if (dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) continue;
           if (decorator_name_is(dec->children[0]->str_val, "staticmethod")) marker_static = true;
           else if (decorator_name_is(dec->children[0]->str_val, "classmethod")) marker_class = true;
-          // issues/171 #13: inject_property_accessors consumes every class
-          // @property getter of the program's modules, imported ones
-          // included. One left here is stacked with other decorators or
-          // not on a method -- refuse it rather than ignore it.
+          // issues/171 #13, issues/007: inject_property_accessors consumes
+          // every @property that is a method's outermost decorator, in the
+          // program's modules and the imported ones. One left here is not
+          // on a method, or is UNDER another decorator, which would then
+          // be handed a property object: refuse it rather than ignore it.
           else if (decorator_name_is(dec->children[0]->str_val, "property"))
-            fail("error line %d: this @property is not supported: only a class's read-only getter, alone, "
-                 "is (issues/007)",
+            fail("error line %d: this @property is not supported: it must be a method's outermost decorator "
+                 "(issues/007)",
                  dec->line);
         }
       }
@@ -1327,6 +1345,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
               mark_store(c->children[0]);
               build_syms_pyda(c->children[0], ctx);
             } else if (c->kind == PY_star_arg || c->kind == PY_dstar_arg) {
+              if (!c->children.n) continue;  // a bare `*`
               mark_store(c->children[0]);
               build_syms_pyda(c->children[0], ctx);
             } else {
@@ -1447,6 +1466,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
             mark_store(c->children[0]);
             build_syms_pyda(c->children[0], ctx);
           } else if (c->kind == PY_star_arg || c->kind == PY_dstar_arg) {
+            if (!c->children.n) continue;  // a bare `*`
             mark_store(c->children[0]);
             build_syms_pyda(c->children[0], ctx);
           } else {
@@ -1501,7 +1521,6 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     Lclassdef_inner:;
       PyDAST *cdef = (n->kind == PY_decorated) ? n->children.last() : n;
       PycAST *cdef_ast = getAST(cdef, ctx);
-      rewrite_class_properties(cdef);  // issues/117, before anything binds the body
       // Process base classes (all children of cdef between name and last suite)
       for (int i = 1; i < cdef->children.n - 1; i++) build_syms_pyda(cdef->children[i], ctx);
       PYC_SCOPINGS scope = (ctx.is_builtin() && ctx.scope_stack.n == 1) ? PYC_GLOBAL : PYC_LOCAL;
@@ -1675,7 +1694,11 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       ast->sym = ast->rval = def_fun_pyda(n, ast, new_sym(ast, 1), ctx);
       if (varargsl)
         for (auto c : varargsl->children.values()) {
-          PyDAST *param = (c->kind == PY_arg_default) ? c->children[0] : c;
+          // issues/182: a `*a` / `**k` parameter is the node's child, and a
+          // bare `*` has none.
+          if ((c->kind == PY_star_arg || c->kind == PY_dstar_arg) && !c->children.n) continue;
+          PyDAST *param = (c->kind == PY_arg_default || c->kind == PY_star_arg || c->kind == PY_dstar_arg)
+                              ? c->children[0] : c;
           mark_store(param);
           build_syms_pyda(param, ctx);
         }
@@ -2550,99 +2573,6 @@ static void compute_init_elidable_fields(PyDAST *init_def, Vec<cchar *> &out) {
 // inside one). String literals are read the same way the
 // @vector("s") decorator argument already is (strip the raw
 // source's surrounding quote char) -- there's no runtime value to
-
-// issues/117: read-only `NAME = property(GETTER)` in a class body.
-//
-// Python's `property` is a DESCRIPTOR: `obj.NAME` calls GETTER(obj),
-// and whether "call the getter" or "read the field" applies depends on
-// the receiver's CLASS. voronoi2 has both in one program -- `xmin` is a
-// property on SiteList and a plain instance field on EdgeList -- so the
-// general feature is type-directed and belongs in FA. shedskin does
-// exactly that rewrite, emitting `siteList->_getxmin()` for the one and
-// `this->xmin` for the other.
-//
-// This handles the common special case without any of that machinery.
-// When the getter's whole body is `return self.ATTR`, the property is
-// nothing but a public name for a private field: renaming that field to
-// the property's name inside the class turns `obj.NAME` into an
-// ordinary field read, which FA and codegen already resolve per class.
-// Anything less trivial is left untouched and still reports "builtin
-// 'property' is not supported by pyc" rather than being silently
-// mis-lowered.
-static void pyda_rename_self_attr(PyDAST *n, cchar *from, cchar *to) {
-  if (!n) return;
-  // The `self.ATTR` shape, as in simple_self_field_overwrite.
-  if (n->kind == PY_power && n->children.n >= 2 && n->children[0]->kind == PY_name && n->children[0]->str_val &&
-      !strcmp(n->children[0]->str_val, "self") && n->children[1]->kind == PY_attribute &&
-      n->children[1]->children.n && n->children[1]->children[0]->str_val &&
-      !strcmp(n->children[1]->children[0]->str_val, from))
-    n->children[1]->children[0]->str_val = to;
-  for (auto c : n->children.values()) pyda_rename_self_attr(c, from, to);
-}
-
-// `return self.ATTR` as the getter's entire body -> ATTR, else nullptr.
-static cchar *pyda_trivial_getter_field(PyDAST *fdef) {
-  if (!fdef || !fdef->children.n) return nullptr;
-  PyDAST *body = fdef->children.last();
-  Vec<PyDAST *> stmts;
-  if (body->kind == PY_suite)
-    for (auto c : body->children.values()) stmts.add(c);
-  else
-    stmts.add(body);
-  if (stmts.n != 1 || stmts[0]->kind != PY_return_stmt || stmts[0]->children.n != 1) return nullptr;
-  PyDAST *r = stmts[0]->children[0];
-  if (!(r->kind == PY_power && r->children.n == 2 && r->children[0]->kind == PY_name && r->children[0]->str_val &&
-        !strcmp(r->children[0]->str_val, "self") && r->children[1]->kind == PY_attribute &&
-        r->children[1]->children.n && r->children[1]->children[0]->str_val))
-    return nullptr;
-  return r->children[1]->children[0]->str_val;
-}
-
-static void rewrite_class_properties(PyDAST *cdef) {
-  if (!cdef || !cdef->children.n) return;
-  PyDAST *body_node = cdef->children.last();
-  if (!body_node) return;
-  Vec<PyDAST *> stmts;
-  if (body_node->kind == PY_suite)
-    for (auto c : body_node->children.values()) stmts.add(c);
-  else
-    stmts.add(body_node);
-  for (auto n : stmts.values()) {
-    if (!n || n->kind != PY_assign || n->children.n != 2) continue;
-    PyDAST *tgt = n->children[0], *val = n->children[1];
-    if (tgt->kind != PY_name || !tgt->str_val) continue;
-    // `property(GETTER)`: PY_power[ PY_name("property"), PY_call[ PY_name(GETTER) ] ]
-    if (!(val->kind == PY_power && val->children.n == 2 && val->children[0]->kind == PY_name &&
-          val->children[0]->str_val && !strcmp(val->children[0]->str_val, "property") &&
-          val->children[1]->kind == PY_call && val->children[1]->children.n == 1))
-      continue;
-    // The call's argument is wrapped in a PY_arglist; unwrap single-child
-    // wrappers until the name (or give up).
-    PyDAST *arg = val->children[1]->children[0];
-    for (int guard = 0; arg && arg->kind != PY_name && arg->children.n == 1 && guard < 4; guard++)
-      arg = arg->children[0];
-    if (!arg || arg->kind != PY_name || !arg->str_val) continue;
-    cchar *pname = tgt->str_val, *gname = arg->str_val;
-    // Find the getter in this class body and require the trivial shape.
-    cchar *field = nullptr;
-    for (auto d0 : stmts.values()) {
-      PyDAST *d = (d0 && d0->kind == PY_decorated) ? d0->children.last() : d0;
-      if (d && d->kind == PY_funcdef && d->children.n && d->children[0]->str_val &&
-          !strcmp(d->children[0]->str_val, gname)) {
-        field = pyda_trivial_getter_field(d);
-        break;
-      }
-    }
-    if (!field || !strcmp(field, pname)) continue;  // not the trivial shape (or already named right)
-    pyda_rename_self_attr(body_node, field, if1_cannonicalize_string(if1, pname));
-    // Drop the assignment: `property` itself is never evaluated, so the
-    // name stays unbound and unreported.
-    n->kind = PY_pass_stmt;
-    n->children.clear();
-  }
-}
-
-
 // evaluate here, this runs before build_if1 does anything.
 static void collect_match_args(PyDAST *cdef, Vec<cchar *> &out) {
   PyDAST *body_node = cdef->children.last();
@@ -3205,6 +3135,13 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
       for (int i = 2; i < init_sym->has.n; i++) {
         Sym *wf = new_sym(ast, init_sym->has[i]->name);
         wf->clone_for_constants = init_sym->has[i]->clone_for_constants;
+        // issues/182: the wrapper has __init__'s signature, so a call of
+        // the class binds as a call of __init__ would. Its own `*args` and
+        // `**kw` formals are marked is_rest: they already hold the packed
+        // tuple and dict, which __init__ must take as they are.
+        if (ctx.star_formals.set_in(init_sym->has[i])) ctx.star_formals.set_add(wf), wf->is_rest = 1;
+        if (ctx.dstar_formals.set_in(init_sym->has[i])) ctx.dstar_formals.set_add(wf), wf->is_rest = 1;
+        if (ctx.kwonly_formals.set_in(init_sym->has[i])) ctx.kwonly_formals.set_add(wf);
         // A constant-cloned ctor param also marks the CLASS for
         // per-receiver-CS method contours (ifa/issues/045), plus the
         // __new__ wrapper and __init__ Fun syms for HARD per-constant
@@ -3234,7 +3171,15 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
       }
       Code *send = if1_send(if1, &body, 2, 1, sym___init__, t, new_sym(ast));
       send->ast = ast;
-      for (int i = 2; i < init_sym->has.n; i++) if1_add_send_arg(if1, send, as[i - 1]);
+      // A keyword-only formal takes no positional actual: name those. But
+      // an __init__ with `*args` or `**kw` is called as its signature
+      // wrapper calls it, one positional actual per formal.
+      bool init_starred = false;
+      for (Sym *h : init_sym->has.values())
+        if (ctx.star_formals.set_in(h) || ctx.dstar_formals.set_in(h)) init_starred = true;
+      for (int i = 2; i < init_sym->has.n; i++)
+        if1_add_send_arg(if1, send, as[i - 1],
+                         !init_starred && ctx.kwonly_formals.set_in(init_sym->has[i]) ? init_sym->has[i]->name : nullptr);
       if1_move(if1, &body, t, fn->ret);
       if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
       if1_closure(if1, fn, body, as.n, as.v);

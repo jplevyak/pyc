@@ -1,64 +1,18 @@
-# 173 — silent wrong answers the strict-suite comparison found (every mode)
+# 173 — silent wrong answers the strict-suite comparison found
 
-**Status:** open. Filed 2026-09-29 from
+**Status:** open on three items. Filed 2026-09-29 from
 [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)'s
-verification step: every `tests/*.py` compiled with `--strict`, run, and
-compared with CPython's stdout and exit status. 336 matched, 38 were
-refused, and 24 differed. Of the 24, 14 are programs CPython cannot run
-(pyc extensions such as `pyc_compat`/`__pyc_c_call__`, async runtime
-tests) and 2 differ only in where a traceback goes (stderr vs stdout). The
-rest are below. None is an accommodation: each is wrong the same way in
-permissive mode, so none belongs behind a flag. Each needs a fix or a
-refusal.
+verification: every `tests/*.py` compiled with `--strict`, run, and compared
+with CPython. Its first item, `isinstance` on a `{list, str}` value folding
+to False, was fixed 2026-10-15 by refusing what no run-time tag can decide
+(`cg_isinstance_tag_targets`; `tests/isinstance_dynamic.py.check_fail`).
+Each item below is wrong the same way in every mode, so none is an
+accommodation: each needs a fix or a refusal.
 
-## 1. `isinstance` on a `{list, str}` value folds to False
+## 1. A class attribute read through a subclass or an instance after the class is mutated
 
-`tests/isinstance_dynamic.py`:
-
-```python
-def check(v):
-    if isinstance(v, list): return 1
-    return 0
-for v in [[1, 2], "hello"]:
-    print(check(v))     # CPython: 1 0.   pyc: 0 0, no diagnostic
-```
-
-`v` is `{list, str}`, emitted as `_CG_any`, and the isinstance test is
-folded to the constant False. Two defects. First, the union reached
-codegen, although neither member carries a runtime tag that could answer
-the question. Second, the test was folded. Either a class tag must be
-available to test (list and str are both heap objects), or the union must
-be refused like any other unrepresentable one. Folding it is never right.
-
-**FIXED 2026-10-15: refused.** The analysis was right (the result is
-`{True, False}`); the fold was codegen's. Both emitters build the
-run-time test as a compare of `x`'s class tag against the tagged
-implementors of the class, and when there were none (list has no tag) they
-wrote `0`. Splitting cannot help here: `v` is one heterogeneous list's
-element at one call site, so no contour separates the two. When `check` is
-called with one type per site it already splits, and each copy folds
-correctly.
-
-`cg_isinstance_tag_targets` (`ifa/codegen/codegen_common.cc`), shared by
-both emitters, now decides the test from the members of `x`'s type. Every
-member an instance gives True, none gives False, and a tag compare is used
-only when every member that IS an instance carries a tag. Otherwise it
-refuses: `isinstance(x, list) cannot be decided at run time: x is {str,
-list}, and 'list' carries no class tag to test`. That is the same refusal
-`len(v)` on this value already got. Membership goes through the member's
-tag family (a clone is not in its class's implementor set) and through the
-builtin's `meta_type` (the class operand of `isinstance(v, list)` is the
-meta Sym). `tests/isinstance_dynamic.py` is now a `.check_fail` pinning the
-diagnostic; `tests/isinstance_union_decided.py` pins the unions that are
-answered.
-Sweep `check__default__bf54cb21+bebed088`: every corpus verdict, warning
-count and contour count unchanged, so no corpus program reaches the
-refusal.
-
-## 2. A class attribute read through a subclass after the base is mutated
-
-`tests/class_attr_mutation.py` (`.python.expect_fail`: its `.exec.check`
-bakes in pyc's answer):
+`tests/class_attr_mutation.py` (`.known_issue`; its check holds CPython's
+output):
 
 ```python
 class A: n = 2
@@ -67,17 +21,75 @@ A.n = 4
 print(B.n)          # CPython: 4.   pyc: 2
 ```
 
-The subclass's prototype holds its own copy of `n`, taken at class
-creation, so a later store to `A.n` never reaches `B.n` (or `B().n`).
-Recorded in closed [003](closed/003-subclass-struct-layout-mismatch.md),
-never fixed. CPython looks an unset class attribute up through the MRO at
-read time. The fix is for a subclass NOT to copy an inherited class
-attribute it does not assign, and to read through the base's.
+**Wider than filed (measured 2026-11-14).** Instances have the same
+defect, and that is the common case:
 
-## 3. A global read before its definition
+```python
+class A: n = 2
+a = A()
+A.n = 9
+print(a.n)          # CPython: 9.   pyc: 2
 
-`tests/scope_global_before_define.py` (a scoping test run with
-`--test-scoping`, so the suite never runs the binary):
+class C:
+    k = 0
+    def bump(self):
+        C.k += 1
+        return self.k
+c = C()
+print(c.bump(), c.bump())   # CPython: 1 2.   pyc: 0 0
+```
+
+`tests/class_attr_mutation_instances.py` (`.known_issue`) holds these.
+
+**Mechanism.** A class is a struct type with a prototype object. A
+subclass's prototype copies each inherited member when the class is
+created (`python_ifa_build_syms.cc`, the base `___init___`), and an
+instance is a clone of its class's prototype. Every class attribute is
+therefore copied at the moment the subclass or the instance is made.
+CPython looks an attribute up at READ time: the instance, then the class
+MRO. The two agree exactly when a class attribute is never stored
+through a class after something has copied it.
+
+**Why the filed fix is not enough.** "A subclass does not copy an
+inherited attribute it never assigns; its read goes to the base's
+prototype" fixes `B.n` but not `B().n` (the instance clones B's
+prototype) nor any instance read. Any fix has to change what a read of
+such a member means. It is a representation change, not a lowering fix.
+
+**Two designs, neither started:**
+
+- *A shared cell per mutated class attribute.* The prototype holds a
+  pointer to a cell `{owner, value}`, and subclass prototypes and
+  instances copy the pointer, so they alias the class's cell. A read
+  dereferences it. A store through an object that owns the cell mutates
+  it in place (`A.n = 4`, seen by B and every instance). A store through
+  one that does not (`B.n = 5`, `a.n = 1`) installs a fresh cell it
+  owns. That is CPython's lookup for every case above, at one
+  indirection, paid only by the members that need it.
+- *Redirect the read.* A read of a member that no store ever reaches
+  through an instance goes to the defining class's prototype. Cheaper,
+  but it covers instances and not a subclass that later assigns its own
+  value (`B.n = 5`, read before that store), and "no store reaches it
+  through an instance" has to come from FA's types, not from the
+  attribute's name (AGENTS.md).
+
+**Which members.** Only a class attribute stored through a class value
+after definition needs either design, and that has to be decided
+structurally: a `setter` whose receiver can be a class prototype
+CreationSet, found by FA, not a scan for `Name.attr =` in the source.
+Everything else keeps the copy, which is exact for it.
+
+**Corpus: no witness.** The two programs that mutate class attributes
+(`chull`'s `Edge.enumm += 1`, `bh`'s `BH.nbody = ...`) read them back
+through the class itself, which is correct today. Priority is the suite
+and real programs: the class-counter idiom read through `self` is
+common Python. The same gap refuses a decorator stored on a class after
+its definition ([007](closed/007-decorators-not-applied.md)).
+
+## 2. A global read before its definition sees the later value
+
+`tests/scope_global_before_define.py` (run under `--test-scoping`, so the
+binary never runs):
 
 ```python
 class a:
@@ -86,39 +98,34 @@ class a:
 z = 1
 ```
 
-pyc reads the one module-level value, which is assigned later. Same family
-as [103](closed/103-unknown-kwarg-silently-bound-positionally.md)'s executed
-undefined name: a read that CPython rejects at run time must be refused, or
-checked at run time. It must not see a value from the future.
+A read CPython rejects at run time must be refused or checked at run
+time, as closed/103 does for an executed undefined name; it must not see
+a value from the future. The flow-insensitive global slot is
+[ifa/050](../ifa/issues/050-FA-general-constant-propagation-unreachable-code.md)'s
+subject; a write-once global (its 1b) answers this case exactly.
 
-## Already tracked elsewhere (for completeness)
+## 3. Deep recursion overflows the C stack; `sys.setrecursionlimit` is ignored
 
-- `list_tuple_union_method`: strict prints `[1, 2]` for `(1, 2)`
-  (ifa/102; `.known_issue` at the EXEC stage).
-- ~~`repr_without_str`: `<object>` for a class's `__repr__`~~ FIXED
-  2026-10-03 ([123](closed/123-str-does-not-fall-back-to-repr.md)):
-  `object.__str__` now calls `__repr__`.
-- `lambda_class_attr`: the default `repr` of an instance (`<object>` for
-  `<__main__.A object at 0x…>`). This is the residual of 123, which fixed
-  the fallback but not the default text.
+`tests/list_index_type_mismatch_salvage.py` (corpus `loop`) segfaults in
+every mode: 16,883 frames of DFS recursion, and `ulimit -s unlimited`
+runs it to completion. The program calls `sys.setrecursionlimit(100000)`,
+which `pyc_lib/sys.py` accepts and ignores. Fix: run the program on a
+stack sized to the limit (the runtime's `main` starts the program on a
+thread with a large stack), and turn an overflow into CPython's
+`RecursionError` rather than a SIGSEGV.
+
+## Noted, not actionable here
+
+- `lambda_class_attr`: the default instance repr is `<object>` where
+  CPython prints `<__main__.A object at 0x…>`. The address can never
+  match; printing the class name is cheap and is all that can.
 - `zip_builtin`, `tuple_list_mix`: `len(zip(...))` and `zip(...)[i]`
-  compile, where CPython raises `TypeError`. `zip`/`map`/`filter` return
-  eager lists. The author's decision (2026-09-29) is to keep the eager
-  lists and not add lazy iterator objects, so this is a documented
-  representation (171 #5).
-- `list_index_type_mismatch_salvage` (= corpus `loop`): segfaults in
-  every mode. `--strict` used to refuse it, but only because of the
-  premature check fixed in 171 (see there). Triaged 2026-09-29: it is
-  **C-stack exhaustion**, not a miscompile. gdb shows 16,883 frames of the
-  DFS recursion, and with `ulimit -s unlimited` the binary runs to
-  completion (rc 0). The program calls `sys.setrecursionlimit(100000)`,
-  which pyc ignores. [025](025-shedskin-examples-coverage.md) lists `loop
-  139` under ifa/102; that attribution is wrong. **Fix:** honour the
-  recursion limit by running the program on a stack sized to it (e.g. the
-  runtime's `main` starts a thread with a large stack), or at least turn
-  the overflow into CPython's `RecursionError` rather than a SIGSEGV.
+  compile where CPython raises. The eager lists are a documented
+  representation by the author's decision (README accommodation table).
+- `list_tuple_union_method`: a `{list, tuple}` receiver,
+  [ifa/102](../ifa/issues/closed/102-codegen-detected-conditions-are-refusals-or-demands.md).
 
 ## Verification
 
-Re-run the comparison (the script is in 171's verification record). Each
-item above either matches CPython or is refused with a named diagnostic.
+Re-run the comparison (the script is in 171's verification record):
+every item matches CPython or is refused with a named diagnostic.

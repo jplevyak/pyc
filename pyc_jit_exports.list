@@ -1,0 +1,9 @@
+/* The symbols the `pyc -j` JIT resolves in the running pyc
+   (DynamicLibrarySearchGenerator::GetForCurrentProcess): the runtime
+   (pyc_runtime.o) and the Boehm GC. `make pyc-static` exports only these;
+   -rdynamic would export all of the statically linked LLVM as well. */
+{
+  _CG_*;
+  _cg_*;
+  GC_*;
+};

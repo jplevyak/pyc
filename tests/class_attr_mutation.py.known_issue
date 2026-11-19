@@ -1,0 +1,1 @@
+issues/173 (173-silent-deviations-found-by-the-strict-suite-check) item 1: a class attribute read through a subclass after the base is mutated (A.n = 4, then B.n) reads the subclass prototype's own copy, taken at class creation; CPython looks it up through the MRO at read time. The .exec.check holds CPython's output, so this flips to PASS when the issue is fixed.

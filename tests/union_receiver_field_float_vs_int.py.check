@@ -1,0 +1,1 @@
+union_receiver_field_float_vs_int.py:23: warning: an expression holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)

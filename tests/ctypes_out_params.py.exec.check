@@ -1,0 +1,19 @@
+0.75 4
+0.25 3.0
+123 b'abc'
+7 8 9
+6 c_int(6) c_double(2.0) True
+44
+255
+b'a' b'B' b'\x00' None b'hi'
+b'Q'
+True 7 7
+9
+11
+11 4
+False True
+ValueError NULL pointer access
+42 42 42
+b'z' 13 13
+b'A'
+4 8 1 8 16 4 16

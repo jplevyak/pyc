@@ -1,7 +1,12 @@
 # 180 — a bound method stored into another class's instance crashes when called
 
 **Status:** open. Found 2026-10-16. The README listed it as a compile error
-(its old "t30" limitation). It now compiles and SEGFAULTs, both backends.
+(its old "t30" limitation). It then compiled and SEGFAULTed on both
+backends. Since 2026-11-07 it is refused at compile time on both
+backends, by ifa/102 step 3's dispatch coverage check: "the dispatch of
+'x' has no arm for receiver type(s) closure …". The receiver union holds
+the two closure types, and no tag compare claims them. The fix below is
+still the work.
 
 ## Symptom
 

@@ -1,0 +1,1 @@
+fail: error line 8: the decorator on method 'm' cannot be applied: the method takes *args or keyword-only parameters, uses super() or a __private name, or its class is not at module level; pyc refuses rather than ignore it (issues/007)

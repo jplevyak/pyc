@@ -29,6 +29,13 @@
  * definition TU. */
 extern char *_CG_string_alloc(size_t s);
 extern char *_CG_String(const void *x);
+extern _CG_int64 _CG_ffi_bytes_addr(char *b);
+extern char *_CG_ffi_cstr(_CG_int64 p);
+extern char *_CG_ffi_buf(_CG_int64 n);
+extern char *_CG_ffi_char(_CG_int64 v);
+extern _CG_int64 _CG_ffi_sizeof_ptr(void);
+extern _CG_int64 _CG_ffi_rd_ptr(_CG_int64 a);
+extern _CG_int64 _CG_ffi_wr_ptr(_CG_int64 a, _CG_int64 v);
 extern char *_CG_format_string(char *str, ...);
 extern char *_CG_format_string_tagged(char *str, const char *tags, ...);
 extern char *_CG_fmt_grow(char *out, size_t *cap, size_t len, size_t need);

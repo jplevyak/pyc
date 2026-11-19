@@ -14,6 +14,9 @@
 #include <ftw.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include <set>
 #include <string>
 
@@ -114,6 +117,24 @@ static void exec_program(const std::string &exe, char **prog_argv) {
 }
 
 // Where -x keeps `script`'s executable: fills *dir, *exe, *manifest.
+// The running executable's path, through any symlink, or "" when the platform
+// cannot say (Linux: /proc/self/exe; macOS: _NSGetExecutablePath).
+static std::string executable_path() {
+  char self[PATH_MAX];
+#ifdef __APPLE__
+  uint32_t size = sizeof(self);
+  if (_NSGetExecutablePath(self, &size) != 0) return "";
+  char real[PATH_MAX];
+  if (!realpath(self, real)) return "";
+  return real;
+#else
+  ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+  if (n <= 0) return "";
+  self[n] = 0;
+  return self;
+#endif
+}
+
 static void exec_cache_paths(cchar *script, int argc_opts, char **argv, std::string *dir, std::string *exe,
                              std::string *manifest, std::string *name) {
   cchar *base = strrchr(script, '/');
@@ -128,7 +149,9 @@ static void exec_cache_paths(cchar *script, int argc_opts, char **argv, std::str
   char real[PATH_MAX];
   if (realpath(script, real)) h = fnv64(real, strlen(real), h);
   struct stat st;
-  if (stat("/proc/self/exe", &st) == 0) {  // the compiler's identity
+  // The compiler's identity. (stat of /proc/self/exe failed silently on
+  // macOS, so a rebuilt pyc reused programs the old one had cached.)
+  if (stat(executable_path().c_str(), &st) == 0) {
     h = fnv64(&st.st_size, sizeof(st.st_size), h);
 #ifdef __APPLE__
     h = fnv64(&st.st_mtimespec, sizeof(st.st_mtimespec), h);
@@ -160,7 +183,7 @@ static void help(ArgumentState *arg_state, char *arg_unused) {
 }
 
 static void version(ArgumentState *arg_state, char *arg_unused) {
-  char ver[30];
+  char ver[128];
   get_version(ver);
   fprintf(stderr, "PYC Version %s ", ver);
   fprintf(stderr,
@@ -228,6 +251,10 @@ static ArgumentDescription arg_desc[] = {
     {"no-optimize", ' ', "Compile the generated C without optimization (-O0, for debugging)", "f", &codegen_optimize,
      "PYC_NO_OPTIMIZE", NULL},
     {"output", 'o', "Output File", "S511", codegen_output, "PYC_OUTPUT", NULL},
+    {"cflags", ' ', "Extra flags for compiling the generated program (e.g. \"$(pkg-config --cflags glib-2.0)\")",
+     "S2047", codegen_extra_cflags, "PYC_CFLAGS", NULL},
+    {"libs", ' ', "Extra flags for linking the generated program (e.g. \"-L/opt/lib -lfoo\")", "S2047",
+     codegen_extra_libs, "PYC_LIBS", NULL},
     {"exec", 'x',
      "Compile (cached in ~/.cache/pyc by name and source hash) and run; for `#!/usr/bin/env -S pyc -x`. "
      "Arguments after the source file go to the program",
@@ -297,10 +324,14 @@ static void init_system() {
 }
 
 void compile(cchar *fn) {
+  // The program's sys.argv[0] under -j: the script, or '' in the REPL, as in
+  // an interactive CPython (its input is compiled from a temporary file).
+  cchar *script = do_repl ? "" : fn;
   if (ifa_analyze(fn) < 0) fail("program does not type");
   // issue 011: Fun::calls (built by clone(), inside ifa_analyze())
   // now exists -- compute the precise, post-FA can-raise bit before
   // any codegen consumes it.
+  ifa_phase("analyze-tail");
   compute_fun_can_raise();
   // issue 011 (Tier 2 continued): fold each provably-safe exception
   // check's condition to FA's own canonical true_type constant --
@@ -326,10 +357,13 @@ void compile(cchar *fn) {
   // NOT redundant with native FA integration; it addresses a
   // different, general property of mark_live_code's design.
   mark_exc_checks_constant(fa);
+  ifa_phase("can-raise");
   if (ifa_optimize() < 0) fail("unable to optimize program");
   ifa_dbg_bodies("after-optimize");  // ifa/issues/112
   { extern void sum_audit_check(cchar *); sum_audit_check("after-optimize"); }  // ifa/120
+  ifa_phase("optimize-tail");
   { extern void compute_clone_equivalence(FA *); compute_clone_equivalence(pdb->fa); }  // ifa/121
+  ifa_phase("clone-equivalence");
   if (fgraph) ifa_graph(fn);
   // pyc -x: codegen's .c/.ll/.o and the executable go in the cache entry
   // being built, not beside the source (which may not be writable).
@@ -349,20 +383,30 @@ void compile(cchar *fn) {
       // cg_v2_emit_llvm_module (see llvm.cc:155 — old direct
       // emitter was retired in issue 014).
       llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
+      ifa_phase("write-llvm-ir");
       { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
       maybe_dump_html();
       if (codegen_jit) {
-        if (llvm_jit_execute()) fail("JIT execution failed");
+        if (codegen_extra_source || codegen_link_libs.n)
+          fail("foreign (ctypes) calls are not supported under --jit: the shim and the library are linked, not loaded");
+        // sys.argv is [script], as under CPython: the JIT called main(0,
+        // NULL), so len(sys.argv) was 0 and every program that derives a
+        // run-time value from it computed something else.
+        char *jit_argv[] = {(char *)script, nullptr};
+        if (llvm_jit_execute(1, jit_argv)) fail("JIT execution failed");
       } else {
         if (llvm_codegen_compile(fn)) fail("compilation failure");
+        ifa_phase("llvm-compile");
       }
     } else
 #endif
     {
       c_codegen_write_c(pdb->fa, if1->top->fun, fn);
+      ifa_phase("write-c");
       { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
       maybe_dump_html();
       if (c_codegen_compile(fn)) fail("compilation failure");
+      ifa_phase("cc");
     }
   } else {
     maybe_dump_html();
@@ -379,6 +423,36 @@ cchar *mod_name_from_filename(cchar *n) {
   cchar *end = strrchr(n, '.');
   assert(end);
   return dupstr(start, end);
+}
+
+// The directory of the running executable, through any symlink, or "" when
+// the platform cannot say.
+static std::string executable_dir() {
+  std::string self = executable_path();
+  size_t slash = self.rfind('/');
+  return slash == std::string::npos ? "" : self.substr(0, slash);
+}
+
+// The library directory: `__pyc__/`, `pyc_lib/`, the runtime header and
+// objects, `Makefile.cg`. In order:
+//   - `-D DIR` or PYC_SYSTEM_DIRECTORY, as given;
+//   - "." when it holds `__pyc__` (the source tree, the test harness);
+//   - the executable's own directory when it does (a source-tree build run
+//     from elsewhere, or a `#!/usr/bin/env -S pyc -x` script);
+//   - `<exe>/../lib/pyc`, the installed layout (`make install`, `make dist`).
+// It is made absolute: generated C includes the runtime header by this path.
+static void resolve_system_dir() {
+  bool explicit_dir = strcmp(system_dir, ".") != 0;
+  if (!explicit_dir && !is_directory("./__pyc__")) {
+    std::string exe = executable_dir();
+    for (std::string cand : {exe, exe + "/../lib/pyc"}) {
+      if (exe.empty() || !is_directory((cand + "/__pyc__").c_str())) continue;
+      if (cand.size() < sizeof(system_dir)) strcpy(system_dir, cand.c_str());
+      break;
+    }
+  }
+  char real[PATH_MAX];
+  if (realpath(system_dir, real) && strlen(real) < sizeof(system_dir)) strcpy(system_dir, real);
 }
 
 int main(int argc, char *argv[]) {
@@ -404,6 +478,7 @@ int main(int argc, char *argv[]) {
     }
   }
   MEM_INIT();
+  ifa_phase("start");
   // The C backend optimizes by default, as the LLVM backend always has
   // (clang -O2): at -O0 the generated C ran 2-4x slower (brainfuck 100s vs
   // 26s, slower than CPython) and every C-vs-LLVM timing compared optimized
@@ -415,7 +490,7 @@ int main(int argc, char *argv[]) {
   int exec_script = -1;
   {
     bool saw_x = false;
-    static cchar *takes_value[] = {"-o", "-D", "-l", "--output", "--system-directory", "--log", "--fa-inline",
+    static cchar *takes_value[] = {"-o", "-D", "-l", "--output", "--system-directory", "--log", "--cflags", "--libs", "--fa-inline",
                                    "--narrow", "--dump-ir-after", nullptr};
     for (int i = 1; i < argc; i++) {
       cchar *a = argv[i];
@@ -439,23 +514,7 @@ int main(int argc, char *argv[]) {
     pyc_argv[argc] = nullptr;
   }
   process_args(&arg_state, argc, pyc_argv);
-  // The library directory (-D / PYC_SYSTEM_DIRECTORY) defaults to ".", which
-  // only works from the source tree. Left at that default with no __pyc__
-  // here, use the directory of the pyc executable itself (through any
-  // symlink), so `pyc` on PATH -- and a `#!/usr/bin/env -S pyc -x` script run
-  // from anywhere -- finds its library.
-  if (!strcmp(system_dir, ".") && !is_directory("./__pyc__")) {
-    char self[PATH_MAX];
-    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
-    if (n > 0) {
-      self[n] = 0;
-      if (char *slash = strrchr(self, '/')) {
-        *slash = 0;
-        std::string lib = std::string(self) + "/__pyc__";
-        if (is_directory(lib.c_str()) && strlen(self) < sizeof(system_dir)) strcpy(system_dir, self);
-      }
-    }
-  }
+  resolve_system_dir();
 #ifdef USE_LLVM
   // The JIT runs only on the LLVM backend (compile() consults codegen_jit
   // inside the codegen_llvm branch), so `-j` alone used to be ignored
@@ -556,6 +615,14 @@ int main(int argc, char *argv[]) {
         pymod = dparse_builtin_dir(fn);
       } else {
         strcat(fn, ".py");
+        if (access(fn, R_OK) != 0) {
+          fprintf(stderr,
+                  "pyc: cannot find its library (__pyc__/) in '%s'.\n"
+                  "Pass -D DIR or set PYC_SYSTEM_DIRECTORY. pyc also looks beside its executable "
+                  "and, installed, in <prefix>/lib/pyc.\n",
+                  system_dir);
+          exit(2);
+        }
         filename = dupstr(fn);
         pymod = dparse_python_to_ast(filename);
       }

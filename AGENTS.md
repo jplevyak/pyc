@@ -47,16 +47,17 @@ structure happened to split. Splitting driven by structure rather than
 by demand is a defect, however well it converges.
 
 **This keeps getting forgotten, so the audit is written down.**
-[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md) tracks it to
-completion. It holds the two-question test and the non-monotone diagnostic
-that identifies an arbitrary lever. It lists what has been removed and what
-is still in the tree, and gives a verdict for every off-by-default
-splitting lever in `fa_flags.cc`. As of 2026-10-13, no violation is known
+[ifa/146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md) tracked it to
+completion (closed 2026-11-03). It holds the two-question test and the
+non-monotone diagnostic that identifies an arbitrary lever, and lists what
+was removed with the measurement for each. The one default-path violation
+that remains, the SETTER stage nominating on a fact, is
+[ifa/196](ifa/issues/196-the-setter-stage-splits-on-a-fact.md). As of 2026-10-13, no violation is known
 to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
 test, now asks for a demand. On 2026-10-15 every off-by-default lever
 measured dead, non-monotone or inert was deleted, `PYC_SLOTARITY`,
 `PYC_TYPEMOVE` and `PYC_RETDEMAND` with them, so the inventory is empty.
-The writer split (ifa/178) has no known program that needs it.
+The writer split (closed/178) has no known program that needs it.
 **A dispatch that cannot resolve statically is a demand**: the goal is zero
 run-time dispatch.
 
@@ -70,8 +71,10 @@ structural by construction: on chess, 95 list CSs stood for 6 element
 types
 ([ifa/128](ifa/issues/closed/128-cs-identity-over-discriminates-vs-element-type.md)).
 The flip cut container CreationSets from 4.41 per shape to 3.19 per shape
-(sweep `4b61e721`). The plan, and what is still open, is
-[ifa/129](ifa/issues/129-plan-demand-driven-creation-set-splitting.md).
+(sweep `4b61e721`). The plan is
+[ifa/129](ifa/issues/closed/129-plan-demand-driven-creation-set-splitting.md)
+(landed, closed 2026-11-03); what is still open is
+[ifa/196](ifa/issues/196-the-setter-stage-splits-on-a-fact.md).
 
 The dependency runs one way only: an EntrySet is split **so that** a
 CreationSet split becomes possible, when a demand test has asked for one.
@@ -177,7 +180,7 @@ rather than failing — easy to read as "fine". Two habits follow:
 - Running `./test_pyc.py` alone is NOT the gate. It is one of the four
   things `test-core` does, which is itself one of four things `test`
   does. `make test` is what CI runs.
-- `test-ir` covers **16 phases**, and `./ifa-test --phase <name>` prints
+- `test-ir` covers **17 phases**, and `./ifa-test --phase <name>` prints
   a per-phase summary. Reading the tail of `make test-ir` shows you the
   LAST phase only. Check every phase's `failed:` line, or just trust
   `make test`'s exit code, which is the point of running it.
@@ -456,7 +459,7 @@ facts. **A demand is something OBSERVING a distinction and being unable to
 proceed**: a type violation, an irrepresentable union, a dispatch that
 cannot resolve. Reading a fact as a demand is how an arbitrary splitter
 passes the test, and it has happened twice in this repo — see
-[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s E and its
+[ifa/146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md)'s E and its
 note on the refinement.
 
 So `creation_point` keying on `(allocation site x contour)` was wrong (the
@@ -508,7 +511,7 @@ plausible and each was measured dead:
 
 The last one is the sharpest warning: a one-bit grouping key with no content
 information *looks* like arbitrary splitting by
-[ifa/146](ifa/issues/146-remove-all-arbitrary-splitting.md)'s first question,
+[ifa/146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md)'s first question,
 and removing it makes the corpus WORSE. 146's own diagnostic settles it —
 an arbitrary lever is **non-monotone**; a lever whose removal costs contours
 is earning its keep. Apply the diagnostic, not just the definition.
@@ -617,7 +620,9 @@ CPython at `nproc/4`, and CPython results are cached in
 11 minutes, validated at 76-of-77 programs byte-identical to the serial
 script on one tree and one binary; the 77th is `score4`, which straddles
 the 120 s cap and flips on repeats of a single build. The remaining floor
-is `othello3`, which takes 317 s **on its own** to fail to compile.
+is `othello3`: since 2026-11-10 it compiles inside the 400 s cap, in about
+170 s (ifa/207, ifa/186). `PYC_DBG_PHASES=1` prints the wall time of each
+pipeline stage.
 
 Two things follow from the cache. CPython's answer changes only when the
 corpus does, so the key is the corpus tree hash + uncommitted `**/*.py` +
@@ -695,6 +700,43 @@ Three ways to get a sweep that looks real and is not:
 first diagnostic) is still the right tool for *triaging* what is broken;
 `corpus_sweep.sh` is for *comparing two trees* and for the run/output
 status. `ifa/issues/runstatus.sh` predates both.
+
+## Release builds: `make PORTABLE=1 dist`, then `dist_smoke.sh`
+
+A pyc for someone else's machine is `make clean && make PORTABLE=1 dist`.
+It produces `dist/pyc-<version>-<os>-<arch>.tar.gz`, a relocatable
+install: `bin/pyc` linked statically (LLVM, Boehm GC, dparser, the C++
+runtime; only libc and zstd stay dynamic), and `lib/pyc/` holding the
+library, the runtime and a static Boehm GC that the programs pyc builds
+link. pyc finds `lib/pyc` from its own location, so the tarball unpacks
+anywhere. The user needs `clang++` (any recent version) and `make`.
+The release workflow builds it on Linux (x86-64, arm64) and macOS (arm64,
+x86-64); on macOS from Homebrew's llvm@20 and bdw-gc, with Xcode's
+`clang++` for pyc itself. A macOS `pyc` is stripped with `strip -x`, never
+a full strip: that removes the globals the binary exports, and the stripped
+pyc segfaulted in its static initializers before `main`.
+
+Three things that are easy to get wrong:
+
+- **`PORTABLE=1` and a clean tree.** Without it every object is built
+  with `-march=native` and the binary can die on an older CPU. make does
+  not track flags, so a tree already built without it keeps those
+  objects; `dist` refuses to run without `PORTABLE=1`.
+- **Test it where nothing else is.** `dist_smoke.sh TARBALL` compiles a
+  fixed set of suite programs from a fresh directory on both backends,
+  plus the JIT, and compares with their `.exec.check`, and it fails any
+  binary that loads a library outside the OS's own directories. That
+  last check is the self-containment test where no clean machine exists
+  (macOS runners keep Homebrew). On Linux, also run it in a clean
+  container (its header has the `docker run` line): that is what
+  found the LLVM backend handing its IR to the user's older clang, fixed
+  by writing the object in process (ifa/CODEGEN_LLVM.md §11).
+- **The LLVM version is the release's, not the user's.** pyc carries its
+  LLVM, so nothing it produces may need the user's LLVM to read it: no
+  `.ll` or bitcode handed to the system compiler. The runtime bitcode
+  `pyc_runtime_lto.o` must be built by a clang no newer than the LLVM pyc
+  links (`make CC=clang-20 CXX=clang++-20 LLVM_CONFIG=...` together), or
+  pyc cannot read it and falls back to `libpyc_runtime.a`, slower.
 
 ## Do not check in build artifacts
 

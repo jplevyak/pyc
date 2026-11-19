@@ -29,6 +29,7 @@ class PycCallbacks : public IFACallbacks {
   cchar *narrowing_isinstance_name() { return "isinstance"; }
   cchar *narrowing_is_none_name() { return "__is__"; }
   cchar *narrowing_is_not_none_name() { return "__nis__"; }
+  int narrowing_wrapper_polarity(Sym *selector);
 };
 
 class PycSymbol : public IFASymbol {
@@ -118,6 +119,8 @@ class PycModule : public gc {
 };
 
 int ast_to_if1(Vec<PycModule *> &mods);
+// REPL: this input needs the builtin module shaped for it (issues/007).
+bool pyc_needs_whole_program_frontend(Vec<PycModule *> &mods);
 
 // issue 011 (per-callee can-raise gating, post-FA refinement): call
 // once after ifa_analyze() succeeds (pyc.cc), before ifa_optimize()

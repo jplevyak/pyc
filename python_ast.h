@@ -102,13 +102,14 @@ class PyDAST : public gc {
   unsigned is_member : 1;
   unsigned is_object_index : 1;
   unsigned is_async : 1;
+  unsigned is_raw_field : 1;  // `o.ATTR` is the field itself, never a property accessor (issues/007)
 
   PyDAST()
       : kind(PY_invalid), str_val(nullptr), int_val(0), float_val(0.0),
         is_int(false), is_imag(false), op(0), ctx(0),
         filename(nullptr), line(0), col(0),
         code(nullptr), sym(nullptr), rval(nullptr),
-        parent(nullptr), is_builtin(0), is_member(0), is_object_index(0), is_async(0) {
+        parent(nullptr), is_builtin(0), is_member(0), is_object_index(0), is_async(0), is_raw_field(0) {
     label[0] = label[1] = nullptr;
   }
 

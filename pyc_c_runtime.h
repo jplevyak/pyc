@@ -45,6 +45,9 @@
 #endif
 #include <sys/time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/random.h>  // getentropy (glibc declares it in unistd.h)
+#endif
 #include <sys/socket.h>
 #include <poll.h>
 #include <arpa/inet.h>
@@ -528,6 +531,26 @@ inline char *_CG_String_n(const void *x, size_t len) {
   char *str = _CG_string_alloc(len);
   memcpy(str, x, len);
   return str;
+}
+
+// Foreign calls (the ctypes subset, python_ifa_ctypes.cc). A foreign address
+// is a machine word on the pyc side; these convert between it and bytes.
+// _CG_ffi_buf is a C-layout struct's storage: collected, zeroed and SCANNED,
+// so a pointer stored into a struct field keeps its target alive.
+inline _CG_int64 _CG_ffi_bytes_addr(char *b) { return (_CG_int64)(intptr_t)b; }
+inline char *_CG_ffi_cstr(_CG_int64 p) { return _CG_String((const void *)(intptr_t)p); }
+inline char *_CG_ffi_buf(_CG_int64 n) { return _CG_string_alloc((size_t)n); }
+// A c_char's value: one byte, which may be NUL.
+inline char *_CG_ffi_char(_CG_int64 v) {
+  char c = (char)v;
+  return _CG_String_n(&c, 1);
+}
+// A ctypes pointer object is a one-word cell in such storage.
+inline _CG_int64 _CG_ffi_sizeof_ptr(void) { return (_CG_int64)sizeof(void *); }
+inline _CG_int64 _CG_ffi_rd_ptr(_CG_int64 a) { return (_CG_int64)(intptr_t) * (void **)(intptr_t)a; }
+inline _CG_int64 _CG_ffi_wr_ptr(_CG_int64 a, _CG_int64 v) {
+  *(void **)(intptr_t)a = (void *)(intptr_t)v;
+  return 0;
 }
 
 // Real process argv (ifa/issues -- pyc_lib/sys.py used to hardcode

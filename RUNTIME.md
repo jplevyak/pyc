@@ -463,7 +463,9 @@ hello   (binary linking against libgc, libm)
 `Makefile.cg` (at `$system_dir/Makefile.cg`) sets:
 - `CG_ROOT=$system_dir` — for finding `pyc_c_runtime.h`.
 - `-I$CG_ROOT` — adds the include path.
-- `-lgc` — Boehm GC.
+- the Boehm GC: `$CG_ROOT/gc/lib/libgc.a` and `-I$CG_ROOT/gc/include` when
+  the install bundles one (`make dist`), so the program needs no libgc
+  where it is built or run; otherwise `-lgc`.
 - `-lm` — standard math.
 - `CG_TARGET` — the output binary's path; `hello` by default (input filename,
   extension stripped) but overridden by pyc's `-o`/`--output` flag when given.
@@ -622,6 +624,12 @@ so error messages reference a consistent path.
 - `__pyc__/*.py` — the Python builtin module.
 - `__pyc__.py` — single-file fallback.
 - `Makefile.cg` (in install dir) — driver for the C compile.
+- The install layout (`make install`, `make dist`): `<prefix>/bin/pyc` and
+  `<prefix>/lib/pyc/` holding `__pyc__/`, `pyc_lib/`, `pyc_c_runtime.h`,
+  `Makefile.cg`, `pyc_runtime.o`, `libpyc_runtime.a`, `pyc_runtime_lto.o`
+  and, bundled, `gc/{include,lib}`. pyc finds the library directory with
+  `-D` / `PYC_SYSTEM_DIRECTORY`, else `./__pyc__`, else beside its
+  executable, else `<exe>/../lib/pyc` (`resolve_system_dir`, `pyc.cc`).
 - Sister docs: [PYTHON_FRONTEND.md](PYTHON_FRONTEND.md) (the
   frontend that consumes the builtins),
   [ifa/CODEGEN_C.md](ifa/CODEGEN_C.md) (the backend that emits

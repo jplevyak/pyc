@@ -34,13 +34,13 @@ const OPTIONS: [string, string][] = [
   ['--no-optimize', 'Compile the generated C at -O0, for debugging.'],
   ['-g, --debug-info', 'Emit debug information.'],
   ['--html', 'Emit an HTML view of the type-annotated program.'],
-  ['-D <dir>, --system-directory <dir>', "pyc's library directory. Default: $PYC_SYSTEM_DIRECTORY, else ., else the pyc executable's directory."],
+  ['-D <dir>, --system-directory <dir>', "pyc's library directory. Default: $PYC_SYSTEM_DIRECTORY, else ., else beside the pyc executable, else ../lib/pyc from it (the installed layout)."],
   ['-v, --verbose / -d, --debug', 'More output; repeat for more. --help also lists the development options.'],
 ];
 
 const SUPPORTED: [string, string][] = [
-  ['Classes', 'Inheritance, super(), class attributes, operator overloading, __str__/__repr__, __iter__/__next__, __enter__/__exit__, read-only @property, @staticmethod, @classmethod (cls(...))'],
-  ['Functions', 'Closures, nonlocal/global, lambdas, default and mutable default arguments, *args, nested functions, local classes'],
+  ['Classes', 'Inheritance, super(), class attributes, operator overloading, __str__/__repr__, __iter__/__next__, __enter__/__exit__, @property (getters, setters, deleters), @staticmethod, @classmethod (cls(...))'],
+  ['Functions', 'Closures, nonlocal/global, lambdas, default and mutable default arguments, *args, **kwargs, keyword-only parameters, nested functions, local classes'],
   ['Exceptions', 'try/except/else/finally, raise, user hierarchies, built-in exceptions raised by the runtime'],
   ['Generators', 'yield, yield from, send(), return values'],
   ['async / await', "Compiled to coroutines and run on pyc's own event loop (no asyncio module yet)"],
@@ -193,23 +193,28 @@ def sqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
         <p>Not yet supported, each tracked by an issue:</p>
         <ul>
           <li>
-            <code>**kwargs</code> and keyword-only parameters (
-            <a href={repo('blob/main/issues/182-kwargs-and-keyword-only-parameters.md')}>
-              issues/182
+            <code>f(**d)</code> unpacked into named parameters, which a forwarding decorator does, and{' '}
+            <code>f(*xs)</code> of a list into them (
+            <a href={repo('blob/main/issues/189-unpacking-into-named-parameters.md')}>
+              issues/189
             </a>
             )
           </li>
           <li>
-            Property setters and deleters (
-            <a href={repo('blob/main/issues/007-decorators-not-applied.md')}>issues/007</a>)
+            A class attribute stored through the class after an instance or subclass was made
+            (<code>C.k += 1</code> then <code>self.k</code>): the instance keeps the old value (
+            <a href={repo('blob/main/issues/173-silent-deviations-found-by-the-strict-suite-check.md')}>
+              issues/173
+            </a>
+            )
           </li>
           <li>
             <code>complex</code>
           </li>
           <li>
-            Attribute reads through <code>cls</code> in a <code>@classmethod</code> (
-            <a href={repo('blob/main/issues/184-classmethod-attribute-through-cls.md')}>
-              issues/184
+            A class&apos;s <code>__name__</code> (
+            <a href={repo('blob/main/issues/190-class-name-attribute.md')}>
+              issues/190
             </a>
             )
           </li>

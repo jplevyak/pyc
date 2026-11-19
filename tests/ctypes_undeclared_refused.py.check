@@ -1,0 +1,1 @@
+fail: error ctypes_undeclared_refused.py:5: ctypes: libc.getpid is used but has no argtypes; pyc needs every foreign function's argtypes declared
