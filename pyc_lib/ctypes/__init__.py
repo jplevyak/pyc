@@ -2,7 +2,8 @@
 # python_ifa_ctypes.cc. A program's declarations (CDLL, argtypes, restype,
 # Structure, POINTER) are consumed by that pass and never reach this module;
 # the names below exist so that `from ctypes import c_int` binds. What does
-# run is here: byref and pointer.
+# run is here: byref, pointer, and sizeof of an instance (sizeof of a type is
+# rewritten to the C compiler's answer).
 #
 # A use the pass does not cover is refused at compile time with its line.
 
@@ -12,12 +13,16 @@ def byref(x):
 def pointer(x):
     return x.__pyc_ffi_pointer__()
 
+def sizeof(x):
+    return x.__pyc_ffi_sizeof__()
+
 CDLL = 0
 PyDLL = 0
 cdll = 0
 Structure = 0
 POINTER = 0
 c_bool = 0
+c_char = 0
 c_byte = 0
 c_ubyte = 0
 c_short = 0

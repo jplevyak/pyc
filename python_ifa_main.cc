@@ -1195,6 +1195,11 @@ bool pyc_has_property_names() { return pyc_property_names.n || pyc_setter_names.
 void pyc_add_setter_name(cchar *name) {
   if (!pyc_is_setter_name(name)) pyc_setter_names.add(dupstr(name));
 }
+// A getter written out as `__pyc_get_NAME__` in a class the property scan
+// does not visit: the ctypes classes generated into the builtin module.
+void pyc_add_property_name(cchar *name) {
+  if (!pyc_is_property_name(name)) pyc_property_names.add(dupstr(name));
+}
 
 // One property of one class, as the scan of its body finds it. `defines`:
 // the class builds the descriptor itself (`@property`, `property(...)`),
@@ -1635,8 +1640,13 @@ static void inject_property_accessors(Vec<PycModule *> &mods, Vec<PyDAST *> &imp
   for (PyDAST *gcls : gen->children) {
     if (gcls->kind != PY_classdef || k >= targets.n) continue;
     PyDAST *body = targets[k++]->children.last();
+    // A default never replaces an accessor the class writes out itself (the
+    // ctypes classes generated into the builtin module do).
+    Vec<cchar *> own;
+    for (PyDAST *m : body->children)
+      if (m->kind == PY_funcdef && m->children.n && m->children[0]->str_val) own.add(m->children[0]->str_val);
     for (PyDAST *meth : gcls->children.last()->children)
-      if (meth->kind == PY_funcdef) body->children.add(meth);
+      if (meth->kind == PY_funcdef && !name_in(own, meth->children[0]->str_val)) body->children.add(meth);
   }
 }
 

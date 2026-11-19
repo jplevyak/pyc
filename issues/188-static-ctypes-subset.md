@@ -1,7 +1,8 @@
 # 188 — a static subset of `ctypes`: calling C libraries from pyc programs
 
-**Status:** open. The core landed 2026-11-11 (`python_ifa_ctypes.cc`,
-`pyc_lib/ctypes/`, tests `ctypes_*`); what is left is the list under
+**Status:** open. The core landed 2026-11-11, and step 0 and item 2 on
+2026-11-18 (`python_ifa_ctypes.cc`, `pyc_lib/ctypes/`, tests `ctypes_*`);
+what is left is the list under
 [Not done](#not-done).
 
 ## What it is
@@ -41,14 +42,17 @@ C shim. Nothing in ifa knows about it.
 | `lib.f.argtypes = [...]`, `lib.f.restype = T` | compile-time only; the statement is erased |
 | `lib.f(a, b)`, `g = lib.f` | untouched: plain method dispatch and a plain bound method, from any module |
 | `class S(Structure)` with `_fields_` | a class over C-layout storage, a getter and a setter per field |
-| `POINTER(T)` | a generated pointer class per interned pointee type (`S`, or a pointer to one): nominal, so `POINTER(S)` and `POINTER(T)` do not mix. A pointer object is a one-word C cell, as in CPython |
+| `POINTER(T)` | a generated pointer class per interned pointee type (a scalar, `S`, or a pointer to one): nominal, so `POINTER(S)` and `POINTER(T)` do not mix. A pointer object is a one-word C cell, as in CPython |
+| `c_int(5)`, `x.value` | a box: a generated class over a one-scalar C cell, one per canonical class (`c_int32` is `c_int`), shared by every module through the builtin module |
+| `sizeof(T)` | the C compiler's `sizeof`; `sizeof(x)` of an instance is a run-time method |
 | `byref(s)`, `pointer(s)` | run-time functions in `pyc_lib/ctypes` |
 
 Three decisions carry the design:
 
 - **Argument checking is method dispatch.** Each wrapper converts its
   arguments with a method only the acceptable types define
-  (`a.__pyc_ffi_int__()` exists on `int` and `bool`, not `float`), so a
+  (`a.__pyc_ffi_c_int__()` exists on `int`, `bool` and a `c_int` box, not
+  on `float` or a `c_long` box), so a
   wrong argument is an ordinary compile-time type error where CPython
   raises `ctypes.ArgumentError`. Those methods are added to the builtin
   classes only for a program that imports `ctypes`.
@@ -88,13 +92,15 @@ the default search path (`--libs "-L. -lfoo -Wl,-rpath,."`).
 | a `c_void_p` result or field | CPython yields `int`, or `None` for NULL. `PYC_FFI_VOIDP_INT` (permissive, warns at the declaration) yields the address with NULL as 0; `--strict` refuses. `POINTER(S)` avoids it. |
 | an unsigned 64-bit result above 2^63 | wraps negative: pyc's `int` is 64-bit. Not flagged. |
 | a `None` passed where a C integer is declared | a run-time `AttributeError`, where CPython raises `ArgumentError`; both at run time. |
+| a `bytes` of length other than 1 passed where a `c_char` is declared | a run-time `TypeError`, where CPython raises `ArgumentError` (whose message carries the same `TypeError` text). As a box value or a field, both raise `TypeError`. |
 
 ## Refused, with the line
 
 A library that is not a string literal, `None` or `find_library("lit")`; a
 function called with no `argtypes` (pyc does not guess a signature from the
 arguments); a declaration that is not at module top level; and any other use
-of a ctypes name (`c_int(5)`, `cast`, `sizeof`, `CFUNCTYPE`).
+of a ctypes name (`cast`, `CFUNCTYPE`, `c_wchar`, constructing a pointer
+from a value: write `pointer(x)`).
 
 ## Not done
 
@@ -103,8 +109,10 @@ of a ctypes name (`c_int(5)`, `cast`, `sizeof`, `CFUNCTYPE`).
    analysis as an external caller. Anything a library retains
    (`user_data`) then needs pinning, because Boehm does not scan the
    library's heap.
-2. **Scalar boxes and out-parameters**: `x = c_int(); f(byref(x)); x.value`,
-   and `POINTER(c_int)`. The `GError **` idiom needs this.
+2. ~~**Scalar boxes and out-parameters**~~: done 2026-11-18, see Item 2 under the plan below. `p[i]` on a
+   NULL pointer does not reach an `except` yet: that is
+   [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)'s
+   item-subscript half. `p.contents` on NULL does.
 3. **Arrays** (`c_int * 4`) and a Structure held by value in a field.
 4. **`Union`, bit fields, `_pack_`.**
 5. **Declarations across modules**: `POINTER(S)` must be written in the
@@ -192,7 +200,7 @@ handed to libc's `memcpy`, NULL construction and truthiness, and NULL
 `contents` raising `ValueError`, identical to CPython on both backends and
 under `--strict`.
 
-### Item 2 — scalar boxes, out-parameters, `POINTER(scalar)`
+### Item 2 — scalar boxes, out-parameters, `POINTER(scalar)` (done 2026-11-18)
 
 The surface: `x = c_int(5)`, `x.value`, `x.value = 3`, `byref(x)`,
 `pointer(x)`, `POINTER(c_int)` as an argument type, a result type and a
@@ -225,6 +233,46 @@ idiom: `err = POINTER(GError)(); f(..., byref(err)); if err: err.contents.messag
 `POINTER(c_char_p)` end pointer, a box passed by value, `p[0]` against
 `p.contents`, and NULL truthiness. The `GError **` shape gets a libc
 stand-in or a hand run against glib, as the core's glib check was.
+
+**What landed.**
+
+- The scalar table carries each name's canonical class on an LP64 target
+  (`c_int32`, `c_int`; `c_size_t`, `c_ulong`; `c_longlong`, `c_long`), and
+  that is the type's identity: `POINTER(c_int64)` is `POINTER(c_long)`, as
+  in CPython. `c_char` is new: a `bytes` of length 1 or an `int` in, a
+  one-byte `bytes` out (`_CG_ffi_char`), NUL included.
+- **A box converts only where its own class is declared.** CPython rejects
+  `abs(c_long(3))` for a `c_int` parameter and accepts `abs(c_int32(3))`.
+  So the per-kind conversions (`__pyc_ffi_int__`, `__pyc_ffi_float__`) became
+  one method per canonical class, `__pyc_ffi_c_int__`, defined on `int`,
+  `bool`, `float` and `bytes` as CPython accepts them, and on that class's
+  box. A mismatch is still a compile-time dispatch error, now naming the C
+  type (`tests/ctypes_arg_type_refused.py.check`).
+- The box classes (`__pyc_ffi_B_K__`), their views, and every pointer type
+  whose root is a scalar are generated into the **builtin module**, so every
+  module shares one `c_int`. The shim gets a generic read, write and
+  `sizeof` per box type (`_CG_ffi_rd_sK`, `_wr_sK`, `_sizeof_sK`), which is
+  the generic accessor step 0 deferred. Two frontend changes follow from
+  generating property-bearing classes there:
+  - the `@property` scan does not visit the builtin module, so the
+    generated classes write their getters out as `__pyc_get_NAME__` and
+    register the name (`pyc_add_property_name`);
+  - `inject_property_accessors` no longer appends a default accessor to a
+    builtin class that defines that accessor itself. It used to append a
+    second `__pyc_get_value__` after the box's own, and the later one wins.
+- The lowering arms `pyc_program_has_raise` when it generates box or
+  pointer classes into the builtin module. Their raises are reached through
+  `p.contents` and `b.value`, which the syntactic gate cannot see in builtin
+  code.
+- `p.contents = x` repoints `p` (`__pyc_set_contents__`), for a struct, a
+  box and a pointer pointee. `p[i] = v` stores through a scalar pointer.
+- `POINTER(c_void_p)` and a `c_void_p` box fall under `PYC_FFI_VOIDP_INT`,
+  so `--strict` refuses them, as planned.
+
+Not done: `POINTER(T)(x)` (write `pointer(x)`), a box's `from_param`,
+`c_wchar`, and keyword arguments to a box constructor. The `GError **`
+shape is `tests/ctypes_pointers`' `POINTER(POINTER(Node))` with `byref`,
+which libc's `memcpy` writes; it was not run against glib.
 
 ### Item 3 — arrays, and a Structure held by value in a field
 

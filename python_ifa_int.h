@@ -307,6 +307,7 @@ cchar *cannonicalize_string(cchar *s);
 bool decorator_name_is(cchar *s, cchar *want);
 bool pyc_is_setter_name(cchar *name);   // issues/188 (python_ifa_main.cc)
 void pyc_add_setter_name(cchar *name);
+void pyc_add_property_name(cchar *name);
 bool pyc_is_deleter_name(cchar *name);  // issues/007
 bool pyc_has_property_names();
 bool pyc_is_property_name(cchar *name);  // issues/171 #13 (python_ifa_main.cc)
