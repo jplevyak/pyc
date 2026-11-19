@@ -537,6 +537,23 @@ inline char *_CG_String_n(const void *x, size_t len) {
 inline _CG_int64 _CG_ffi_bytes_addr(char *b) { return (_CG_int64)(intptr_t)b; }
 inline char *_CG_ffi_cstr(_CG_int64 p) { return _CG_String((const void *)(intptr_t)p); }
 inline char *_CG_ffi_buf(_CG_int64 n) { return _CG_string_alloc((size_t)n); }
+// C storage copied by value (a Structure or an array stored into a field
+// or an element), and a c_char array read as bytes (to the first NUL, or
+// all of it) and written from bytes (with a NUL after, when there is room).
+inline _CG_int64 _CG_ffi_copy(_CG_int64 dst, _CG_int64 src, _CG_int64 n) {
+  memmove((void *)(intptr_t)dst, (const void *)(intptr_t)src, (size_t)n);
+  return 0;
+}
+inline char *_CG_ffi_rd_cstr_n(_CG_int64 a, _CG_int64 n) {
+  const char *p = (const char *)(intptr_t)a;
+  return _CG_String_n(p, strnlen(p, (size_t)n));
+}
+inline char *_CG_ffi_rd_raw(_CG_int64 a, _CG_int64 n) { return _CG_String_n((const void *)(intptr_t)a, (size_t)n); }
+inline _CG_int64 _CG_ffi_wr_chars(_CG_int64 a, char *b, _CG_int64 len, _CG_int64 n) {
+  memcpy((void *)(intptr_t)a, b, (size_t)len);
+  if (len < n) ((char *)(intptr_t)a)[len] = 0;
+  return 0;
+}
 // A c_char's value: one byte, which may be NUL.
 inline char *_CG_ffi_char(_CG_int64 v) {
   char c = (char)v;

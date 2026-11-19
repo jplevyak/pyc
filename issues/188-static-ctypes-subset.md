@@ -1,7 +1,7 @@
 # 188 — a static subset of `ctypes`: calling C libraries from pyc programs
 
-**Status:** open. The core landed 2026-11-11, and step 0 and item 2 on
-2026-11-18 (`python_ifa_ctypes.cc`, `pyc_lib/ctypes/`, tests `ctypes_*`);
+**Status:** open. The core landed 2026-11-11, and step 0 and items 2 and 3
+on 2026-11-18 (`python_ifa_ctypes.cc`, `pyc_lib/ctypes/`, tests `ctypes_*`);
 what is left is the list under
 [Not done](#not-done).
 
@@ -44,6 +44,8 @@ C shim. Nothing in ifa knows about it.
 | `class S(Structure)` with `_fields_` | a class over C-layout storage, a getter and a setter per field |
 | `POINTER(T)` | a generated pointer class per interned pointee type (a scalar, `S`, or a pointer to one): nominal, so `POINTER(S)` and `POINTER(T)` do not mix. A pointer object is a one-word C cell, as in CPython |
 | `c_int(5)`, `x.value` | a box: a generated class over a one-scalar C cell, one per canonical class (`c_int32` is `c_int`), shared by every module through the builtin module |
+| `c_int * 4`, `S * 2` | an array class per interned (element, length), as CPython caches them; `a[i]` is a value for a scalar element and a view for C storage. An array converts where `POINTER(elem)` is declared |
+| a field of type `S` or `T * n` | a view at the field's offset that keeps the owner alive; a store copies. A `c_char * n` field reads as `bytes` to the first NUL |
 | `sizeof(T)` | the C compiler's `sizeof`; `sizeof(x)` of an instance is a run-time method |
 | `byref(s)`, `pointer(s)` | run-time functions in `pyc_lib/ctypes` |
 
@@ -113,7 +115,10 @@ from a value: write `pointer(x)`).
    NULL pointer does not reach an `except` yet: that is
    [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)'s
    item-subscript half. `p.contents` on NULL does.
-3. **Arrays** (`c_int * 4`) and a Structure held by value in a field.
+3. ~~**Arrays** (`c_int * 4`) and a Structure held by value in a field~~:
+   done 2026-11-18, see Item 3 under the plan below. An out-of-range `a[i]`
+   raises `IndexError` but nothing reports it (175's item-subscript half
+   again): the program goes on with a zero.
 4. **`Union`, bit fields, `_pack_`.**
 5. **Declarations across modules**: `POINTER(S)` must be written in the
    module that defines `S`. Generated bindings do this anyway.
@@ -274,7 +279,7 @@ Not done: `POINTER(T)(x)` (write `pointer(x)`), a box's `from_param`,
 shape is `tests/ctypes_pointers`' `POINTER(POINTER(Node))` with `byref`,
 which libc's `memcpy` writes; it was not run against glib.
 
-### Item 3 — arrays, and a Structure held by value in a field
+### Item 3 — arrays, and a Structure held by value in a field (done 2026-11-18)
 
 The surface: `A = c_int * 4`, `A(1, 2)` (the rest zero), `a[i]`,
 `a[i] = v`, `len(a)`, iteration, `list(a)`, an array as an argument (it
@@ -304,6 +309,40 @@ decays to a pointer), an array field (`("v", c_int * 3)`), a struct field
 out-of-range `IndexError`, an array field and a struct field showing the
 aliasing view and the copy on store, `c_char * 8` reading as `bytes`, and
 an array passed to `memset` or `memcpy`.
+
+**What landed.** `K_ARRAY` with `elem` and `n`, interned per (element,
+length) like pointers. `T * N` takes an integer literal or a module-level
+name bound to one; anything else is refused with its line. Array classes
+whose root is a scalar go into the builtin module with the boxes; those over
+a Structure follow it in its module, as its pointer types do.
+
+- `A(x, y)` is rewritten to `A().__pyc_ffi_ini__(0, x).__pyc_ffi_ini__(1, y)`,
+  so construction is `a[i] = x` for each item, with no varargs and any mix
+  of item types. Too many items is a compile error (CPython: `IndexError`
+  at run time), so are keyword and star arguments.
+- Elements and fields share one reader and one writer per type
+  (`py_read_at`, `py_write_at`): a scalar is a value through the box
+  accessors, a Structure or an array a view (`__pyc_ffi_view_K__`,
+  `__pyc_ffi_aview_K__`), a pointer a cell view. A store of C storage is a
+  copy (`_CG_ffi_copy`), checked by dispatch on `__pyc_ffi_val_K__` /
+  `__pyc_ffi_aval_K__`, so storing the wrong Structure is a compile error.
+- `c_char * N`: `.value` (to the first NUL), `.raw`, and as a field `bytes`
+  in and out, with CPython's `bytes too long (9, maximum length 8)`
+  `ValueError`. A value of exactly N bytes gets no NUL.
+- No `byref(a)`. CPython's is a pointer to the ARRAY, which a
+  `POINTER(elem)` parameter rejects (`expected LP_c_int instance instead of
+  pointer to c_int_Array_4`); `a` itself converts. An array as a declared
+  argument or result type is refused (declare `POINTER(elem)`), as is
+  `POINTER` of an array type.
+- The array's `sizeof` is emitted into the shim when its class is
+  generated, not when the type is interned: only then is an element
+  Structure complete.
+- **Found on the way, pre-existing:** `from ctypes import X` with ONE name
+  was not seen as a ctypes import at all (a lone name is not wrapped in a
+  list node), so such a module was never lowered and its ctypes names were
+  `pyc_lib`'s placeholders. `tests/ctypes_single_import.py`.
+
+Not done: slicing an array (CPython gives a list), `a == b`, `repr`.
 
 ### Item 1 — callbacks (`CFUNCTYPE`)
 

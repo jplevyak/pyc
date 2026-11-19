@@ -42,7 +42,7 @@
 
 namespace {
 
-enum Kind { K_VOID, K_INT, K_BOOL, K_FLOAT, K_CHAR, K_CHARP, K_VOIDP, K_PTR, K_STRUCT };
+enum Kind { K_VOID, K_INT, K_BOOL, K_FLOAT, K_CHAR, K_CHARP, K_VOIDP, K_PTR, K_STRUCT, K_ARRAY };
 
 struct FStruct;
 // A ctypes type. Scalars are values; K_STRUCT names its class; K_PTR is a
@@ -53,8 +53,9 @@ struct FType {
   Kind kind = K_INT;
   std::string c = "int";          // the C spelling, for the scalar kinds
   FStruct *s = nullptr;           // K_STRUCT
-  const FType *elem = nullptr;    // K_PTR: the pointee (interned)
-  int id = -1;                    // K_PTR: the interned pointer type's id
+  const FType *elem = nullptr;    // K_PTR: the pointee; K_ARRAY: the element (interned)
+  int id = -1;                    // K_PTR, K_ARRAY: the interned type's id (one space each)
+  int n = 0;                      // K_ARRAY: the length
   cchar *canon = nullptr;         // a scalar: its canonical ctypes class (c_int32 is c_int)
 };
 struct FField {
@@ -92,6 +93,8 @@ struct FunRef {
 struct Env {
   cchar *filename = nullptr;
   std::vector<FType *> ptr_order;            // pointer types first named in this module
+  std::vector<FType *> arr_order;            // array types first named in this module
+  std::map<std::string, long> int_consts;    // NAME = <int literal>, for an array length
   std::vector<std::string> mod_names;        // names bound to the ctypes module
   std::map<std::string, std::string> from;   // local name -> dotted ctypes name
   bool star = false;                         // from ctypes import *
@@ -173,6 +176,11 @@ struct FBox {
 };
 std::vector<FBox *> boxes;
 std::map<std::string, FBox *> box_interned;
+// Every interned array type (`c_int * 4`), by id, and by structural key:
+// CPython caches these too, `(c_int * 4) is (c_int * 4)`.
+int n_arrs = 0;
+std::vector<FType *> arr_types;
+std::map<std::string, FType *> arr_interned;
 std::string shim;          // the C++ shim, accumulated over every module
 bool builtin_needed = false;
 
@@ -236,6 +244,18 @@ bool string_literal(PyDAST *n, std::string &out) {
   return out.find('\\') == std::string::npos && out.find(q) == std::string::npos;
 }
 
+// A decimal or hex integer literal's value, or false.
+bool int_literal(PyDAST *n, long &out) {
+  if (!n || n->kind != PY_number || !n->str_val) return false;
+  std::string t;
+  for (cchar *p = n->str_val; *p; p++)
+    if (*p != '_') t += *p;
+  if (t.empty() || !isdigit((unsigned char)t[0])) return false;
+  char *end = nullptr;
+  out = strtol(t.c_str(), &end, t.size() > 1 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X') ? 16 : 10);
+  return end && !*end;
+}
+
 // The dotted ctypes name an expression denotes ("c_int", "cdll.LoadLibrary",
 // "." for the module itself), or "" if it is not a ctypes reference.
 // `nchildren` limits a PY_power to its first trailers.
@@ -290,6 +310,7 @@ std::string type_key(const FType &t) {
   switch (t.kind) {
     case K_STRUCT: return fmt("s%d", t.s->id);
     case K_PTR: return fmt("p%d", t.id);
+    case K_ARRAY: return fmt("a%d", t.id);
     default: return t.canon ? t.canon : t.c;
   }
 }
@@ -317,7 +338,26 @@ FBox *box_of(Env &env, const FType &t) {
   }
   return b;
 }
-bool is_box_kind(Kind k) { return k != K_VOID && k != K_PTR && k != K_STRUCT; }
+bool is_box_kind(Kind k) { return k != K_VOID && k != K_PTR && k != K_STRUCT && k != K_ARRAY; }
+std::string c_decl(const FType &t, const std::string &d);
+
+// elem * n: one interned type, and one generated class, per (element, length).
+FType arr_to(Env &env, const FType &elem, long n) {
+  FType *&a = arr_interned[fmt("A(%s)*%ld", type_key(elem).c_str(), n)];
+  if (!a) {
+    a = new FType;
+    a->kind = K_ARRAY;
+    a->c = "";
+    a->elem = elem.kind == K_PTR ? ptr_types[elem.id] : elem.kind == K_ARRAY ? arr_types[elem.id] : new FType(elem);
+    a->n = (int)n;
+    a->id = n_arrs++;
+    arr_types.push_back(a);
+    env.arr_order.push_back(a);
+    if (is_box_kind(elem.kind)) box_of(env, elem);  // the element accessors
+    ptr_to(env, elem);  // an array decays to POINTER(elem)
+  }
+  return *a;
+}
 
 // POINTER(elem): one interned type, and one generated class, per pointee.
 FType ptr_to(Env &env, const FType &elem) {
@@ -338,7 +378,7 @@ FType ptr_to(Env &env, const FType &elem) {
 
 // The Structure a pointer type ultimately points to.
 FStruct *ptr_root(const FType *t) {
-  while (t && t->kind == K_PTR) t = t->elem;
+  while (t && (t->kind == K_PTR || t->kind == K_ARRAY)) t = t->elem;
   return t && t->kind == K_STRUCT ? t->s : nullptr;
 }
 
@@ -353,6 +393,7 @@ FType pointer_type(Env &env, PyDAST *at, PyDAST *arg) {
         "POINTER(...) of anything but a ctypes scalar, a Structure subclass defined above in this module, or a "
         "pointer to one, is not supported (for an untyped address use c_void_p)");
   if (el.kind == K_VOIDP) voidp_result(env, at, "pointee");
+  if (el.kind == K_ARRAY) err(env, at, "POINTER of an array type is not supported; use POINTER of its element");
   return ptr_to(env, el);
 }
 
@@ -373,6 +414,20 @@ bool eval_type(Env &env, PyDAST *e, FType &out) {
       out = FType{K_STRUCT, "", s};
       return true;
     }
+  }
+  if (e->kind == PY_binop && e->op == PY_OP_MUL && e->children.n == 2) {
+    FType el;
+    if (!eval_type(env, e->children[0], el)) return false;
+    PyDAST *ne = e->children[1];
+    long n = -1;
+    if (int_literal(ne, n)) {
+    } else if (ne->kind == PY_name && ne->str_val && env.int_consts.count(ne->str_val)) n = env.int_consts[ne->str_val];
+    if (n < 0) err(env, e, "an array length must be a non-negative integer literal, or a module-level name bound to one");
+    if (el.kind == K_VOID) err(env, e, "an array of None is not a type");
+    if (el.kind == K_STRUCT && !el.s->has_fields) err(env, e, "an array of %s before its _fields_ are set", el.s->name.c_str());
+    if (el.kind == K_VOIDP) voidp_result(env, e, "array element");
+    out = arr_to(env, el, n);
+    return true;
   }
   std::string callee;
   Vec<PyDAST *> args;
@@ -426,12 +481,21 @@ std::string c_type(const FType &t) {
     case K_CHARP: return "char *";
     case K_VOIDP: return "void *";
     case K_PTR: {
+      if (t.elem->kind == K_ARRAY) return "void *";  // only the decay of an array of arrays
       std::string e = c_type(*t.elem);
       return e + (e.back() == '*' ? "*" : " *");
     }
     case K_STRUCT: return fmt("struct _CG_ffi_s_%d", t.s->id);
+    case K_ARRAY: fail("internal error: ctypes: an array type has no C spelling without a declarator"); return "";
     default: return t.c;
   }
+}
+
+// A C declaration of `d` with type `t`: `int v[3]`, `struct _CG_ffi_s_1 s`.
+// With d empty, the type name (`int [3]`), for sizeof.
+std::string c_decl(const FType &t, const std::string &d) {
+  if (t.kind == K_ARRAY) return c_decl(*t.elem, fmt("%s[%d]", d.c_str(), t.n));
+  return c_type(t) + " " + d;
 }
 
 // How the shim turns a pyc-side word `v` into the C value, and back.
@@ -537,7 +601,13 @@ void scan_import(Env &env, PyDAST *n) {
     else env.from["find_library"] = "util.find_library";
     return;
   }
-  for (PyDAST *c : n->children[1]->children) {
+  // One name is the PY_import_as_name itself, several a list of them.
+  Vec<PyDAST *> names;
+  if (n->children[1]->kind == PY_import_as_name)
+    names.add(n->children[1]);
+  else
+    for (PyDAST *c : n->children[1]->children) names.add(c);
+  for (PyDAST *c : names) {
     if (c->kind != PY_import_as_name || !c->children.n || !c->children[0]->str_val) continue;
     std::string name = c->children[0]->str_val;
     std::string local = c->children.n > 1 && c->children[1]->str_val ? c->children[1]->str_val : name;
@@ -564,7 +634,8 @@ void set_fields(Env &env, FStruct *s, PyDAST *value) {
       err(env, it, "a _fields_ entry must be a (\"name\", type) pair (bit fields are not supported)");
     need_type(env, pair[1], f.t, "a field type");
     if (f.t.kind == K_VOID) err(env, it, "a field cannot have type None");
-    if (f.t.kind == K_STRUCT) err(env, it, "a field holding a Structure by value is not supported yet");
+    if (f.t.kind == K_STRUCT && !f.t.s->has_fields)
+      err(env, it, "a field of type %s before its _fields_ are set", f.t.s->name.c_str());
     if (f.t.kind == K_VOIDP) voidp_result(env, it, "field");
     s->fields.push_back(f);
   }
@@ -680,12 +751,15 @@ void scan_assign(Env &env, PyDAST *st) {
         FType t;
         need_type(env, it, t, "an argtypes entry");
         if (t.kind == K_VOID) err(env, it, "an argument cannot have type None");
+        if (t.kind == K_ARRAY)
+          err(env, it, "an array argument type is not supported; declare POINTER(element), which an array converts to");
         f->args.push_back(t);
       }
       f->has_args = true;
     } else {
       if (f->has_res) err(env, st, "the restype of %s is set twice", f->name.c_str());
       need_type(env, value, f->res, "restype");
+      if (f->res.kind == K_ARRAY) err(env, st, "a C function cannot return an array");
       if (f->res.kind == K_VOIDP) voidp_result(env, st, "result");
       f->has_res = true;
     }
@@ -750,6 +824,22 @@ void scan_assign(Env &env, PyDAST *st) {
     }
     return;
   }
+  // NAME = 8  (an array length may name it)
+  long lit;
+  if (int_literal(value, lit)) {
+    env.int_consts[name] = lit;
+    return;
+  }
+  env.int_consts.erase(name);
+  // NAME = c_int * 4  (an array type)
+  if (value->kind == PY_binop && value->op == PY_OP_MUL) {
+    FType t;
+    if (eval_type(env, value, t)) {
+      env.type_alias[name] = t;
+      erase(st);
+    }
+    return;
+  }
   // NAME = c_int  (a type alias)
   std::string r = ctypes_ref(env, value);
   if (r != "" && is_scalar_name(r)) {
@@ -790,6 +880,7 @@ bool is_type_expr(Env &env, PyDAST *e) {
   std::string callee;
   Vec<PyDAST *> args;
   if (ctypes_call(env, e, callee, args)) return callee == "POINTER";
+  if (e->kind == PY_binop && e->op == PY_OP_MUL && e->children.n == 2) return is_type_expr(env, e->children[0]);
   return is_scalar_name(ctypes_ref(env, e));
 }
 
@@ -810,8 +901,51 @@ void replace_expr(Env &env, PyDAST *n, const std::string &text) {
 //    the run-time `sizeof` in pyc_lib/ctypes).
 // Runs after scanning, so every alias is known, and before generation, so the
 // types it interns get their classes.
+// Replace each PY_name `__pyc_ffi_argN__` under `n` by args[N].
+void subst_args(PyDAST *n, Vec<PyDAST *> &args) {
+  for (int i = 0; i < n->children.n; i++) {
+    PyDAST *c = n->children[i];
+    int k;
+    if (c->kind == PY_name && c->str_val && sscanf(c->str_val, "__pyc_ffi_arg%d__", &k) == 1 && k < args.n) {
+      args[k]->parent = n;
+      n->children.v[i] = args[k];
+    } else
+      subst_args(c, args);
+  }
+}
+
+// An array constructor `A(x, y)` at trailer `ctor` of power node `n`:
+// `__pyc_ffi_A_K__().__pyc_ffi_ini__(0, x).__pyc_ffi_ini__(1, y)`, which
+// stores each item as `a[i] = x` does and leaves the rest zero.
+void rewrite_array_ctor(Env &env, PyDAST *n, int ctor, const FType &t) {
+  Vec<PyDAST *> cargs;
+  call_args(n->children[ctor], cargs);
+  if (cargs.n > t.n) err(env, n, "too many initializers: an array of %d takes at most %d (CPython: IndexError)", t.n, t.n);
+  for (PyDAST *a : cargs)
+    if (a->kind == PY_keyword_arg || a->kind == PY_star_arg || a->kind == PY_dstar_arg)
+      err(env, n, "an array is constructed from its items, positionally");
+  std::string text = fmt("__pyc_ffi_A_%d__()", t.id);
+  for (int i = 0; i < cargs.n; i++) text += fmt(".__pyc_ffi_ini__(%d, __pyc_ffi_arg%d__)", i, i);
+  PyDAST *g = parse_generated(env, "__pyc_x__ = " + text + "\n", n);
+  PyDAST *v = g->children[0]->children[1];
+  subst_args(v, cargs);
+  Vec<PyDAST *> rest;
+  for (PyDAST *c : v->children) rest.add(c);
+  for (int i = ctor + 1; i < n->children.n; i++) rest.add(n->children[i]);
+  n->children.clear();
+  for (PyDAST *c : rest) n->add(c);
+}
+
 void rewrite_ctors(Env &env, PyDAST *n) {
   if (!n) return;
+  // `(c_int * 4)(1, 2)`
+  if (n->kind == PY_power && n->children.n >= 2 && n->children[0]->kind == PY_binop && n->children[1]->kind == PY_call &&
+      is_type_expr(env, n->children[0])) {
+    FType t;
+    need_type(env, n->children[0], t, "a constructed type");
+    if (t.kind != K_ARRAY) err(env, n, "only an array type is constructed from an expression here");
+    rewrite_array_ctor(env, n, 1, t);
+  }
   if (n->kind == PY_power && n->children.n >= 2 && n->children[0]->kind == PY_name && n->children[0]->str_val) {
     PyDAST *h = n->children[0];
     int nref = 1;
@@ -841,6 +975,7 @@ void rewrite_ctors(Env &env, PyDAST *n) {
         need_type(env, sargs[0], st, "sizeof's argument");
         std::string f;
         if (st.kind == K_PTR) f = "_CG_ffi_sizeof_ptr";
+        else if (st.kind == K_ARRAY) f = fmt("_CG_ffi_sizeof_a%d", st.id);
         else if (st.kind == K_STRUCT) {
           if (!st.s->has_fields) err(env, n, "sizeof(%s) before its _fields_ are set", st.s->name.c_str());
           f = fmt("_CG_ffi_sizeof_%d", st.s->id);
@@ -851,6 +986,10 @@ void rewrite_ctors(Env &env, PyDAST *n) {
         replace_expr(env, n, fmt("__pyc_c_call__(int, \"%s\")", f.c_str()));
         return;
       }
+    }
+    if (ctor >= 0 && t.kind == K_ARRAY) {
+      rewrite_array_ctor(env, n, ctor, t);
+      ctor = -1;
     }
     if (ctor >= 0) {
       Vec<PyDAST *> cargs;
@@ -900,20 +1039,22 @@ PyDAST *parse_generated(Env &env, const std::string &text, PyDAST *at) {
 void shim_struct(FStruct *s) {
   if (!s->has_fields) return;
   shim += fmt("struct _CG_ffi_s_%d {\n", s->id);
-  for (FField &f : s->fields) shim += fmt("  %s %s;\n", c_type(f.t).c_str(), f.name.c_str());
+  for (FField &f : s->fields) shim += fmt("  %s;\n", c_decl(f.t, f.name).c_str());
   shim += "};\n";
   shim += fmt("_CG_FFI_DEF int64_t _CG_ffi_sizeof_%d(void) { return (int64_t)sizeof(struct _CG_ffi_s_%d); }\n", s->id,
               s->id);
   for (FField &f : s->fields) {
+    // A field that is itself C storage (a Structure, an array) reads as a
+    // view at its offset, and a pointer field as a view of its cell.
+    if (f.t.kind == K_PTR || f.t.kind == K_STRUCT || f.t.kind == K_ARRAY)
+      shim += fmt("_CG_FFI_DEF int64_t _CG_ffi_off_%d_%s(void) { return (int64_t)offsetof(struct _CG_ffi_s_%d, %s); }\n",
+                  s->id, f.name.c_str(), s->id, f.name.c_str());
+    if (f.t.kind == K_STRUCT || f.t.kind == K_ARRAY) continue;
     std::string lv = fmt("((struct _CG_ffi_s_%d *)(intptr_t)a)->%s", s->id, f.name.c_str());
     shim += fmt("_CG_FFI_DEF %s _CG_ffi_get_%d_%s(int64_t a) { return %s; }\n", word_type(f.t), s->id, f.name.c_str(),
                 c_to_word(f.t, lv).c_str());
     shim += fmt("_CG_FFI_DEF int64_t _CG_ffi_set_%d_%s(int64_t a, %s v) { %s = %s; return 0; }\n", s->id,
                 f.name.c_str(), word_type(f.t), lv.c_str(), c_from_word(f.t, "v").c_str());
-    // A pointer field reads as a view of the field's own cell.
-    if (f.t.kind == K_PTR)
-      shim += fmt("_CG_FFI_DEF int64_t _CG_ffi_off_%d_%s(void) { return (int64_t)offsetof(struct _CG_ffi_s_%d, %s); }\n",
-                  s->id, f.name.c_str(), s->id, f.name.c_str());
   }
 }
 
@@ -926,6 +1067,66 @@ cchar *py_default(const FType &t) {
   }
 }
 
+// The size of one `t`, as a Python expression.
+std::string size_expr(const FType &t) {
+  switch (t.kind) {
+    case K_PTR: return "__pyc_c_call__(int, \"_CG_ffi_sizeof_ptr\")";
+    case K_STRUCT: return fmt("__pyc_c_call__(int, \"_CG_ffi_sizeof_%d\")", t.s->id);
+    case K_ARRAY: return fmt("__pyc_c_call__(int, \"_CG_ffi_sizeof_a%d\")", t.id);
+    default: return fmt("__pyc_c_call__(int, \"_CG_ffi_sizeof_s%d\")", box_interned[t.canon]->id);
+  }
+}
+bool is_char_array(const FType &t) { return t.kind == K_ARRAY && t.elem->kind == K_CHAR; }
+
+// The statements reading the C object of type `t` at address expression
+// `at` as its Python value, `keep` keeping the storage alive: a scalar is
+// its value, C storage a view over it.
+std::string py_read_at(const FType &t, const std::string &at, const std::string &keep, cchar *ind) {
+  switch (t.kind) {
+    case K_PTR: return fmt("%sreturn __pyc_ffi_pview_%d__(%s, %s)\n", ind, t.id, at.c_str(), keep.c_str());
+    case K_STRUCT: return fmt("%sreturn __pyc_ffi_view_%d__(%s, %s)\n", ind, t.s->id, at.c_str(), keep.c_str());
+    case K_ARRAY:
+      // CPython's special case: a c_char array field reads as bytes, to the first NUL.
+      if (is_char_array(t))
+        return fmt("%sreturn __pyc_c_call__(bytes, \"_CG_ffi_rd_cstr_n\", int, %s, int, %d)\n", ind, at.c_str(), t.n);
+      return fmt("%sreturn __pyc_ffi_aview_%d__(%s, %s)\n", ind, t.id, at.c_str(), keep.c_str());
+    default: {
+      int b = box_interned[t.canon]->id;
+      return py_ret(t, fmt("__pyc_c_call__(%s, \"_CG_ffi_rd_s%d\", int, %s)", t.kind == K_FLOAT ? "float" : "int", b, at.c_str()),
+                    ind);
+    }
+  }
+}
+
+// The statements storing Python value `v` into the C object of type `t`
+// at `at`: a scalar converts, C storage is copied (`t.s = S()` is a copy).
+std::string py_write_at(const FType &t, const std::string &at, const std::string &v, cchar *ind) {
+  std::string i = ind;
+  switch (t.kind) {
+    case K_PTR:
+      return i + fmt("__pyc_c_call__(int, \"_CG_ffi_wr_ptr\", int, %s, int, (0 if %s is None else %s.__pyc_ffi_as_%d__()))\n",
+                     at.c_str(), v.c_str(), v.c_str(), t.id);
+    case K_STRUCT:
+      return i + fmt("__pyc_c_call__(int, \"_CG_ffi_copy\", int, %s, int, %s.__pyc_ffi_val_%d__(), int, %s)\n", at.c_str(),
+                     v.c_str(), t.s->id, size_expr(t).c_str());
+    case K_ARRAY:
+      if (is_char_array(t))
+        return i + fmt("if len(%s) > %d: raise ValueError(\"bytes too long (\" + str(len(%s)) + \", maximum length %d)\")\n",
+                       v.c_str(), t.n, v.c_str(), t.n) +
+               i + fmt("__pyc_c_call__(int, \"_CG_ffi_wr_chars\", int, %s, bytes, %s, int, len(%s), int, %d)\n", at.c_str(),
+                       v.c_str(), v.c_str(), t.n);
+      return i + fmt("__pyc_c_call__(int, \"_CG_ffi_copy\", int, %s, int, %s.__pyc_ffi_aval_%d__(), int, %s)\n", at.c_str(),
+                     v.c_str(), t.id, size_expr(t).c_str());
+    default: {
+      int b = box_interned[t.canon]->id;
+      cchar *decl;
+      std::string conv = py_arg(t, v, decl);
+      return i + fmt("__pyc_c_call__(int, \"_CG_ffi_wr_s%d\", int, %s, %s, %s)\n", b, at.c_str(), decl, conv.c_str());
+    }
+  }
+}
+bool is_storage(const FType &t) { return t.kind == K_STRUCT || t.kind == K_ARRAY; }
+
 std::string py_struct(FStruct *s) {
   std::string t = fmt("class %s(__pyc_ffi_struct__):\n", s->name.c_str());
   int k = s->id;
@@ -936,28 +1137,36 @@ std::string py_struct(FStruct *s) {
     t += fmt("    self._buf = __pyc_c_call__(bytes, \"_CG_ffi_buf\", int, __pyc_c_call__(int, \"_CG_ffi_sizeof_%d\"))\n", k);
     t += "    self._addr = __pyc_c_call__(int, \"_CG_ffi_bytes_addr\", bytes, self._buf)\n";
     for (FField &f : s->fields) {
+      if (is_storage(f.t)) {  // zeroed unless given: the buffer starts zeroed
+        t += fmt("    if %s is not None: self.__pyc_set_%s__(%s)\n", f.name.c_str(), f.name.c_str(), f.name.c_str());
+        continue;
+      }
       cchar *decl;
       std::string conv = py_arg(f.t, f.name, decl);
       t += fmt("    __pyc_c_call__(int, \"_CG_ffi_set_%d_%s\", int, self._addr, %s, %s)\n", k, f.name.c_str(), decl,
                conv.c_str());
     }
     for (FField &f : s->fields) {
+      std::string at = fmt("self._addr + __pyc_c_call__(int, \"_CG_ffi_off_%d_%s\")", k, f.name.c_str());
       t += "  @property\n";
       t += fmt("  def %s(self):\n", f.name.c_str());
-      if (f.t.kind == K_PTR)
-        t += fmt("    return __pyc_ffi_pview_%d__(self._addr + __pyc_c_call__(int, \"_CG_ffi_off_%d_%s\"), self._buf)\n",
-                 f.t.id, k, f.name.c_str());
+      if (f.t.kind == K_PTR || is_storage(f.t))
+        t += py_read_at(f.t, at, "self._buf", "    ");
       else {
         std::string call = fmt("__pyc_c_call__(%s, \"_CG_ffi_get_%d_%s\", int, self._addr)",
                                f.t.kind == K_FLOAT ? "float" : "int", k, f.name.c_str());
         t += py_ret(f.t, call, "    ");
       }
       // The store side: `s.f = v` is `s.__pyc_set_f__(v)` (emit_member_store).
-      cchar *decl;
-      std::string conv = py_arg(f.t, "v", decl);
       t += fmt("  def __pyc_set_%s__(self, v):\n", f.name.c_str());
-      t += fmt("    __pyc_c_call__(int, \"_CG_ffi_set_%d_%s\", int, self._addr, %s, %s)\n", k, f.name.c_str(), decl,
-               conv.c_str());
+      if (is_storage(f.t))
+        t += py_write_at(f.t, at, "v", "    ");
+      else {
+        cchar *decl;
+        std::string conv = py_arg(f.t, "v", decl);
+        t += fmt("    __pyc_c_call__(int, \"_CG_ffi_set_%d_%s\", int, self._addr, %s, %s)\n", k, f.name.c_str(), decl,
+                 conv.c_str());
+      }
       pyc_add_setter_name(f.name.c_str());
     }
     // byref(s) is CPython's opaque argument object: good as an argument and
@@ -999,6 +1208,9 @@ std::string py_pointer(const FType *p) {
   } else if (e->kind == K_PTR) {
     view = fmt("__pyc_ffi_pview_%d__", e->id);
     size = "__pyc_c_call__(int, \"_CG_ffi_sizeof_ptr\")";
+  } else if (e->kind == K_ARRAY) {
+    view = fmt("__pyc_ffi_aview_%d__", e->id);
+    size = size_expr(*e);
   } else if (is_box_kind(e->kind)) {
     int b = box_interned[e->canon]->id;
     view = fmt("__pyc_ffi_bview_%d__", b);
@@ -1109,6 +1321,65 @@ std::string py_box(FBox *b) {
   }
   t += fmt("def __pyc_ffi_bview_%d__(addr, keep):\n", k);
   t += fmt("  o = __pyc_ffi_B_%d__()\n", k);
+  t += "  o._buf = keep\n";
+  t += "  o._addr = addr\n";
+  t += "  return o\n";
+  return t;
+}
+
+// elem * n: C storage of n elements. `a[i]` is a value for a scalar
+// element and a view for C storage, as in CPython.
+std::string py_array(const FType *a) {
+  int k = a->id, n = a->n;
+  const FType &e = *a->elem;
+  int pid = ptr_interned[type_key(e)]->id;  // POINTER(elem), which the array converts to
+  std::string at = "self._addr + __pyc_i__ * " + size_expr(e);
+  std::string check = fmt(
+      "    __pyc_i__ = i + %d if i < 0 else i\n"
+      "    if __pyc_i__ < 0 or __pyc_i__ >= %d: raise IndexError(\"invalid index\")\n",
+      n, n);
+  // Here, not when interned: the element Structure is complete only now.
+  shim_header();
+  shim += fmt("_CG_FFI_DEF int64_t _CG_ffi_sizeof_a%d(void) { return (int64_t)sizeof(%s); }\n", k, c_decl(*a, "").c_str());
+  std::string t = fmt("class __pyc_ffi_A_%d__(object):\n", k);
+  t += "  def __init__(self):\n";
+  t += fmt("    self._buf = __pyc_c_call__(bytes, \"_CG_ffi_buf\", int, %s)\n", size_expr(*a).c_str());
+  t += "    self._addr = __pyc_c_call__(int, \"_CG_ffi_bytes_addr\", bytes, self._buf)\n";
+  // A(x, y) is A().__pyc_ffi_ini__(0, x).__pyc_ffi_ini__(1, y) (rewrite_ctors).
+  t += "  def __pyc_ffi_ini__(self, i, v):\n";
+  t += "    self.__setitem__(i, v)\n";
+  t += "    return self\n";
+  t += "  def __len__(self):\n";
+  t += fmt("    return %d\n", n);
+  t += "  def __getitem__(self, i):\n" + check + py_read_at(e, at, "self._buf", "    ");
+  t += "  def __setitem__(self, i, v):\n" + check + py_write_at(e, at, "v", "    ");
+  t += "  def __iter__(self):\n";
+  t += fmt("    return iter([self.__getitem__(__pyc_j__) for __pyc_j__ in range(%d)])\n", n);
+  t += fmt("  def __pyc_ffi_as_%d__(self):\n", pid);
+  t += "    return self._addr\n";
+  t += fmt("  def __pyc_ffi_aval_%d__(self):\n", k);
+  t += "    return self._addr\n";
+  // No byref: CPython's byref(a) is a pointer to the ARRAY, which a
+  // POINTER(elem) parameter rejects; `a` itself converts.
+  t += "  def __pyc_ffi_sizeof__(self):\n";
+  t += "    return " + size_expr(*a) + "\n";
+  if (e.kind == K_CHAR) {
+    // CPython's c_char array: .value is the bytes to the first NUL, .raw all of them.
+    t += "  def __pyc_get_value__(self):\n";
+    t += fmt("    return __pyc_c_call__(bytes, \"_CG_ffi_rd_cstr_n\", int, self._addr, int, %d)\n", n);
+    t += "  def __pyc_set_value__(self, v):\n" + py_write_at(*a, "self._addr", "v", "    ");
+    t += "  def __pyc_get_raw__(self):\n";
+    t += fmt("    return __pyc_c_call__(bytes, \"_CG_ffi_rd_raw\", int, self._addr, int, %d)\n", n);
+    t += "  def __pyc_set_raw__(self, v):\n";
+    t += fmt("    if len(v) > %d: raise ValueError(\"byte string too long\")\n", n);
+    t += "    __pyc_c_call__(int, \"_CG_ffi_wr_chars\", int, self._addr, bytes, v, int, len(v), int, 0)\n";
+    pyc_add_property_name("value");
+    pyc_add_setter_name("value");
+    pyc_add_property_name("raw");
+    pyc_add_setter_name("raw");
+  }
+  t += fmt("def __pyc_ffi_aview_%d__(addr, keep):\n", k);
+  t += fmt("  o = __pyc_ffi_A_%d__()\n", k);
   t += "  o._buf = keep\n";
   t += "  o._addr = addr\n";
   t += "  return o\n";
@@ -1249,6 +1520,8 @@ void lower_module(PyDAST *mod, cchar *filename) {
     std::string ptrs;
     for (FType *p : env.ptr_order)
       if (ptr_root(p) == s) ptrs += py_pointer(p);
+    for (FType *a : env.arr_order)
+      if (ptr_root(a) == s) ptrs += py_array(a);
     PyDAST *g = parse_generated(env, py_struct(s) + ptrs, s->cdef);
     bool first = true;
     for (PyDAST *c : g->children) {
@@ -1357,12 +1630,14 @@ void inject_builtin(PyDAST *builtin) {
   // Pointers to scalars, and the boxes: shared by every module.
   for (FType *p : ptr_types)
     if (!ptr_root(p)) text += py_pointer(p);
+  for (FType *a : arr_types)
+    if (!ptr_root(a)) text += py_array(a);
   for (FBox *b : boxes) text += py_box(b);
   // The pointer classes raise (NULL access) and the boxes call conversions
   // that do, from code the program reaches by `p[i]` and `b.value`, which
   // the syntactic gate (user_code_reaches_raise) cannot see: builtin code is
   // not scanned for it. The program that uses them can raise.
-  if (boxes.size()) pyc_program_has_raise = true;
+  if (boxes.size() || arr_types.size()) pyc_program_has_raise = true;
   if (getenv("PYC_DBG_CTYPES")) fprintf(stderr, "--- ctypes: builtin\n%s", text.c_str());
   PyDAST *g = dparse_python_buf_to_ast("<ctypes>", text.c_str(), (int)text.size());
   if (!g) fail("internal error: ctypes support code does not parse");
