@@ -41,7 +41,7 @@ C shim. Nothing in ifa knows about it.
 | `lib.f.argtypes = [...]`, `lib.f.restype = T` | compile-time only; the statement is erased |
 | `lib.f(a, b)`, `g = lib.f` | untouched: plain method dispatch and a plain bound method, from any module |
 | `class S(Structure)` with `_fields_` | a class over C-layout storage, a getter and a setter per field |
-| `POINTER(S)` | a generated pointer class per `S`: nominal, so `POINTER(S)` and `POINTER(T)` do not mix |
+| `POINTER(T)` | a generated pointer class per interned pointee type (`S`, or a pointer to one): nominal, so `POINTER(S)` and `POINTER(T)` do not mix. A pointer object is a one-word C cell, as in CPython |
 | `byref(s)`, `pointer(s)` | run-time functions in `pyc_lib/ctypes` |
 
 Three decisions carry the design:
@@ -127,9 +127,11 @@ two days, item 1 about a week.
 
 Every behaviour below was checked against CPython 3 on 2026-11-18. Each
 step's test runs under CPython and pyc on both backends, and under
-`--strict`, and its `.ffi.cc` golden is blessed only after reading the diff.
+`--strict`. (A `tests/*.ffi.cc` is the LLVM backend's generated shim, written
+beside the program, not a golden; three were committed with the core and
+are untracked and ignored since step 0.)
 
-### Step 0 — one model for C-layout objects
+### Step 0 — one model for C-layout objects (done 2026-11-18)
 
 Items 2 and 3 both need things that the current `FType` (a flat kind plus
 `FStruct *`) cannot say: a pointer to a scalar, a pointer to a pointer, an
@@ -156,8 +158,39 @@ C storage, because `byref(p)` must be the address of `p`'s cell.
   place of today's per-field getter and setter. That keeps the shim linear
   in the number of types rather than in the number of fields.
 
-**Done when** the existing `ctypes_*` tests pass unchanged and the
-`.ffi.cc` goldens change only in the ways described above.
+**Done when** the existing `ctypes_*` tests pass unchanged.
+
+**What landed.** `FType` carries `elem` and `id`; `ptr_to` interns
+`POINTER(T)` by structural key, and every Structure interns its own pointer
+type when its class is read. Each pointer type generates, after its root
+Structure: `__pyc_ffi_P_K__` (the cell; `contents` and `p[i]` when the
+pointee is a Structure with fields or a pointer, `byref` and `pointer` when
+`POINTER(POINTER_K)` is itself declared), `__pyc_ffi_R_K__` (`byref`'s
+result), `__pyc_ffi_mk_K__(addr)` (a new cell holding `addr`: a foreign
+result, `pointer(x)`) and `__pyc_ffi_pview_K__(addr, keep)` (a cell it does
+not own). The `__pyc_ffi_as_K__` conversion is keyed by the pointer type's
+id, no longer by the Structure's. The base `__pyc_ffi_pointer__` allocates
+the cell; the runtime gained `_CG_ffi_rd_ptr`, `_CG_ffi_wr_ptr`,
+`_CG_ffi_sizeof_ptr`. `_keep` is gone from pointers.
+
+- A pointer FIELD now reads as a view of the field's cell (`_CG_ffi_off_K_f`
+  is emitted for pointer fields), where it used to read as a copy of the
+  address. That is CPython's behaviour: `a.next.contents.v = 20` writes
+  through, and `pointer(a.next)` points at the field.
+- `POINTER(T)()` and a pointer alias called with no arguments construct a
+  NULL pointer (`rewrite_ptr_ctors`, between scanning and generation), as
+  `POINTER(GError)()` needs. Constructing one from a value is refused.
+- **Not done, deliberately:** scalar fields keep their per-field shim getter
+  and setter. A generic read at `addr + offsetof` is two calls per access
+  where it is now one, and on the LLVM backend the shim is a separate
+  translation unit, so neither inlines. Item 2's boxes and item 3's arrays
+  add the generic per-scalar accessors where they need them.
+
+`tests/ctypes_pointers.py` covers a self-referential `Node`, a pointer field
+as a view, `POINTER(POINTER(Node))`, `byref(p)` and a pointer-to-pointer
+handed to libc's `memcpy`, NULL construction and truthiness, and NULL
+`contents` raising `ValueError`, identical to CPython on both backends and
+under `--strict`.
 
 ### Item 2 — scalar boxes, out-parameters, `POINTER(scalar)`
 

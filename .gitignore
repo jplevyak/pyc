@@ -76,6 +76,8 @@ tests/pyc_compat.py
 tests/*.out
 tests/*.py.c
 tests/*.py.s
+# the LLVM backend's foreign-call shim (codegen_extra_source), written beside the program
+tests/*.ffi.cc
 tests/*.ll
 tests/*.o
 tests/*.bak
