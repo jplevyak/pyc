@@ -36,13 +36,14 @@
 // guessed. See issues/188.
 #include "python_ifa_int.h"
 #include "python_parse.h"
+#include <unistd.h>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace {
 
-enum Kind { K_VOID, K_INT, K_BOOL, K_FLOAT, K_CHAR, K_CHARP, K_VOIDP, K_PTR, K_STRUCT, K_ARRAY };
+enum Kind { K_VOID, K_INT, K_BOOL, K_FLOAT, K_CHAR, K_CHARP, K_VOIDP, K_PTR, K_STRUCT, K_ARRAY, K_CFUNC };
 
 struct FStruct;
 // A ctypes type. Scalars are values; K_STRUCT names its class; K_PTR is a
@@ -54,7 +55,7 @@ struct FType {
   std::string c = "int";          // the C spelling, for the scalar kinds
   FStruct *s = nullptr;           // K_STRUCT
   const FType *elem = nullptr;    // K_PTR: the pointee; K_ARRAY: the element (interned)
-  int id = -1;                    // K_PTR, K_ARRAY: the interned type's id (one space each)
+  int id = -1;                    // K_PTR, K_ARRAY, K_CFUNC: the interned type's id (one space each)
   int n = 0;                      // K_ARRAY: the length
   cchar *canon = nullptr;         // a scalar: its canonical ctypes class (c_int32 is c_int)
 };
@@ -95,6 +96,9 @@ struct Env {
   std::vector<FType *> ptr_order;            // pointer types first named in this module
   std::vector<FType *> arr_order;            // array types first named in this module
   std::map<std::string, long> int_consts;    // NAME = <int literal>, for an array length
+  std::vector<int> cfun_order;               // CFUNCTYPE types first named in this module
+  std::map<int, PyDAST *> cfun_stmt;         // ... and the statement that named each
+  PyDAST *cur_stmt = nullptr;                // the top-level statement being scanned
   std::vector<std::string> mod_names;        // names bound to the ctypes module
   std::map<std::string, std::string> from;   // local name -> dotted ctypes name
   bool star = false;                         // from ctypes import *
@@ -158,7 +162,7 @@ FType scalar_type(const Scalar &sc) {
 // (pyc_lib/ctypes). Every other ctypes name is compile-time only.
 const char *runtime_names[] = {"byref", "pointer", "sizeof"};
 // Compile-time names this pass understands, beyond the scalar table.
-const char *static_names[] = {"CDLL", "PyDLL", "cdll", "cdll.LoadLibrary", "Structure", "POINTER",
+const char *static_names[] = {"CDLL", "PyDLL", "cdll", "cdll.LoadLibrary", "Structure", "POINTER", "CFUNCTYPE",
                               "util", "util.find_library"};
 
 int n_structs = 0, n_libs = 0, n_ptrs = 0;
@@ -181,6 +185,17 @@ std::map<std::string, FBox *> box_interned;
 int n_arrs = 0;
 std::vector<FType *> arr_types;
 std::map<std::string, FType *> arr_interned;
+// A CFUNCTYPE(res, *args) type: a C function pointer a pyc callable is
+// called through (issues/188 item 1). Interned by signature, as CPython
+// caches them, each with a CB class and an exported trampoline.
+struct FCfun {
+  int id;
+  FType res;
+  std::vector<FType> args;
+  PyDAST *cdef = nullptr, *fdef = nullptr;  // the CB class and the trampoline, once generated
+};
+std::vector<FCfun *> cfuns;
+std::map<std::string, FCfun *> cfun_interned;
 std::string shim;          // the C++ shim, accumulated over every module
 bool builtin_needed = false;
 
@@ -311,6 +326,7 @@ std::string type_key(const FType &t) {
     case K_STRUCT: return fmt("s%d", t.s->id);
     case K_PTR: return fmt("p%d", t.id);
     case K_ARRAY: return fmt("a%d", t.id);
+    case K_CFUNC: return fmt("f%d", t.id);
     default: return t.canon ? t.canon : t.c;
   }
 }
@@ -338,7 +354,7 @@ FBox *box_of(Env &env, const FType &t) {
   }
   return b;
 }
-bool is_box_kind(Kind k) { return k != K_VOID && k != K_PTR && k != K_STRUCT && k != K_ARRAY; }
+bool is_box_kind(Kind k) { return k != K_VOID && k != K_PTR && k != K_STRUCT && k != K_ARRAY && k != K_CFUNC; }
 std::string c_decl(const FType &t, const std::string &d);
 
 // elem * n: one interned type, and one generated class, per (element, length).
@@ -384,6 +400,7 @@ FStruct *ptr_root(const FType *t) {
 
 bool eval_type(Env &env, PyDAST *e, FType &out);
 void voidp_result(Env &env, PyDAST *at, cchar *what);
+void need_type(Env &env, PyDAST *e, FType &out, cchar *what);
 
 // POINTER(arg), at `at`.
 FType pointer_type(Env &env, PyDAST *at, PyDAST *arg) {
@@ -431,6 +448,36 @@ bool eval_type(Env &env, PyDAST *e, FType &out) {
   }
   std::string callee;
   Vec<PyDAST *> args;
+  if (ctypes_call(env, e, callee, args) && callee == "CFUNCTYPE") {
+    if (!args.n) err(env, e, "CFUNCTYPE takes the result type, then the argument types");
+    FCfun f;
+    std::string key = "F(";
+    for (int i = 0; i < args.n; i++) {
+      if (args[i]->kind == PY_keyword_arg) err(env, e, "CFUNCTYPE's use_errno / use_last_error are not supported");
+      FType t;
+      need_type(env, args[i], t, i ? "a CFUNCTYPE argument type" : "a CFUNCTYPE result type");
+      if (t.kind == K_STRUCT || t.kind == K_ARRAY || t.kind == K_CFUNC)
+        err(env, args[i], "a callback %s of this type is not supported (a scalar or a POINTER)", i ? "argument" : "result");
+      if (i && t.kind == K_VOID) err(env, args[i], "a callback argument cannot have type None");
+      if (!i && t.kind == K_PTR) err(env, args[i], "a callback returning a pointer is not supported");
+      if (t.kind == K_VOIDP) voidp_result(env, args[i], i ? "callback argument" : "callback result");
+      (i ? f.args.push_back(t), 0 : (f.res = t, 0));
+      key += type_key(t) + ",";
+    }
+    FCfun *&c = cfun_interned[key + ")"];
+    if (!c) {
+      c = new FCfun(f);
+      c->id = (int)cfuns.size();
+      cfuns.push_back(c);
+      env.cfun_order.push_back(c->id);
+      env.cfun_stmt[c->id] = env.cur_stmt;
+    }
+    out = FType();
+    out.kind = K_CFUNC;
+    out.c = "";
+    out.id = c->id;
+    return true;
+  }
   if (ctypes_call(env, e, callee, args)) {
     if (callee != "POINTER") return false;
     if (args.n != 1) err(env, e, "POINTER takes one type");
@@ -487,6 +534,7 @@ std::string c_type(const FType &t) {
     }
     case K_STRUCT: return fmt("struct _CG_ffi_s_%d", t.s->id);
     case K_ARRAY: fail("internal error: ctypes: an array type has no C spelling without a declarator"); return "";
+    case K_CFUNC: return "void *";
     default: return t.c;
   }
 }
@@ -503,7 +551,7 @@ std::string c_from_word(const FType &t, const std::string &v) {
   switch (t.kind) {
     case K_FLOAT: return fmt("(%s)%s", t.c.c_str(), v.c_str());
     case K_STRUCT: return fmt("*(%s *)(intptr_t)%s", c_type(t).c_str(), v.c_str());
-    case K_CHARP: case K_VOIDP: case K_PTR: return fmt("(%s)(intptr_t)%s", c_type(t).c_str(), v.c_str());
+    case K_CHARP: case K_VOIDP: case K_PTR: case K_CFUNC: return fmt("(%s)(intptr_t)%s", c_type(t).c_str(), v.c_str());
     default: return fmt("(%s)%s", t.c.c_str(), v.c_str());
   }
 }
@@ -531,6 +579,8 @@ std::string py_arg(const FType &t, const std::string &a, cchar *&decl) {
     case K_VOIDP: return "(0 if " + a + " is None else " + a + ".__pyc_ffi_addr__())";
     case K_PTR: return fmt("(0 if %s is None else %s.__pyc_ffi_as_%d__())", a.c_str(), a.c_str(), t.id);
     case K_STRUCT: return fmt("%s.__pyc_ffi_val_%d__()", a.c_str(), t.s->id);
+    // A CB object converts to its closure's code address.
+    case K_CFUNC: return fmt("(0 if %s is None else %s.__pyc_ffi_cfn_%d__())", a.c_str(), a.c_str(), t.id);
     default: fail("internal error: ctypes: no argument conversion for kind %d", (int)t.kind); return "";
   }
 }
@@ -815,7 +865,7 @@ void scan_assign(Env &env, PyDAST *st) {
       env.lib_order.push_back(lib);
       return;
     }
-    if (callee == "POINTER") {
+    if (callee == "POINTER" || callee == "CFUNCTYPE") {
       FType t;
       need_type(env, value, t, "a type alias");
       env.type_alias[name] = t;
@@ -879,7 +929,7 @@ bool is_type_expr(Env &env, PyDAST *e) {
   if (e->kind == PY_name && e->str_val && (env.type_alias.count(e->str_val) || struct_named(env, e))) return true;
   std::string callee;
   Vec<PyDAST *> args;
-  if (ctypes_call(env, e, callee, args)) return callee == "POINTER";
+  if (ctypes_call(env, e, callee, args)) return callee == "POINTER" || callee == "CFUNCTYPE";
   if (e->kind == PY_binop && e->op == PY_OP_MUL && e->children.n == 2) return is_type_expr(env, e->children[0]);
   return is_scalar_name(ctypes_ref(env, e));
 }
@@ -997,6 +1047,10 @@ void rewrite_ctors(Env &env, PyDAST *n) {
       if (t.kind == K_PTR) {
         if (cargs.n) err(env, n, "constructing a pointer from a value is not supported; use pointer(x)");
         h->str_val = dupstr(fmt("__pyc_ffi_P_%d__", t.id).c_str());
+      } else if (t.kind == K_CFUNC) {
+        if (cargs.n != 1 || cargs[0]->kind == PY_keyword_arg || cargs[0]->kind == PY_star_arg)
+          err(env, n, "a CFUNCTYPE type is constructed from one Python callable here");
+        h->str_val = dupstr(fmt("__pyc_ffi_CB_%d__", t.id).c_str());
       } else if (is_box_kind(t.kind)) {
         if (cargs.n > 1) err(env, n, "%s takes at most one value", t.canon);
         for (PyDAST *a : cargs)
@@ -1179,6 +1233,9 @@ std::string py_struct(FStruct *s) {
     t += "    return self._addr\n";
     t += fmt("  def __pyc_ffi_target_%d__(self):\n", s->ptr->id);
     t += "    return self._addr\n";
+    // As in CPython, an S where POINTER(S) is declared is passed by reference.
+    t += fmt("  def __pyc_ffi_as_%d__(self):\n", s->ptr->id);
+    t += "    return self._addr\n";
     t += "  def __pyc_ffi_sizeof__(self):\n";
     t += fmt("    return __pyc_c_call__(int, \"_CG_ffi_sizeof_%d\")\n", k);
     // A view: an S over storage it does not own, keeping the owner alive.
@@ -1303,6 +1360,9 @@ std::string py_box(FBox *b) {
   t += fmt("    return __pyc_ffi_mk_%d__(self._addr)\n", pid);
   t += fmt("  def __pyc_ffi_target_%d__(self):\n", pid);
   t += "    return self._addr\n";
+  // As in CPython, a c_int where POINTER(c_int) is declared is passed by reference.
+  t += fmt("  def __pyc_ffi_as_%d__(self):\n", pid);
+  t += "    return self._addr\n";
   t += "  def __pyc_ffi_sizeof__(self):\n";
   t += fmt("    return __pyc_c_call__(int, \"_CG_ffi_sizeof_s%d\")\n", k);
   // Passed by value where its own class is declared.
@@ -1383,6 +1443,126 @@ std::string py_array(const FType *a) {
   t += "  o._buf = keep\n";
   t += "  o._addr = addr\n";
   t += "  return o\n";
+  return t;
+}
+
+// ---------------------------------------------------------------- callbacks
+//
+// CFUNCTYPE(res, *args) (issues/188 item 1). `CB(f)` is an instance of
+// __pyc_ffi_CB_K__ holding `fn`; its constructor allocates a libffi closure
+// whose code address is the C function pointer and whose user_data is the
+// CB object. The closure's handler (shim) reads the C arguments, widens them
+// to words and calls `_CG_ffi_cb_K`, the EXPORTED trampoline (ifa/212):
+// __pyc_ffi_cbt_K__(cb, a0, ...) converts each word to the Python value,
+// calls cb.fn, and converts the result back. FA roots the trampoline as an
+// outside caller passing every CB_K instance and words of the declared
+// kinds, so `cb.fn` dispatches over every callable the program wraps.
+
+// A word from C as the Python value a callback receives.
+std::string py_from_word(const FType &t, const std::string &a) {
+  switch (t.kind) {
+    case K_BOOL: return a + " != 0";
+    case K_CHAR: return "__pyc_c_call__(bytes, \"_CG_ffi_char\", int, " + a + ")";
+    case K_CHARP: return "(None if " + a + " == 0 else __pyc_c_call__(bytes, \"_CG_ffi_cstr\", int, " + a + "))";
+    case K_PTR: return fmt("__pyc_ffi_mk_%d__(%s)", t.id, a.c_str());
+    default: return a;
+  }
+}
+
+// libffi's description of a C type.
+cchar *ffi_type_of(const FType &t) {
+  switch (t.kind) {
+    case K_VOID: return "&ffi_type_void";
+    case K_CHARP: case K_VOIDP: case K_PTR: case K_CFUNC: return "&ffi_type_pointer";
+    case K_FLOAT: return t.c == "float" ? "&ffi_type_float" : "&ffi_type_double";
+    default: break;
+  }
+  static const struct { cchar *c, *ffi; } m[] = {
+      {"bool", "&ffi_type_uint8"},           {"char", "&ffi_type_schar"},          {"signed char", "&ffi_type_schar"},
+      {"unsigned char", "&ffi_type_uchar"},  {"short", "&ffi_type_sshort"},        {"unsigned short", "&ffi_type_ushort"},
+      {"int", "&ffi_type_sint"},             {"unsigned int", "&ffi_type_uint"},   {"long", "&ffi_type_slong"},
+      {"unsigned long", "&ffi_type_ulong"},
+  };
+  for (auto &x : m)
+    if (t.c == x.c) return x.ffi;
+  fail("internal error: ctypes: no libffi type for '%s'", t.c.c_str());
+  return "";
+}
+
+cchar *cb_word_c(const FType &t) { return t.kind == K_FLOAT ? "double" : "long long"; }
+
+void shim_cfun(FCfun *f) {
+  shim_header();
+  int k = f->id, n = (int)f->args.size();
+  static bool once = false;
+  if (!once) {
+    once = true;
+    shim +=
+        "#if __has_include(<ffi.h>)\n#include <ffi.h>\n#else\n#include <ffi/ffi.h>\n#endif\n"
+        "#include <stdlib.h>\n"
+        "extern \"C\" void GC_register_finalizer(void *, void (*)(void *, void *), void *, void (**)(void *, void *), "
+        "void **);\n"
+        "// A CB object was collected: its closure goes with it.\n"
+        "static void _CG_ffi_cbfree(void *obj, void *cl) { (void)obj; ffi_closure_free(cl); }\n";
+  }
+  bool has_res = f->res.kind != K_VOID;
+  // The exported trampoline (ifa/212), as both backends define it.
+  std::string decl = fmt("extern \"C\" %s _CG_ffi_cb_%d(void *", has_res ? cb_word_c(f->res) : "void", k);
+  for (int i = 0; i < n; i++) decl += std::string(", ") + cb_word_c(f->args[i]);
+  shim += decl + ");\n";
+  shim += fmt("static ffi_cif _CG_ffi_cif_%d;\nstatic ffi_type *_CG_ffi_at_%d[%d];\n", k, k, n ? n : 1);
+  shim += fmt("static void _CG_ffi_cbh_%d(ffi_cif *cif, void *ret, void **args, void *ud) {\n  (void)cif;\n  ", k);
+  std::string call = fmt("_CG_ffi_cb_%d(ud", k);
+  for (int i = 0; i < n; i++)
+    call += ", (" + std::string(cb_word_c(f->args[i])) + ")" +
+            c_to_word(f->args[i], fmt("*(%s *)args[%d]", c_type(f->args[i]).c_str(), i));
+  call += ")";
+  if (!has_res)
+    shim += call + ";\n  (void)ret;\n";
+  else if (f->res.kind == K_FLOAT)
+    shim += fmt("*(%s *)ret = (%s)%s;\n", f->res.c.c_str(), f->res.c.c_str(), call.c_str());
+  else  // libffi returns an integer narrower than a register as a whole ffi_arg
+    shim += fmt("*(ffi_arg *)ret = (ffi_arg)(%s)%s;\n", c_type(f->res).c_str(), call.c_str());
+  shim += "}\n";
+  shim += fmt("_CG_FFI_DEF int64_t _CG_ffi_cbnew_%d(void *cb) {\n  static int ready = 0;\n  if (!ready) {\n", k);
+  for (int i = 0; i < n; i++) shim += fmt("    _CG_ffi_at_%d[%d] = %s;\n", k, i, ffi_type_of(f->args[i]));
+  shim += fmt("    if (ffi_prep_cif(&_CG_ffi_cif_%d, FFI_DEFAULT_ABI, %d, %s, _CG_ffi_at_%d) != FFI_OK) abort();\n", k, n,
+              ffi_type_of(f->res), k);
+  shim += "    ready = 1;\n  }\n  void *code = 0;\n";
+  shim += "  ffi_closure *cl = (ffi_closure *)ffi_closure_alloc(sizeof(ffi_closure), &code);\n";
+  shim += fmt("  if (!cl || ffi_prep_closure_loc(cl, &_CG_ffi_cif_%d, _CG_ffi_cbh_%d, cb, code) != FFI_OK) abort();\n", k, k);
+  shim += "  // user_data is the CB object, where the collector does not look: the\n"
+          "  // program keeps the CB object alive while C may call it, as in CPython.\n"
+          "  GC_register_finalizer(cb, _CG_ffi_cbfree, cl, 0, 0);\n"
+          "  return (int64_t)(intptr_t)code;\n}\n";
+}
+
+std::string py_cfun(FCfun *f) {
+  int k = f->id, n = (int)f->args.size();
+  std::string cls = fmt("__pyc_ffi_CB_%d__", k);
+  std::string t = "class " + cls + "(object):\n";
+  t += "  def __init__(self, fn):\n";
+  t += "    self.fn = fn\n";
+  t += fmt("    self._code = __pyc_c_call__(int, \"_CG_ffi_cbnew_%d\", %s, self)\n", k, cls.c_str());
+  t += fmt("  def __pyc_ffi_cfn_%d__(self):\n", k);
+  t += "    return self._code\n";
+  t += fmt("def __pyc_ffi_cbt_%d__(cb", k);
+  for (int i = 0; i < n; i++) t += fmt(", a%d", i);
+  t += "):\n  try:\n";
+  std::string call = "cb.fn(";
+  for (int i = 0; i < n; i++) call += (i ? ", " : "") + py_from_word(f->args[i], fmt("a%d", i));
+  call += ")";
+  if (f->res.kind == K_VOID)
+    t += "    " + call + "\n";
+  else {
+    cchar *decl;
+    t += "    __pyc_r__ = " + call + "\n";
+    t += "    return " + py_arg(f->res, "__pyc_r__", decl) + "\n";
+  }
+  // No exception may unwind into C: CPython prints it and returns zero.
+  t += "  except Exception as __pyc_e__:\n";
+  t += "    __pyc_c_call__(int, \"_CG_ffi_cb_ignored\", str, str(__pyc_e__))\n";
+  if (f->res.kind != K_VOID) t += f->res.kind == K_FLOAT ? "  return 0.0\n" : "  return 0\n";
   return t;
 }
 
@@ -1500,8 +1680,10 @@ void lower_module(PyDAST *mod, cchar *filename) {
       scan_import(env, st);
     else if (st->kind == PY_classdef)
       scan_class(env, st);
-    else if (st->kind == PY_assign)
+    else if (st->kind == PY_assign) {
+      env.cur_stmt = st;
       scan_assign(env, st);
+    }
   }
   if (!env.mod_names.size() && !env.from.size() && !env.star) return;
   rewrite_ctors(env, mod);
@@ -1536,6 +1718,35 @@ void lower_module(PyDAST *mod, cchar *filename) {
         first = false;
       } else
         after[s->cdef].push_back(c);
+    }
+  }
+  for (int id : env.cfun_order) {
+    FCfun *f = cfuns[id];
+    shim_cfun(f);
+    PyDAST *at = env.cfun_stmt[id] ? env.cfun_stmt[id] : mod->children.last();
+    PyDAST *g = parse_generated(env, py_cfun(f), at);
+    if (g->children.n != 2 || g->children[0]->kind != PY_classdef || g->children[1]->kind != PY_funcdef)
+      fail("internal error: ctypes callback shape");
+    f->cdef = g->children[0];
+    f->fdef = g->children[1];
+    after[at].push_back(f->cdef);
+    after[at].push_back(f->fdef);
+    // libffi, only for a program that declares a CFUNCTYPE: the static one
+    // an installed pyc carries in <system_dir>/ffi (`make dist`, as it
+    // carries Boehm's), so the program needs no libffi where it is built or
+    // run; else the system's.
+    static bool linked_ffi = false;
+    if (!linked_ffi) {
+      linked_ffi = true;
+      std::string dir = std::string(system_dir) + "/ffi";
+      if (access((dir + "/lib/libffi.a").c_str(), R_OK) == 0) {
+        codegen_link_libs.add(dupstr((dir + "/lib/libffi.a").c_str()));
+        std::string inc = " -I" + dir + "/include";
+        if (strlen(codegen_extra_cflags) + inc.size() >= sizeof(codegen_extra_cflags))
+          fail("ctypes: the C compiler flags are too long to add libffi's headers");
+        strcat(codegen_extra_cflags, inc.c_str());
+      } else
+        codegen_link_libs.add("-lffi");
     }
   }
   for (FLib *lib : env.lib_order) {
@@ -1667,6 +1878,24 @@ void inject_builtin(PyDAST *builtin) {
 }  // namespace
 
 cchar *pyc_ffi_shim = nullptr;
+
+// issues/188 item 1, ifa/212: each callback trampoline is an exported
+// function, called by the libffi closure handler as _CG_ffi_cb_K(cb, words).
+// Bound here, after build_syms gave the generated defs their Syms: the CB
+// class is an object formal (every CB_K instance reaches it), each word an
+// int64 or a float64.
+void pyc_ffi_bind_exports(PycCompiler &ctx) {
+  for (FCfun *f : cfuns) {
+    if (!f->fdef) continue;
+    Sym *fs = getAST(f->fdef, ctx)->sym, *cls = getAST(f->cdef, ctx)->sym;
+    if (!fs || !fs->is_fun || !cls) fail("internal error: ctypes callback %d has no Syms", f->id);
+    fs->export_name = dupstr(fmt("_CG_ffi_cb_%d", f->id).c_str());
+    fs->export_args.clear();
+    fs->export_args.add(cls);
+    for (FType &a : f->args) fs->export_args.add(a.kind == K_FLOAT ? sym_float64 : sym_int64);
+    fs->export_ret = f->res.kind == K_VOID ? nullptr : f->res.kind == K_FLOAT ? sym_float64 : sym_int64;
+  }
+}
 
 void lower_ctypes(Vec<PycModule *> &mods, Vec<PyDAST *> &imported) {
   for (int i = 1; i < mods.n; i++) lower_module(mods[i]->pymod, mods[i]->filename);

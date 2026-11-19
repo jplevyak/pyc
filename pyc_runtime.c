@@ -33,6 +33,7 @@ extern _CG_int64 _CG_ffi_bytes_addr(char *b);
 extern char *_CG_ffi_cstr(_CG_int64 p);
 extern char *_CG_ffi_buf(_CG_int64 n);
 extern char *_CG_ffi_char(_CG_int64 v);
+extern _CG_int64 _CG_ffi_cb_ignored(char *msg);
 extern _CG_int64 _CG_ffi_copy(_CG_int64 dst, _CG_int64 src, _CG_int64 n);
 extern char *_CG_ffi_rd_cstr_n(_CG_int64 a, _CG_int64 n);
 extern char *_CG_ffi_rd_raw(_CG_int64 a, _CG_int64 n);

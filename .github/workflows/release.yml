@@ -68,7 +68,7 @@ jobs:
           # bdw-gc's static archives and headers are what the tarball bundles;
           # zstd's archive is linked into pyc. CPATH / LIBRARY_PATH let
           # dparser's build find the GC without editing its Makefile.
-          brew install llvm@20 bdw-gc zstd
+          brew install llvm@20 bdw-gc zstd libffi
           LLVM=$(brew --prefix llvm@20)
           {
             echo CC=$LLVM/bin/clang
@@ -93,7 +93,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang-20 llvm-20 llvm-20-dev lld-20 \
-            libgc-dev zlib1g-dev libzstd-dev python3 make
+            libgc-dev libffi-dev zlib1g-dev libzstd-dev python3 make
 
       - name: Build and install DParser (libdparse_gc + make_dparser)
         run: |

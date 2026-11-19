@@ -678,6 +678,7 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
     if (report_import_errors(*ctx) > 0) return -1;
     if (report_undefined_names(*ctx) > 0) return -1;
   }
+  pyc_ffi_bind_exports(*ctx);  // issues/188: callback trampolines are exported (ifa/212)
   // issue 011: user-level call graph (the builtin module's own was
   // already computed once in ast_to_if1_baseline). all_mods.n here
   // (not the n_user snapshot) so imports build_syms pulled in mid-loop

@@ -554,6 +554,11 @@ inline _CG_int64 _CG_ffi_wr_chars(_CG_int64 a, char *b, _CG_int64 len, _CG_int64
   if (len < n) ((char *)(intptr_t)a)[len] = 0;
   return 0;
 }
+// A ctypes callback raised: CPython prints it and the callback returns zero.
+inline _CG_int64 _CG_ffi_cb_ignored(char *msg) {
+  fprintf(stderr, "Exception ignored on calling ctypes callback function\n%s\n", msg);
+  return 0;
+}
 // A c_char's value: one byte, which may be NUL.
 inline char *_CG_ffi_char(_CG_int64 v) {
   char c = (char)v;

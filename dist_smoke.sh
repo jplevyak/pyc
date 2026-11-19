@@ -22,7 +22,8 @@ set -u
 TARBALL=$(realpath "$1")
 TESTS=$(realpath "${2:-$(dirname "$0")/tests}")
 PROGRAMS="call_unpacking_into_named list_eq_other_type narrowing_not_isinstance kwargs_parameter
-          generator_send_typed decorator_method property_setter"
+          generator_send_typed decorator_method property_setter
+          ctypes_callbacks"  # ctypes callbacks link the bundled static libffi (issues/188)
 
 ROOT=$(mktemp -d)
 echo "unpacked in $ROOT"
@@ -61,7 +62,7 @@ for flags in "" "-b"; do
       echo "FAIL [${flags:-C}] $p: output differs from $p.py.exec.check"; fail=1
     fi
     check_deps "./$p" "[${flags:-C}] $p" || fail=1
-    rm -f "$p" "$p.py.c" "$p.ll" "$p.o"
+    rm -f "$p" "$p.py.c" "$p.ll" "$p.o" "$p.py.ffi.cc" "$p.py.ffi.o"
   done
 done
 # A generator too: the JIT once aborted on any (ifa/211).

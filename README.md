@@ -468,9 +468,9 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   an `except` clause is refused when the program raises `StopIteration` with more than one value
   type ([issues/172](issues/172-stopiteration-value-reads-the-global-exception-slot.md)).
 - **The standard library** is limited to the partial modules in `pyc_lib/`.
-- **`ctypes`** is a static subset: no callbacks (`CFUNCTYPE`), scalar out-parameters
-  (`byref(c_int())`), arrays, unions or `cast`, declarations must be at module top level, and a
-  program with foreign calls does not run under `--jit`
+- **`ctypes`** is a static subset: structures, pointers, arrays, scalar out-parameters and
+  `CFUNCTYPE` callbacks (through libffi), but no unions, bit fields or `cast`; declarations must
+  be at module top level, and a program with foreign calls does not run under `--jit`
   ([issues/188](issues/188-static-ctypes-subset.md)).
 - **Class attributes stored through the class after it is used**: an instance or a subclass keeps
   the value the class had when the instance or subclass was made, so `C.k += 1` is not seen

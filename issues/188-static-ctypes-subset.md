@@ -1,7 +1,7 @@
 # 188 — a static subset of `ctypes`: calling C libraries from pyc programs
 
-**Status:** open. The core landed 2026-11-11, and step 0 and items 2 and 3
-on 2026-11-18 (`python_ifa_ctypes.cc`, `pyc_lib/ctypes/`, tests `ctypes_*`);
+**Status:** open. The core landed 2026-11-11, and step 0 and items 1, 2
+and 3 on 2026-11-18 (`python_ifa_ctypes.cc`, `pyc_lib/ctypes/`, tests `ctypes_*`);
 what is left is the list under
 [Not done](#not-done).
 
@@ -101,16 +101,16 @@ the default search path (`--libs "-L. -lfoo -Wl,-rpath,."`).
 A library that is not a string literal, `None` or `find_library("lit")`; a
 function called with no `argtypes` (pyc does not guess a signature from the
 arguments); a declaration that is not at module top level; and any other use
-of a ctypes name (`cast`, `CFUNCTYPE`, `c_wchar`, constructing a pointer
-from a value: write `pointer(x)`).
+of a ctypes name (`cast`, `WINFUNCTYPE`, `c_wchar`, constructing a pointer
+from a value: write `pointer(x)`, and calling a `CFUNCTYPE(...)` expression
+directly: bind the type to a name first).
 
 ## Not done
 
-1. **Callbacks** (`CFUNCTYPE`). A pyc function is cloned per contour and C
-   needs one entry point, so the declared signature has to seed flow
-   analysis as an external caller. Anything a library retains
-   (`user_data`) then needs pinning, because Boehm does not scan the
-   library's heap.
+1. ~~**Callbacks** (`CFUNCTYPE`)~~: done 2026-11-18, see Item 1 under the
+   plan below. A Python object as `user_data` (`py_object`) is not
+   supported, and a callback from a thread the library created is not
+   detected.
 2. ~~**Scalar boxes and out-parameters**~~: done 2026-11-18, see Item 2 under the plan below. `p[i]` on a
    NULL pointer does not reach an `except` yet: that is
    [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)'s
@@ -470,6 +470,45 @@ the IR, not from a language.
 `CB` objects alive at once, a closure capturing a local, a raising callback
 (its stderr in a `.check`), and `--strict`. `--jit` stays refused (item 6),
 though exported names are one of the two things it lacks.
+
+**What landed (Part B, 2026-11-18).** As planned, with these findings:
+
+- `pyc_ffi_bind_exports` (after `build_syms`) binds the export from the
+  generated `funcdef` and `classdef` NODES: the trampoline's Sym and the
+  CB class's Sym, no name lookup. The trampoline is a module-level `def`,
+  so pyc gives it nesting depth 1; ifa's root edge takes its display from
+  the top contour (ifa/212).
+- Wiring the first callback through found four defects in Part A, all
+  fixed there (ifa/212): the root edge had no display; the class's
+  prototype (`Sym::self`) reached the object formal as if it were an
+  instance; the root edge was skipped when its object argument was still
+  empty and never retried; and a `can_raise` check refused every trampoline,
+  since `Fun::can_raise` cannot tell a caught exception from an escaping one.
+- On LLVM, `CB(f)` passed `null` for `f`: a function used as a call ARGUMENT
+  had no value there (ifa/210). Fixed in `emit_send_call`: the function's
+  address, as `emit_move` stores it. Plain Python had the same crash.
+- CPython passes a `c_int` (or a Structure) by reference where `POINTER` of
+  it is declared (`bsearch(key, ...)`); the box and the Structure now
+  convert there.
+- A raising callback is its own test, `tests/ctypes_callback_raises.py`:
+  the harness compares stderr too, and pyc's message omits CPython's
+  `<function f at 0x...>` and traceback (`.python.expect_fail`).
+- The shim includes `<ffi.h>` (or the SDK's `<ffi/ffi.h>`) and declares
+  `GC_register_finalizer` itself, so it needs no GC header. A program links
+  `<lib/pyc>/ffi/lib/libffi.a` when pyc carries it, else `-lffi`; `make
+  dist` bundles it beside Boehm's (`FFI_STATIC_LIB`, `FFI_INCLUDE`), and CI
+  and the release install libffi.
+- A `CFUNCTYPE`'s argument and result types: scalars and `POINTER`s
+  (no pointer result, no Structure by value); `use_errno` refused.
+
+Measured: `make test` green on both backends; the corpus `check` sweep
+`check__default__ad72ad31+54ab4ec7` matches Part A's row for row except
+`chaos`'s run timeout, which ran alone in 77 s of the 120 s cap (a parallel
+sweep's fabricated timeout); the LLVM sweep
+`check__PYC_LLVM_1__ad72ad31+2a323769` matches `19a71648`'s row for row
+(`doom`'s compile failure is in both). `make PORTABLE=1 dist` bundles
+`lib/pyc/ffi`, and `dist_smoke.sh` (now with `ctypes_callbacks`) passes on
+both backends; the programs it builds link no shared libffi.
 
 #### What else Part A buys
 
