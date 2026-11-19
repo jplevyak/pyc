@@ -54,7 +54,7 @@ Ordered by value against effort. Items in one row are independent.
 
 | order | do | why | unblocks |
 | --- | --- | --- | --- |
-| 1 | the silent wrong answers with a local fix: none left. [185](closed/185-list-eq-tuple-is-true.md) closed 2026-11-14; [180](180-method-assigned-across-classes-crashes.md) has been a compile-time refusal since 2026-11-07, so it is a row 5 item; [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 1 turned out to be a representation change (2026-11-14: instances copy class attributes too; two designs in the issue), so it is a decision, not a day | rule 1's worst outcome | |
+| 1 | the silent wrong answers with a local fix: [194](194-repr-of-an-empty-set.md) (one line, filed 2026-11-19). [185](closed/185-list-eq-tuple-is-true.md) closed 2026-11-14; [180](180-method-assigned-across-classes-crashes.md) has been a compile-time refusal since 2026-11-07, so it is a row 5 item; [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 1 turned out to be a representation change (2026-11-14: instances copy class attributes too; two designs in the issue), so it is a decision, not a day | rule 1's worst outcome | |
 | 2 | exception liveness along the call graph: [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 2 | the silent wrong answers on the exception side wait on it, and the up-front check is measured too expensive | [179](179-sequence-index-out-of-range-does-not-raise.md), tuple `__setitem__`, ifa/165. Not [172](172-stopiteration-value-reads-the-global-exception-slot.md), which needs exception VALUE flow (corrected 2026-11-14) |
 | 3 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 1 (operators, `ZeroDivisionError`) and [179](179-sequence-index-out-of-range-does-not-raise.md) | silent memory reads and a SIGFPE on the default path | |
 | 4 | the crashes: [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 3 (recursion limit), [187](187-self-import-overflows-the-frontend.md) | a crash beats a wrong answer but not by much | corpus `loop` |
@@ -70,6 +70,7 @@ Ordered by value against effort. Items in one row are independent.
 | issue | what |
 | --- | --- |
 | [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
+| [194](194-repr-of-an-empty-set.md) | an empty set prints as `{}` (CPython: `set()`), through every route to its repr. |
 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) | a raise inside an operator or `__getitem__` never reaches the handler; `7 // 0` is a SIGFPE; the item-subscript check costs +72 % compile time if emitted up front. |
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | a subclass or an instance does not see a class attribute stored through the class after it was made (`C.k += 1; self.k`); a global read before its definition sees the later value; deep recursion overflows the C stack and `setrecursionlimit` is ignored. |
 | [180](180-method-assigned-across-classes-crashes.md) | `a.x = b.x` across unrelated classes compiles clean, then `a.x()` segfaults: a field holding a closure called as a method slot. |
@@ -81,6 +82,7 @@ Ordered by value against effort. Items in one row are independent.
 | --- | --- |
 | [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
 | [190](190-class-name-attribute.md) | A class has no `__name__` (`C.__name__`, `cls.__name__`). |
+| [195](195-typing-and-dataclasses.md) | `typing` and `@dataclass` landed 2026-11-19; `NamedTuple`, `TypedDict`, `order=True`, `fields()`/`asdict()` and a non-dataclass subclass of a dataclass are refused. |
 | [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class defining a method twice is an ambiguous call; CPython takes the last. |
 | [189](189-unpacking-into-named-parameters.md) | `f(**d)` into named parameters (the forwarding decorator), `f(*xs)` of a list into them, and `**kw` with mixed value types. `f(*t)` of a tuple works (2026-11-14). |
 | [048](048-none-int-field-pair-runtime-abort.md) | a genuinely read `{None, scalar}`: refused in every mode; the permissive sentinel is built only when a program needs it. |

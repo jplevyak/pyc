@@ -1,0 +1,1 @@
+fail: error dataclass_subclass_refused.py:8: class B is a subclass of dataclass A and must be a dataclass itself (issues/195)

@@ -683,6 +683,26 @@ backend through `codegen_extra_source`; the libraries a program names go to
 `codegen_link_libs`. Design, limits and the list of what is refused:
 [issues/188](issues/188-static-ctypes-subset.md).
 
+### 11.2 `typing` and `dataclasses`
+
+`lower_typing_and_dataclasses` (`python_ifa_dataclass.cc`) runs on the AST
+right after `lower_ctypes`, and for the same reason it comes before the
+property scan: a frozen dataclass's fields get `__pyc_set_NAME__` setters.
+It removes the body of `if TYPE_CHECKING:` and every `X: TypeAlias = ...`,
+and rewrites a module-level `@dataclass` class into the class CPython's
+decorator builds. Names are resolved through the module's own imports of
+`typing` and `dataclasses`. Two pieces of it live elsewhere:
+
+- `PyDAST::is_default_factory` marks a parameter default that
+  `PycCompiler::default_wrapper` CALLS on each call that omits it
+  (`field(default_factory=...)`).
+- `pyc_dataclass_check`, after `build_syms`, checks what only the class
+  hierarchy shows: every subclass of a dataclass is one.
+
+`PYC_DBG_DATACLASS=1` prints the generated Python. `pyc_lib/typing.py`
+binds the names; pyc never evaluates an annotation. Design and limits:
+[issues/195](issues/195-typing-and-dataclasses.md).
+
 ---
 
 ## 12. The DParser grammar (`python.g`)

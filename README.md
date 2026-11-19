@@ -46,6 +46,10 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
   time. Partial implementations of common standard-library modules live in
   [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os`, `collections`, `heapq`,
   `copy`, `struct`, `string`, `socket` and parts of `re` and `itertools`. File I/O uses `open()`.
+- **Type hints and dataclasses**: annotations are accepted and ignored, `typing` provides its
+  names (`TYPE_CHECKING` blocks are skipped, `TypeAlias` assignments dropped), and `@dataclass`
+  generates `__init__`, `__repr__`, `__eq__` and `__hash__` as CPython does, with `field()`
+  defaults and factories, `frozen=True` and `__post_init__`.
 - **C libraries**: a static subset of `ctypes`. Declare a function with `CDLL`, `argtypes` and
   `restype` and it compiles to a direct call, with `Structure` and `POINTER` for C data. The same
   file runs under CPython. See [Calling a C library](#calling-a-c-library).
@@ -468,6 +472,10 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   an `except` clause is refused when the program raises `StopIteration` with more than one value
   type ([issues/172](issues/172-stopiteration-value-reads-the-global-exception-slot.md)).
 - **The standard library** is limited to the partial modules in `pyc_lib/`.
+- **`typing` and `dataclasses`**: `NamedTuple`, `TypedDict`, `Generic` and `Protocol` are not
+  provided. `@dataclass` must be on a class at module level, a subclass of a dataclass must be
+  one itself, and `order`, `kw_only`, `slots`, `InitVar`, `fields()`, `asdict()` and `replace()`
+  are refused ([issues/195](issues/195-typing-and-dataclasses.md)).
 - **`ctypes`** is a static subset: structures, pointers, arrays, scalar out-parameters and
   `CFUNCTYPE` callbacks (through libffi), but no unions, bit fields or `cast`; declarations must
   be at module top level, and a program with foreign calls does not run under `--jit`

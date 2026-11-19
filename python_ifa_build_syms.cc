@@ -1804,7 +1804,15 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       build_syms_pyda(n->children[1], ctx);
       return 0;
 
-    case PY_annassign:
+    case PY_annassign: {
+      // issues/195: a bare annotation (`x: int`) in a class or module body
+      // binds nothing in CPython; it only records the annotation. Binding
+      // it made `x` a class member with no value, which a subclass then
+      // read ("unresolved member 'x' of class 'Base'"). In a function it
+      // does make `x` local, so it binds there.
+      PycScope *sc = ctx.scope_stack.last();
+      if (n->children.n == 2 && sc->in && sc->in == sc->cls) return 0;
+    }
       mark_store(n->children[0]);
       build_syms_pyda(n->children[0], ctx);
       if (n->children.n == 3) {

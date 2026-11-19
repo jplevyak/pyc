@@ -243,6 +243,19 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   MPosition pos;
   pos.push(1);
   Code *body = 0;
+  // issues/195: a default flagged is_default_factory (a dataclass field's
+  // default_factory) is a callable, called on every call that omits it.
+  // The stored value is the factory, evaluated once where the def runs.
+  Map<MPosition *, Sym *> made;
+  for (MPosition *cp : defaults_set) {
+    if (!cp) continue;
+    PycAST *d = (PycAST *)f->default_args.get(cp);
+    if (!d->xpyd || !d->xpyd->is_default_factory) continue;
+    Sym *v = new_sym(ast);
+    Code *call = if1_send(if1, &body, 1, 1, d->sym, v);
+    call->ast = ast;
+    made.put(cp, v);
+  }
   Sym *ret = new_sym(ast);
   Code *send = if1_send(if1, &body, 0, 1, ret);
   send->ast = ast;
@@ -252,7 +265,8 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
     // send names the ones it passes.
     cchar *kwname = f->kwonly_pos && i + 1 >= f->kwonly_pos ? f->sym->has[i]->name : nullptr;
     if (defaults_set.set_in(cp)) {
-      if1_add_send_arg(if1, send, ((PycAST *)f->default_args.get(cp))->sym, kwname);
+      Sym *m = made.get(cp);
+      if1_add_send_arg(if1, send, m ? m : ((PycAST *)f->default_args.get(cp))->sym, kwname);
     } else {
       Sym *a = new_sym(ast);
       // Inherit clone_for_constants from the wrapped formal:

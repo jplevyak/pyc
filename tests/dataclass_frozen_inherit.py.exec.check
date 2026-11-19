@@ -1,0 +1,5 @@
+Key(a=1, b='z') True True z 2
+FrozenInstanceError cannot assign to field 'a'
+1
+Derived(x=2, y=1, z=5, log=['hi'], n=9) 3 ['hi'] 9 True True
+True False 3

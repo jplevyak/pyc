@@ -358,6 +358,8 @@ cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
 // python_ifa_ctypes.cc: lower the static ctypes subset to pyc Python plus a C
 // shim, before build_syms. pyc_ffi_shim is the shim's text, or null.
 void lower_ctypes(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);
+void lower_typing_and_dataclasses(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);  // issues/195
+void pyc_dataclass_check(PycCompiler &ctx);  // issues/195, after build_syms
 extern cchar *pyc_ffi_shim;
 void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out);
 int build_syms(PycModule *x, PycCompiler &ctx);

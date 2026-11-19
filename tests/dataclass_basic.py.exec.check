@@ -1,0 +1,6 @@
+Point(x=1, y=0) Point(x=1, y=2) True False True 0 0
+Point(x=4, y=5) Point(x=3, y=1)
+Bag(name='a', items=[3, 4], tags={'t'}, unit=Unit()) Bag(name='b', items=[], tags={'u'}, unit=Unit()) 7 0 7
+True True True False
+<n> True False
+TypeError unhashable type: 'Point'

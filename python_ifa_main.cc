@@ -679,6 +679,7 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
     if (report_undefined_names(*ctx) > 0) return -1;
   }
   pyc_ffi_bind_exports(*ctx);  // issues/188: callback trampolines are exported (ifa/212)
+  pyc_dataclass_check(*ctx);    // issues/195
   // issue 011: user-level call graph (the builtin module's own was
   // already computed once in ast_to_if1_baseline). all_mods.n here
   // (not the n_user snapshot) so imports build_syms pulled in mid-loop
@@ -1711,6 +1712,7 @@ int ast_to_if1(Vec<PycModule *> &mods) {
   Vec<PyDAST *> imported;
   prescan_imported_modules(mods, *make_search_path(), imported);
   lower_ctypes(mods, imported);  // issues/188: before the property scan, which reads the classes it generates
+  lower_typing_and_dataclasses(mods, imported);  // issues/195: also before it (a frozen field's setter)
   inject_property_accessors(mods, imported);  // issues/171 #13: @property getters
   Vec<PyDAST *> asts;
   for (PycModule *m : mods) asts.add(m->pymod);
