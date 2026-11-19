@@ -117,6 +117,207 @@ of a ctypes name (`c_int(5)`, `cast`, `sizeof`, `CFUNCTYPE`).
 8. **macOS** is written (`-lNAME` from `libNAME.dylib`,
    `__USER_LABEL_PREFIX__`) and untested.
 
+## Plan for items 1–3 (2026-11-18)
+
+Order: **step 0, then 2, then 3, then 1.** Steps 0, 2 and 3 are frontend
+only (`python_ifa_ctypes.cc`, `pyc_c_runtime.h`), like the core. Item 1 is
+the only one that needs ifa: a second FA entry point and a fixed C entry
+point in both backends. Rough size: step 0 a day, item 2 two days, item 3
+two days, item 1 about a week.
+
+Every behaviour below was checked against CPython 3 on 2026-11-18. Each
+step's test runs under CPython and pyc on both backends, and under
+`--strict`, and its `.ffi.cc` golden is blessed only after reading the diff.
+
+### Step 0 — one model for C-layout objects
+
+Items 2 and 3 both need things that the current `FType` (a flat kind plus
+`FStruct *`) cannot say: a pointer to a scalar, a pointer to a pointer, an
+array of structs. They also need a pointer object whose own value lives in
+C storage, because `byref(p)` must be the address of `p`'s cell.
+
+- Make `FType` a tree, `{kind, c, FStruct *s, FType *elem, int n}`, with
+  the new kinds `K_BOX` (a scalar box, `c_int()`), `K_ARRAY` (`elem * n`)
+  and `K_PTR` over any `elem`. Intern the types by structure, so each
+  distinct type has one id and one generated class: CPython caches these
+  too (`POINTER(c_int) is POINTER(c_int)`, `(c_int * 4) is A`). Structs
+  stay nominal, one per class.
+- Every C-layout object gets the representation a Structure has today:
+  `_buf` (collected, scanned storage from `_CG_ffi_buf`) and `_addr`. A
+  view (`p.contents`, `t.s`, `a[i]` of a struct) is the same class with
+  `_buf` set to the owner's buffer, so it keeps the owner alive.
+- **A pointer object becomes a one-word cell**: `_buf` holds the address
+  and `_addr` points at the cell. `p.contents` reads the cell. The `_keep`
+  field goes away, because a pointee that pyc allocated is now reachable
+  from a scanned cell. NULL is still a falsy instance
+  (`bool(POINTER(c_int)())` is False).
+- The shim emits `sizeof` and `offsetof` per type (`_CG_ffi_sizeof_K`,
+  `_CG_ffi_off_K_f`) and a generic read and write per scalar C type, in
+  place of today's per-field getter and setter. That keeps the shim linear
+  in the number of types rather than in the number of fields.
+
+**Done when** the existing `ctypes_*` tests pass unchanged and the
+`.ffi.cc` goldens change only in the ways described above.
+
+### Item 2 — scalar boxes, out-parameters, `POINTER(scalar)`
+
+The surface: `x = c_int(5)`, `x.value`, `x.value = 3`, `byref(x)`,
+`pointer(x)`, `POINTER(c_int)` as an argument type, a result type and a
+field type, and `POINTER(POINTER(S))`. That last one is the `GError **`
+idiom: `err = POINTER(GError)(); f(..., byref(err)); if err: err.contents.message`.
+
+- `c_T(v)` stops being a refused leftover and becomes construction of the
+  box class `__pyc_ffi_box_K__`. It has a `value` property, with the store
+  side through the existing setter dispatch (`pyc_add_setter_name`), and the
+  `__pyc_ffi_byref__` and `__pyc_ffi_pointer__` methods a Structure has.
+- CPython accepts a box where its scalar is declared (`f(c_int(3))` for a
+  `c_int` argument). Give the box the same conversion method the scalar
+  has (`__pyc_ffi_int__`, `__pyc_ffi_float__`, `__pyc_ffi_charp__`).
+- `POINTER(T)` for any `T`, via step 0. As in CPython, `p.contents` is a
+  box view and `p[i]` is the **value** (`type(p[0])` is `int`, and
+  `type(p.contents)` is `c_int`).
+- Argument conversion: a `POINTER(T)` parameter accepts `byref(x)`,
+  `pointer(x)`, a `POINTER(T)` instance, `None`, and, once item 3 lands,
+  an array of `T`. Each one gets `__pyc_ffi_as_K__`, so a mismatch is still
+  a compile-time dispatch error.
+- Add `c_char` and `sizeof(T)` to the scalar table and the static names.
+  Item 3 needs `c_char`, and every callback example needs `sizeof`.
+  `sizeof` is a compile-time `__pyc_c_call__` of `_CG_ffi_sizeof_K`.
+- A `c_void_p` box's `.value` is the same `int`-or-`None` union as a
+  `c_void_p` result, so it falls under the existing `PYC_FFI_VOIDP_INT`
+  gate and `--strict` refuses it.
+
+**Test** `tests/ctypes_out_params.py` against libc and libm:
+`frexp(12.0, byref(e))` gives `0.75 4`, plus `modf`, `strtol` with a
+`POINTER(c_char_p)` end pointer, a box passed by value, `p[0]` against
+`p.contents`, and NULL truthiness. The `GError **` shape gets a libc
+stand-in or a hand run against glib, as the core's glib check was.
+
+### Item 3 — arrays, and a Structure held by value in a field
+
+The surface: `A = c_int * 4`, `A(1, 2)` (the rest zero), `a[i]`,
+`a[i] = v`, `len(a)`, iteration, `list(a)`, an array as an argument (it
+decays to a pointer), an array field (`("v", c_int * 3)`), a struct field
+(`("s", S)`), and `c_char * N`.
+
+- `T * N` needs a literal `N`, or a module-level name bound to a literal,
+  read at lowering time. Anything else is refused with its line, as a
+  non-literal library is.
+- `__pyc_ffi_arr_K__` gets `__init__(*items)`, `__len__`, `__getitem__`
+  and `__setitem__` bounds-checked with `IndexError("invalid index")` as
+  CPython raises, `__iter__`, and `__pyc_ffi_as_K__` for the decay to
+  `POINTER(elem)`. A struct element reads as a view, a scalar element as a
+  value.
+- Fields: the shim struct emits `int v[3];` or `struct _CG_ffi_s_K s;`.
+  The getter returns a view at `self._addr + offsetof(...)` that shares
+  `self._buf`, so `a2 = t.s; a2.q = 9` changes `t`, as CPython's does.
+  The setter copies the bytes (`t.s = S()` is a copy). Delete the "by value
+  is not supported yet" refusal in `set_fields`.
+- `c_char * N` is CPython's special case: as a field it reads as `bytes`
+  up to the first NUL, and an array of it has `.value` and `.raw`. Do it
+  in this step, because C structs are full of `char name[32]`.
+- A slice of an array (`a[1:3]`) gives a list in CPython. That is cheap to
+  add, but it can be refused at first.
+
+**Test** `tests/ctypes_arrays.py`: construction, indexing, the
+out-of-range `IndexError`, an array field and a struct field showing the
+aliasing view and the copy on store, `c_char * 8` reading as `bytes`, and
+an array passed to `memset` or `memcpy`.
+
+### Item 1 — callbacks (`CFUNCTYPE`)
+
+The target is the CPython ctypes documentation's own example, verified
+above:
+
+```python
+CMP = CFUNCTYPE(c_int, POINTER(c_int), POINTER(c_int))
+def cmp(a, b): return a[0] - b[0]
+libc.qsort(arr, len(arr), sizeof(c_int), CMP(cmp))
+```
+
+Three problems, each with its own mechanism.
+
+**(a) C needs one fixed entry point with the declared signature.** A pyc
+function is named `_CG_f_<symid>_<i>` and its C signature drops dead and
+constant arguments (`write_c_fun_proto` emits only live ones), so the shim
+cannot call it directly. The lowering generates one pyc trampoline per
+`CFUNCTYPE` type, `def __pyc_ffi_cbt_K__(cb, a0, a1): ...`. It converts
+each word argument into the Python value the callback expects (an `int`, a
+`float`, `bytes` through `_CG_ffi_cstr`, a `POINTER` cell), calls
+`cb.fn(...)`, and converts the result back. The trampoline is marked
+**exported** under a C name. That is a generic ifa feature, not a Python
+one (`Sym::export_name`, a header change, so `make clean`). Both backends
+then emit `extern "C" <word> _CG_ffi_cb_K(<word>...)` with the full
+declared arity, forwarding to the live arguments of the trampoline's single
+clone: `cg.cc` for C, and `llvm.cc` / `cg_emit_llvm.cc` for LLVM.
+
+**(b) FA has to see the trampoline as called, with the declared types.**
+FA has one root today (`make_top_edge` / `refresh_top_edge`, `fa.cc` around
+line 3492). Add one root edge per exported function, with each formal
+filtered to its declared type: the machine-word `int` or `float`, and the
+callback object's class for `cb`. That is a genuine external caller, which
+is what the item asks for. The alternative is a call from `main` behind an
+opaque false guard. It needs no ifa change, but it emits dead code and is
+the kind of structural workaround the directives warn against, so use it
+only as a stepping stone. The trampoline is only ever reached from its
+root, so FA has no demand that would split it. If it ever has two clones,
+that is an internal error naming the demand, not something to work around.
+
+**(c) A C function pointer cannot carry a closure: libffi closures**
+(decided 2026-11-18, over a fixed trampoline pool). `CB(f)` builds an
+instance of `__pyc_ffi_CB_K__`, a collected object holding `fn`, and
+allocates a libffi closure for it (`ffi_closure_alloc` +
+`ffi_prep_closure_loc`, as CPython does). Its `ffi_cif` is built once per
+`CFUNCTYPE` type from the declared C types, which the lowering knows
+statically. The closure's handler is a shim function that reads the C
+arguments from libffi's `args[]`, widens them to words, and calls
+`_CG_ffi_cb_K(cb, ...)`. The closure's `user_data` is the CB object, held as
+a pointer Boehm does **not** see (libffi's closure memory is not scanned), and
+a finalizer on the CB object frees the closure. So the callback lives exactly
+as long as the program keeps the CB object, which is CPython's rule (calling
+a collected callback is undefined behaviour there too). `fn` is an ordinary
+field, so FA sees every callable stored at every `CB(f)` site and dispatches
+over them. There is no limit on how many callbacks are alive at once.
+
+The cost is a library: the generated program links `-lffi`, and **only** when
+it declares a `CFUNCTYPE`, through `codegen_link_libs` as the `CDLL` entries
+are. `make PORTABLE=1 dist` must bundle a static `libffi.a` in `lib/pyc`, as
+it bundles Boehm's, and `dist_smoke.sh` must gain a callback program so the
+self-containment check covers it. CI installs `libffi-dev` (ubuntu) and
+`libffi` (Homebrew).
+
+What else follows from these:
+
+- **A callback that raises.** No pyc exception may unwind through C. The
+  trampoline catches everything, prints CPython's `Exception ignored on
+  calling ctypes callback function: <function ...>` and the exception to
+  stderr, and returns zero. Nothing reaches the caller, as in CPython.
+- **Retention (`user_data`).** A library that keeps the function pointer
+  needs the program to keep the CB object, as in CPython. A Python object
+  passed as `user_data` needs `py_object`, which is out of scope. The
+  supported shape is a `c_void_p` of `None` or the address of a ctypes
+  object the program keeps. Pinning a pointer handed to C is
+  `GC_malloc_uncollectable` storage, and that waits for a program that
+  needs it.
+- **Threads.** A callback from a thread the library created is refused in
+  documentation and not detected; pyc does not register foreign threads
+  with Boehm.
+- A `CFUNCTYPE` restype or argtype of `c_void_p` or `c_char_p` follows the
+  existing result rules (the `PYC_FFI_VOIDP_INT` gate).
+
+**Test** `tests/ctypes_callbacks.py`: the `qsort` example, `bsearch`, two
+`CB` objects alive at once, a closure capturing a local, a
+raising callback (its stderr goes in a `.check` for the "Exception ignored"
+line), and `--strict`. A `--jit` run stays refused (item 6).
+
+**Stop conditions, written before starting:**
+
+- If the exported trampoline ever gets more than one clone on the corpus or
+  the suite, stop and find the demand. Do not pick one clone.
+- If the extra FA root changes any corpus program's contour count or
+  verdict, it is not inert. Every program that does not import ctypes must
+  be unaffected, so check it with a `check` sweep before and after.
+
 ## Verification
 
 `tests/ctypes_scalars`, `ctypes_struct`, `ctypes_bindings` pass on both
