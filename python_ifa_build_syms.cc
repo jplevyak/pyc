@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
+#include "ast.h"
 #include "python_parse.h"
 
 
@@ -929,6 +930,60 @@ static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
 // make_PycSymbol's PYC_USE case) and *before* exit_scope. Returns the
 // closure class Sym, or null if the scope captured nothing (the common,
 // unaffected case -- top-level lambdas, methods, non-capturing nested defs).
+// issues/169: CLOSURE CONVERSION OF A FUNCTION-LOCAL CLASS. A class
+// defined in a function may read that function's locals from its body
+// (`z = x`) and from its methods (`return x`). Both used to be read through
+// the lexical display, which the analysis can only fill for a contour
+// called while its lexical parent is active, and fills with ONE parent: the
+// class-body function shared by `make(2)` and `make(3)` read one call's `x`
+// for both (silently wrong), and a method, called through an instance after
+// the function returned, had no display at all (the unique_AVar assert).
+// So, as for a capturing nested def (issues/001), the values are passed:
+//
+//   - the class-body function takes one extra formal per captured name, and
+//     the `class` statement passes the values read in the enclosing scope;
+//   - the body stores each on the prototype under a hidden member
+//     (local_class_cap_field), which every instance copies when it is
+//     cloned from the prototype, and reads the formal where it read `x`;
+//   - a method reads `self.<hidden member>` where it read `x`.
+//
+// Values are copied when the class statement runs, as a carrier copies
+// them when the closure is made: a later rebinding of `x` in the function
+// is not seen, where CPython's shared cell would show it.
+//
+// Which names: those a scope marked NONLOCAL_USE that resolve to an
+// enclosing FUNCTION scope -- the same filter maybe_synthesize_closure_pyda
+// applies. Classes and functions referenced by name keep their existing
+// resolution (they are not values that change per call in the programs
+// this serves).
+cchar *local_class_cap_field(Sym *s) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "__pyc_cap_%s_%d", s->name ? s->name : "v", s->id);
+  return cannonicalize_string(buf);
+}
+
+static Sym *local_class_capture_target(PycCompiler &ctx, cchar *name) {
+  int level = 0;
+  PycSymbol *outer = find_PycSymbol(ctx, name, &level);
+  if (!outer || !outer->sym || level <= 0) return nullptr;  // module, import or builtin
+  if (ctx.scope_stack[level]->in) return nullptr;            // a class body, or an already-converted carrier
+  if (!ctx.scope_stack[level]->fun) return nullptr;
+  Sym *s = outer->sym;
+  if (s->is_fun || (s->alias && s->alias->is_fun) || s->type_kind == Type_RECORD) return nullptr;
+  return s;
+}
+
+// The names the current scope reads from an enclosing function, for a
+// local class (`class_level` is the class scope's index).
+static void local_class_captures(PycCompiler &ctx, int class_level, Vec<Sym *> &out) {
+  if (class_level < 2) return;  // a class at module level captures nothing
+  form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
+    if (x->value == NONLOCAL_USE)
+      if (Sym *s = local_class_capture_target(ctx, x->key)) out.set_add(s);
+  out.set_to_vec();
+  if (out.n > 1) qsort(out.v, out.n, sizeof(out.v[0]), compar_syms);
+}
+
 static Sym *maybe_synthesize_closure_pyda(PycAST *ast, PycCompiler &ctx, bool decorated = false) {
   Vec<Sym *> captured;
   form_Map(MapCharPycSymbolElem, x, ctx.scope_stack.last()->map)
@@ -1223,8 +1278,30 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           // scope; formals/locals re-derive as nesting_depth+1 at if1
           // finalization, which runs after this.
           def_ast->sym->nesting_depth -= 1;
+          // issues/181: a marker-method GENERATOR is installed as its
+          // wrapper, which creates the generator object (as a generator
+          // method's is, gen_method_wrapper above). The raw body returns the
+          // bare coroutine handle, so `for v in C.s():` found no __iter__.
+          // The wrapper is made here because the setter needs its value
+          // now; build_if1's PY_decorated fills its body. It carries the
+          // marker flags, since class-qualified calls and FA's
+          // receiver-less read look the member's function up and test them.
+          Sym *member_val = def_ast->sym;
+          bool gen_marker = false;
+          for (auto c : def->children.values())
+            if (pyda_contains_yield(c)) { gen_marker = true; break; }
+          if (gen_marker) {
+            Sym *w = new_fun(def_ast);
+            w->in = def_ast->sym->in;
+            w->nesting_depth = def_ast->sym->nesting_depth;
+            w->is_static_method = def_ast->sym->is_static_method;
+            w->is_class_method = def_ast->sym->is_class_method;
+            ctx.gen_def_wrapper.put(def_ast->sym, w);
+            def_ast->rval->alias = w;
+            member_val = w;
+          }
           if1_send(if1, &def_ast->code, 5, 1, sym_operator, ctx.cls()->self, sym_setter,
-                   if1_make_symbol(if1, def_ast->rval->name), def_ast->sym, new_sym(def_ast))
+                   if1_make_symbol(if1, def_ast->rval->name), member_val, new_sym(def_ast))
               ->ast = def_ast;
         } else {
           // issues/007: same split identity as the plain PY_funcdef
@@ -1395,6 +1472,27 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // adder(x): return x + n; return adder`). Harmless no-op for the
       // overwhelmingly common non-capturing case (top-level defs, methods).
       if (!is_method) maybe_synthesize_closure_pyda(ast, ctx);
+      else if (ctx.scope_stack.n >= 2) {
+        // issues/169: a method of a function-local class reads the
+        // function's locals through hidden members of `self`.
+        PycScope *cls_scope = ctx.scope_stack[ctx.scope_stack.n - 2];
+        Vec<Sym *> caps;
+        local_class_captures(ctx, ctx.scope_stack.n - 2, caps);
+        Sym *recv = nullptr;
+        if (varargsl && varargsl->children.n) {
+          PyDAST *c0 = varargsl->children[0];
+          if (c0->kind == PY_arg_default) c0 = c0->children[0];
+          if (c0->kind != PY_star_arg && c0->kind != PY_dstar_arg) recv = getAST(c0, ctx)->sym;
+        }
+        if (caps.n && recv && !ast->is_staticmethod && !ast->is_classmethod) {
+          PycScope *ms = ctx.scope_stack.last();
+          ms->cap_self = recv;
+          for (Sym *cs : caps) {
+            ms->cap_fields.put(cs, local_class_cap_field(cs));
+            cls_scope->class_caps.set_add(cs);
+          }
+        }
+      }
       exit_scope(ctx);
       return 0;
     }
@@ -1528,6 +1626,24 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // class's own body statements, emitted after both, override
       // everything an ordinary override would.
       if (add_iter_bridge) cdef_ast->sym->inherits_add(iter_bridge_sym);
+      // issues/169: a local class's captured values (see
+      // local_class_cap_field): the body's own reads, and its methods'
+      // (collected as each method's scope exited). Each gets a formal of
+      // the class-body function and a hidden member, created here so the
+      // field loop below commits it to `has` with the class's own fields.
+      {
+        PycScope *cs_scope = ctx.scope_stack.last();
+        Vec<Sym *> caps;
+        local_class_captures(ctx, ctx.scope_stack.n - 1, caps);
+        for (Sym *c : caps) cs_scope->class_caps.set_add(c);
+        cs_scope->class_caps.set_to_vec();
+        if (cs_scope->class_caps.n > 1)
+          qsort(cs_scope->class_caps.v, cs_scope->class_caps.n, sizeof(cs_scope->class_caps.v[0]), compar_syms);
+        for (Sym *c : cs_scope->class_caps) {
+          cs_scope->cap_formals.put(c, new_sym(cdef_ast));
+          make_PycSymbol(ctx, local_class_cap_field(c), PYC_LOCAL);
+        }
+      }
       // Collect class fields into a temporary Vec, sort by
       // name, then commit to `has` in sorted order.  Direct
       // iteration over the scope map would walk the
@@ -1582,7 +1698,14 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_global_stmt:
-      for (auto c : n->children.values()) make_PycSymbol(ctx, c->str_val, PYC_GLOBAL);
+      for (auto c : n->children.values()) {
+        make_PycSymbol(ctx, c->str_val, PYC_GLOBAL);
+        // ifa/177: a function that declares it can store it, so a call
+        // may change it between a guard's load and a later read.
+        if (ctx.scope_stack.n > 1)
+          if (PycSymbol *g = ctx.scope_stack[0]->map.get(c->str_val))
+            if ((intptr_t)g > (intptr_t)NONLOCAL_DEF && g->sym) ctx.globals_declared_in_functions.set_add(g->sym);
+      }
       return 0;
 
     case PY_nonlocal_stmt:
@@ -1932,17 +2055,24 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_list:
     case PY_slice:
     case PY_subscriptlist:
+    case PY_arglist: {
+      for (PyDAST *c : n->children) build_syms_pyda(c, ctx);
+      return 0;
+    }
     case PY_parameters:
     case PY_varargslist:
     case PY_fpdef:
     case PY_fplist:
-    case PY_arglist:
     case PY_keyword_arg: {
       // issues/107: children[0] is the PARAMETER NAME (`print(x, end=" ")`
       // -- `end` names a formal, not a reference to a variable called
       // `end`). It must still be WALKED (the earlier attempt to skip it
       // broke 283 tests), but an unresolved lookup on it must not be
-      // reported as an undefined name.
+      // reported as an undefined name. Only HERE: this case used to be
+      // shared with PY_arglist, PY_list and a dozen other kinds, whose
+      // children[0] is an ordinary expression -- the first argument of
+      // every call, the first element of every list -- so an undefined
+      // name there was never reported (`print(NoSuchName)`).
       ctx.in_kwarg_key++;
       if (n->children.n) build_syms_pyda(n->children[0], ctx);
       ctx.in_kwarg_key--;
@@ -2700,6 +2830,52 @@ static void synthesize_default_iop(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym 
       ->ast = ast;
 }
 
+// issues/178: CPython's `dict(x)` (and `d.update(x)`) copies a MAPPING --
+// `d[k] = x[k]` for each `k in x.keys()` -- and reads anything else as an
+// iterable of pairs; which one is decided by whether x has `keys`. So a
+// class whose body defines `keys` gets
+//   def __pyc_dict_into__(self, d): return __pyc_dict_from_mapping__(d, self)
+// and every other type inherits the pairs loop (__pyc_any_type__). The
+// choice is then made by dispatch on x, per receiver type. The name is
+// CPython's own protocol here, not an inference about the program.
+static void synthesize_dict_into(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody) {
+  cchar *name = "__pyc_dict_into__";
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
+  if (!ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, "keys"))) return;  // not a mapping
+  PycSymbol *copy_fn = make_PycSymbol(ctx, "__pyc_dict_from_mapping__", PYC_USE);
+  if (!copy_fn || !copy_fn->sym) return;  // builtin module not loaded (unit tests)
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Sym *d = new_sym(ast);  // the dict being filled
+  d->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, name));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, name));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  as.add(d);
+  Code *b = 0;
+  Code *send = if1_send1(if1, &b, ast);
+  if1_add_send_arg(if1, send, copy_fn->sym);
+  if1_add_send_arg(if1, send, d);
+  if1_add_send_arg(if1, send, mfn->self);
+  Sym *res = new_sym(ast);
+  if1_add_send_result(if1, send, res);
+  if1_move(if1, &b, res, mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(name)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, name), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size, bool derive_compare) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
@@ -2716,23 +2892,60 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
   collect_match_args(cdef, cls->match_args);
   for (int i = 0; i < cls->includes.n && !cls->match_args.n; i++)
     if (cls->includes[i]->match_args.n) cls->match_args = cls->includes[i]->match_args;
-  // Build base ___init___ (class prototype initialization)
-  for (int i = 0; i < cls->includes.n; i++) {
-    Sym *inc = cls->includes[i];
-    for (int j = 0; j < inc->has.n; j++) {
-      Sym *iv = if1_make_symbol(if1, inc->has[j]->name);
-      if (!inc->has[j]->alias || !inc->has.v[j]->alias->is_fun) {
-        Sym *t = new_sym(ast);
-        if (inc->self) {
-          if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
-          if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, t, (ast->rval = new_sym(ast)))->ast = ast;
-        }
-      } else
-        if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, inc->has[j]->alias,
-                 (ast->rval = new_sym(ast)))
-            ->ast = ast;
+  // Build base ___init___ (class prototype initialization): each inherited
+  // attribute, resolved as CPython resolves it (ifa/130 A1). Every member of
+  // every base used to be copied in base order and by name, and the class's
+  // own body then wrote the same slots, so
+  //   - an OVERRIDE left the inherited value and the override in one slot,
+  //     a union over time CPython never has (`class B(A): x = "s"` over
+  //     `x = 1` was refused as {int, str}, a method over data likewise);
+  //   - with two bases defining a name the LAST base won, where the MRO
+  //     says the first (`class B(C, D)` read D's x silently).
+  // Now a name the class defines itself is not copied at all (it SHADOWS),
+  // and any other is copied once, from the first class in the class's C3
+  // MRO (c3_mro, the linearization ifa's dispatch uses) that defines it.
+  // The name is the query, as in Python's own lookup; what is copied is
+  // that class's member.
+  {
+    // A class's OWN members are those it defines (`in` is the class); its
+    // `has` may already hold inherited ones too, which must not shadow.
+    Vec<cchar *> resolved;
+    for (Sym *m : cls->has) if (m && m->name && m->in == cls) resolved.set_add((char *)m->name);
+    Vec<Sym *> mro;
+    c3_mro(cls, mro);
+    if (!mro.n) mro.add(cls);
+    Vec<Sym *> bases;  // the MRO after the class itself, then any include it does not list
+    for (int i = 1; i < mro.n; i++) bases.add(mro[i]);
+    for (Sym *inc : cls->includes) if (!bases.in(inc)) bases.add(inc);
+    for (Sym *inc : bases) {
+      if (!cls->includes.in(inc) && !inc->self) continue;
+      for (int j = 0; j < inc->has.n; j++) {
+        Sym *m = inc->has[j];
+        if (!m) continue;
+        // Only what this class itself defines: an inherited member is
+        // resolved at the class in the MRO that defines it. (A member with
+        // no defining class recorded keeps the old, unconditional copy.)
+        if (m->in && m->in != inc && !m->in->is_fun) continue;
+        if (m->name && !resolved.set_add((char *)m->name)) continue;  // shadowed, or an earlier class won
+        Sym *iv = if1_make_symbol(if1, m->name);
+        if (!m->alias || !m->alias->is_fun) {
+          Sym *t = new_sym(ast);
+          if (inc->self) {
+            if1_send(if1, &body, 4, 1, sym_operator, inc->self, sym_period, iv, t)->ast = ast;
+            if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, t, (ast->rval = new_sym(ast)))->ast = ast;
+          }
+        } else
+          if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, iv, m->alias, (ast->rval = new_sym(ast)))
+              ->ast = ast;
+      }
     }
   }
+  // issues/169: store a local class's captured values on the prototype.
+  PycScope *cls_scope = ctx.scope_stack.last();
+  for (Sym *c : cls_scope->class_caps)
+    if1_send(if1, &body, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, local_class_cap_field(c)),
+             cls_scope->cap_formals.get(c), new_sym(ast))
+        ->ast = ast;
   // Body statements (last child = PY_suite or single stmt)
   {
     PyDAST *body_node = cdef->children.last();
@@ -2865,6 +3078,7 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     synthesize_default_iop(ctx, ast, cls, fn, &body, "__iand__", "__and__");
     synthesize_default_iop(ctx, ast, cls, fn, &body, "__ifloordiv__", "__floordiv__");
   }
+  if (is_record) synthesize_dict_into(ctx, ast, cls, fn, &body);
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
@@ -2872,13 +3086,27 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     Vec<Sym *> as;
     as.add(fn);
     as.add(fn->self);
+    for (Sym *c : cls_scope->class_caps) as.add(cls_scope->cap_formals.get(c));  // issues/169
     if1_closure(if1, fn, body, as.n, as.v);
   }
   // Build prototype
   Sym *proto = cls->self;
   if (is_record) {
     if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_new, cls, proto)->ast = ast;
-    if1_send(if1, &ast->code, 2, 1, fn, proto, new_sym(ast))->ast = ast;
+    if (!cls_scope->class_caps.n)
+      if1_send(if1, &ast->code, 2, 1, fn, proto, new_sym(ast))->ast = ast;
+    else {
+      // issues/169: pass each captured value, read where the class
+      // statement runs (the enclosing scope).
+      PycScope *outer = ctx.scope_stack.n >= 2 ? ctx.scope_stack[ctx.scope_stack.n - 2] : nullptr;
+      Vec<Sym *> vals;
+      for (Sym *c : cls_scope->class_caps) vals.add(outer ? pyc_read_captured(outer, c, &ast->code, ast, ctx) : c);
+      Code *send = if1_send1(if1, &ast->code, ast);
+      if1_add_send_arg(if1, send, fn);
+      if1_add_send_arg(if1, send, proto);
+      for (Sym *v : vals) if1_add_send_arg(if1, send, v);
+      if1_add_send_result(if1, send, new_sym(ast));
+    }
   }
   // issue 078 (Option D): if this class defines its OWN __init__
   // whose entire body is safe, self-independent field-literal
@@ -3103,7 +3331,16 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     as.add(rhs);
     body = 0;
     Sym *t = new_sym(ast);
-    if1_send(if1, &body, 4, 1, sym_primitive, sym_coerce, cls, rhs, t)->ast = ast;
+    // issues/176: `int(x)` / `float(x)` (and `map(int, ...)`, which reaches
+    // the same function) dispatch on the ARGUMENT, `x.__pyc_int__()` /
+    // `x.__pyc_float__()`, so str and bytes can validate the whole string
+    // and raise ValueError (__pyc__/01_str.py). `object`'s defaults are the
+    // coerce primitive this used to emit, so every other type converts
+    // exactly as before. Other numeric kinds keep the bare primitive.
+    if (cls->num_kind == IF1_NUM_KIND_INT || cls->num_kind == IF1_NUM_KIND_FLOAT)
+      call_method(&body, ast, rhs, if1_make_symbol(if1, cls->num_kind == IF1_NUM_KIND_INT ? "__pyc_int__" : "__pyc_float__"), t, 0);
+    else
+      if1_send(if1, &body, 4, 1, sym_primitive, sym_coerce, cls, rhs, t)->ast = ast;
     if1_move(if1, &body, t, fn->ret);
     if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
     if1_closure(if1, fn, body, as.n, as.v);

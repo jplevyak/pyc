@@ -1,4 +1,28 @@
+container_scalar_union_add.py:38:45: error: 'x' holds both a number and an object, which has no representation:( list float64 ) 
+    print(x + x)
+                ^
+  called from container_scalar_union_add.py:38
+container_scalar_union_add.py:38:45: error: 'l' holds both a number and an object, which has no representation:( list float64 ) 
+    print(x + x)
+                ^
+  called from container_scalar_union_add.py:38
 container_scalar_union_add.py:38:45: error: illegal primitive argument type 'x' illegal: list 
+    print(x + x)
+                ^
+  called from container_scalar_union_add.py:38
+container_scalar_union_add.py:37:11: error: expression holds both a number and an object, which has no representation:( list float64 ) 
+    x = [1] if len(sys.argv) > 1 else 3.5
+              ^
+container_scalar_union_add.py:38:44: error: expression holds both a number and an object, which has no representation:( list float64 ) 
+    print(x + x)
+                ^
+container_scalar_union_add.py:38:46: error: expression holds both a number and an object, which has no representation:( list float64 ) 
+    print(x + x)
+                ^
+container_scalar_union_add.py:38:45: error: expression holds both a number and an object, which has no representation:( list float64 ) 
+    print(x + x)
+                ^
+container_scalar_union_add.py:38:45: error: expression holds both a number and an object, which has no representation:( list float64 ) 
     print(x + x)
                 ^
   called from container_scalar_union_add.py:38

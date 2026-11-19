@@ -101,6 +101,10 @@ class __pyc_generator__:
     # ones included).
     return self.retval
   def __pyc_advance__(self):
+    # issues/172: a resume by next() delivers None to the paused yield
+    # (__pyc_resume_none__, python_ifa_main.cc, for why it is not a plain
+    # None: the priming next() delivers nothing).
+    self.sendval = __pyc_primitive__(__pyc_symbol__("__pyc_resume_none__"), self, self.sendval)
     self.has_next = __pyc_c_call__(bool, "_CG_generator_advance", int, self.handle)
     if self.has_next:
       # Result type from self.nextval (seeded in __init__ from the
@@ -150,7 +154,11 @@ class __pyc_generator__:
       r.append(self.__next__())
     return r
   def send(self, value):
-    self.has_next = __pyc_c_call__(bool, "_CG_generator_send", int, self.handle, int, value)
+    # issues/172: the paused `x = yield` reads `value` from this object's
+    # `sendval` (PY_yield_expr, python_ifa_build_if1.cc), so it is typed
+    # per generator rather than carried through the coroutine as an int.
+    self.sendval = value
+    self.has_next = __pyc_c_call__(bool, "_CG_generator_advance", int, self.handle)
     self.primed = False
     if not self.has_next:
       if __pyc_exc__ is not None:

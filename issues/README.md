@@ -42,29 +42,51 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 
 | issue | what |
 | --- | --- |
-| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: `isinstance` on a `{list, str}` value folds to False; a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
+| [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
+| [173](173-silent-deviations-found-by-the-strict-suite-check.md) | found by 171's strict comparison: ~~`isinstance` on a `{list, str}` value folds to False~~ (refused 2026-10-15); a subclass does not see a mutated base class attribute; a global read before its definition sees the later value; `loop` overflows the C stack (ignores `setrecursionlimit`). |
 | [007](007-decorators-not-applied.md) | decorators and descriptors. `@property` getters and dotted decorators now work, and anything unresolved is refused. Open: property setters, and a `@property` in an imported module. |
-| [043](043-slice-target-augmented-assignment-silently-wrong.md) | `a[i:j] += x` acts like `a[i:j] = x`. |
-| [168](168-object-at-a-computed-format-s-prints-garbage.md) | an object at a computed `%s` prints raw memory. |
-| [176](176-int-and-float-of-an-invalid-string-do-not-raise.md) | `int("q")` is `0`, `int("3.5")` is `3`, `float("x")` is `0.0`: C `strtol`/`strtod` semantics, no `ValueError`. |
-| [041](041-stdlib-shim-stubs-silently-wrong.md) | `hashlib` is a stub returning `""`. Shims must be real or raise. |
-| [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` returns a list in every mode. The fix is built (`PYC_MAKESEQ`) and held on a copy-of-copy deepcopy blocker; re-test after the ifa deepcopy fixes. |
+| [177](177-integer-literals-past-int64-were-accepted-silently.md) | `0xFFFFFFFFFFFFFFFF` was silently `-1` and `99999999999999999999` silently INT64_MAX, even under `--strict`; now warned, or refused. othello2's 64-bit masks. |
+| [110](110-tuple-from-iterable-returns-a-list.md) | `tuple(iterable)` is a real tuple since 2026-09-28. Residuals: `t[i] = x` mutates (blocked on 175's item-store check), and `zip`/`map`/`filter`/`reversed` are eager lists. |
 
 ### Typing and representation
 
 | issue | what |
 | --- | --- |
-| [172](172-generator-send-channel-and-stopiteration-value.md) | a generator's `send` value travels as `int64` (gated by `PYC_YIELD_INT_SEND`; refused under `--strict`), and `StopIteration.value` reads the global exception slot. |
+| [172](172-generator-send-channel-and-stopiteration-value.md) | ~~a generator's `send` value travels as `int64`~~ (typed per generator 2026-10-16; the `next(g); g.send(5)` idiom keeps a flagged permissive zero for None, `PYC_SEND_NONE_ZERO`), and `StopIteration.value` reads the global exception slot. |
 | [048](048-none-int-field-pair-runtime-abort.md) | genuine scalar unions (`{None, int}`, `{None, float}`, `{int, float}` elements): strict refuses; permissive gets a flagged sentinel or widening. |
-| [125](125-in-has-no-iterable-fallback.md) | `x in y` has no iterable fallback; `object.__contains__` should be CPython's scan. |
+
+### Missing features (refused, not wrong)
+
+| issue | what |
+| --- | --- |
+| [184](184-classmethod-attribute-through-cls.md) | an attribute read through `cls` in a `@classmethod` (`cls.base`, `cls.h()`) does not type; `cls(...)` works. |
+| [182](182-kwargs-and-keyword-only-parameters.md) | `**kwargs` parameters and keyword-only parameters (`def f(a, *, b)`). |
 
 ### Diagnostics, crashes, performance, harness
 
 | issue | what |
 | --- | --- |
-| [103](103-unknown-kwarg-silently-bound-positionally.md) | an unknown keyword or an undefined name is refused, but reported as `'X' has no type`, not in CPython's terms. |
-| [169](169-local-class-method-reading-enclosing-local-crashes.md) | a method of a function-local class reading the function's local aborts the compiler. |
-| [111](111-checks-embed-builtin-library-line-numbers.md) | COMPILE-OUT checks embed `__pyc__.py` line numbers (one left). |
+| [180](180-method-assigned-across-classes-crashes.md) | `a.x = b.x` across unrelated classes compiles clean, then `a.x()` segfaults: it calls through the stored closure as if it were `A`'s method slot. |
+| [169](169-local-class-method-reading-enclosing-local-crashes.md) | local classes are closure-converted (2026-10-14); residual: a captured value of a different TYPE per call is refused (one global prototype per class statement). |
+
+### Closed on 2026-10-16
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [183](closed/183-none-or-int-in-arithmetic-reads-none-as-zero.md) | a `{None, scalar}` operand of an operator is a demand like a method receiver: an invented union splits, a genuine one is refused; pisang edited (its None was unreachable) | — |
+| [181](closed/181-staticmethod-generator-does-not-compile.md) | every decorated generator (`@staticmethod`, `@classmethod`, any decorator) gets its return/send cell and generator-object wrapper | — |
+| [178](closed/178-dict-of-a-mapping-reads-it-as-pairs.md) | `dict(x)` / `d.update(x)` copy a mapping (any class with `keys`) and read anything else as pairs, by dispatch | — |
+
+### Closed on 2026-10-15
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [176](closed/176-int-and-float-of-an-invalid-string-do-not-raise.md) | `int()`/`float()` of a string validate the whole string and raise CPython's `ValueError` | — |
+| [125](closed/125-in-has-no-iterable-fallback.md) | `object.__contains__` is CPython's iterable fallback | — |
+| [111](closed/111-checks-embed-builtin-library-line-numbers.md) | the harness compares builtin-module line numbers as `N` | — |
+| [041](closed/041-stdlib-shim-stubs-silently-wrong.md) | audit repeated; `time.sleep` and `socket.gethostname` were stubs, now real | — |
+| [043](closed/043-slice-target-augmented-assignment-silently-wrong.md) | `o[i:j] op= x` reads the slice, applies the operator, writes back | — |
+| [168](closed/168-object-at-a-computed-format-s-prints-garbage.md) | a computed format converts each argument through `__str__` by dispatch; a format constant only after the analysis renders a number at `%s` | — |
 
 ### Closed on 2026-10-03
 
@@ -94,6 +116,7 @@ history, is in git: `git show e3b44e2c:issues/README.md`.*
 | [117](closed/117-property-and-reflected-ordering.md) | trivial `property` and reflected ordering landed | 007 (descriptors) |
 | [120](closed/120-richards-silent-wrong-answer.md) | richards matches CPython (ifa/174) | — |
 | [162](closed/162-dict-insertion-is-quadratic.md) | hashed dict (closed/118) | — |
+| [103](closed/103-unknown-kwarg-silently-bound-positionally.md) | closed 2026-10-14: both refusals say what CPython says (`name 'X' is not defined`, `f() got an unexpected keyword argument 'k'`) | — |
 
 Every archived file starts with a dated closure note. The archive is
 [`closed/`](closed/).

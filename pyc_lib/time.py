@@ -12,7 +12,11 @@
 def time():
     return __pyc_c_call__(float, "_CG_get_time")
 
-# A no-op: sleeping does not affect program results, only wall time,
-# and a real sleep would make tests slow/nondeterministic.
+# issues/041: this was a no-op, which is observable (a `time.time()` delta
+# around it, or any program pacing itself against another process). CPython
+# raises ValueError for a negative duration.
 def sleep(seconds):
+    if seconds < 0:
+        raise ValueError("sleep length must be non-negative")
+    __pyc_c_call__(int, "_CG_sleep", float, seconds)
     return None

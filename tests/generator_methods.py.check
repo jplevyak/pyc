@@ -1,1 +1,1 @@
-warning line 88, the value of a yield expression is carried as an int: a resume by next() reads 0 where CPython gives None, and a non-int send() is refused (issues/172)
+generator_methods.py:87: warning: this generator is both resumed by next() and sent a number. A next() resume delivers None, which has no representation beside a number, so it reads 0 where CPython gives None; the priming next() delivers nothing and is unaffected (issues/172; PYC_SEND_NONE_ZERO=0 or --strict refuses)

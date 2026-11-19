@@ -1,6 +1,6 @@
 # 107 — an undefined name compiles (exit 0) and the binary segfaults
 
-> **CLOSED 2026-09-28 (merged into 103).** Undefined names now refuse the program in every position (ifa/158 made the violation fatal). What is left is the wording, which [103](../103-unknown-kwarg-silently-bound-positionally.md) now carries alongside the unknown-keyword case.
+> **CLOSED 2026-09-28 (merged into 103).** Undefined names now refuse the program in every position (ifa/158 made the violation fatal). What is left is the wording, which [103](103-unknown-kwarg-silently-bound-positionally.md) now carries alongside the unknown-keyword case.
 >
 > *Archived during the 2026-09-28 issue consolidation. The text below is the historical record and is not maintained.*
 

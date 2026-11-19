@@ -1,0 +1,11 @@
+scalar_object_union_refused.py:19:42: error: 'x' holds both a number and an object, which has no representation:( int64 A ) 
+    x = 0
+         ^
+scalar_object_union_refused.py:22:74: error: expression holds both a number and an object, which has no representation:( int64 A ) 
+    print(x)
+            ^
+scalar_object_union_refused.py:22:74: error: expression holds both a number and an object, which has no representation:( int64 A ) 
+    print(x)
+            ^
+  called from scalar_object_union_refused.py:22
+fail: program does not type

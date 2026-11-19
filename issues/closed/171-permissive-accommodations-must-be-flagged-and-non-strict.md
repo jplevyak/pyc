@@ -47,7 +47,7 @@ compile error.**
 | --- | --- | --- | --- | --- |
 | 1 | `raise "message"` wrapped in `Exception(...)` (a CPython 3 `TypeError`) | `python_ifa_build_if1.cc` (`PY_raise_stmt`) | **DONE 2026-09-28:** permissive only (`PYC_RAISE_STRING`, default on in permissive); warns at each site; `--strict` refuses (`tests/raise_string_strict.py`) | ✓. Corpus sites `chess.py:92,128` and `minilight/ml/entry.py:77` now warn by default and are refused under strict. They remain edit candidates. |
 | 2 | implicit-`None` fall-off replaced by a "typed default" | `python_ifa_build_syms.cc` (`ifa_no_implicit_none`) | **DONE 2026-09-28:** no longer set by `--strict`; `PYC_NO_IMPLICIT_NONE=1` honoured only in permissive, with a warning (ignored, with a warning, under strict). `tests/implicit_none_strict_refuses.py` | ✓. Finding: it was not even a typed default. Dropping the fall-off arm let FA fold the return to the one explicit value, so `f([0])` printed `1` where CPython prints `None`. `--strict` did that silently. |
-| 3 | `{int, float}` widened to `float` (prints `1.0` for `1`) | `fa_coerce_numeric_confluences` / `coerce_annotate` | `fruntime_errors` (ifa/145). **Warning DONE 2026-09-29:** `show_numeric_coercions` (`fa.cc`) reports every coerced variable once per line after convergence, naming it and the widened type | ✓ Gated and announced. Three suite `.check` files carry it (`numeric_unification`, `mixed_numeric_field`, `builtins_batch`). Still open: prefer a split where one exists ([ifa/156](../../ifa/issues/156-FA-split-int-from-float-coerce-last.md). |
+| 3 | `{int, float}` widened to `float` (prints `1.0` for `1`) | `fa_coerce_numeric_confluences` / `coerce_annotate` | `fruntime_errors` (ifa/145). **Warning DONE 2026-09-29:** `show_numeric_coercions` (`fa.cc`) reports every coerced variable once per line after convergence, naming it and the widened type | ✓ Gated and announced. Three suite `.check` files carry it (`numeric_unification`, `mixed_numeric_field`, `builtins_batch`). Still open: prefer a split where one exists ([ifa/156](../../ifa/issues/closed/156-FA-split-int-from-float-coerce-last.md). |
 | 4 | `tuple(iterable)` returns a **list** | `python_ifa_build_if1.cc:958` | **DONE 2026-09-28:** `PYC_MAKESEQ=1` is the default, so `tuple(x)` is a real runtime-length tuple in every mode (`PYC_MAKESEQ=0` restores the list) | ✓ Nothing left to gate. The blocker was tuple deepcopy ([110](../110-tuple-from-iterable-returns-a-list.md). |
 | 5 | `zip`/`map`/`filter`/`reversed` return eager lists; `itertools.product(repeat=)` yields lists | `__pyc__/05_builtins.py:222`, `pyc_lib/itertools.py` | **`product` DONE 2026-09-29:** `repeat=N` yields `tuple(row)` (runtime-length tuples, `tests/itertools_product_repeat_tuple.py`) | ✓ for `product`. **Author's decision (2026-09-29): the eager lists stay**, as a documented representation. They are equivalent under iteration and `list()`. They are observable only through `len(zip(..))`, `zip(..)[i]` or printing the object, which CPython rejects or prints as `<zip object>` (`tests/zip_builtin.py`; see [173](../173-silent-deviations-found-by-the-strict-suite-check.md). |
 | 6 | `None` read as the zero value (`None + "y"` gives `"y"`) | nullable-pointer representation (ifa/164) | **DONE 2026-09-28** in every mode: a `{None, T*}` receiver is checked where the call is emitted and reports CPython's uncaught `TypeError` (`_CG_none_receiver`), and `{None, scalar}` is refused at FA time (a BOXING violation) | ✓ `tests/none_receiver_raises.py`. Remaining: the check reports and exits, so `except TypeError` cannot catch it ([ifa/165](../../ifa/issues/165-none-reaching-an-operation-is-silently-accepted.md). |
@@ -111,7 +111,7 @@ left is tracked elsewhere:
 - [172](../172-generator-send-channel-and-stopiteration-value.md: a typed
   `send` channel, which retires `PYC_YIELD_INT_SEND`; exception flow for
   `StopIteration.value`.
-- [ifa/156](../../ifa/issues/156-FA-split-int-from-float-coerce-last.md:
+- [ifa/156](../../ifa/issues/closed/156-FA-split-int-from-float-coerce-last.md:
   split `{int, float}` where a split exists, and coerce last (#3).
 - [128](128-cross-class-field-promotion.md steps 2-4: promoted fields as
   derived state (#8's other half).
@@ -183,4 +183,4 @@ exactly the new warnings (#3's and #7's), and nothing else.
   refuse) and which are one shared contour taking int actuals at some
   sites and float actuals at others. The second is an FA precision gap,
   and a split fixes it
-  ([ifa/156](../../ifa/issues/156-FA-split-int-from-float-coerce-last.md)).
+  ([ifa/156](../../ifa/issues/closed/156-FA-split-int-from-float-coerce-last.md)).

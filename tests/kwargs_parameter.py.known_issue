@@ -1,0 +1,1 @@
+issues/182 (182-kwargs-and-keyword-only-parameters): pyc is wrong here; the .exec.check holds CPython's output, so this flips to PASS when the issue is fixed.

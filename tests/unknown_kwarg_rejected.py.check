@@ -1,1 +1,4 @@
-unknown_kwarg_rejected.py:24:1: error: f() got an unexpected keyword argument 'nosuchkw'
+unknown_kwarg_rejected.py:29:44: error: f() got an unexpected keyword argument 'nosuchkw'
+    f([1, 2], nosuchkw=99)
+                          ^
+fail: program does not type

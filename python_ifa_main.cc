@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "python_parse.h"
+#include <algorithm>
 #include <set>
 #include <string>
 #include <vector>
@@ -35,8 +36,6 @@ static void build_environment(PycModule *mod, PycCompiler &ctx) {
   scope_sym(ctx, sym_uint8, "__pyc_char__");
   scope_sym(ctx, sym_operator, "__pyc_operator__");
   scope_sym(ctx, sym_primitive, "__pyc_primitive__");
-  scope_sym(ctx, sym_declare, "__pyc_declare__");
-  sym_declare->is_fake = true;
 #define P(_x) scope_sym(ctx, sym_##_x);
 #include "pyc_symbols.h"
   exit_scope(ctx);
@@ -313,18 +312,136 @@ static char format_string_tag(Sym *t) {
   return t->num_kind == IF1_NUM_KIND_FLOAT ? 'f' : 'i';
 }
 
+// issues/172: what a resume by next() delivers to a paused `x = yield`.
+// CPython delivers None -- except that the FIRST resume, which starts the
+// body, delivers nothing at all, since no yield is paused yet. The
+// generator's `sendval` cell is a field, and field types are flow-
+// insensitive, so the priming next() of the common `next(g);
+// g.send(5)` idiom puts a None in the cell that is never read, and `x`
+// types as {None, int}, which has no representation.
+//
+// So `__pyc_advance__` stores `__pyc_resume_none__(self, self.sendval)`.
+// For a generator object (CreationSet) recorded in pyc_send_none_zero it
+// yields the cell's own types without None -- at run time a zero of that
+// type -- and None otherwise. The record is a DECISION, taken by reanalyze
+// (pyc_record_send_none_cells) on converged types and kept across passes,
+// so this transfer is monotone within a pass. It is an ACCOMMODATION: a
+// non-priming next() into a scalar cell reads 0 where CPython gives None.
+// Permissive only (PYC_SEND_NONE_ZERO), it warns, and --strict refuses.
+static std::set<CreationSet *> pyc_send_cells;      // every generator object seen here
+static std::set<CreationSet *> pyc_send_none_zero;  // the decisions
+
+static void resume_none_transfer_function(PNode *pn, EntrySet *es) {
+  AVar *gen = make_AVar(pn->rvals[2], es);
+  AVar *cell = make_AVar(pn->rvals[3], es);
+  AVar *result = make_AVar(pn->lvals[0], es);
+  bool any_nil = false;
+  for (CreationSet *cs : gen->out->sorted) {
+    if (!cs) continue;
+    pyc_send_cells.insert(cs);
+    if (!pyc_send_none_zero.count(cs)) any_nil = true;
+  }
+  if (any_nil) update_gen(result, make_abstract_type(sym_nil_type));
+  if (gen->out->sorted.n && !any_nil) {
+    // The cell's own types, None excluded: the self-loop through the cell
+    // adds nothing the send() stores have not.
+    Vec<CreationSet *> keep;
+    for (CreationSet *c : cell->out->sorted)
+      if (c && c->sym && c->sym->type != sym_nil_type) keep.add(c);
+    if (keep.n) update_gen(result, make_AType(keep));
+  }
+}
+
+static void resume_none_codegen(FILE *fp, PNode *n, Fun *f) {
+  if (!n->lvals.n || !n->lvals[0]->cg_string) return;
+  fprintf(fp, "%s = 0;\n", n->lvals[0]->cg_string);
+}
+
+bool pyc_record_send_none_cells() {
+  static int accept = -1;
+  if (accept < 0) {
+    cchar *v = getenv("PYC_SEND_NONE_ZERO");
+    accept = runtime_errors && (!v || atoi(v));
+  }
+  static std::set<CreationSet *> noted;  // --strict: each refused cell once
+  bool again = false;
+  // By id, not by pointer: the warnings' order must not follow heap layout.
+  std::vector<CreationSet *> cells(pyc_send_cells.begin(), pyc_send_cells.end());
+  std::sort(cells.begin(), cells.end(), [](CreationSet *a, CreationSet *b) { return a->id < b->id; });
+  for (CreationSet *cs : cells) {
+    if (pyc_send_none_zero.count(cs) || !fa->css_set.set_in(cs)) continue;
+    AVar *cell = nullptr;
+    for (AVar *av : cs->vars)
+      if (av && av->var && av->var->sym && av->var->sym->name && !strcmp(av->var->sym->name, "sendval")) cell = av;
+    if (!cell || !cell->out) continue;
+    bool has_nil = false, has_scalar = false;
+    for (CreationSet *c : cell->out->sorted) {
+      if (!c || !c->sym || !c->sym->type) continue;
+      if (c->sym->type == sym_nil_type) has_nil = true;
+      else if (c->sym->type->num_kind) has_scalar = true;
+    }
+    if (!has_nil || !has_scalar) continue;
+    if (!accept && !noted.insert(cs).second) continue;
+    if (accept) {
+      pyc_send_none_zero.insert(cs);
+      again = true;
+    }
+    // Where: the object is created inside __pyc_generator__'s constructor;
+    // the constructor is called by the wrapper built from the generator's
+    // `def`, so that call (the creation contour's in-edge) carries its line.
+    cchar *path = nullptr;
+    int line = 0;
+    for (AVar *d : cs->defs) {
+      if (!d || !d->contour || d->contour == GLOBAL_CONTOUR) continue;
+      for (AEdge *e : ((EntrySet *)d->contour)->edges)
+        if (e && e->pnode && e->pnode->code && e->pnode->code->ast && e->pnode->code->source_line()) {
+          path = e->pnode->code->pathname();
+          line = e->pnode->code->line();
+          break;
+        }
+      if (path) break;
+    }
+    if (accept)
+      fprintf(stderr,
+              "%s:%d: warning: this generator is both resumed by next() and sent a number. A next() resume delivers "
+              "None, which has no representation beside a number, so it reads 0 where CPython gives None; the "
+              "priming next() delivers nothing and is unaffected (issues/172; PYC_SEND_NONE_ZERO=0 or --strict "
+              "refuses)\n",
+              path ? path : "?", line);
+    else
+      fprintf(stderr,
+              "%s:%d: note: this generator is both resumed by next() and sent a number, so the value of its yield "
+              "is {None, number}, which has no representation. The priming next() delivers nothing in CPython, but "
+              "pyc cannot tell it from a later next() (issues/172)\n",
+              path ? path : "?", line);
+  }
+  return again;
+}
+
 static void format_string_codegen(FILE *fp, PNode *n, Fun *f) {
   Var *v = n->rvals[3];
   cchar *fmt = n->rvals[2]->sym->constant;
   Vec<char> convs;
   if (fmt) collect_format_convs(fmt, convs);
   bool is_tuple = v->type && v->type->type_kind == Type_RECORD && !cg_has_classtag(v->type);
+  // issues/168: a format that is constant only HERE -- a function returning
+  // one literal, propagated into str.__mod__ -- was never read by the
+  // frontend, so a number meeting its `%s` arrived unconverted, and the
+  // casts below have nothing that renders a number as text: `%s` read 42 as
+  // a pointer and segfaulted. The tagged runtime renders it, so take that
+  // path for such a format, exactly as for one not known at all.
+  bool num_meets_s = false;
+  for (int i = 0; i < convs.n; i++) {
+    if (!strchr("sra", convs[i])) continue;
+    Sym *at = is_tuple ? (i < v->type->has.n ? v->type->has[i]->type : nullptr) : v->type;
+    if (fmt_arg_is_numeric(at)) num_meets_s = true;
+  }
   // issues/165: with a NON-constant format there are no conversions to
   // match arguments against, so the casts below cannot be chosen -- an
   // integer got widened and a float was left as a double, which then met
   // `%d` in the wrong register class. Hand the argument TYPES to the
   // runtime instead and let it pair them with the format it can see.
-  if (!fmt) {
+  if (!fmt || num_meets_s) {
     fputs("_CG_format_string_tagged(", fp);
     fputs(n->rvals[2]->cg_string, fp);
     fputs(", \"", fp);
@@ -397,6 +514,7 @@ static void add_primitive_transfer_functions() {
   c_call_prim->is_functional = 0;
   prim_reg(sym___pyc_format_string__->name, format_string_transfer_function, format_string_codegen)->is_visible = 1;
   prim_reg(sym___pyc_to_str__->name, to_str_transfer_function, to_str_codegen)->is_visible = 1;
+  prim_reg(cannonicalize_string("__pyc_resume_none__"), resume_none_transfer_function, resume_none_codegen)->is_visible = 1;
   prim_reg(cannonicalize_string("to_string"), return_string_transfer_function)->is_visible = 1;
   prim_reg(cannonicalize_string("__pyc_net_wait_read__"), return_nil_transfer_function)->is_visible = 1;
   prim_reg(cannonicalize_string("__pyc_net_wait_write__"), return_nil_transfer_function)->is_visible = 1;
@@ -804,8 +922,8 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
     const char *loop;  // the whole unconstrained body
   };
   static const OneOp ops[] = {
-      {"__hash__(self)", 1, "    h = 0\n", "    h = h * 1000003 + __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__hash__()\n", "    return h\n",
-       "    h = 0\n    for i in range(len(self)):\n      h = h * 1000003 + self[i].__hash__()\n    return h\n"},
+      {"__hash__(self)", 1, "    h = 0\n", "    h = __pyc_c_call__(int, \"_CG_hash_mix\", int, h, int, __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__hash__())\n", "    return h\n",
+       "    h = 0\n    for i in range(len(self)):\n      h = __pyc_c_call__(int, \"_CG_hash_mix\", int, h, int, self[i].__hash__())\n    return h\n"},
       // `in`, count and index compare each element by `==`; cross-type
       // `==` answers False, as in CPython.
       {"__contains__(self, item)", 2, "", "    if __pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d) == item: return True\n", "    return False\n",
@@ -864,6 +982,30 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
   fputs("    if n == 1: x += \",\"\n", f);
   fputs("    x += \")\"\n", f);
   fputs("    return x\n", f);
+  specs.push_back(spec_for(none, 1));
+
+  // issues/168: a computed format's arguments, each converted at a constant
+  // index so the conversion is that field's own (__pyc_any_type__'s
+  // __pyc_fmtconv__ is the one-value case). A list-layout tuple has one
+  // element type, so its runtime loop builds a list-layout tuple back.
+  for (int k : arities) {
+    fputs("  def __pyc_fmtconv__(self):\n", f);
+    if (!k) {
+      fputs("    return self\n", f);
+    } else {
+      fputs("    return (", f);
+      for (int i = 0; i < k; i++) fprintf(f, "%s__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__pyc_fmtval__()", i ? ", " : "", i);
+      fputs(k == 1 ? ",)\n" : ")\n", f);
+    }
+    specs.push_back(spec_for(self_k(k), 1));
+  }
+  fputs("  def __pyc_fmtconv__(self):\n", f);
+  fputs("    n = len(self)\n", f);
+  fputs("    if n == 0: return self\n", f);
+  fputs("    r = []\n", f);
+  fputs("    for i in range(n):\n", f);
+  fputs("      r.append(self[i].__pyc_fmtval__())\n", f);
+  fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
   specs.push_back(spec_for(none, 1));
 
   // CPython's tuple.index: start/stop normalized like a slice (as list.index

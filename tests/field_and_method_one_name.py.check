@@ -1,0 +1,8 @@
+field_and_method_one_name.py:25:114: error: expression holds both a number and an object, which has no representation:( closure int64 ) 
+    print(xs[0].f, xs[1].g, b.f())
+                                  ^
+field_and_method_one_name.py:25:114: error: expression holds both a number and an object, which has no representation:( closure int64 ) 
+    print(xs[0].f, xs[1].g, b.f())
+                                  ^
+  called from field_and_method_one_name.py:25
+fail: program does not type

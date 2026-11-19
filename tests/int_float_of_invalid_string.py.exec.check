@@ -1,0 +1,44 @@
+'12' 12
+' 7 ' 7
+'-4' -4
+'+3' 3
+'q' ValueError: invalid literal for int() with base 10: 'q'
+'' ValueError: invalid literal for int() with base 10: ''
+'  ' ValueError: invalid literal for int() with base 10: '  '
+'3.5' ValueError: invalid literal for int() with base 10: '3.5'
+'1_000' 1000
+'1__0' ValueError: invalid literal for int() with base 10: '1__0'
+'_1' ValueError: invalid literal for int() with base 10: '_1'
+'1_' ValueError: invalid literal for int() with base 10: '1_'
+'0010' 10
+'ff' 16 255
+'0xff' 16 255
+'0x_ff' 16 255
+'0b101' 2 5
+'777' 8 511
+'0o17' 0 15
+'0x1A' 0 26
+'010' 0 ValueError: invalid literal for int() with base 0: '010'
+'0' 0 0
+'z' 36 35
+'12' 2 ValueError: invalid literal for int() with base 2: '12'
+'1.5' 1.5
+' -2.25 ' -2.25
+'1e3' 1000.0
+'1_0.5' 10.5
+'inf' inf
+'-Infinity' -inf
+'.5' 0.5
+'5.' 5.0
+'x' ValueError: could not convert string to float: 'x'
+'' ValueError: could not convert string to float: ''
+'1e' ValueError: could not convert string to float: '1e'
+'0x1p3' ValueError: could not convert string to float: '0x1p3'
+'1.2.3' ValueError: could not convert string to float: '1.2.3'
+b'42' 42
+b'q' ValueError: invalid literal for int() with base 10: b'q'
+b'2.5' 2.5
+b'x' ValueError: could not convert string to float: b'x'
+6
+map ValueError: invalid literal for int() with base 10: 'two'
+3 -3 1 7.0 0.0

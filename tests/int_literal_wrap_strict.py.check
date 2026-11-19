@@ -1,0 +1,1 @@
+fail: error line 4, integer literal 0xFFFFFFFFFFFFFFFF exceeds int64; pyc's int is int64, and wrapping it to -1 is accepted only in permissive mode (issues/177)

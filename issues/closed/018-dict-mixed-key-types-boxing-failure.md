@@ -302,7 +302,7 @@ mechanism).
 ## A more severe manifestation: shared container method specialized against a genuine non-container (2026-08-11)
 
 Found compiling `shedskin_examples/rdb/rdb.py` after fixing
-[issues/041](../041-stdlib-shim-stubs-silently-wrong.md)'s `getopt`/`os`
+[issues/041](041-stdlib-shim-stubs-silently-wrong.md)'s `getopt`/`os`
 stubs (unrelated to this issue directly — real `getopt`/`os.listdir`
 made previously-dead-code-eliminated branches in `rdb.py` live for the
 first time, and one of them hits this). Hard compile-time failure, not

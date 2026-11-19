@@ -4,16 +4,27 @@
 # - Build pyc with USE_LLVM=1 so both backends are compiled in.
 # - Standard test suite (make test → ./ifa --test + IR fixtures + ./test_pyc.py).
 # - `make test_llvm` — the V-language LLVM backend smoke test.
-# - LLVM-backend pyc e2e via the PYC_FLAGS hook: floors the pass
-#   count at the current baseline (see step comment).
+#   test_pyc.py runs on BOTH backends there (test-e2e), as a hard gate.
+#   (A separate LLVM e2e step with an LLVM_BASELINE_PASS floor of 37
+#   was removed 2026-10-18: the suite passes 488 on LLVM, and make test
+#   already fails on any LLVM failure, so the floor caught nothing and
+#   cost a second full run.)
 # - DParser grammar validation.
 
 name: ci
 
+# A push or PR that touches ONLY the website (built and deployed by
+# website.yml) skips this run; one that also touches anything else runs it.
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - 'website/**'
+      - '.github/workflows/website.yml'
   pull_request:
+    paths-ignore:
+      - 'website/**'
+      - '.github/workflows/website.yml'
 
 jobs:
   build-and-test:
@@ -46,6 +57,11 @@ jobs:
       # emits (matching LLVM 20's intrinsic signatures) gets fed to a
       # differently-versioned clang++ and fails the same way.
       PYC_LLVM_CXX: clang++-20
+      # PYC_CXX: the same for the C backend (Makefile.cg compiles the
+      # emitted C++ with it). The runner image stopped shipping an
+      # unversioned `clang++` around 2026-10-13, and every C-backend
+      # e2e test then failed with `make: clang++: No such file`.
+      PYC_CXX: clang++-20
 
     steps:
       - name: Checkout pyc
@@ -58,12 +74,16 @@ jobs:
           # packages resolve to LLVM 18 on ubuntu-24.04, which the
           # LLVM backend's coroutine codegen isn't compatible with).
           # `llvm-20-dev` ships the headers and `libLLVM*` archives.
+          # `lld-20`: the LLVM backend links its output with the runtime
+          # as LTO bitcode (pyc_runtime_lto.o) under `-fuse-ld=lld`, so the
+          # runtime helpers inline. Without lld it falls back to the archive.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             clang-20 \
             llvm-20 \
             llvm-20-dev \
+            lld-20 \
             libgc-dev \
             libpcre3-dev \
             python3 \
@@ -101,38 +121,13 @@ jobs:
         # the production path; this step is the primary gate.
         run: make test
 
-      - name: V-language LLVM backend smoke (make test_llvm)
-        # Builds and runs a small V program through the LLVM
-        # backend end-to-end. Issue 012 (missing -lgc) was fixed
+      - name: V-language smoke, both backends (make test_llvm)
+        # Builds and runs a small V program through the LLVM and C
+        # backends end-to-end, and diffs each one's output against
+        # ifa/test_llvm.v.expected. Issue 012 (missing -lgc) was fixed
         # in the same commit that wired this step up; if this step
         # starts failing again, that's the first place to look.
         run: make -C ifa test_llvm
-
-      - name: LLVM-backend pyc e2e (PYC_FLAGS=-b ./test_pyc.py)
-        # PYC_FLAGS=-b prepends `-b` (the LLVM backend selector) to
-        # every pyc invocation inside test_pyc.py. The LLVM backend
-        # doesn't yet handle method dispatch through closures
-        # (phase 3.5 of ifa/codegen/CODEGEN_PLAN.md), so most pyc
-        # tests fail to compile. Rather than gate CI on parity that
-        # isn't achievable yet, we floor the pass count at the
-        # current baseline — CI fails if any *previously passing*
-        # LLVM test regresses.
-        #
-        # Update LLVM_BASELINE_PASS when a PR brings the count up.
-        run: |
-          LLVM_BASELINE_PASS=37
-          set -o pipefail
-          PYC_FLAGS=-b ./test_pyc.py 2>&1 | tee /tmp/llvm_e2e.log | tail -20 || true
-          passed=$(grep -E '^  passed' /tmp/llvm_e2e.log | awk '{print $2}')
-          echo "LLVM-backend pyc e2e: passed=${passed} (baseline=${LLVM_BASELINE_PASS})"
-          if [ -z "$passed" ]; then
-            echo "ERROR: could not parse pass count from test_pyc output" >&2
-            exit 1
-          fi
-          if [ "$passed" -lt "$LLVM_BASELINE_PASS" ]; then
-            echo "ERROR: LLVM pass count dropped below baseline (${passed} < ${LLVM_BASELINE_PASS})" >&2
-            exit 1
-          fi
 
       - name: DParser grammar validation (make test_dparse)
         run: make test_dparse

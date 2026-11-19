@@ -3,6 +3,7 @@ import argparse
 import glob
 import os
 import shutil
+import re
 import subprocess
 import sys
 import time
@@ -19,9 +20,18 @@ def parse_args():
     parser.add_argument("pattern", nargs="?", default="", help="only run tests whose name matches pattern")
     return parser.parse_args()
 
+_PYC_BUILTIN_LINE = re.compile(r'__pyc__\.py:\d+')
+
 def diff_files(file1, file2):
     try:
         # returns (is_diff, stdout)
+        # issues/111: `__pyc__.py:<N>` is a line of the builtin module as the
+        # library files happen to be concatenated, so any edit to an earlier
+        # library file moves it. It is compared as `__pyc__.py:N`; a user
+        # program's own line numbers stay exact.
+        with open(file1, errors='replace') as f1, open(file2, errors='replace') as f2:
+            if _PYC_BUILTIN_LINE.sub('__pyc__.py:N', f1.read()) == _PYC_BUILTIN_LINE.sub('__pyc__.py:N', f2.read()):
+                return False, ""
         # diff -q is not used because we want the first 20 lines if it fails
         res = subprocess.run(["diff", file1, file2], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         if res.returncode != 0:

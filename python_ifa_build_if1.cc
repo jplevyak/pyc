@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "python_ifa_int.h"
 #include "python_parse.h"
+#include <cerrno>
 #include <functional>
 
 // ifa/issues/104: unify `list` and `tuple` in the analysis, leaving the
@@ -249,14 +250,28 @@ static char *strip_numeric_underscores(const char *s) {
 // handle only `0x` and a C-style leading-zero octal, so `0b111` and `0o17`
 // fell through to base 10, stopped at the `b`/`o`, and were silently 0
 // (othello2's `move & 0b111`).
-static int64 parse_int_literal(const char *text) {
+//
+// The magnitude is read as uint64 in every base, so a literal past int64
+// is detectable: *range is 0 when it fits, 1 when it fits 64 bits but not
+// int64 (the value returned is its two's-complement wrap), and 2 when it
+// does not fit 64 bits at all. A decimal literal was read by strtoll,
+// which SATURATES, so 99999999999999999999 was silently INT64_MAX while
+// 0xFFFFFFFFFFFFFFFF was silently -1. `negated` is a literal under a
+// folded unary minus, for which 2^63 is INT64_MIN and fits.
+static int64 parse_int_literal(const char *text, int *range = nullptr, bool negated = false) {
   const char *s = strip_numeric_underscores(text);
-  char *end;
-  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) return (int64)strtoull(s + 2, &end, 16);
-  if (s[0] == '0' && (s[1] == 'o' || s[1] == 'O')) return (int64)strtoull(s + 2, &end, 8);
-  if (s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) return (int64)strtoull(s + 2, &end, 2);
-  if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') return (int64)strtoull(s + 1, &end, 8);
-  return (int64)strtoll(s, &end, 10);
+  int base = 10;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) base = 16, s += 2;
+  else if (s[0] == '0' && (s[1] == 'o' || s[1] == 'O')) base = 8, s += 2;
+  else if (s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) base = 2, s += 2;
+  else if (s[0] == '0' && s[1] >= '0' && s[1] <= '7') base = 8, s += 1;
+  errno = 0;
+  uint64 u = strtoull(s, nullptr, base);
+  if (range) {
+    uint64 limit = negated ? (uint64)INT64_MAX + 1 : (uint64)INT64_MAX;
+    *range = errno == ERANGE ? 2 : u > limit ? 1 : 0;
+  }
+  return (int64)u;
 }
 
 // Parse a PY_number PyDAST node as a decimal/hex/octal integer
@@ -333,7 +348,35 @@ static bool try_fold_tuple_arity(PyDAST *n, Vec<PyDAST *> &out) {
 }
 
 // Make a number constant from a PyDAST PY_number node
-static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
+// issues/177: an integer literal past int64. CPython's int is exact, so
+// wrapping one is an ACCOMMODATION (issues/171): it is what C, and
+// shedskin, do with a 64-bit bit pattern such as othello2's
+// 0xFFFFFFFFFFFFFFFF board mask. Permissive mode wraps and says so;
+// --strict, or PYC_INT_LITERAL_WRAP=0, refuses. A literal that does not
+// fit 64 bits has no value to wrap to and is refused in every mode.
+static void check_int_literal_range(PyDAST *n, const char *s, int range, bool negated, int64 v, PycCompiler &ctx) {
+  if (!range) return;
+  const char *sign = negated ? "-" : "";
+  if (range == 2)
+    fail("error line %d, integer literal %s%s does not fit in 64 bits; pyc's int is int64 (issues/177)", ctx.lineno,
+         sign, s);
+  static int accept = -1;
+  if (accept < 0) {
+    cchar *e = getenv("PYC_INT_LITERAL_WRAP");
+    accept = runtime_errors && (!e || atoi(e));
+  }
+  long w = negated ? (long)(0 - (uint64)v) : (long)v;
+  if (!accept)
+    fail("error line %d, integer literal %s%s exceeds int64; pyc's int is int64, and wrapping it to %ld is accepted "
+         "only in permissive mode (issues/177)",
+         ctx.lineno, sign, s, w);
+  fprintf(stderr,
+          "%s:%d: warning: integer literal %s%s exceeds int64 and wraps to %ld, where CPython keeps it exact. "
+          "Permissive, refused under --strict (issues/177)\n",
+          n->filename ? n->filename : ctx.filename, ctx.lineno, sign, s, w);
+}
+
+static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx, bool negated = false) {
   // Parse str_val since is_int/int_val/float_val may not be set from grammar
   const char *s = n->str_val;
   if (!s) s = "0";
@@ -362,7 +405,9 @@ static Sym *make_num_pyda(PyDAST *n, PycCompiler &ctx) {
     sprintf(buf, "%ld", n->int_val);
     return if1_const(if1, sym_int64, buf, &imm);
   } else if (!is_float) {
-    int64 v = parse_int_literal(s);
+    int range = 0;
+    int64 v = parse_int_literal(s, &range, negated);
+    check_int_literal_range(n, s, range, negated, v, ctx);
     Immediate imm;
     imm.v_int64 = v;
     char buf[80];
@@ -1252,6 +1297,10 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       PycAST *a1 = getAST(pos_args[1], ctx);
       ast->rval = new_sym(ast);
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_int_base__"), ast->rval, 1, a1->rval);
+      // issues/176: __pyc_int_base__ raises ValueError on an invalid
+      // literal, and a builtin shortcut returns before the generic call
+      // path's check (issues/175's gap, for this send).
+      emit_exc_check(&ast->code, ast, ctx);
       return 1;
     }
   }
@@ -1667,6 +1716,109 @@ static void reenter_scope_pyda(PyDAST *n, PycCompiler &ctx) {
 }
 
 // Helper: build if-else chain for PY_if_stmt
+// ifa/177: REUSE A GUARD'S LOAD OF A MODULE VARIABLE IN ITS TRUE BRANCH.
+//
+// A module-level data variable is a memory cell: each read loads it into a
+// fresh temp (ifa/issues/031). FA narrows the operand of an `isinstance` /
+// `is None` guard, which is the temp the guard loaded, so a later read in
+// the branch loaded the unnarrowed cell again. `if isinstance(x, A):
+// x.f = 4` then wrote `f` on `{A, B}` and gave `B` a field it never has.
+// A function local has one SSU name and narrows fine.
+//
+// So reuse the guard's load in the branch. That is plain redundant-load
+// elimination, sound whenever nothing can store the cell in between:
+//   - the load must run whenever the condition does: not under the right
+//     operand of `and` / `or`, a ternary, or a later link of a chained
+//     comparison;
+//   - no function may declare the variable `global` (a call could then
+//     store it, and almost anything is a call);
+//   - nothing in the condition or the branch may store or delete it. Any
+//     node that mentions the name other than a plain read of this variable
+//     counts, which over-approximates (an attribute named `x` kills too)
+//     and so is safe. Loops make a whole-branch scan necessary: a store
+//     late in a loop body reaches an earlier read on the next iteration.
+// A module-attribute store (`m.x = v`) could only reach the module's own
+// top-level code through a circular import.
+static void unconditional_module_loads(PyDAST *n, PycCompiler &ctx, Vec<PyDAST *> &out) {
+  if (!n) return;
+  switch (n->kind) {
+    case PY_name: {
+      PycAST *a = getAST(n, ctx);
+      if (n->ctx == PY_LOAD && a->sym && a->rval && a->rval != a->sym && is_module_data_var(a->sym)) out.add(n);
+      return;
+    }
+    case PY_bool_and:
+    case PY_bool_or:
+      if (n->children.n) unconditional_module_loads(n->children[0], ctx, out);
+      return;
+    case PY_compare:
+      if (n->children.n >= 3) {
+        unconditional_module_loads(n->children[0], ctx, out);
+        unconditional_module_loads(n->children[2], ctx, out);
+      }
+      return;
+    case PY_bool_not:
+    case PY_power:
+    case PY_call:
+    case PY_arglist:
+    case PY_keyword_arg:
+    case PY_binop:
+    case PY_testlist:
+      for (auto c : n->children.values()) unconditional_module_loads(c, ctx, out);
+      return;
+    default:
+      return;  // anything else may not evaluate every operand
+  }
+}
+static bool mentions_other_than_read(PyDAST *n, Sym *var, cchar *name, PycCompiler &ctx) {
+  if (!n) return false;
+  if (n->str_val && name && !strcmp(n->str_val, name)) {
+    PycAST *a = n->kind == PY_name && n->ctx == PY_LOAD ? getAST(n, ctx) : nullptr;
+    if (!a || a->sym != var) return true;
+  }
+  for (auto c : n->children.values())
+    if (mentions_other_than_read(c, var, name, ctx)) return true;
+  return false;
+}
+// After `cond` is lowered and before `suite` is: push the reuses. Returns
+// how many were pushed, for guard_reuse_end.
+static int guard_reuse_begin(PyDAST *cond, PyDAST *suite, PycCompiler &ctx) {
+  static int enabled = -1;
+  if (enabled < 0) { const char *v = getenv("PYC_GUARDREUSE"); enabled = v ? atoi(v) : 1; }
+  if (!enabled) return 0;
+  Vec<PyDAST *> loads;
+  unconditional_module_loads(cond, ctx, loads);
+  int pushed = 0;
+  Vec<Sym *> done;
+  for (PyDAST *ln : loads) {
+    PycAST *a = getAST(ln, ctx);
+    Sym *var = a->sym;
+    if (done.set_in(var)) continue;
+    done.set_add(var);
+    if (ctx.globals_declared_in_functions.set_in(var)) continue;
+    if (mentions_other_than_read(suite, var, ln->str_val, ctx)) continue;
+    // ...and a store inside the condition itself, after the load (`:=`).
+    bool cond_store = false;
+    std::function<void(PyDAST *)> scan = [&](PyDAST *c) {
+      if (!c || cond_store) return;
+      if (c->kind == PY_name && c->ctx != PY_LOAD && c->str_val && !strcmp(c->str_val, ln->str_val)) cond_store = true;
+      for (auto cc : c->children.values()) scan(cc);
+    };
+    scan(cond);
+    if (cond_store) continue;
+    ctx.reuse_var.add(var);
+    ctx.reuse_temp.add(a->rval);
+    ctx.reuse_scope.add(ctx.scope_stack.last());
+    ++pushed;
+  }
+  return pushed;
+}
+static void guard_reuse_end(int pushed, PycCompiler &ctx) {
+  ctx.reuse_var.n -= pushed;
+  ctx.reuse_temp.n -= pushed;
+  ctx.reuse_scope.n -= pushed;
+}
+
 static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // n is PY_if_stmt: children = [cond, suite, elif1, elif2, ..., else?]
   // Build elif/else chain inside-out: process from innermost (last) to outermost.
@@ -1698,7 +1850,9 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
       call_method(&elif_chain, elif_ast, elif_cond_ast->rval, sym___pyc_to_bool__, elif_t, 0);
     }
     Code *elif_then = 0;
+    int elif_reuse = guard_reuse_begin(elif_cond, elif_suite, ctx);
     build_if1_suite_pyda(elif_suite, &elif_then, ctx);
+    guard_reuse_end(elif_reuse, ctx);
     if1_if(if1, &elif_chain, 0, elif_t, elif_then, 0, chain, 0, 0, elif_ast);
     chain = elif_chain;
   }
@@ -1716,7 +1870,9 @@ static void build_if_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
     call_method(&ast->code, ast, cond_ast->rval, sym___pyc_to_bool__, t, 0);
   }
   Code *then_code = 0;
+  int reuse = guard_reuse_begin(cond, suite, ctx);
   build_if1_suite_pyda(suite, &then_code, ctx);
+  guard_reuse_end(reuse, ctx);
   if1_if(if1, &ast->code, 0, t, then_code, 0, chain, 0, 0, ast);
 }
 
@@ -2731,7 +2887,10 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
     // if1_fixup_nesting (it looks like a LOCALLY_NESTED local of the
     // creator) and corrupt the outer function's own reads.
     Sym *cin = ctx.scope_stack.last()->in;
-    if (cin && cin != cls && cin->has.in(field) && ctx.fun() && ctx.fun()->self) {
+    if (ctx.scope_stack.last()->cap_formals.get(field) || ctx.scope_stack.last()->cap_fields.get(field)) {
+      // issues/169: created inside a local class's body or method
+      val = pyc_read_captured(ctx.scope_stack.last(), field, code, ast, ctx);
+    } else if (cin && cin != cls && cin->has.in(field) && ctx.fun() && ctx.fun()->self) {
       val = new_sym(ast);
       if1_send(if1, code, 4, 1, sym_operator, ctx.fun()->self, sym_period, if1_make_symbol(if1, field->name), val)
           ->ast = ast;
@@ -2741,6 +2900,25 @@ static Sym *build_closure_instance_pyda(Sym *cls, PycAST *ast, Code **code, PycC
         ->ast = ast;
   }
   return inst;
+}
+
+// See python_ifa_int.h.
+Sym *pyc_read_captured(PycScope *scope, Sym *s, Code **code, PycAST *ast, PycCompiler &ctx) {
+  if (!scope || !s) return s;
+  if (Sym *f = scope->cap_formals.get(s)) return f;  // a local class's body
+  if (cchar *fld = scope->cap_fields.get(s)) {       // a local class's method
+    Sym *t = new_sym(ast);
+    if1_send(if1, code, 4, 1, sym_operator, scope->cap_self, sym_period, if1_make_symbol(if1, fld), t)->ast = ast;
+    return t;
+  }
+  // a closure carrier's own captured field (issues/001)
+  Sym *cin = scope->in;
+  if (cin && cin->type_kind == Type_RECORD && cin->has.in(s) && scope->fun && scope->fun->self) {
+    Sym *t = new_sym(ast);
+    if1_send(if1, code, 4, 1, sym_operator, scope->fun->self, sym_period, if1_make_symbol(if1, s->name), t)->ast = ast;
+    return t;
+  }
+  return s;
 }
 
 // Assign an already-computed value Sym `val` to the (already-built)
@@ -3297,6 +3475,15 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           def_ast->sym->self = new_sym(def_ast);
           def_ast->sym->self->must_implement_and_specialize(closure_cls);
         }
+        // issues/181: a decorated GENERATOR gets what PY_funcdef gives an
+        // undecorated one -- the return/send cell (before the body is
+        // walked, since `return` and `x = yield` read it) and a wrapper that
+        // creates the generator object (after gen_fun_pyda). The decorators
+        // then apply to the wrapper, the function CPython's `def` produces.
+        // A capturing one is dispatched on its closure carrier, which stays
+        // the value decorated, as in PY_funcdef's closure branch.
+        bool dec_gen = def_ast->sym->is_generator;
+        if (dec_gen) ctx.gen_retcell.put(def_ast->sym, new_sym(def_ast));
         PyDAST *params = def->children[1];
         PyDAST *varargsl = (params->children.n > 0) ? params->children[0] : nullptr;
         if (varargsl)
@@ -3309,6 +3496,24 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         }
         gen_fun_pyda(def, def_ast, ctx);
         exit_scope(ctx);
+        Sym *gen_wrapper = nullptr;
+        if (dec_gen && closure_cls) {
+          Sym *wrapper = new_fun(def_ast);
+          wrapper->nesting_depth = def_ast->sym->nesting_depth;
+          Sym *dispatch0 = new_sym(def_ast);
+          dispatch0->must_implement_and_specialize(closure_cls);
+          build_generator_wrapper(wrapper, def_ast->sym, dispatch0, def_ast, ctx, def_ast->sym->self);
+        } else if (dec_gen) {
+          // A marker method's wrapper already exists: build_syms installed it
+          // as the class member.
+          gen_wrapper = ctx.gen_def_wrapper.get(def_ast->sym);
+          if (!gen_wrapper) {
+            gen_wrapper = new_fun(def_ast);
+            gen_wrapper->nesting_depth = def_ast->sym->nesting_depth;
+            ctx.gen_def_wrapper.put(def_ast->sym, gen_wrapper);
+          }
+          build_generator_wrapper(gen_wrapper, def_ast->sym, gen_wrapper, def_ast, ctx);
+        }
         // issues/007: actually APPLY the decorators. With split
         // identity (build_syms_pyda), the def's public name
         // (def_ast->rval) is an ordinary variable and the raw
@@ -3320,7 +3525,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // an argument list, applied as `d(args)(fn)`) are handled;
         // dotted names keep the historical silent no-op.
         Sym *carrier = closure_cls ? build_closure_instance_pyda(closure_cls, def_ast, &def_ast->code, ctx) : nullptr;
-        Sym *cur = carrier ? carrier : def_ast->sym;
+        Sym *cur = carrier ? carrier : gen_wrapper ? gen_wrapper : def_ast->sym;
         for (int i = n->children.n - 2; i >= 0; i--) {
           PyDAST *child = n->children[i];
           Vec<PyDAST *> decs;
@@ -3431,7 +3636,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // FIELD shape (rval->alias == sym, installed via the setter
         // emitted in build_syms_pyda) -- no variable binding, same rule
         // as PY_funcdef's fd_is_method.
-        if (!(def_ast->rval && def_ast->rval->alias == def_ast->sym))
+        if (!(def_ast->rval &&
+              (def_ast->rval->alias == def_ast->sym || (gen_wrapper && def_ast->rval->alias == gen_wrapper))))
           if1_move(if1, &def_ast->code, cur, def_ast->rval, ast);
         // issues/171 #12: the body reads its own name through the carrier
         // (maybe_synthesize_closure_pyda); give it the decorated value.
@@ -3690,7 +3896,13 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       int op = n->children[1]->op;
       PyDAST *val_node = n->children[2];
       build_if1_pyda(val_node, ctx);
-      build_if1_pyda(tgt_node, ctx);
+      {
+        bool saved_aug = ctx.building_augassign_target;
+        ctx.building_augassign_target = true;
+        ctx.aug_slice_obj = nullptr;
+        build_if1_pyda(tgt_node, ctx);
+        ctx.building_augassign_target = saved_aug;
+      }
       PycAST *v = getAST(val_node, ctx);
       PycAST *t = getAST(tgt_node, ctx);
       if1_gen(if1, &ast->code, v->code);
@@ -3702,18 +3914,20 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         if1_send(if1, &ast->code, 5, 1, sym_operator, t->rval, sym_setter, t->sym, tmp, (ast->rval = new_sym(ast)))
             ->ast = ast;
       } else if (t->is_object_index) {
-        if (t->is_slice) {
-          // issues/025: slice augmented-assignment (`a[i:j] |= x`) still
-          // has the same silent-wrong-answer shape as the plain-index
-          // case below -- the value the operator sees isn't the current
-          // slice's contents, so `|=` acts like `=`. Not fixed here:
-          // no failing corpus example exercises it and __pyc_setslice__
-          // takes a whole replacement sequence, not a single value, so
-          // the read-compute-write shape needs its own translation.
-          if1_add_send_arg(if1, find_send(ast->code), v->rval);
-          emit_exc_check(&ast->code, t, ctx);  // issues/175
-          if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, (ast->rval = new_sym(ast)))
-              ->ast = ast;
+        if (t->is_slice && ctx.aug_slice_obj) {
+          // issues/043: CPython's order. The target lowering read the slice
+          // (t->rval, a new list) with the bounds evaluated once; apply the
+          // in-place operator to THAT, then write the result back over the
+          // same slice (its length may change). It used to store the RHS
+          // into the slice unread, so `a[1:3] += [10, 20]` acted like `=`.
+          Sym *result = new_sym(ast);
+          if1_send(if1, &ast->code, 3, 1, map_pyop_to_ioperator(op), t->rval, v->rval, result)->ast = ast;
+          call_method(&ast->code, ast, ctx.aug_slice_obj, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 4,
+                      ctx.aug_slice_l, ctx.aug_slice_u, ctx.aug_slice_s, result);
+          emit_exc_check(&ast->code, ast, ctx);  // issues/175
+          ctx.aug_slice_obj = nullptr;
+        } else if (t->is_slice) {
+          fail("error line %d: unsupported slice target for an augmented assignment (issues/043)", ctx.lineno);
         } else {
           // t->rval/t->sym are the object/index pair deferred by the
           // PY_power STORE-mode subscript branch above (not an
@@ -4188,8 +4402,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // strlen'd the scalar (segfault: genetic2's
       // `"Epoch: %s, best fitness: %s" % (epoch, fitness)`) and an
       // object could never print its __str__. %d/%f/etc. args stay
-      // raw (matching specs already work). Non-constant formats keep
-      // the old path. For a literal arg tuple, the conversions are
+      // raw (matching specs already work). A non-constant format is
+      // converted in str.__mod__ instead (issues/168), so these sends go
+      // to str.__pyc_mod__, which does not convert again. For a literal arg tuple, the conversions are
       // emitted BEFORE the tuple's own make send and the make's args
       // are swapped in place (building a second tuple would leave the
       // original het-tuple make dead but diagnosed).
@@ -4256,7 +4471,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           Sym *targs = new_sym(ast);
           if1_add_send_result(if1, send, targs);
           ast->rval = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, targs, ast->rval)->ast = ast;
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__pyc_mod__"), fmt_sym, targs, ast->rval)->ast = ast;
           return 0;
         }
         // issues/174: any other right operand -- a tuple VARIABLE or field,
@@ -4304,7 +4519,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           Sym *targs = new_sym(ast);
           if1_add_send_result(if1, send, targs);
           ast->rval = new_sym(ast);
-          if1_send(if1, &ast->code, 3, 1, make_symbol("__mod__"), fmt_sym, targs, ast->rval)->ast = ast;
+          if1_send(if1, &ast->code, 3, 1, make_symbol("__pyc_mod__"), fmt_sym, targs, ast->rval)->ast = ast;
           return 0;
         }
       }
@@ -4333,7 +4548,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // Chained/non-literal operands (`-x`, `--1`, `~n`) still take
       // the general runtime-dispatch path below.
       if ((n->op == PY_OP_USUB || n->op == PY_OP_UADD) && n->children[0]->kind == PY_number) {
-        Sym *lit = make_num_pyda(n->children[0], ctx);
+        Sym *lit = make_num_pyda(n->children[0], ctx, n->op == PY_OP_USUB);
         if (n->op == PY_OP_USUB) {
           Immediate imm = lit->imm;
           char buf[80];
@@ -4341,7 +4556,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             imm.v_float64 = -imm.v_float64;
             sprintf(buf, "%g", imm.v_float64);
           } else {
-            imm.v_int64 = -imm.v_int64;
+            imm.v_int64 = (int64)(0 - (uint64)imm.v_int64);  // INT64_MIN negates to itself
             sprintf(buf, "%ld", (long)imm.v_int64);
           }
           lit = if1_const(if1, lit->type, buf, &imm);
@@ -4365,6 +4580,22 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *cur_val = atom_ast->rval;
       bool pending_member = false;
       Sym *pending_sym = nullptr;
+      Sym *module_global_target = nullptr;  // `m.G` as a store target
+      // `open(...).method(...)`: the file is only a temporary, and CPython
+      // closes it as soon as that call returns (its reference count drops to
+      // zero), so a later open of the same path sees everything it wrote.
+      // pyc kept it open until exit: minpng's `open(p, 'wb').write(png)`
+      // left its last 2727 bytes unflushed for a read in the same process,
+      // and `open(p).read()` in a loop leaked a descriptor per call. The
+      // shape is exactly [open, call, attribute, call]; `open` is the
+      // builtin by symbol, as the open() intercept resolves it.
+      bool temp_open_chain = false;
+      Sym *temp_file = nullptr;
+      if (n->ctx != PY_STORE && n->children.n == 4 && n->children[1]->kind == PY_call &&
+          n->children[2]->kind == PY_attribute && n->children[3]->kind == PY_call && atom_ast->sym) {
+        PycSymbol *open_sym = make_PycSymbol(ctx, "open", PYC_USE);
+        temp_open_chain = open_sym && atom_ast->sym == open_sym->sym;
+      }
       // issue 027 feature: class-qualified member state, parallel to
       // pending_member/pending_sym. qual_cls is the class Sym `X` in
       // `X.attr` when X is a literal class reference and attr names a
@@ -4374,6 +4605,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *qual_cls = nullptr, *qual_fn = nullptr;
       for (int i = 1; i < n->children.n; i++) {
         PyDAST *trailer = n->children[i];
+        if (temp_open_chain && i == 2) temp_file = cur_val;  // open(...)'s file
         if (trailer->kind == PY_attribute) {
           // `X.attr` where X is an imported module (issue 025 module
           // subsystem phase 2): a module is a compile-time namespace,
@@ -4388,6 +4620,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               if ((intptr_t)member <= (intptr_t)NONLOCAL_DEF)
                 fail("error line %d, module '%s' has no attribute '%s'", ctx.lineno, mm->name, attr);
               cur_val = member->sym;
+              // A STORE to it (`m.G = v`) assigns that module global itself:
+              // the target is the variable, as for a plain name. It used to
+              // leave ast->sym unset, and the assignment's if1_move asserted
+              // (othello2_check's `othello2.NODES = 0`).
+              if (n->ctx == PY_STORE && i == n->children.n - 1) module_global_target = cur_val;
               continue;
             }
           }
@@ -4666,6 +4903,12 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             if (store && ctx.building_del_target) {
               call_method(&ast->code, ast, cur_val, sym___pyc_delslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
               emit_exc_check(&ast->code, ast, ctx);
+            } else if (store && ctx.building_augassign_target) {
+              // issues/043: `o[i:j] op= x` reads the slice here; PY_augassign
+              // applies the operator to it and writes the result back.
+              call_method(&ast->code, ast, cur_val, sym___pyc_getslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
+              emit_exc_check(&ast->code, ast, ctx);
+              ctx.aug_slice_obj = cur_val, ctx.aug_slice_l = l, ctx.aug_slice_u = u, ctx.aug_slice_s = s;
             } else if (store)
               call_method(&ast->code, ast, cur_val, sym___pyc_setslice__, (ast->rval = new_sym(ast)), 3, l, u, s);
             else {
@@ -4728,8 +4971,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           send->partial = Partial_OK;
           ast->rval = t;
         }
-      } else
+      } else {
         ast->rval = cur_val;
+        if (module_global_target) ast->sym = module_global_target;
+      }
+      if (temp_file) call_method(&ast->code, ast, temp_file, make_symbol("close"), new_sym(ast), 0);
       return 0;
     }
 
@@ -4737,6 +4983,15 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // rval already set by build_syms_pyda; handle class member access
       TEST_SCOPE printf("%sfound '%s' at level %d\n", ast->sym ? "" : "not ", n->str_val, 0);
       bool load = (n->ctx != PY_STORE);
+      // issues/169: a local class's body or method reading an enclosing
+      // function's local reads its captured copy.
+      if (load && ast->sym) {
+        PycScope *sc = ctx.scope_stack.last();
+        if (sc->cap_formals.get(ast->sym) || sc->cap_fields.get(ast->sym)) {
+          ast->rval = pyc_read_captured(sc, ast->sym, &ast->code, ast, ctx);
+          return 0;
+        }
+      }
       Sym *in = ctx.scope_stack[ctx.scope_stack.n - 1]->in;
       if (in && in->type_kind == Type_RECORD && in->has.in(ast->sym)) {
         if (load)
@@ -4768,7 +5023,16 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
         // through the wrapper the public name is bound to (gen_def_wrapper).
         Sym *gw = ifn->self ? nullptr : ctx.gen_def_wrapper.get(ifn);
         ast->rval = ifn->self ? ifn->self : (gw ? gw : ifn);
-      } else if (load && is_module_data_var(ast->sym)) {
+      } else if (load && is_module_data_var(ast->sym) && [&]() {
+                   // ifa/177: inside a guard's true branch, reuse the
+                   // guard's own load (see build_if_pyda).
+                   for (int i = ctx.reuse_var.n - 1; i >= 0; i--)
+                     if (ctx.reuse_var[i] == ast->sym && ctx.reuse_scope[i] == ctx.scope_stack.last()) {
+                       ast->rval = ctx.reuse_temp[i];
+                       return false;
+                     }
+                   return true;
+                 }()) {
         // ifa/issues/031 step 2: treat a module-level data variable
         // as a memory cell, not a register -- each *read* loads the
         // cell into a fresh local temp. The temp is on FA's
@@ -5424,37 +5688,27 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
     }
 
     case PY_yield_expr: {
-      // issues/014: `yield expr` as an expression (`x = yield foo`).
-      // Same "yield" primitive send as PY_yield_stmt above, but this
-      // form's own value is consumed by the caller -- real Python
-      // gives it whatever a subsequent `.send(v)` provides (None for
-      // a plain `next()`/`__pyc_more__`-driven advance). cg.cc's
-      // P_prim_yield now assigns the send's real result Sym here
-      // (`yval_result`) instead of the old hardcoded `sym_nil`, wired
-      // through to `co_yield`'s own expression value (see
-      // pyc_c_runtime.h's yield_awaiter) -- this is what makes
-      // `.send()` observable inside the generator body at all.
+      // issues/014: `yield expr` as an expression (`x = yield foo`). Its
+      // value is what the resume delivers: None for next(), v for
+      // send(v).
       //
-      // issues/171 #7: that value travels an int64 channel (P_prim_yield),
-      // so a resume by next() -- CPython's None -- reads 0, and a non-int
-      // send() is refused. An ACCOMMODATION: permissive only, announced;
-      // --strict (or PYC_YIELD_INT_SEND=0) refuses a yield whose value is
-      // used. The typed channel is issues/172.
-      {
-        static int accept = -1;
-        if (accept < 0) {
-          cchar *v = getenv("PYC_YIELD_INT_SEND");
-          accept = runtime_errors && (!v || atoi(v));
-        }
-        if (!accept)
-          fail("error line %d, the value of a yield expression is not supported under --strict: it is carried "
-               "as an int, so a resume by next() reads 0 where CPython gives None (issues/172)",
-               ctx.lineno);
-        fprintf(stderr,
-                "warning line %d, the value of a yield expression is carried as an int: a resume by next() reads 0 "
-                "where CPython gives None, and a non-int send() is refused (issues/172)\n",
-                ctx.lineno);
-      }
+      // issues/172: it is read from the generator's own object (its
+      // `sendval`, through the hidden formal `return X` stores into,
+      // gen_retcell), which send(v) and next() write before they resume
+      // the body. So it is typed per generator: a resume by next() reads
+      // None, and send() takes any type. The primitive's own result -- the
+      // coroutine's `sent` word -- was the old channel, an int64 that read 0
+      // for None (an accommodation, now gone); it is no longer read.
+      //
+      // A generator with no generator object has no cell. Every def
+      // gets a wrapper that makes one (plain, method, capturing, decorated
+      // -- issues/181), so this is a backstop for a generator built
+      // some other way, which would return the bare coroutine handle.
+      Sym *sendcell = ctx.fun()->is_generator ? ctx.gen_retcell.get(ctx.fun()) : nullptr;
+      if (!sendcell)
+        fail("error line %d, internal: the value of this yield expression has nowhere to come from: the generator "
+             "has no generator object (issues/172, 181)",
+             ctx.lineno);
       Sym *yval = sym_nil;
       if (n->children.n > 0) {
         build_if1_pyda(n->children[0], ctx);
@@ -5466,6 +5720,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       Sym *yval_result = new_sym(ast);
       Code *send = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), yval, yval_result);
       send->ast = ast;
+      yval_result = new_sym(ast);
+      if1_send(if1, &ast->code, 4, 1, sym_operator, sendcell, sym_period, if1_make_symbol(if1, "sendval"), yval_result)
+          ->ast = ast;
       ast->rval = yval_result;
       ast->sym = ast->rval;
       return 0;
@@ -5485,12 +5742,15 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       // .throw()/GeneratorExit -- pyc has neither) to:
       //
       //   __yf_sub = EXPR
-      //   __yf_sent = 0                          # None
+      //   __yf_val = __yf_sub.__next__()         # may raise StopIteration
+      //   [post-call check, as below]
+      //   goto Lyield
       // Lloop:
       //   __yf_val = __yf_sub.send(__yf_sent)    # may raise StopIteration
       //   [post-call check, exactly emit_exc_check's own shape --
       //    ANY pending exception jumps to Ldispatch below; __yf_val is
       //    only defined/read on the fallthrough (no-exception) edge]
+      // Lyield:
       //   __yf_sent = yield __yf_val
       //   goto Lloop
       // Ldispatch:
@@ -5515,19 +5775,35 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       if1_gen(if1, &ast->code, sub_ast->code);
       Sym *sub = sub_ast->rval;
 
+      Sym *sendcell = ctx.fun()->is_generator ? ctx.gen_retcell.get(ctx.fun()) : nullptr;
       Sym *sent = new_sym(ast);
-      if1_move(if1, &ast->code, int64_constant(0), sent, ast);
 
       Label *Lloop = if1_alloc_label(if1);
+      Label *Lyield = if1_alloc_label(if1);
       Label *Ldispatch = if1_alloc_label(if1);
       Label *Ldone = if1_alloc_label(if1);
 
+      Sym *val = new_sym(ast);
+      if (!sendcell)
+        fail("error line %d, internal: `yield from` needs a generator object to receive what is sent, and this "
+             "generator has none (issues/172, 181)",
+             ctx.lineno);
+      // issues/172: start the sub-generator with next(), as PEP 380 does,
+      // not send(None). A send stores its value in the sub-generator's
+      // cell, so send(None) put a None there that the priming resume never
+      // delivers (__pyc_resume_none__, python_ifa_main.cc).
+      ctx.try_stack.add(PycTryFrame{Ldispatch, ctx.fun()});
+      call_method(&ast->code, ast, sub, make_symbol("__next__"), val, 0);
+      emit_exc_check(&ast->code, ast, ctx);
+      ctx.try_stack.n--;
+      if1_goto(if1, &ast->code, Lyield)->ast = ast;
+
       if1_label(if1, &ast->code, ast, Lloop);
       ctx.try_stack.add(PycTryFrame{Ldispatch, ctx.fun()});
-      Sym *val = new_sym(ast);
       call_method(&ast->code, ast, sub, make_symbol("send"), val, 1, sent);
       emit_exc_check(&ast->code, ast, ctx);
       ctx.try_stack.n--;
+      if1_label(if1, &ast->code, ast, Lyield);
 
       // Fallthrough: .send() returned normally (no exception pending)
       // -- yield the delegated value out to OUR OWN caller, then feed
@@ -5539,6 +5815,11 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
       gen_yield_type_contribution(val, ast, ctx);
       Code *yfsend = if1_send(if1, &ast->code, 3, 1, sym_primitive, make_symbol("yield"), val, new_sent);
       yfsend->ast = ast;
+      // issues/172: what our caller sent arrives in our own cell, as for a
+      // plain `x = yield v` (PY_yield_expr).
+      new_sent = new_sym(ast);
+      if1_send(if1, &ast->code, 4, 1, sym_operator, sendcell, sym_period, if1_make_symbol(if1, "sendval"), new_sent)
+          ->ast = ast;
       if1_move(if1, &ast->code, new_sent, sent, ast);
       if1_goto(if1, &ast->code, Lloop)->ast = ast;
 

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
+#include <strings.h>
 #include <errno.h>
 #include <math.h>
 #ifdef __cplusplus
@@ -189,8 +190,8 @@ inline void* _CG_run_coro(_CG_Coroutine coro) {
 // but driven synchronously by __next__/__pyc_more__/.send() (pyc's
 // existing iterator protocol, see __pyc__/07_file.py's __pyc_file__)
 // instead of an event loop -- no awaiter chain, no _CG_event_loop_*
-// calls. _CG_generator_advance/_CG_generator_send are the only entry
-// points: each resumes the coroutine once (unless already done, where
+// calls. _CG_generator_advance is the only entry
+// point: it resumes the coroutine once (unless already done, where
 // resuming would be UB) and reports whether a value is now available.
 // Callers must always pair one advance()/send() with at most one
 // _CG_generator_value() read before the next advance()/send() --
@@ -198,6 +199,13 @@ inline void* _CG_run_coro(_CG_Coroutine coro) {
 // "primed" flag so both the __pyc_more__-then-__next__ alternation
 // PY_for_stmt's lowering does, and bare repeated __next__()/.send()
 // calls with no __pyc_more__ in between, stay one-for-one.
+//
+// issues/172: the value a resume delivers to a paused `x = yield foo`
+// does NOT travel through here any more. send(v) and next() store it in
+// the generator object's own `sendval` before resuming, and the body
+// reads it there, typed per generator (__pyc__/09_generator.py), where
+// `sent` below was an untyped word. `sent` stays only as yield_awaiter's
+// result, which nothing reads; the text below is its history.
 //
 // `sent`: the value delivered to a paused `x = yield foo` expression
 // by the *next* resume. A plain advance (bare next()) delivers None
@@ -258,21 +266,6 @@ inline bool _CG_generator_advance(long long raw_handle) {
   auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
   if (h.done()) return false;
   h.promise().sent = nullptr;
-  h.resume();
-  return !h.done();
-}
-
-// .send(v): like _CG_generator_advance, but delivers `v` as the
-// value of the paused `yield` expression being resumed into, instead
-// of None. Calling .send() on a not-yet-started generator (no paused
-// yield to deliver into yet) is the same UB-if-done guard as advance
-// -- real Python raises a TypeError for that specific case, which
-// pyc has no exception model to express (issue 011); left unchecked,
-// matching every other iterator's past-exhaustion behavior here.
-inline bool _CG_generator_send(long long raw_handle, long long value) {
-  auto h = std::coroutine_handle<_CG_Generator::promise_type>::from_address((void*)(intptr_t)raw_handle);
-  if (h.done()) return false;
-  h.promise().sent = (void*)(uintptr_t)value;
   h.resume();
   return !h.done();
 }
@@ -921,6 +914,141 @@ inline char *_CG_str_from_float(double d) {
 inline double _CG_str_to_float64(char *s) { return strtod(s, 0); }
 inline int64 _CG_str_to_int64(char *s) { return (int64)strtoll(s, 0, 10); }
 inline int64 _CG_str_to_int64_base(char *s, int base) { return (int64)strtoll(s, 0, base); }
+// int(x) for a float x (__pyc__/02_numeric.py, issues/176): truncation.
+inline int64 _CG_float_to_int64(double x) { return (int64)x; }
+
+// issues/176: CPython's int()/float() of a string accept the WHOLE string
+// or raise ValueError; strtoll/strtod parse a prefix and return 0 for none.
+// `int(s)` and `float(s)` reach `str.__pyc_int__` / `__pyc_float__`
+// (__pyc__/01_str.py), which ask these for validity and raise there --
+// the runtime has no exception model of its own. A string is a
+// length-carrying char* that may hold NULs (ifa/070), so the length is
+// read, never strlen. Surrounding whitespace is allowed, and `_` only
+// between two digits, as in CPython's literal grammar.
+static inline int _CG_digit_value(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+  return 99;
+}
+static inline int _CG_is_space(char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+// The digits of an int literal in `base` (0 = from the prefix), copied
+// into `out` without sign, prefix or underscores. Returns the effective
+// base, or 0 when the string is not a valid literal.
+static inline int _CG_int_literal_digits(char *s, int64 base, char *out, int *neg) {
+  size_t n = _CG_string_len(s), i = 0, j = 0, k = 0;
+  if (base != 0 && (base < 2 || base > 36)) return 0;
+  while (i < n && _CG_is_space(s[i])) i++;
+  while (n > i && _CG_is_space(s[n - 1])) n--;
+  *neg = 0;
+  if (i < n && (s[i] == '+' || s[i] == '-')) *neg = s[i++] == '-';
+  int b = (int)base;
+  if (i + 1 < n && s[i] == '0') {
+    char p = s[i + 1] | 0x20;
+    int pb = p == 'x' ? 16 : p == 'o' ? 8 : p == 'b' ? 2 : 0;
+    if (pb && (b == 0 || b == pb)) {
+      b = pb;
+      i += 2;
+      if (i < n && s[i] == '_') i++;  // `0x_1f` is valid
+    }
+  }
+  if (b == 0) {
+    // Base 0 without a prefix is decimal, and a leading zero is legal only
+    // if every digit is zero (CPython: int("010", 0) raises).
+    b = 10;
+    if (i < n && s[i] == '0')
+      for (k = i; k < n; k++)
+        if (s[k] != '0' && s[k] != '_') return 0;
+  }
+  int prev_digit = 0;
+  for (; i < n; i++) {
+    if (s[i] == '_') {
+      if (!prev_digit || i + 1 >= n || _CG_digit_value(s[i + 1]) >= b) return 0;
+      prev_digit = 0;
+      continue;
+    }
+    if (_CG_digit_value(s[i]) >= b) return 0;
+    out[j++] = s[i];
+    prev_digit = 1;
+  }
+  out[j] = 0;
+  return j ? b : 0;
+}
+inline int64 _CG_str_int_ok(char *s, int64 base) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 1);
+  int neg;
+  int b = _CG_int_literal_digits(s, base, buf, &neg);
+  free(buf);
+  return b ? 1 : 0;
+}
+inline int64 _CG_str_int_value(char *s, int64 base) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 1);
+  int neg;
+  int b = _CG_int_literal_digits(s, base, buf, &neg);
+  uint64_t v = b ? strtoull(buf, 0, b) : 0;
+  free(buf);
+  return neg ? (int64)(0 - v) : (int64)v;
+}
+// A float literal: digits with `_` between digits, at most one `.`, an
+// optional exponent, or inf / infinity / nan in any case. Copies the
+// accepted text without underscores into `out` for strtod. (strtod also
+// takes hex floats, "0x1p3", which CPython's float() refuses.)
+static inline int _CG_float_literal_text(char *s, char *out) {
+  size_t n = _CG_string_len(s), i = 0, j = 0;
+  while (i < n && _CG_is_space(s[i])) i++;
+  while (n > i && _CG_is_space(s[n - 1])) n--;
+  if (i < n && (s[i] == '+' || s[i] == '-')) out[j++] = s[i++];
+  size_t rest = n - i;
+  static const char *words[] = {"inf", "infinity", "nan", 0};
+  for (int w = 0; words[w]; w++)
+    if (rest == strlen(words[w]) && !strncasecmp(s + i, words[w], rest)) {
+      memcpy(out + j, s + i, rest);
+      out[j + rest] = 0;
+      return 1;
+    }
+  int digits = 0, dot = 0, prev_digit = 0;
+  for (; i < n; i++) {
+    char c = s[i];
+    if (c >= '0' && c <= '9') { out[j++] = c; digits++; prev_digit = 1; continue; }
+    if (c == '_') {
+      if (!prev_digit || i + 1 >= n || s[i + 1] < '0' || s[i + 1] > '9') return 0;
+      prev_digit = 0;
+      continue;
+    }
+    if (c == '.' && !dot) { out[j++] = c; dot = 1; prev_digit = 0; continue; }
+    if ((c == 'e' || c == 'E') && digits) {
+      out[j++] = 'e';
+      i++;
+      if (i < n && (s[i] == '+' || s[i] == '-')) out[j++] = s[i++];
+      int edigits = 0;
+      prev_digit = 0;
+      for (; i < n; i++) {
+        if (s[i] >= '0' && s[i] <= '9') { out[j++] = s[i]; edigits++; prev_digit = 1; continue; }
+        if (s[i] == '_' && prev_digit && i + 1 < n && s[i + 1] >= '0' && s[i + 1] <= '9') { prev_digit = 0; continue; }
+        return 0;
+      }
+      if (!edigits) return 0;
+      break;
+    }
+    return 0;
+  }
+  out[j] = 0;
+  return digits > 0;
+}
+inline int64 _CG_str_float_ok(char *s) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 2);
+  int ok = _CG_float_literal_text(s, buf);
+  free(buf);
+  return ok ? 1 : 0;
+}
+inline double _CG_str_float_value(char *s) {
+  char *buf = (char *)malloc(_CG_string_len(s) + 2);
+  double v = _CG_float_literal_text(s, buf) ? strtod(buf, 0) : 0.0;
+  free(buf);
+  return v;
+}
 // int.bit_count(): the number of one bits in abs(x), as CPython defines it
 // (othello2 counts the pieces on its bitboards with it).
 inline int64 _CG_int_bit_count(int64 x) {
@@ -971,6 +1099,23 @@ inline char *_CG_locale_encoding(void) {
   char *r = _CG_String(enc);
   setlocale(LC_CTYPE, saved);
   return r;
+}
+
+// issues/041: time.sleep and socket.gethostname were stubs (a no-op, and a
+// constant "localhost"). Both are now the real calls.
+inline int64 _CG_sleep(double seconds) {
+  if (!(seconds > 0)) return 0;
+  struct timespec ts;
+  ts.tv_sec = (time_t)seconds;
+  ts.tv_nsec = (long)((seconds - (double)ts.tv_sec) * 1e9);
+  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+  return 0;
+}
+inline char *_CG_gethostname(void) {
+  char buf[256];
+  if (gethostname(buf, sizeof(buf)) != 0) buf[0] = 0;
+  buf[sizeof(buf) - 1] = 0;
+  return _CG_String(buf);
 }
 
 // 32 bits of OS entropy, for pyc_lib/random.py's seed on first use: CPython
@@ -1653,6 +1798,16 @@ typedef struct _CG_list_struct {
 #define _CG_TUPLE_FIXED_ARITY 0x80000000u
 #define _CG_tuple_set_fixed(_l) (_CG_list_to_struct(_l)->total_len |= _CG_TUPLE_FIXED_ARITY)
 #define _CG_tuple_is_fixed(_l) ((_CG_list_to_struct(_l)->total_len & _CG_TUPLE_FIXED_ARITY) != 0)
+// ifa/102: the next bit says a tuple has NO static arity (make_seq, a
+// slice), so a {list, tuple} receiver can be dispatched by header: a
+// fixed-arity tuple has the bit above, a dynamic tuple this one, and a
+// list neither. Like the fixed bit, it is set at construction and lives in
+// capacity bits a tuple never uses.
+#define _CG_TUPLE_DYNAMIC 0x40000000u
+#define _CG_TUPLE_BITS (_CG_TUPLE_FIXED_ARITY | _CG_TUPLE_DYNAMIC)
+#define _CG_tuple_set_dynamic(_l) (_CG_list_to_struct(_l)->total_len |= _CG_TUPLE_DYNAMIC)
+#define _CG_tuple_is_dynamic(_l) ((_CG_list_to_struct(_l)->total_len & _CG_TUPLE_DYNAMIC) != 0)
+#define _CG_is_plain_list(_l) ((_CG_list_to_struct(_l)->total_len & _CG_TUPLE_BITS) == 0)
 #define _CG_prim_len(_c, _l) ((_l) ? _CG_list_len(_l) : 0)
 #define _CG_ptr_to_list(_l) ((_CG_list)(((char *)(_l)) + SIZEOF_LIST_HEADER))
 static inline _CG_list _CG_to_list(_CG_list l) { return l; }
@@ -1788,7 +1943,7 @@ static inline _CG_list _CG_list_add_internal(_CG_list l1, _CG_list l2, uint32 si
 // their elements INLINE in the header.
 static inline _CG_list _CG_list_resize_internal(_CG_list l1, uint32 size1, uint32 new_len) {
   uint32 s1 = _CG_prim_len(0, l1);
-  uint32 cap = _CG_list_total_len(0, l1) & ~_CG_TUPLE_FIXED_ARITY;  // ifa/185
+  uint32 cap = _CG_list_total_len(0, l1) & ~_CG_TUPLE_BITS;  // ifa/185, ifa/102
   if (new_len && new_len <= cap && _CG_list_ptr(l1)) {
     // Already big enough: move the length and zero anything newly
     // exposed. No allocation, no copy -- this is the amortized path.
@@ -2078,6 +2233,14 @@ inline void _CG_writeln(void) { _CG_Syscall_Write(1, "\n", 1); }
 #define _CG_list_mult(_l1, _l, _s) (_CG_list_mult_internal(_CG_to_list(_l1), _l, _s))
 #define _CG_list_getslice(_l, _s, _lower, _upper, _step) \
   (_CG_list_getslice_internal(_CG_to_list(_l), _s, _lower, _upper, _step))
+// A tuple slice is a dynamic tuple (ifa/102): the list slicer, marked.
+static inline _CG_list _CG_tuple_getslice_internal(_CG_list v, uint32 size, int32 l, int32 h, int32 s) {
+  _CG_list x = _CG_list_getslice_internal(v, size, l, h, s);
+  _CG_tuple_set_dynamic(x);
+  return x;
+}
+#define _CG_tuple_getslice(_l, _s, _lower, _upper, _step) \
+  (_CG_tuple_getslice_internal(_CG_to_list(_l), _s, _lower, _upper, _step))
 #define _CG_list_setslice(_l1, _s, _lower, _upper, _step, _l2) \
   (_CG_list_setslice_internal(_l1, _s, _lower, _upper, _step, _CG_to_list(_l2)))
 #define _CG_list_delslice(_l1, _s, _lower, _upper, _step) \
@@ -2210,6 +2373,15 @@ inline _CG_bool _CG_str_ne(const char *a, const char *b) { return (_CG_bool)!_CG
 // deterministic across runs (unlike CPython's SipHash with
 // PYTHONHASHSEED randomization) -- programs only rely on
 // self-consistency within one run.
+// The multiply-add step of the tuple/list hash (`h * 1000003 + x`), with
+// wraparound DEFINED: done in unsigned 64-bit arithmetic. The hash relies on
+// wrapping (four elements already overflow int64), and as plain int64
+// arithmetic that is signed overflow -- undefined in C, and poison under the
+// LLVM backend's `nsw`. The value is the same as the wrapped int64 one.
+inline long long _CG_hash_mix(long long h, long long x) {
+  return (long long)((unsigned long long)h * 1000003ull + (unsigned long long)x);
+}
+
 inline long long _CG_str_hash(const char *s) {
   size_t len = _CG_string_len(s);
   unsigned long long h = 14695981039346656037ULL;

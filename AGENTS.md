@@ -2,7 +2,7 @@
 
 **A contour is NEVER split because a surrounding contour was split. Splitting is only ever on demand.** The primary purpose of IFA is that demand splitting, especially of data contours, which IFA calls Creation Sets.
 
-**ALL DEMAND IS EVALUATED AT QUIESCENCE. All of it.** A demand is a property of the CONVERGED types — "this AVar holds a union that something cannot proceed on" — so it is asked once the types have reached a fixed point, and re-asked every pass. Never on the transient event of a union forming. [ifa/157](ifa/issues/157-FA-all-demand-must-be-evaluated-at-quiescence.md) is the standing issue, and its first measurement is the warning to read before acting on this rule: the types ARE already converged when every split stage runs, so *when* was never the defect people assumed — and asking the level question instead of the edge one, on its own, buys nothing.
+**ALL DEMAND IS EVALUATED AT QUIESCENCE. All of it.** A demand is a property of the CONVERGED types — "this AVar holds a union that something cannot proceed on" — so it is asked once the types have reached a fixed point, and re-asked every pass. Never on the transient event of a union forming. [ifa/157](ifa/issues/closed/157-FA-all-demand-must-be-evaluated-at-quiescence.md) (closed 2026-10-15) records it, and its first measurement is the warning to read before acting on this rule: the types ARE already converged when every split stage runs, so *when* was never the defect people assumed — and asking the level question instead of the edge one, on its own, buys nothing.
 
 # Document Index
 
@@ -12,6 +12,7 @@
 - [PYTHON_FRONTEND.md](PYTHON_FRONTEND.md) — pyc Python frontend: `pyc.cc`, `python_parse.cc` + `python.g`, `python_ifa_*` two-pass lowering (`build_syms` → `build_if1`), scope sentinels, builtin module loading, language extensions, gotchas.
 - [RUNTIME.md](RUNTIME.md) — pyc runtime layer: `pyc_c_runtime.h` (`_CG_*` types/macros, string layout, allocation, GC), `__pyc__/*.py` (Python builtin module), `pyc_compat.py` (CPython shim), recipes for adding new runtime support.
 - [GENERICS.md](GENERICS.md) — Design study: recognizing generic (type-parametric) builtins as parametric transfer functions, how that fits the demand/provenance rules, and what it would do for othello3 (measured: less than its most expensive pass needs).
+- [website/README.md](website/README.md) — pyc-lang.org: Next.js static site, how to build and deploy it, and which repo facts its pages quote (keep its examples `--strict`-clean and CPython-identical).
 - [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) — Plan for filling out the rest of the documentation set, with checkboxes.
 
 ## IFA library
@@ -27,15 +28,17 @@ calls Creation Sets.
 
 **And all demand is evaluated at QUIESCENCE** — on converged types, never
 on the transient event of a union forming.
-[ifa/157](ifa/issues/157-FA-all-demand-must-be-evaluated-at-quiescence.md)
-is the standing issue. Read its first measurement before acting on the rule:
-`analyze_to_convergence` drains every worklist BEFORE the split stages run,
-so the types they read are already at a fixed point on every pass. The
-`!analyze_again` gate that `fa.cc` calls quiescence throughout is not one —
-it tests whether a higher-priority stage acted, and it is why
-`PER_CS_RECEIVER` and `CSM_ELEMENT_CS` fire ZERO times on every program
-measured. The starvation is a cascade, not a convergence problem, and a
-level-triggered detector was built, measured against it, and deleted.
+[ifa/157](ifa/issues/closed/157-FA-all-demand-must-be-evaluated-at-quiescence.md)
+(closed 2026-10-15) records it. Read its first measurement before acting on
+the rule: `analyze_to_convergence` drains every worklist BEFORE the split
+stages run, so the types they read are already at a fixed point on every
+pass. The `!analyze_again` gate is not a quiescence gate: it tests whether a
+higher-priority stage acted, and `fa.cc` now calls it the CASCADE gate
+(`higher_stages_idle`, `PYC_DBG_CASCADE`). It delays lower stages but cannot
+lose a demand: the loop ends only on a pass where no stage acted, so every
+gated stage runs on the final converged state. The 2026-10-15 census found
+no program that needs a stage sooner, and a level-triggered detector was
+built, measured, and deleted.
 
 That is the yardstick for any change in `ifa/analysis/`. A contour —
 function (EntrySet) or data (CreationSet) — exists because something
@@ -48,16 +51,14 @@ by demand is a defect, however well it converges.
 completion. It holds the two-question test and the non-monotone diagnostic
 that identifies an arbitrary lever. It lists what has been removed and what
 is still in the tree, and gives a verdict for every off-by-default
-splitting lever in `fa_flags.cc`. As of 2026-09-28, the violations still
-live on the default path are:
-
-- **`MARK_SETTER` / `MARK_SETTER_OF_SETTER`** (`fa.cc`, the stage-4
-  block). Mark distance is provenance. The other three mark splitters are
-  gone. This one survived because `voronoi2` needed it, and that
-  prerequisite (the nil codegen fix at `cg.cc:3707`) has landed.
-- **Stage 5's per-CreationSet fan in `split_edges`.** Its partition size
-  is the receiver CS count. `PYC_SPLITEDGES2=1` bounds it to two groups.
-- **`SETTER_OF_SETTER`'s confluence test**, which has no type condition.
+splitting lever in `fa_flags.cc`. As of 2026-10-13, no violation is known
+to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
+test, now asks for a demand. On 2026-10-15 every off-by-default lever
+measured dead, non-monotone or inert was deleted, `PYC_SLOTARITY`,
+`PYC_TYPEMOVE` and `PYC_RETDEMAND` with them, so the inventory is empty.
+The writer split (ifa/178) has no known program that needs it.
+**A dispatch that cannot resolve statically is a demand**: the goal is zero
+run-time dispatch.
 
 **Both sides now start minimal.** EntrySets start at one per function and
 split on demand: a two-call program splits `f` into exactly the two
@@ -82,14 +83,21 @@ follow every ES split, was removed 2026-09-08.)
 
 **A merge can be taken back.** `analyze_to_convergence` resets *before*
 every pass, so derived types are re-derived from bottom, and what persists
-is the DECISION (`av->cs_map`, the split ledger). So a decision taken on
+is the DECISIONS: CreationSets and each creation point's assignment to one
+(`av->cs_map`), EntrySets and each call edge's binding to one
+(`AEdge::to`), and the split ledger. ifa keeps decisions and rebuilds the
+structure each pass, as shedskin does; the difference is that shedskin
+re-derives its function contours every iteration and keeps only data-contour
+decisions ([ifa/111](ifa/issues/closed/111-FA-selective-invalidation-per-pass.md)). So a decision taken on
 transient types should be revisited at convergence, not protected
 ([ifa/170](ifa/issues/170-FA-contours-minted-on-transient-types-are-never-remerged.md)).
-[ifa/111](ifa/issues/111-FA-selective-invalidation-per-pass.md) is a
-performance lever for the extra passes, not a precondition. The separation
+The extra passes are cheap: per-pass work falls after the first few and stays
+flat, and FA time is call matching in those first passes
+([ifa/111](ifa/issues/closed/111-FA-selective-invalidation-per-pass.md), closed
+2026-10-18). The separation
 mechanisms that made start-merged viable have landed, all default-on:
 
-- arity in CS identity ([132](ifa/issues/132-arity-is-representation-not-provenance.md));
+- arity in CS identity ([132](ifa/issues/closed/132-arity-is-representation-not-provenance.md));
 - route 4 (`CS_DEF_PARTITION`), with a content channel for every CS shape;
 - the backtrack to the merged CS (closed/152);
 - the ES split as a means (`PYC_ESBLOCK=1`).
@@ -155,9 +163,11 @@ The build is a prerequisite, so a bare `make` first is optional (though
 (`PYC_FLAGS=-b ./test_pyc.py`), while `make -C ifa test_llvm` is the
 *V-language* smoke — different tests, same name, two Makefiles. The root
 alias for the second is `make test-ifa-llvm`. And `make test` does not
-re-run the pyc LLVM e2e separately, because `test-e2e` already runs it;
-CI splits it into its own step only to apply an `LLVM_BASELINE_PASS`
-floor instead of a hard pass/fail.
+re-run the pyc LLVM e2e separately, because `test-e2e` already runs it,
+as a hard gate on both backends. (CI used to run it again in its own step
+with an `LLVM_BASELINE_PASS` floor of 37; removed 2026-10-18, since the
+suite passes in full on LLVM and `make test` already fails on any LLVM
+failure.)
 
 **`make test` is the one that gets skipped, and it is the one that
 matters.** It chains its gates and `set -e`s out of the first failure,
@@ -172,10 +182,8 @@ rather than failing — easy to read as "fine". Two habits follow:
   LAST phase only. Check every phase's `failed:` line, or just trust
   `make test`'s exit code, which is the point of running it.
 
-Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed with
-2 known (below); `test_pyc.py` 0 failed on both backends, the LLVM one
-well above CI's `LLVM_BASELINE_PASS` floor (raise that floor in ci.yml
-when a change lifts the count).
+Expected state when green: `ifa --test` 58/0; `test-ir` 0 failed, 0
+known; `test_pyc.py` 0 failed on both backends.
 
 **Touched a header? `make clean` first, before you trust any of it.**
 Header dependencies are incomplete, so `make` alone happily links stale
@@ -206,6 +214,11 @@ changed line belongs to your change. Two real cases from this repo:
   `<fixture>.<phase>.known_issue` instead, which reports `KNOWN`,
   does not fail the run, and flips to `PASS` by itself when the stage
   works again. `--rebless` refuses to touch a fixture that has one.
+  (Epilogue, 2026-10-13: the "regression" was the mark split itself, which
+  is provenance. When `MARK_SETTER` was deleted (ifa/146 D), `ess=3` was
+  confirmed as the demand-driven answer, and these two goldens were
+  re-blessed and their sidecars removed. A `.known_issue` records what
+  you believe at the time; revisit it when the belief changes.)
 
 Same rule as `tests/<name>.py.known_issue` for the pyc suite — see
 [issues/README.md](issues/README.md). Prefer it over baking in wrong
@@ -382,8 +395,9 @@ The rule has paid for itself every time it has been applied here:
 - Mark-based splitting is being retired — mark distance is
   depth-from-a-generating-AVar, so no type tuple can name what it
   separates. Turning `MARK_TYPE` off: guard trips 18 → 10, −55% analysis
-  time, −12.3% contours. `MARK_TYPE` and two other mark splitters are
-  deleted; `MARK_SETTER` is still live (ifa/146 D).
+  time, −12.3% contours. All four mark splitters are deleted; the last,
+  `MARK_SETTER`, went on 2026-10-13 for −7% EntrySets, −7% CreationSets
+  and −12% compile time with every corpus verdict unchanged (ifa/146 D).
 - The per-site key `v<id>|` in `cselem_shape_key` fragments contour
   identity 2.53× (ifa/129), and it is exactly provenance.
 - ifa/128's whole complaint was that CS identity was *(allocation site ×
@@ -395,7 +409,7 @@ types ARE, or where the value CAME FROM?** The first is identity; the
 second is not. A third category exists and is legitimate — what the target
 language can REPRESENT (arity, member width, `None` in a union) — and that
 belongs behind `IFACallbacks`, not in the key and not in provenance. See
-[132](ifa/issues/132-arity-is-representation-not-provenance.md), whose
+[132](ifa/issues/closed/132-arity-is-representation-not-provenance.md), whose
 title is that distinction.
 
 **Corollary: a merge you cannot undo is not a reason to record provenance.**
@@ -593,7 +607,7 @@ current one.
 ./corpus_sweep.sh -m run                  # + the binary's exit status (~11 min)
 ./corpus_sweep.sh -m check                # + warnings, CPython rc,
                                           #   and stdout vs CPython    (~11 min)
-./corpus_sweep.sh -m compile -e "PYC_CSELEM=3"
+./corpus_sweep.sh -m compile -e "PYC_CSBACKTRACK=0"
 ./corpus_sweep.sh -m check -R             # + confirm run timeouts alone
 ```
 

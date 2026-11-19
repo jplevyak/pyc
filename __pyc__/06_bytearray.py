@@ -3,6 +3,14 @@ class bytearray:
   length = 0
   def __init__(self, s):
     self.length = s
+    # bytearray(n) is n zero bytes. The vector is allocated zeroed, but the
+    # analysis types an element only from a write, so a bytearray that is
+    # only ever READ had no element type, and `bytearray(3)[0]` was
+    # refused ("expression has no type"). Storing the zero it already
+    # holds says what the elements are.
+    if s > 0:
+      __pyc_primitive__(__pyc_symbol__("set_index_object"), self, 0,
+                        __pyc_primitive__(__pyc_symbol__("coerce"), __pyc_char__, 0))
   def __getitem__(self, key):
     if key < 0:
       key = key + self.length

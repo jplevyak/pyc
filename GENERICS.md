@@ -168,7 +168,7 @@ blind cast, so it must record a layout obligation like every other
 **What to watch.** G1 makes downstream unions smaller, and some demand that
 fires downstream today may be the only thing splitting a builtin contour.
 Under G1 that demand has to be raised at the contour itself. The
-re-measurement in [157](ifa/issues/157-FA-all-demand-must-be-evaluated-at-quiescence.md)
+re-measurement in [157](ifa/issues/closed/157-FA-all-demand-must-be-evaluated-at-quiescence.md)
 and [152](ifa/issues/closed/152-FA-backtrack-the-demand-to-the-merged-creation-set.md)'s
 backtracking are the relevant prior art. A program whose contour count
 RISES under G1 is the signature of a demand that lost its observation

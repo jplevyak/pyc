@@ -134,7 +134,7 @@ the rendered text, which is what CPython does. `bool` needed its own tag
 `"%s" % True` is `"True"` and not `"1"`.
 
 The **object** case is not fixable here and is filed as
-[168](../168-object-at-a-computed-format-s-prints-garbage.md): `%s` on an
+[168](168-object-at-a-computed-format-s-prints-garbage.md): `%s` on an
 object needs `__str__`, which is a method dispatch, and a C runtime helper
 cannot call back into generated code. A tag could say "object" and the
 runtime still could not act on it. The repair belongs in the frontend,

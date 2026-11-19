@@ -1,1 +1,2 @@
 method_slot_registered_on_concrete_type.py:13: warning: an expression holds both int and float; widened to float64, so an int value in it prints as a float (CPython keeps the int). Permissive numeric coercion, refused under --strict (issues/171)
+method_slot_registered_on_concrete_type.py:27: warning: the call to 'add' reaches two versions of it for one receiver object, chosen by an argument's type; the object's method slot decides, which is right only if that argument has the type its version expects. Permissive, refused under --strict (ifa/121)

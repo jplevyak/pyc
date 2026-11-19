@@ -34,10 +34,17 @@ extern char *_CG_format_string_tagged(char *str, const char *tags, ...);
 extern char *_CG_fmt_grow(char *out, size_t *cap, size_t len, size_t need);
 extern const char *_CG_widen_int_convs(const char *fmt);
 extern char *_CG_str_from_int(int64 x);
+extern long long _CG_hash_mix(long long h, long long x);
 extern char *_CG_str_from_float(double d);
 extern double _CG_str_to_float64(char *s);
 extern int64 _CG_str_to_int64(char *s);
 extern int64 _CG_str_to_int64_base(char *s, int base);
+/* issues/176: whole-string validation for int() / float() of a str. */
+extern int64 _CG_str_int_ok(char *s, int64 base);
+extern int64 _CG_str_int_value(char *s, int64 base);
+extern int64 _CG_str_float_ok(char *s);
+extern double _CG_str_float_value(char *s);
+extern int64 _CG_float_to_int64(double x);
 extern char *_CG_group_digits(const char *core, char sep);
 extern char *_CG_pad_align(const char *core, int width, char align, char fill, int sign_len);
 extern void  _CG_parse_format_spec(const char *spec, _CG_FormatSpec *out);
@@ -65,6 +72,8 @@ extern int64 _CG_int_pow(int64 b, int64 e);
 extern int64 _CG_errno(void);
 extern char *_CG_locale_encoding(void);
 extern int64 _CG_entropy32(void);
+extern int64 _CG_sleep(double seconds);  /* issues/041 */
+extern char *_CG_gethostname(void);
 extern int64 _CG_int_bit_count(int64 x);
 extern char *_CG_strerror(int64 e);
 extern char *_CG_char_from_string(void *s, int i);
@@ -172,6 +181,7 @@ void *_CG_to_list_runtime(void *struct_ptr,
 #undef _CG_list_resize
 #undef _CG_list_mult
 #undef _CG_list_getslice
+#undef _CG_tuple_getslice
 #undef _CG_list_setslice
 #undef _CG_list_delslice
 
@@ -305,6 +315,14 @@ void *_CG_list_getslice(void *v, int64 size, int64 l_in, int64 h_in,
       }
     }
   }
+  return x;
+}
+
+/* ifa/102: a tuple slice is a dynamic tuple -- the list slicer, with the
+ * header's _CG_TUPLE_DYNAMIC bit set (pyc_c_runtime.h). */
+void *_CG_tuple_getslice(void *v, int64 size, int64 l_in, int64 h_in, int64 s) {
+  void *x = _CG_list_getslice(v, size, l_in, h_in, s);
+  _CG_LIST_HDR_TOTAL(x) |= 0x40000000u;
   return x;
 }
 

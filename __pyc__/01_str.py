@@ -35,9 +35,19 @@ class str:
     for c in self:
       r.append(c)
     return r
-  # int(s, base) (python_ifa_build_if1.cc lowers it to this).
+  # int(s, base) (python_ifa_build_if1.cc lowers it to this), and int(s).
+  # issues/176: the WHOLE string must be a literal, or ValueError, as
+  # CPython; strtoll used to read a prefix and return 0 for none.
   def __pyc_int_base__(self, base):
-    return __pyc_c_call__(int, "_CG_str_to_int64_base", str, self, int, base)
+    if not __pyc_c_call__(int, "_CG_str_int_ok", str, self, int, base):
+      raise ValueError("invalid literal for int() with base " + str(base) + ": " + self.__repr__())
+    return __pyc_c_call__(int, "_CG_str_int_value", str, self, int, base)
+  def __pyc_int__(self):
+    return self.__pyc_int_base__(10)
+  def __pyc_float__(self):
+    if not __pyc_c_call__(int, "_CG_str_float_ok", str, self):
+      raise ValueError("could not convert string to float: " + self.__repr__())
+    return __pyc_c_call__(float, "_CG_str_float_value", str, self)
   def __pyc_ord__(self):
     return __pyc_c_call__(int, "_CG_ord", str, self)
   def __pyc_tobytes__(self):
@@ -78,8 +88,16 @@ class str:
     return __pyc_c_call__(bool, "_CG_str_gt", str, self, str, x)
   def __ge__(self, x):
     return __pyc_c_call__(bool, "_CG_str_ge", str, self, str, x)
+  # issues/168: a format the frontend could not read converts its arguments
+  # here (__pyc_any_type__.__pyc_fmtval__). A constant format's arguments
+  # are already converted, and the frontend sends __pyc_mod__ instead.
   def __mod__(self, t):
+    return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t.__pyc_fmtconv__())
+  def __pyc_mod__(self, t):
     return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t)
+  # issues/168: a str argument stays a str (__pyc_any_type__).
+  def __pyc_fmtval__(self):
+    return self
   # CPython's fallback for a type with no in-place method: `x op= y` is
   # `x = x op y`. Issue 034 synthesizes it for record classes only, so a
   # builtin value type spells it out (rdb's `basis &= MatchRule(...)`).

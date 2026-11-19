@@ -52,5 +52,6 @@ class socket:
     def setsockopt(self, level, optname, value):
         pass
 
+# issues/041: this returned the constant "localhost".
 def gethostname():
-    return "localhost"
+    return __pyc_c_call__(str, "_CG_gethostname")

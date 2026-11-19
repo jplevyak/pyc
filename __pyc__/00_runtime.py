@@ -11,6 +11,27 @@ class __pyc_any_type__:
     if n != 1:
       raise TypeError("not enough arguments for format string")
     return (self,)
+  # issues/168: `fmt % x` with a format that is NOT a compile-time constant.
+  # The frontend cannot see which arguments meet `%s`, so str.__mod__
+  # converts every argument before the format primitive sees it: a value
+  # with no formatting of its own becomes its __str__, and int, float, bool
+  # and str (which override __pyc_fmtval__) stay as they are, for the
+  # primitive's per-argument type tag (issues/165) to pair with whatever
+  # conversion meets them. Without this an object, list, dict or None at a
+  # computed `%s` was printed as raw memory. __pyc_fmtconv__ is the whole
+  # right operand: one value here, each element for a tuple (generated per
+  # arity, python_ifa_main.cc).
+  # issues/178: `dict(x)` / `d.update(x)` of a value with no keys(): an
+  # iterable of (key, value) pairs. dict and every class defining keys()
+  # override it with the mapping form (07_dict.py, gen_class_pyda).
+  def __pyc_dict_into__(self, d):
+    for pair in self:
+      d[pair[0]] = pair[1]
+    return d
+  def __pyc_fmtval__(self):
+    return self.__str__()
+  def __pyc_fmtconv__(self):
+    return self.__pyc_fmtval__()
   def __pyc_to_bool__(self):
     # issues/089: __pyc_any_type__ is ifa's own universal top type
     # (sym_any, python_ifa_sym.cc renames it "__pyc_any_type__") --
@@ -120,6 +141,24 @@ class object:
     return self.__repr__()
   def __repr__(self):
     return "<object>"
+  # issues/125: `x in y` lowers to `y.__contains__(x)`. CPython falls back
+  # to the iterable protocol when y defines no __contains__, and this is
+  # that fallback, verbatim: iter(y), compare each item, consuming what
+  # iter() returns (as CPython does). Any class with its own __contains__
+  # overrides it; __pyc_iterator__, __pyc_generator__ and __dict_iter__
+  # keep their specialized loops.
+  def __contains__(self, item):
+    for x in self:
+      if x == item:
+        return True
+    return False
+  # issues/176: int(x) and float(x) dispatch on the argument (the frontend's
+  # synthesized `__coerce__`), so str and bytes can parse and RAISE. Numbers
+  # and bool define their own; any other object takes CPython's protocol.
+  def __pyc_int__(self):
+    return self.__int__()
+  def __pyc_float__(self):
+    return self.__float__()
   def __pyc_tobytes__(self):
     # bytes(x) (python_ifa_build_if1.cc) dispatches to __pyc_tobytes__,
     # not CPython's real __bytes__ -- bytes/str/list define their own
@@ -332,6 +371,18 @@ class __pyc_None_type__:
     return True
 
 class bool:
+  # issues/168: a computed format's argument stays a bool (__pyc_any_type__).
+  def __pyc_fmtval__(self):
+    return self
+  # issues/176: int(True) == 1, float(False) == 0.0.
+  def __pyc_int__(self):
+    if self:
+      return 1
+    return 0
+  def __pyc_float__(self):
+    if self:
+      return 1.0
+    return 0.0
   # bytes %-formatting reads a bool as the int it is (`b'%d' % True`).
   def __pyc_bytes_fmtarg__(self):
     if self:

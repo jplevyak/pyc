@@ -65,13 +65,18 @@ Tests: `tests/tuple_deepcopy_elements.py` (heterogeneous and nested),
 ## Residuals
 
 1. `t[i] = x` on a tuple mutates, where CPython raises `TypeError`.
-   `tuple.__setitem__` exists only for the frontend's own use. Refuse the
-   user-level store, or make it raise.
+   **Blocked on [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)'s
+   item-store half (2026-10-15).** Making `tuple.__setitem__` raise was
+   tried: an item store `a[i] = v` carries no exception check (one after
+   every item store cost hq2x 4.6× compile time), so FA saw the raise,
+   killed everything after the store, and the program printed NOTHING and
+   exited 0, even with a `try`/`except TypeError` around it. Worse than the
+   mutation; reverted. Refusing at compile time needs a refusal primitive
+   `__pyc__` does not have. Do it after 175 lands item-store checks.
 2. `zip`/`map`/`filter`/`reversed` stay eager lists, and
    `itertools.product(repeat=)` yields lists. They are equivalent under
    iteration, but the observable cases (printing the result, an infinite
-   iterable) belong to [171](closed/171-permissive-accommodations-must-be-flagged-and-non-strict.md)
-   #5.
+   iterable) were 171 #5; 171 is closed, so they are tracked here.
 
 ## Verification
 

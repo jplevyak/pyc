@@ -30,21 +30,33 @@ struct PycScope : public gc {
   // pair can sit in front of it. Read by PY_funcdef while emitting the
   // method's class setter, which is why it lives on the scope.
   bool iter_bridge;
+  // issues/169: closure conversion of a FUNCTION-LOCAL class. Its body and
+  // its methods may read the enclosing function's locals. The class-body
+  // function receives each such value as an extra formal (cap_formals, on
+  // the class scope, in class_caps order) and stores it on the prototype
+  // under a hidden name; a method reads it back as self.<field>
+  // (cap_fields and cap_self, on the method scope).
+  Map<Sym *, Sym *> cap_formals;
+  Vec<Sym *> class_caps;
+  Map<Sym *, cchar *> cap_fields;
+  Sym *cap_self;
   PycScope()
-      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false) {
+      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false), cap_self(0) {
     id = scope_id++;
   }
 };
 
 // -- Globals defined in python_ifa_util.cc --
 extern Map<PyDAST *, PycAST *> pydmap;
-extern Sym *sym_ellipsis, *sym_ellipsis_type, *sym_declare;
+extern Sym *sym_ellipsis, *sym_ellipsis_type;
 #define S(_x) extern Sym *sym_##_x;
 #include "pyc_symbols.h"
 extern cchar *cannonical_self;
 extern Vec<Sym *> super_aspect_syms;
 extern Vec<Sym *> builtin_functions;
 extern bool pyc_program_has_raise;
+// issues/172: the send-cell decision (python_ifa_main.cc), taken from reanalyze.
+bool pyc_record_send_none_cells();
 
 // -- PycCompiler: combines PycCallbacks + former PycContext state --
 
@@ -90,6 +102,11 @@ class PycCompiler : public PycCallbacks {
   // of an empty list (which cannot express a strided delete: CPython
   // REMOVES the selected elements, where `o[::2] = []` is a ValueError).
   bool building_del_target = false;
+  // issues/043: building the target of `o[i:j] op= x`. The slice STORE
+  // then reads the slice instead of storing, and records where to write
+  // back, so the bounds are evaluated once.
+  bool building_augassign_target = false;
+  Sym *aug_slice_obj = nullptr, *aug_slice_l = nullptr, *aug_slice_u = nullptr, *aug_slice_s = nullptr;
   void *node;
   PycModule *mod, *package;
   Vec<PycModule *> *modules;
@@ -133,6 +150,14 @@ class PycCompiler : public PycCallbacks {
   // field written once, after decoration -- CPython's cell, provided nothing
   // rebinds the name later, so a later store to one of these is refused.
   Vec<Sym *> decorated_self_refs;
+  // ifa/177: module-level variables that some function declares `global`.
+  // A call can store one of these, so a load of it is never reused across
+  // code that might call (build_if_pyda's guarded-branch reuse).
+  Vec<Sym *> globals_declared_in_functions;
+  // ifa/177: active reuse of a guard's load inside its true branch:
+  // reads of `reuse_var[i]` in scope `reuse_scope[i]` use `reuse_temp[i]`.
+  Vec<Sym *> reuse_var, reuse_temp;
+  Vec<PycScope *> reuse_scope;
 
   // issue 025 module subsystem phase 2: for `import X`, X is bound to
   // a module-marker Sym (is_module set). This maps that marker to the
@@ -326,6 +351,12 @@ void get_syms_args_pyda(PycAST *ast, PyDAST *varargslist, Vec<Sym *> &has, PycCo
 void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_lambda_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx);
 void gen_class_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx, char *vector_size = nullptr, bool derive_compare = false);
+// issues/169: the value of `s` as read in `scope` -- `s` itself, or the
+// captured copy a local class's body or method, or a closure carrier,
+// reads instead -- emitting any read into `code`.
+Sym *pyc_read_captured(PycScope *scope, Sym *s, Code **code, PycAST *ast, PycCompiler &ctx);
+// The hidden prototype field a local class keeps captured `s` in.
+cchar *local_class_cap_field(Sym *s);
 // Symbol-table pass entry point, exposed so python_ifa_build_if1.cc can run
 // it over freshly-parsed expression ASTs that never went through the
 // whole-module build_syms pass (f-string interpolation sub-expressions).

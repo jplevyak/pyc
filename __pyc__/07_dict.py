@@ -316,11 +316,16 @@ class dict:
     self._index = []
     self._mask = 0
   def update(self, other):
+    # issues/178: a mapping or an iterable of pairs, as dict(x) takes.
     if other is None:
       return self
-    for k in other:
-      self[k] = other[k]
-    return self
+    return other.__pyc_dict_into__(self)
+  # issues/178: dict(m) / d.update(m) of a dict copies its items. A class
+  # of the user's that defines keys() gets the same method synthesized
+  # (gen_class_pyda), and anything else is an iterable of pairs
+  # (__pyc_any_type__, 00_runtime.py).
+  def __pyc_dict_into__(self, d):
+    return __pyc_dict_from_mapping__(d, self)
   def __iter__(self):
     return __dict_iter__(self._keys, self._len)
   def __pyc_tolist__(self):
@@ -408,7 +413,16 @@ class dict:
 # (shedskin's adatron.py). A new function, not a dict method, since
 # real Python's dict(iterable) form takes 2-tuples, not another
 # dict's `__iter__`-over-keys shape update() already relies on.
-def __pyc_dict_from_iterable__(d, pairs):
-  for pair in pairs:
-    d[pair[0]] = pair[1]
+#
+# issues/178: which form `dict(x)` takes is decided by DISPATCH on x, as
+# CPython decides it by whether x has keys(). This used to run the pairs
+# loop on everything, so a dict was read as an iterable of pairs and each
+# key string split in two (`dict({"ab": 1})` was `{'a': 'b'}`).
+def __pyc_dict_from_iterable__(d, x):
+  return x.__pyc_dict_into__(d)
+
+# CPython's mapping form: d[k] = m[k] for each k in m.keys().
+def __pyc_dict_from_mapping__(d, m):
+  for k in m.keys():
+    d[k] = m[k]
   return d

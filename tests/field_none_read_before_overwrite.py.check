@@ -1,0 +1,8 @@
+field_none_read_before_overwrite.py:11:75: error: expression has mixed basic types:( __pyc_None_type__ int64 ) 
+            print(self.x)
+                         ^
+  called from field_none_read_before_overwrite.py:7
+field_none_read_before_overwrite.py:14:93: error: expression has mixed basic types:( __pyc_None_type__ int64 ) 
+    print(a.x + 1)
+                  ^
+fail: program does not type

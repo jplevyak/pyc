@@ -15,7 +15,11 @@ ifeq ($(OS_TYPE),Linux)
   LIBS += -ldl -lrt
 endif
 
-CC = clang++
+# PYC_CXX overrides the compiler, as PYC_LLVM_CXX does for the LLVM
+# backend: a host with only a versioned clang (CI's clang++-20) has no
+# `clang++` on PATH.
+PYC_CXX ?= clang++
+CC = $(PYC_CXX)
 CFLAGS += -std=c++23
 # pyc's object model IS blind casts between prefix-compatible structs: a
 # shared method takes a generic receiver and reads it as the base's

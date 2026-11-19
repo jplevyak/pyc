@@ -1,0 +1,1 @@
+issues/179 (179-sequence-index-out-of-range-does-not-raise): pyc is wrong here; the .exec.check holds CPython's output, so this flips to PASS when the issue is fixed.

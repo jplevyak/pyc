@@ -1,0 +1,4 @@
+list IndexError
+str IndexError
+str negative IndexError
+bytes IndexError
