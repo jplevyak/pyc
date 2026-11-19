@@ -92,11 +92,17 @@ class str:
   # here (__pyc_any_type__.__pyc_fmtval__). A constant format's arguments
   # are already converted, and the frontend sends __pyc_mod__ instead.
   def __mod__(self, t):
-    return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t.__pyc_fmtconv__())
+    convs = __pyc_c_call__(str, "_CG_format_convs", str, self)
+    return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t.__pyc_fmtconv__(convs))
   def __pyc_mod__(self, t):
     return __pyc_primitive__(__pyc_symbol__("__pyc_format_string__"), self, t)
-  # issues/168: a str argument stays a str (__pyc_any_type__).
-  def __pyc_fmtval__(self):
+  # issues/168: a str argument stays a str (__pyc_any_type__), unless it
+  # meets %r or %a (issues/199).
+  def __pyc_fmtval__(self, c):
+    if c == "r":
+      return self.__repr__()
+    if c == "a":
+      return __pyc_fmt_ascii__(self.__repr__())
     return self
   # CPython's fallback for a type with no in-place method: `x op= y` is
   # `x = x op y`. Issue 034 synthesizes it for record classes only, so a
@@ -301,6 +307,27 @@ class str:
     # substring, since callers rely on catching it (sudoku2.py's
     # `except ValueError: pass` around exactly this call).
     i = self.find(sub, start, end)
+    if i < 0:
+      raise ValueError("substring not found")
+    return i
+  def rfind(self, sub, start=0, end=None):
+    # issues/197: str had no rfind. Bounds normalized exactly as find's.
+    n = len(self)
+    i = start
+    if i < 0:
+      i += n
+      if i < 0:
+        i = 0
+    e = n
+    if end is not None:
+      e = end
+      if e < 0:
+        e += n
+      if e > n:
+        e = n
+    return __pyc_c_call__(int, "_CG_str_rfind", str, self, str, sub, int, i, int, e)
+  def rindex(self, sub, start=0, end=None):
+    i = self.rfind(sub, start, end)
     if i < 0:
       raise ValueError("substring not found")
     return i

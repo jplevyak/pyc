@@ -20,3 +20,11 @@ def sleep(seconds):
         raise ValueError("sleep length must be non-negative")
     __pyc_c_call__(int, "_CG_sleep", float, seconds)
     return None
+
+# strftime of the current local time (issues/197, for logging's asctime).
+# The second argument, a struct_time, is not modelled: pyc has no
+# localtime()/struct_time, so passing one is refused rather than ignored.
+def strftime(format, t=None):
+    if t is not None:
+        raise NotImplementedError("pyc: time.strftime with a time tuple is not implemented")
+    return __pyc_c_call__(str, "_CG_strftime_local", str, format, float, time())

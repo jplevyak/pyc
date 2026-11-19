@@ -504,3 +504,10 @@ def sorted(seq, key=None, reverse=False):
 
 def repr(x):
   return x.__repr__()
+
+# issues/199: %a is ascii(x), the repr with non-ASCII characters escaped.
+# pyc has no ascii(); a repr that is already ASCII is the same answer.
+def __pyc_fmt_ascii__(r):
+  if __pyc_c_call__(int, "_CG_str_is_ascii", str, r):
+    return r
+  raise NotImplementedError("pyc: %a of a value with non-ASCII characters is not implemented")

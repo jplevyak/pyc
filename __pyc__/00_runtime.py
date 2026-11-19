@@ -28,10 +28,16 @@ class __pyc_any_type__:
     for pair in self:
       d[pair[0]] = pair[1]
     return d
-  def __pyc_fmtval__(self):
+  # issues/199: `c` is the conversion this argument meets ("" past the
+  # last one): %r and %a take the repr, as CPython's do.
+  def __pyc_fmtval__(self, c):
+    if c == "r":
+      return self.__repr__()
+    if c == "a":
+      return __pyc_fmt_ascii__(self.__repr__())
     return self.__str__()
-  def __pyc_fmtconv__(self):
-    return self.__pyc_fmtval__()
+  def __pyc_fmtconv__(self, convs):
+    return self.__pyc_fmtval__(convs[0:1])
   def __pyc_to_bool__(self):
     # issues/089: __pyc_any_type__ is ifa's own universal top type
     # (sym_any, python_ifa_sym.cc renames it "__pyc_any_type__") --
@@ -372,7 +378,7 @@ class __pyc_None_type__:
 
 class bool:
   # issues/168: a computed format's argument stays a bool (__pyc_any_type__).
-  def __pyc_fmtval__(self):
+  def __pyc_fmtval__(self, c):
     return self
   # issues/176: int(True) == 1, float(False) == 0.0.
   def __pyc_int__(self):

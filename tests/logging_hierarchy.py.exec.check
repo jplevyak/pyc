@@ -1,0 +1,11 @@
+root
+a root
+a.b a
+True True
+a.b.c:from abc
+m 5 INFO 23
+[T]
+m 5 
+ValueError Unknown level: 'BOGUS'
+ValueError Invalid format 'no fields here' for '%' style
+TypeError level must be an integer

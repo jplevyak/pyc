@@ -70,7 +70,7 @@ used when the class has no such member.
 | module | imported by | note |
 | --- | --- | --- |
 | `ast` | 12 modules | item 1 |
-| `logging` | `__init__`, `log`, `error`, `infer`, `typestr`, `cmake`, `extmod` | everywhere; `logging.Formatter` subclassed |
+| `logging` | `__init__`, `log`, `error`, `infer`, `typestr`, `cmake`, `extmod` | **done 2026-11-19** ([197](197-logging.md)); `logging.Formatter` subclassed |
 | `pathlib` | 10 modules incl. `python`, `cpp`, `graph`, `state/*` | everywhere |
 | `argparse` | `__init__`, `config`, `cmake` | the command line |
 | `subprocess`, `platform` | `__init__`, `config`, `makefile`, `cmake` | |

@@ -1,0 +1,4 @@
+no handlers: lastResort
+ERROR:root:configured 1
+WARNING:q:now through root
+CRITICAL:q.r:deep [1, 2]

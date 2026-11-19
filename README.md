@@ -45,7 +45,8 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
 - **Modules**: `import`, `from … import`, packages and relative imports, all resolved at compile
   time. Partial implementations of common standard-library modules live in
   [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os`, `collections`, `heapq`,
-  `copy`, `struct`, `string`, `socket` and parts of `re` and `itertools`. File I/O uses `open()`.
+  `copy`, `struct`, `string`, `socket`, `logging` and parts of `re` and `itertools`. File I/O
+  uses `open()`.
 - **Type hints and dataclasses**: annotations are accepted and ignored, `typing` provides its
   names (`TYPE_CHECKING` blocks are skipped, `TypeAlias` assignments dropped), and `@dataclass`
   generates `__init__`, `__repr__`, `__eq__` and `__hash__` as CPython does, with `field()`
@@ -476,6 +477,10 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   provided. `@dataclass` must be on a class at module level, a subclass of a dataclass must be
   one itself, and `order`, `kw_only`, `slots`, `InitVar`, `fields()`, `asdict()` and `replace()`
   are refused ([issues/195](issues/195-typing-and-dataclasses.md)).
+- **`logging`** covers loggers, levels, `basicConfig`, `%`-style `Formatter`s, `Filter`s and the
+  stream, file and null handlers. A format naming the caller's location (`%(lineno)d`,
+  `%(funcName)s`, …), `exception()`, `exc_info`/`extra`, the `{`/`$` styles, `LoggerAdapter`
+  and `logging.handlers` are refused ([issues/197](issues/197-logging.md)).
 - **`ctypes`** is a static subset: structures, pointers, arrays, scalar out-parameters and
   `CFUNCTYPE` callbacks (through libffi), but no unions, bit fields or `cast`; declarations must
   be at module top level, and a program with foreign calls does not run under `--jit`

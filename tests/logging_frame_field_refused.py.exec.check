@@ -1,0 +1,1 @@
+Unhandled exception: pyc: logging format field %(lineno) is not implemented (issues/197)

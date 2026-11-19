@@ -575,7 +575,7 @@ The frontend implements these (declared `virtual` in
 | `~PycCallbacks()` | `python_ifa_util.cc:27` | vtable anchor (out-of-line). |
 | `new_Sym(name)` | `python_ifa_sym.cc:25` | Allocate a `PycSymbol`; bind `sym->asymbol`. |
 | `finalize_functions()` | `python_ifa_sym.cc:172` | Per-Fun: extract `default_args` from `varargslist` and populate `fn->fun->default_args`. Handles `__new__` wrappers from `gen_class_pyda` (fn's `init` points to the matching `__init__`). |
-| `default_wrapper(f, defaults)` | `python_ifa_sym.cc:186` | Build a wrapper Fun that supplies default args at the specified positions. |
+| `default_wrapper(f, defaults)` | `python_ifa_sym.cc:234` | Build a wrapper Fun that supplies default args at the specified positions. Like `order_wrapper`, `signature_wrapper` and `unpack_wrapper`, it forwards through a fresh send that the matcher resolves again; for a method, the receiver formal carries the aspect of the wrapped method's class (`pin_wrapped_receiver`), so `Base.m(self)` and `super().m()` still reach the base method (issues/198). |
 | `reanalyze(violations)` | `python_ifa_sym.cc:216` | On NOTYPE violations for missing instance variables, add them to the receiver's class and return true to force another analysis pass. |
 | `c_codegen_pre_file(fp)` | `python_ifa_sym.cc:241` | Emit accumulated `__pyc_insert_c_code__` blobs (`c_code` Vec) at the top of the generated `.c`. |
 

@@ -1,0 +1,11 @@
+DEBUG Level 35
+NOTICE
+10 svc d one
+35 svc notice 1.2
+30 svc w a 2
+50 svc c
+NOTICE|'notice 1.2'
+WARNING|'w a 2'
+CRITICAL|'c'
+True True 10
+1

@@ -711,6 +711,10 @@ inline const char *_CG_widen_int_convs(const char *fmt) {
        hand-written "%ld" does not become "%lldd" */
     while (*p && strchr("hlLqjzt", *p)) p++;
     if (*p && strchr("diouxX", *p)) { *o++ = 'l'; *o++ = 'l'; }
+    /* issues/199: an argument meeting %r or %a reaches here already its
+       repr (__pyc_fmtval__, or the frontend's conversion), so it prints as
+       a string; C has no %r, and vsnprintf printed the spec itself */
+    if (*p == 'r' || *p == 'a') { *o++ = 's'; p++; continue; }
     if (*p) *o++ = *p++;
   }
   *o = 0;
@@ -794,7 +798,8 @@ inline char *_CG_format_string_tagged(char *str, const char *tags, ...) {
         spec[si++] = 'l'; spec[si++] = 'l'; spec[si++] = conv; spec[si] = 0;
         m = snprintf(sbuf, sizeof(sbuf), spec, v);
         if (m >= (int)sizeof(sbuf)) { big = (char *)GC_MALLOC_ATOMIC((size_t)m + 1); snprintf(big, (size_t)m + 1, spec, v); }
-      } else if (strchr("feEgGFaA", conv)) {
+      } else if (strchr("feEgGF", conv)) {
+        /* not C's %a/%A: Python's %a is ascii(x), a string (issues/199) */
         double v = (tag == 'f') ? va_arg(ap, double) : (double)va_arg(ap, int64);
         spec[si++] = conv; spec[si] = 0;
         m = snprintf(sbuf, sizeof(sbuf), spec, v);
@@ -846,6 +851,38 @@ inline char *_CG_format_string_tagged(char *str, const char *tags, ...) {
     memcpy(s, out, len);
     return s;
   }
+}
+
+// issues/199: the conversion each argument of a %-format meets, one
+// character per argument ('s', 'r', 'd', ...), skipping `%%` and a
+// `%(key)` name. A computed format's arguments are converted before the
+// format is applied (str.__mod__, issues/168), and an argument meeting %r
+// or %a must convert through __repr__, which only the run-time format can
+// say.
+inline char *_CG_format_convs(const char *fmt) {
+  size_t n = _CG_string_len(fmt), k = 0;
+  char *out = _CG_string_alloc(n);
+  const char *p = fmt;
+  while (*p) {
+    if (*p++ != '%') continue;
+    if (*p == '%') { p++; continue; }
+    if (*p == '(') {
+      while (*p && *p != ')') p++;
+      if (*p) p++;
+    }
+    while (*p && (strchr("-+ #0", *p) || (*p >= '0' && *p <= '9') || *p == '.')) p++;
+    while (*p && strchr("hlLqjzt", *p)) p++;
+    if (!*p) break;
+    out[k++] = *p++;
+  }
+  _CG_string_set_len(out, k);
+  return out;
+}
+inline int64 _CG_str_is_ascii(const char *s) {
+  size_t n = _CG_string_len(s);
+  for (size_t i = 0; i < n; i++)
+    if ((unsigned char)s[i] >= 0x80) return 0;
+  return 1;
 }
 
 inline char *_CG_format_string(char *str, ...) {
@@ -1158,6 +1195,28 @@ inline char *_CG_gethostname(void) {
   if (gethostname(buf, sizeof(buf)) != 0) buf[0] = 0;
   buf[sizeof(buf) - 1] = 0;
   return _CG_String(buf);
+}
+
+// time.strftime(format) and logging's %(asctime)s: libc strftime of a
+// time.time() value in local time, as CPython's time.localtime does (the
+// seconds are floored). The buffer grows until the result fits, as
+// CPython's does; an empty result is a real empty string.
+inline char *_CG_strftime_local(char *fmt, double t) {
+  time_t tt = (time_t)floor(t);
+  struct tm tm;
+  localtime_r(&tt, &tm);
+  size_t fl = strlen(fmt);
+  if (fl == 0) return _CG_String("");
+  for (size_t cap = 256 + fl * 4;; cap *= 2) {
+    char *buf = (char *)malloc(cap);
+    size_t n = strftime(buf, cap, fmt, &tm);
+    if (n > 0 || cap > 256 * fl + 65536) {
+      char *r = _CG_String_n(buf, n);
+      free(buf);
+      return r;
+    }
+    free(buf);
+  }
 }
 
 // 32 bits of OS entropy, for pyc_lib/random.py's seed on first use: CPython
@@ -1916,6 +1975,14 @@ inline int64 _CG_str_find(const char *s, const char *sub, int64 i, int64 e) {
   size_t m = _CG_string_len(sub);
   for (; i + (int64)m <= e; i++)
     if (!m || !memcmp(s + i, sub, m)) return i;
+  return -1;
+}
+// str.rfind: the LAST match starting at or after i and ending by e (the
+// bounds normalized by __pyc__/01_str.py as for find).
+inline int64 _CG_str_rfind(const char *s, const char *sub, int64 i, int64 e) {
+  int64 m = (int64)_CG_string_len(sub);
+  for (int64 j = e - m; j >= i; j--)
+    if (!m || !memcmp(s + j, sub, (size_t)m)) return j;
   return -1;
 }
 

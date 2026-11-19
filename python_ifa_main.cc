@@ -992,24 +992,26 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
   // __pyc_fmtconv__ is the one-value case). A list-layout tuple has one
   // element type, so its runtime loop builds a list-layout tuple back.
   for (int k : arities) {
-    fputs("  def __pyc_fmtconv__(self):\n", f);
+    fputs("  def __pyc_fmtconv__(self, convs):\n", f);
     if (!k) {
       fputs("    return self\n", f);
     } else {
       fputs("    return (", f);
-      for (int i = 0; i < k; i++) fprintf(f, "%s__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__pyc_fmtval__()", i ? ", " : "", i);
+      for (int i = 0; i < k; i++)
+        fprintf(f, "%s__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__pyc_fmtval__(convs[%d:%d])",
+                i ? ", " : "", i, i, i + 1);
       fputs(k == 1 ? ",)\n" : ")\n", f);
     }
-    specs.push_back(spec_for(self_k(k), 1));
+    specs.push_back(spec_for(self_k(k), 2));
   }
-  fputs("  def __pyc_fmtconv__(self):\n", f);
+  fputs("  def __pyc_fmtconv__(self, convs):\n", f);
   fputs("    n = len(self)\n", f);
   fputs("    if n == 0: return self\n", f);
   fputs("    r = []\n", f);
   fputs("    for i in range(n):\n", f);
-  fputs("      r.append(self[i].__pyc_fmtval__())\n", f);
+  fputs("      r.append(self[i].__pyc_fmtval__(convs[i:i + 1]))\n", f);
   fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
-  specs.push_back(spec_for(none, 1));
+  specs.push_back(spec_for(none, 2));
 
   // CPython's tuple.index: start/stop normalized like a slice (as list.index
   // in 04_sequence.py), ValueError when absent.

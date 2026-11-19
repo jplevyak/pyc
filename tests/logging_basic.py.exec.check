@@ -1,0 +1,14 @@
+INFO:root:started with 3 items, ratio 0.50
+WARNING:root:plain warning
+ERROR:root:42
+INFO:app.db:db up: yes
+ERROR:app.db:failed: 'x'
+40 20
+app WARNING Level 7
+app
+[CRITICAL] app.db: both a and b
+[INFO    ] app.net: child info
+[WARNING ] app.net: child 50%
+OTHER|30|SHOUT THIS
+True root 1
+[ERROR   ] app.db: error still shown
