@@ -28,7 +28,7 @@ When modifying or refactoring code generation (CG) in `pyc`, keep these points i
 
 4. **LLVM Block Terminators (`Code_IF` / `Code_GOTO`):**
    - LLVM basic blocks strictly require *exactly one* terminator.
-   - When emitting branches for `Code_IF`, always check `if (Builder->GetInsertBlock()->getTerminator())` to avoid crashing `verifyModule` with double-terminated blocks, particularly in multi-predecessor loops.
+   - When emitting branches for `Code_IF`, always check `if (Builder->GetInsertBlock()->hasTerminator())` to avoid crashing `verifyModule` with double-terminated blocks, particularly in multi-predecessor loops.
 
 5. **Never commit build artifacts:**
    - Don't `git add` compiled binaries (`ifa/ifa`, `ifa/ifa-test`, compiled test binaries under `tests/`), object files, generated LLVM IR (`.ll`), or debug-info bundles (`.dSYM/`). All of these are Makefile/test-harness output and get rebuilt on demand.

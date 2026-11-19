@@ -2,6 +2,8 @@
 #define EXTERN
 #include "defs.h"
 #include "exc_check_fold.h"
+#include "html.h"
+#include "inline.h"
 #include "python_parse.h"
 #include <signal.h>
 #include <sys/resource.h>
@@ -117,6 +119,14 @@ static ArgumentDescription arg_desc[] = {
     {"safe", ' ', "Safe mode: permissive, plus zero-initialize locals that may be read before assignment",
      "F", &pyc_safe_mode, "PYC_SAFE", safe_mode_arg},
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
+    {"browse", 'B', "Generate HTML and open in local browser (implies --html)", "F", &ifa_open_html, "PYC_BROWSE", NULL},
+    {"html-open", ' ', "Generate HTML and open in local browser (implies --html)", "F", &ifa_open_html, "PYC_HTML_OPEN",
+     NULL},
+    {"html-max-size", ' ', "Max HTML telemetry size in MB (default 100)", "I", &ifa_html_max_size_mb, "PYC_HTML_MAX_SIZE",
+     NULL},
+    {"html-pass-limit", ' ', "Pass companion file size threshold in MB (default 2)", "I", &ifa_html_pass_limit_mb,
+     "PYC_HTML_PASS_LIMIT", NULL},
+    {"dump-json", ' ', "Output compilation database as JSON", "F", &ifa_dump_json, "PYC_DUMP_JSON", NULL},
     {"system-directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
     {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
     {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
@@ -193,19 +203,22 @@ void compile(cchar *fn) {
   if (ifa_optimize() < 0) fail("unable to optimize program");
   ifa_dbg_bodies("after-optimize");  // ifa/issues/112
   if (fgraph) ifa_graph(fn);
-  if (fdump_html) {
-    char mktree_dir[512];
-    strcpy(mktree_dir, system_dir);
-    ifa_html(fn, mktree_dir);
-  }
+  auto maybe_dump_html = [&]() {
+    if (fdump_html || ifa_dump_json) {
+      char mktree_dir[512];
+      strcpy(mktree_dir, system_dir);
+      ifa_html(fn, mktree_dir);
+    }
+  };
   if (fcg) {
 #ifdef USE_LLVM
-        if (codegen_llvm) {
+    if (codegen_llvm) {
       // The only LLVM path.  Despite the name `llvm.cc`, the
       // emission internally routes through cg_normalize_v2 +
       // cg_v2_emit_llvm_module (see llvm.cc:155 — old direct
       // emitter was retired in issue 014).
       llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
+      maybe_dump_html();
       if (codegen_jit) {
         if (llvm_jit_execute()) fail("JIT execution failed");
       } else {
@@ -215,8 +228,11 @@ void compile(cchar *fn) {
 #endif
     {
       c_codegen_write_c(pdb->fa, if1->top->fun, fn);
+      maybe_dump_html();
       if (c_codegen_compile(fn)) fail("compilation failure");
     }
+  } else {
+    maybe_dump_html();
   }
   return;
 }
@@ -270,6 +286,18 @@ int main(int argc, char *argv[]) {
 #endif
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
+  if (ifa_open_html) {
+    fdump_html = 1;
+  }
+  if (fdump_html) {
+    ifa_dump_html = 1;
+    fa_events_enable();
+    inline_events_enable();
+  }
+  if (ifa_dump_json) {
+    fa_events_enable();
+    inline_events_enable();
+  }
   // Propagate the --verify-each flag down to the ifa lib's llvm.cc,
   // which reads PYC_VERIFY_EACH (the lib doesn't see pyc's defs.h
   // globals). Setting it from either the CLI flag or

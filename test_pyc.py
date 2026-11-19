@@ -258,7 +258,7 @@ def main():
 
     envs = {
         "PYC": os.environ.get("PYC", "./pyc"),
-        "PYTHON": os.environ.get("PYTHON", "python3"),
+        "PYTHON": os.environ.get("PYTHON") or next((p for p in ["python3.13", "python3.12", "python3.14", "python3.11", "python3"] if shutil.which(p)), "python3"),
         "VALGRIND": os.environ.get("VALGRIND", ""),
         "PYC_FLAGS": os.environ.get("PYC_FLAGS", ""),
         "PYC_STRICT_VERIFY": os.environ.get("PYC_STRICT_VERIFY", "1"),

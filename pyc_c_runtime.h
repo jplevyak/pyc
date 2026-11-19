@@ -51,6 +51,9 @@
 #include <dirent.h>
 #include <locale.h>
 #include <langinfo.h>
+#if __has_include(<sys/random.h>)
+#include <sys/random.h>
+#endif
 
 #ifdef __cplusplus
 #include <coroutine>
