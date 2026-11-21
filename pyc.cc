@@ -367,13 +367,12 @@ void compile(cchar *fn) {
   if (fgraph) ifa_graph(fn);
   // pyc -x: codegen's .c/.ll/.o and the executable go in the cache entry
   // being built, not beside the source (which may not be writable).
+  // The explorer reads the program from `source_fn` and finds codegen's
+  // output next to `fn`; under -x those differ.
+  cchar *source_fn = fn;
   if (exec_out_fn) fn = exec_out_fn;
   auto maybe_dump_html = [&]() {
-    if (fdump_html || ifa_dump_json) {
-      char mktree_dir[512];
-      strcpy(mktree_dir, system_dir);
-      ifa_html(fn, mktree_dir);
-    }
+    if (fdump_html || ifa_dump_json) ifa_html(source_fn, fn);
   };
   if (fcg) {
 #ifdef USE_LLVM
@@ -491,7 +490,7 @@ int main(int argc, char *argv[]) {
   {
     bool saw_x = false;
     static cchar *takes_value[] = {"-o", "-D", "-l", "--output", "--system-directory", "--log", "--cflags", "--libs", "--fa-inline",
-                                   "--narrow", "--dump-ir-after", nullptr};
+                                   "--narrow", "--dump-ir-after", "--html-max-size", "--html-pass-limit", nullptr};
     for (int i = 1; i < argc; i++) {
       cchar *a = argv[i];
       if (!strcmp(a, "--")) { if (i + 1 < argc) exec_script = i + 1; break; }
