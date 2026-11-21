@@ -1,0 +1,2 @@
+error line 3, pyc does not provide module 'argparse': its parse_args() result names and types its attributes at run time, from the option strings, which has no static representation (issues/206); use getopt or sys.argv
+fail: 1 import error

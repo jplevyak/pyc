@@ -1,8 +1,11 @@
 # 206 — `argparse`: its Namespace cannot be typed statically
 
-**Status:** open, a design decision. Filed 2026-11-20 when `argparse` was
-next in [196](196-compiling-shedskin-with-pyc.md)'s order. Nothing is
-implemented: `import argparse` is a compile error (no such module).
+**Status:** open, decided 2026-11-20: option 1, refuse it. Filed the same
+day when `argparse` was next in [196](196-compiling-shedskin-with-pyc.md)'s
+order. `import argparse` is a compile error that gives the reason and
+points to `getopt` and `sys.argv` (`refused_stdlib_module`,
+`python_ifa_build_syms.cc`; `tests/argparse_refused.py`). Options 2 and 3
+stay here for if a program needs them.
 
 ## The obstacle
 
@@ -69,4 +72,5 @@ replacement of `commandline()` in a driver.
 
 ## Verification
 
-None yet: depends on the option chosen.
+`tests/argparse_refused.py` checks the refusal's message, on both
+backends.

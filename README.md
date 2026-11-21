@@ -487,6 +487,8 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   has no Windows flavour and no `as_uri`, `owner`, `group` or `chmod`, and `Path.open()` is
   text-only; `read_bytes()`, `write_bytes()` and `open(path, 'rb')` work
   ([issues/202](issues/202-os-and-pathlib.md)).
+- **`argparse`** is refused at the import: the attributes of its `parse_args()` result are named
+  and typed at run time. `getopt` and `sys.argv` work ([issues/206](issues/206-argparse.md)).
 - **Non-ASCII text**: a `str` is stored as UTF-8 bytes, and `len`, indexing, slicing and
   iteration count bytes, not characters ([issues/203](issues/203-str-counts-utf8-bytes.md)).
 - **`ctypes`** is a static subset: structures, pointers, arrays, scalar out-parameters and

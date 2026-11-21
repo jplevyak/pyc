@@ -76,6 +76,21 @@ static cchar *module_file(cchar *p, cchar *mod) {
 // Search every root for `mod`, importing it on the first hit. Roots that
 // are themselves packages are skipped -- a package's interior is reached
 // through its own dotted name, never as a root.
+// Standard-library modules pyc declines to provide, with the reason in
+// CPython's terms and what to use instead. Consulted only for the
+// diagnostic of an import that found no module; a program's own module of
+// the same name on the search path is found first and used.
+static cchar *refused_stdlib_module(cchar *mod) {
+  static const struct { cchar *name, *why; } refused[] = {
+      {"argparse",
+       "its parse_args() result names and types its attributes at run time, from the option strings, "
+       "which has no static representation (issues/206); use getopt or sys.argv"},
+  };
+  for (auto &r : refused)
+    if (!strcmp(mod, r.name)) return r.why;
+  return nullptr;
+}
+
 static PycModule *find_and_import(cchar *mod, PycCompiler &ctx) {
   if (PycModule *m = get_module(mod, ctx)) return m;
   for (auto p : ctx.search_path->values()) {
@@ -224,11 +239,10 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
   int import_line = ctx.lineno;
   PycModule *m = find_and_import(mod, ctx);
   // Plain dotted import with no matching file for the full dotted
-  // name (e.g. `import os.path`): pyc has no real package hierarchy,
-  // so fall back to the top-level component. This matches CPython's
-  // own binding behavior for this form (only the top package name is
-  // bound) and lets pyc_lib modules that already expose a submodule
-  // as a plain attribute (os.py's `path = _os_path()`) work as-is.
+  // name: fall back to the top-level component, which binds only the
+  // top package name, as CPython's own binding does for this form. (Its
+  // first user, `import os.path` against an os.py whose `path` was an
+  // object, is gone: os is a package with a real os/path.py, issues/202.)
   char *bind_mod = mod;
   if (!m && !from) {
     char *dot = strchr(mod, '.');
@@ -245,6 +259,10 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
     // the undefined-name pass (issues/107) ran first and reported the
     // consequence -- minilight's `from ml import entry` failed with
     // "name 'entry' is not defined" and never mentioned `ml`.
+    if (cchar *why = refused_stdlib_module(mod)) {
+      add_import_error(ctx, "error line %d, pyc does not provide module '%s': %s", import_line, mod, why);
+      return;
+    }
     cchar *path = module_rel_path(mod);
     add_import_error(ctx, "error line %d, cannot find module '%s' (looked for '%s.py' and "
                           "'%s/__init__.py' on the search path)",
