@@ -954,7 +954,17 @@ static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   else
     enter_scope(ctx, (Sym *)0);  // funcdef/lambda: in set later via scope_stack.last()->fun
   ctx.scope_stack.last()->fun = fn;
-  fn->nesting_depth = ctx.scope_stack.n - 1;
+  // The depth counts the enclosing scopes that are functions or class
+  // bodies, not the inline comprehension scopes between them: a lambda in a
+  // module-level `[f(x) for x in map(lambda y: y, xs)]` is at depth 1, as
+  // the module function that creates it is at 0. Counting the
+  // comprehension made its depth one more than its display and crashed
+  // flow analysis (make_AVar) for any lambda inside a comprehension
+  // (issues/207).
+  int depth = 0;
+  for (int i = 0; i < ctx.scope_stack.n - 1; i++)
+    if (!ctx.scope_stack[i]->inline_scope) depth++;
+  fn->nesting_depth = depth;
   ctx.lreturn() = ast->label[0] = if1_alloc_label(if1);
   return fn;
 }
@@ -1852,6 +1862,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_listcomp:
     case PY_genexpr: {
       enter_scope(n, ctx, nullptr);
+      ctx.scope_stack.last()->inline_scope = true;
       ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
       build_comprehension_body_syms(n, ctx);
       exit_scope(ctx);
@@ -2094,6 +2105,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // loop target doesn't leak into the enclosing scope).
       if (n->children.n == 3 && n->children[2]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
+        ctx.scope_stack.last()->inline_scope = true;
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
         build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
@@ -2116,6 +2128,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // into the enclosing scope).
       if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
+        ctx.scope_stack.last()->inline_scope = true;
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
         build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
@@ -2824,6 +2837,42 @@ static void synthesize_default_iop(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym 
 // and every other type inherits the pairs loop (__pyc_any_type__). The
 // choice is then made by dispatch on x, per receiver type. The name is
 // CPython's own protocol here, not an inference about the program.
+// reversed(x) dispatches x.__pyc_reversed__() (05_builtins.py); CPython's
+// reversed() calls __reversed__ when the class defines one, and uses the
+// sequence protocol otherwise (__pyc_any_type__'s default). A class whose
+// body defines __reversed__ gets
+//   def __pyc_reversed__(self): return self.__reversed__()
+// It indexed 0..len-1 regardless, so an OrderedDict was read with integer
+// keys (issues/207).
+static void synthesize_reversed(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody) {
+  cchar *name = "__pyc_reversed__";
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
+  if (!ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, "__reversed__"))) return;
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, name));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, name));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  Code *b = 0;
+  Sym *res = new_sym(ast);
+  call_method(&b, ast, mfn->self, if1_make_symbol(if1, "__reversed__"), res, 0);
+  if1_move(if1, &b, res, mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(name)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, name), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
 static void synthesize_dict_into(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody) {
   cchar *name = "__pyc_dict_into__";
   if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
@@ -3121,6 +3170,7 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     synthesize_default_iop(ctx, ast, cls, fn, &body, "__ifloordiv__", "__floordiv__");
   }
   if (is_record) synthesize_dict_into(ctx, ast, cls, fn, &body);
+  if (is_record) synthesize_reversed(ctx, ast, cls, fn, &body);
   if (is_record) synthesize_class_name(ctx, ast, cls, fn, &body);
   if (is_record) synthesize_class_name(ctx, ast, cls, fn, &body, true);
   if1_move(if1, &body, fn->self, fn->ret, ast);
@@ -3409,11 +3459,27 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
   if (call_fun) {
     fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;
+    // finalize_function reads a class-AST wrapper's defaults from ->init
+    // (the __new__ wrapper's are __init__'s); this one's are __call__'s, so
+    // `k(1)` on `__call__(self, a, b=10)` fills b (issues/207).
+    fn->init = call_sym;
     Vec<Sym *> as;
     as.add(new_sym(ast, "__call__"));
     as[0]->must_implement_and_specialize(cls);
     int n_args = call_sym->has.n - 1;
-    for (int i = 2; i <= n_args; i++) as.add(new_sym(ast));
+    // Each formal takes the name of the __call__ parameter it forwards,
+    // and a `*args` or `**kw` formal is marked as one, as the __new__
+    // wrapper does for __init__ (issues/182): `c(1, 2)` on a
+    // `__call__(self, *args)` bound 2 actuals to 1 positional formal and
+    // failed to resolve, and keywords could not bind by name (issues/207).
+    for (int i = 2; i <= n_args; i++) {
+      Sym *cf = call_sym->has[i];
+      Sym *wf = new_sym(ast, cf->name);
+      if (ctx.star_formals.set_in(cf)) ctx.star_formals.set_add(wf), wf->is_rest = 1;
+      if (ctx.dstar_formals.set_in(cf)) ctx.dstar_formals.set_add(wf), wf->is_rest = 1;
+      if (ctx.kwonly_formals.set_in(cf)) ctx.kwonly_formals.set_add(wf);
+      as.add(wf);
+    }
     body = 0;
     Sym *t = new_sym(ast);
     Code *send = if1_send(if1, &body, 2, 1, sym___call__, as[0], (t = new_sym(ast)));

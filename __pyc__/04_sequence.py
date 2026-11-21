@@ -1,4 +1,10 @@
 class __list_iter__:
+  # list(it) of an iterator: drain what is left, as CPython's list() does.
+  def __pyc_tolist__(self):
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   thelist = None
   position = 0
   def __iter__(self):
@@ -592,6 +598,12 @@ class list:
     return self.__len__() != 0
 
 class __tuple_iter__:
+  # list(it) of an iterator: drain what is left, as CPython's list() does.
+  def __pyc_tolist__(self):
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   thetuple = None
   position = 0
   def __iter__(self):

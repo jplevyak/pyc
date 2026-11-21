@@ -1,0 +1,15 @@
+23416728348467685 CacheInfo(hits=78, misses=81, maxsize=None, currsize=81)
+2432902008176640000 CacheInfo(hits=0, misses=20, maxsize=None, currsize=20)
+CacheInfo(hits=0, misses=0, maxsize=None, currsize=0)
+compute 1
+compute 2
+compute 3
+compute 2
+compute 1
+2 4 2 6 4 2
+CacheInfo(hits=1, misses=5, maxsize=2, currsize=2)
+16 16 CacheInfo(hits=1, misses=1, maxsize=128, currsize=1)
+x-y x-y CacheInfo(hits=1, misses=1, maxsize=128, currsize=1)
+41
+[1, 2, 3] ['ccc', 'bb', 'a']
+24 13

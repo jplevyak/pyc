@@ -1,0 +1,9 @@
+tim likes kung pao, $5, al xtim a likes b, $5, c xa
+override likes b, $5, c xoverride ['who', 'what', 'who_2'] True
+1 $b ${c} $ x ${1} $ False
+3th 7.5 u
+KeyError 'b'
+ValueError Invalid placeholder in string: line 1, col 3
+ValueError Invalid placeholder in string: line 2, col 7
+ValueError Invalid placeholder in string: line 1, col 4
+ValueError Invalid placeholder in string: line 1, col 1

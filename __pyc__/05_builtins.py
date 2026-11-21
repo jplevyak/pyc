@@ -1,7 +1,8 @@
+# abs(x) is x.__abs__(), as CPython's: int, float and bool define it, and a
+# class may (issues/207). It compared with 0 inline, so abs(-0.0) was -0.0
+# and a class's __abs__ was never called.
 def abs(x):
-  if (x < 0):
-    return -x
-  return x
+  return x.__abs__()
 
 def all(iterable):
   for element in iterable:
@@ -140,6 +141,12 @@ class range:
     return self.__pyc_tolist__().__pyc_tobytes__()
 
 class __range_iter__:
+  # list(it) of an iterator: drain what is left, as CPython's list() does.
+  def __pyc_tolist__(self):
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   i = 0
   i0 = 0
   j = 0
@@ -445,13 +452,12 @@ def max(a, b=None, c=None, key=None):
     return b
   return a
 
+# reversed(x): x.__pyc_reversed__(), the class's __reversed__ when it
+# defines one (a synthesized bridge, python_ifa_build_syms.cc), dict's
+# reversed keys, or the sequence protocol (__pyc_any_type__). Still an
+# eager list, a documented representation (issues/README.md).
 def reversed(seq):
-  r = []
-  i = len(seq) - 1
-  while i >= 0:
-    r.append(seq[i])
-    i = i - 1
-  return r
+  return seq.__pyc_reversed__()
 
 def pow(a, b):
   return a ** b

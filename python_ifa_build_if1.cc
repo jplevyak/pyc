@@ -1148,6 +1148,12 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       PycAST *a0 = getAST(pos_args[0], ctx);
       ast->rval = new_sym(ast);
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
+      // list(x) runs x's iteration, which can raise (a generator's body, a
+      // user __next__), so it gets the check a call gets. Without it
+      // `try: list(gen()) except ValueError:` returned the items before the
+      // raise and reported the exception as unhandled later (issues/207).
+      // The post-FA fold removes it where x cannot raise.
+      emit_exc_check(&ast->code, ast, ctx);
       return 1;
     }
   }
@@ -1193,6 +1199,7 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     }
     else
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
+    emit_exc_check(&ast->code, ast, ctx);  // as list(x) above
     return 1;
   }
 
@@ -3682,7 +3689,20 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               PyDAST *arglist = dec->children[1];
               Code *send = if1_send1(if1, &def_ast->code, ast);
               if1_add_send_arg(if1, send, dval);
+              // Keyword arguments as an ordinary call passes them
+              // (`@lru_cache(maxsize=None)`): the value under its name. They
+              // were added as positionals with a null value, and the null
+              // asserted in if1_add_send_arg (issues/207).
               for (auto a : arglist->children.values()) {
+                if (a->kind == PY_star_arg || a->kind == PY_dstar_arg)
+                  fail("error line %d: '*' and '**' unpacking in a decorator's arguments is not supported (issues/207)",
+                       dec->line);
+                if (a->kind == PY_keyword_arg) {
+                  PycAST *vast = getAST(a->children[1], ctx);
+                  if1_gen(if1, &def_ast->code, vast->code);
+                  if1_add_send_arg(if1, send, vast->rval, cannonicalize_string(a->children[0]->str_val));
+                  continue;
+                }
                 PycAST *aast = getAST(a, ctx);
                 if1_gen(if1, &def_ast->code, aast->code);
                 if1_add_send_arg(if1, send, aast->rval);

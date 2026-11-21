@@ -136,6 +136,18 @@ extern int64 _CG_stat_int_field(const char *path, int64 field);
 extern int64 _CG_opendir(const char *path);
 extern int64 _CG_closedir(int64 h);
 extern char *_CG_readdir_name(int64 h);
+extern double _CG_frexp_m(double x);
+extern int64 _CG_frexp_e(double x);
+extern double _CG_modf_frac(double x);
+extern double _CG_modf_int(double x);
+extern int64 _CG_clock_ns(int64 which);
+extern int64 _CG_time_tm(int64 secs, int64 local);
+extern int64 _CG_time_tm_field(int64 i);
+extern char *_CG_time_tm_zone(void);
+extern char *_CG_strftime_fields(char *fmt, int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec,
+                                 int64 wday, int64 yday, int64 isdst, int64 gmtoff, char *zone);
+extern double _CG_mktime_fields(int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec, int64 wday,
+                                int64 yday, int64 isdst);
 extern int64 _CG_os_err(void);
 extern int64 _CG_os_mkdir(const char *p, int64 mode);
 extern int64 _CG_os_rmdir(const char *p);
@@ -164,6 +176,7 @@ extern char *_CG_os_pw_home(const char *name);
 int64 _cg_argc = 0;
 char **_cg_argv = 0;
 int _cg_os_err = 0;
+struct tm _cg_time_tm;
 struct stat _cg_os_st;
 
 /* ifa/issues/051: GC initialisation for the LLVM backend.

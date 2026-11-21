@@ -1,0 +1,9 @@
+['b', 'a', 'd', 'a', 'c'] [1, 1, 1, 1, 1, 1] ['x', 'y', 'y', 'x']
+0.2351703426117069 1.385414337660295 7.483576048445071 0.7891129092255234 0.06266384649021826
+4 45 7 3
+-0.2558802884476004 1.3220097193920135 b'+\x90/\x89' b'\x11\xe8\x18\x18\xc9\x9d]' b'\x95'
+ValueError empty range for randrange()
+ValueError empty range in randrange(5, 5)
+ValueError zero step for randrange()
+ValueError empty range in randrange(10, 1, 2)
+ValueError Total of weights must be greater than zero

@@ -127,6 +127,8 @@ def seed(a):
         key.append(n & 0xffffffff)
         n = n >> 32
     _init_by_array(key)
+    _gauss_state[0] = 0.0
+    _gauss_have[0] = False
 
 def random():
     # genrand_res53: 53 bits of mantissa from two 32-bit draws.
@@ -170,13 +172,30 @@ def _randbelow(n):
 def uniform(a, b):
     return a + (b - a) * random()
 
-def randrange(start, stop=None):
-    # CPython's one-arg form randrange(stop) -> [0, stop). The stop-is-None
+def randrange(start, stop=None, step=1):
+    # CPython 3.12's, step and errors included (issues/207). The stop-is-None
     # branches keep each call contour monomorphic via nil narrowing (same
-    # pattern as min/max key= in __pyc__/05_builtins.py). No step= form yet.
+    # pattern as min/max key= in __pyc__/05_builtins.py).
     if stop is None:
-        return _randbelow(start)
-    return start + _randbelow(stop - start)
+        if step != 1:
+            raise TypeError("Missing a non-None stop argument")
+        if start > 0:
+            return _randbelow(start)
+        raise ValueError("empty range for randrange()")
+    width = stop - start
+    if step == 1:
+        if width > 0:
+            return start + _randbelow(width)
+        raise ValueError("empty range in randrange(" + str(start) + ", " + str(stop) + ")")
+    if step > 0:
+        n = (width + step - 1) // step
+    elif step < 0:
+        n = (width + step + 1) // step
+    else:
+        raise ValueError("zero step for randrange()")
+    if n <= 0:
+        raise ValueError("empty range in randrange(" + str(start) + ", " + str(stop) + ", " + str(step) + ")")
+    return start + step * _randbelow(n)
 
 def randint(a, b):
     return a + _randbelow(b - a + 1)
@@ -247,3 +266,110 @@ def sample(population, k):
             selected.add(j)
             result.append(population[j])
     return result
+
+
+# The rest follow CPython 3.12's random.py, so a seeded run draws the same
+# values (issues/207).
+def choices(population, weights=None, *, cum_weights=None, k=1):
+    n = len(population)
+    if cum_weights is None:
+        if weights is None:
+            nf = float(n)
+            return [population[int(random() * nf)] for i in range(k)]
+        cw = []
+        t = 0
+        for w in weights:
+            t = t + w
+            cw.append(t)
+        return _choices_cum(population, cw, k)
+    if weights is not None:
+        raise TypeError('Cannot specify both weights and cumulative weights')
+    return _choices_cum(population, cum_weights, k)
+
+
+def _choices_cum(population, cum_weights, k):
+    n = len(population)
+    if len(cum_weights) != n:
+        raise ValueError('The number of weights does not match the population')
+    total = cum_weights[-1] + 0.0
+    if total <= 0.0:
+        raise ValueError('Total of weights must be greater than zero')
+    if total != total or total == 1e308 * 10.0:
+        raise ValueError('Total of weights must be finite')
+    hi = n - 1
+    out = []
+    for i in range(k):
+        x = random() * total
+        lo = 0
+        h = hi
+        while lo < h:
+            mid = (lo + h) // 2
+            if x < cum_weights[mid]:
+                h = mid
+            else:
+                lo = mid + 1
+        out.append(population[lo])
+    return out
+
+
+def _clog(x): return __pyc_c_call__(float, "log", float, x)
+def _csqrt(x): return __pyc_c_call__(float, "sqrt", float, x)
+def _ccos(x): return __pyc_c_call__(float, "cos", float, x)
+def _csin(x): return __pyc_c_call__(float, "sin", float, x)
+def _cexp(x): return __pyc_c_call__(float, "exp", float, x)
+
+
+# gauss keeps its second value for the next call, as CPython's does; seed()
+# clears it. Held in one-element lists so it is never {None, float}.
+_gauss_state = [0.0]
+_gauss_have = [False]
+
+
+def gauss(mu=0.0, sigma=1.0):
+    if _gauss_have[0]:
+        z = _gauss_state[0]
+        _gauss_have[0] = False
+    else:
+        x2pi = random() * 6.283185307179586
+        g2rad = _csqrt(-2.0 * _clog(1.0 - random()))
+        z = _ccos(x2pi) * g2rad
+        _gauss_state[0] = _csin(x2pi) * g2rad
+        _gauss_have[0] = True
+    return mu + z * sigma
+
+
+def normalvariate(mu=0.0, sigma=1.0):
+    magic = 4 * _cexp(-0.5) / _csqrt(2.0)
+    while True:
+        u1 = random()
+        u2 = 1.0 - random()
+        z = magic * (u1 - 0.5) / u2
+        zz = z * z / 4.0
+        if zz <= -_clog(u2):
+            break
+    return mu + z * sigma
+
+
+def expovariate(lambd=1.0):
+    return -_clog(1.0 - random()) / lambd
+
+
+def lognormvariate(mu, sigma):
+    return _cexp(normalvariate(mu, sigma))
+
+
+# CPython's getrandbits(n * 8).to_bytes(n, 'little'): whole 32-bit words,
+# least significant first, then the top bits of one more for the rest.
+def randbytes(n):
+    out = []
+    left = n * 8
+    while left >= 32:
+        w = _genrand()
+        for i in range(4):
+            out.append((w >> (8 * i)) & 0xff)
+        left -= 32
+    if left > 0:
+        w = _genrand() >> (32 - left)
+        for i in range(left // 8):
+            out.append((w >> (8 * i)) & 0xff)
+    return bytes(out)

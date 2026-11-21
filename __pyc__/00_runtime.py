@@ -107,6 +107,15 @@ class __pyc_any_type__:
     # SYNTHESIZED recursive override (gen_class_pyda), lists a
     # handwritten one (04_sequence.py).
     return __pyc_primitive__(__pyc_symbol__("copy"), self)
+  # reversed(x) by the sequence protocol, CPython's fallback when x has no
+  # __reversed__ (05_builtins.py).
+  def __pyc_reversed__(self):
+    r = []
+    i = len(self) - 1
+    while i >= 0:
+      r.append(self[i])
+      i = i - 1
+    return r
   def __format__(self, spec):
     # issues/006: default __format__ for classes with no override.
     # CPython's object.__format__ raises TypeError for a non-empty
@@ -633,6 +642,11 @@ class bool:
       return True
     else:
       return not x
+  # abs(True) is 1, an int, as CPython's.
+  def __abs__(self):
+    if self:
+      return 1
+    return 0
   def __str__(self):
     if (self):
       return "True"
@@ -652,6 +666,12 @@ class bool:
     return __pyc_c_call__(str, "_CG_format_int_spec", int, v, str, spec)
 
 class __base_iter__:
+  # list(it) of an iterator: drain what is left, as CPython's list() does.
+  def __pyc_tolist__(self):
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   thestr = None
   position = 0
   slen = 0

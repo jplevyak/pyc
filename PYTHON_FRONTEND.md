@@ -531,6 +531,14 @@ scopes in `v[0]`. From project memory: this was a real bug.
 `import_scope` plugs the imported module's scope into `ctx.imports`
 so `find_PycSymbol` can find its bindings.
 
+**Comprehension scopes are not nesting levels.** A list, set, dict or
+generator comprehension enters its own `PycScope` (its targets are its
+own) but is lowered inline into the enclosing function, so the scope is
+marked `inline_scope` and a function defined inside it (a lambda in the
+element or the iterable) takes its nesting depth from the enclosing
+function. Counting the comprehension made the depth one more than the
+lambda's display and crashed `make_AVar` (issues/207).
+
 **Circular imports.** `import_file` registers the module before running
 `build_syms` on it, so a module that imports one already on the stack
 finds it. Pass 2 does the same: `build_one_module_if1` marks
@@ -829,6 +837,13 @@ does not define them, as CPython's defaults would behave:
 
 - `__i<op>__` falling back to `__<op>__` (`synthesize_default_iop`);
 - `__pyc_dict_into__` for a class with `keys` (`synthesize_dict_into`);
+- `__pyc_reversed__` calling `__reversed__` for a class that defines it
+  (`synthesize_reversed`): `reversed(x)` dispatches `__pyc_reversed__`, and
+  `__pyc_any_type__`'s default is the sequence protocol;
+- the `__call__` forwarder that makes an instance callable. It mirrors the
+  `__new__` wrapper: formals named after `__call__`'s, `*args`/`**kw`
+  formals marked `is_rest`, and `fn->init = __call__` so
+  `finalize_function` finds `__call__`'s defaults;
 - `__pyc_class_name__` returning the class's name and `__pyc_class__`
   returning the class (`synthesize_class_name`), but only in a class that
   INHERITS one: a class opts its subclasses in by defining them. These are

@@ -85,6 +85,7 @@ Ordered by value against effort. Items in one row are independent.
 | --- | --- |
 | [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
 | [190](190-class-name-attribute.md) | A class has no `__name__` (`C.__name__`, `cls.__name__`). |
+| [207](207-core-library-batch.md) | the core batch landed 2026-11-20: itertools, functools (`lru_cache`, `cache`, `wraps`, `cmp_to_key`), Counter/OrderedDict/deque, math (with CPython's errors), bisect, operator, time, random, string.Template. `partial`, `total_ordering`, `namedtuple`, `attrgetter` not done; `nonlocal` and builtin classes as values found unsupported. |
 | [205](205-textwrap.md) | `textwrap` landed 2026-11-20; widths count UTF-8 bytes (203). Fixed on the way: `del l[-1]` deleted nothing, `del` of a missing index or key did nothing, str lacked `isalpha`/`isalnum`/`expandtabs`/... |
 | [206](206-argparse.md) | `argparse` is refused at the import, with the reason (decided 2026-11-20): its Namespace's attributes are named and typed at run time. Two ways to support it are recorded. |
 | [202](202-os-and-pathlib.md) | `os` (now a package with a real `os.path`) and `pathlib` landed 2026-11-20, POSIX only; bytes paths, `OSError.errno`, the Windows flavour and binary `Path.open()` are refused. |

@@ -105,6 +105,11 @@ class int:
     return __pyc_operator__(__pyc_symbol__("+"), self)
   def __neg__(self):
     return __pyc_operator__(__pyc_symbol__("-"), self)
+  # abs(x) dispatches here (05_builtins.py), as CPython's does.
+  def __abs__(self):
+    if self < 0:
+      return -self
+    return self
   def __not__(self):
     return __pyc_operator__(__pyc_symbol__("!"), self)
   def __eq__(self, x):
@@ -207,6 +212,9 @@ class float:
     return __pyc_operator__(__pyc_symbol__("+"), self)
   def __neg__(self):
     return __pyc_operator__(__pyc_symbol__("-"), self)
+  # libm fabs: abs(-0.0) is 0.0, and the sign of a nan is cleared.
+  def __abs__(self):
+    return __pyc_c_call__(float, "fabs", float, self)
   def __not__(self):
     return __pyc_operator__(__pyc_symbol__("!"), self)
   def __eq__(self, x):

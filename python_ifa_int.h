@@ -30,6 +30,12 @@ struct PycScope : public gc {
   // pair can sit in front of it. Read by PY_funcdef while emitting the
   // method's class setter, which is why it lives on the scope.
   bool iter_bridge;
+  // A comprehension's scope (list, set, dict, generator expression): it
+  // binds its own names but is lowered inline into the enclosing function,
+  // so it is not a level of function nesting. A function defined inside it
+  // (a lambda in the element or the iterable) nests in the enclosing
+  // function, as its display does.
+  bool inline_scope;
   // issues/169: closure conversion of a FUNCTION-LOCAL class. Its body and
   // its methods may read the enclosing function's locals. The class-body
   // function receives each such value as an extra formal (cap_formals, on
@@ -41,7 +47,7 @@ struct PycScope : public gc {
   Map<Sym *, cchar *> cap_fields;
   Sym *cap_self;
   PycScope()
-      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false), cap_self(0) {
+      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false), inline_scope(false), cap_self(0) {
     id = scope_id++;
   }
 };

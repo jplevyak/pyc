@@ -351,6 +351,13 @@ class dict:
       r = r.append(self._keys[i])
       i += 1
     return r
+  # reversed(d): the keys, last inserted first, as CPython 3.8+.
+  def __pyc_reversed__(self):
+    r = []
+    for k in self:
+      r.append(k)
+    r.reverse()
+    return r
   def keys(self):
     # issues/025 "has no type" bucket: dict had no .keys()/.values()/
     # .items() at all (loop, mastermind2, plcfrs, sunfish all hit this

@@ -1,0 +1,17 @@
+time.struct_time(tm_year=2001, tm_mon=9, tm_mday=9, tm_hour=1, tm_min=46, tm_sec=40, tm_wday=6, tm_yday=252, tm_isdst=0) 2001 2001 9 (2001, 9, 9, 1, 46, 40, 6, 252, 0) [1970, 1, 1, 0, 0, 0, 3, 1, 0] True time.struct_time(tm_year=1969, tm_mon=12, tm_mday=31, tm_hour=23, tm_min=59, tm_sec=58, tm_wday=2, tm_yday=365, tm_isdst=0)
+2001-09-09 01:46:40 Sun Sep 252 Sunday September AM 01 %
+2020 02 29 01/01
+Sun Sep  9 01:46:40 2001 Wed Dec 25 07:05:03 2024
+1000000000.0 0.0 True
+True True
+True True True True True
+ValueError month out of range
+ValueError day of month out of range
+ValueError hour out of range
+ValueError minute out of range
+ValueError seconds out of range
+2020
+ValueError day of week out of range
+2020
+2020
+ValueError day of year out of range

@@ -1,0 +1,46 @@
+6 0 2 12 1 0
+1 3628800 120 0 20 24 0
+0 3 4 1000000 24 6.0
+True False True True
+True False True True False
+2 -2 -3 -2 -3.0 2.0
+(0.5, 4) (-0.6, -1) (0.0, 0) (0.25, 3.0) (-0.25, -3.0) 8.0
+9.999999999500001e-11 1.00000000005e-10 0.5204998778130465 0.4795001221869535 24.0 12.801827480081467 3.0000000000000004 1024.0
+0.881373587019543 1.3169578969248166 0.5493061443340548 5.0 3.0 5.0
+1.0 1e-100
+1.0 1.0 -1.0 5.0 2.220446049250313e-16 1.0000000000000002
+3.0 1.0 3.0 10.0 1024.0 4.0 11
+ValueError math domain error
+ValueError math domain error
+ValueError math domain error
+ValueError math domain error
+OverflowError math range error
+OverflowError math range error
+ValueError factorial() not defined for negative values
+ValueError isqrt() argument must be nonnegative
+OverflowError cannot convert float infinity to integer
+ValueError cannot convert float NaN to integer
+ValueError math domain error
+ValueError math domain error
+ValueError math domain error
+OverflowError math range error
+ValueError -inf + inf in fsum
+inf True
+0.5 1.7724538509055159 0.5723649429247004
+1.5 0.886226925452758 -0.12078223763524543
+2.5 1.3293403881791372 0.2846828704729196
+7.3 1271.4236336639085 7.147892523022248
+25.0 6.204484017332391e+23 54.78472939811232
+30.5 4.8226969334909095e+31 72.9534711841694
+-0.5 -3.544907701811032 1.265512123484645
+-2.5 -0.9453087204829417 -0.05624371649767457
+1e-25 9.999999999999999e+24 57.564627324851145
+150.0 3.8089226376305703e+260 600.0094705553274
+171.5 9.483367566824801e+307 709.1431630309282
+-150.5 -4.478447658150641e-264 -606.383188068925
+ValueError math domain error
+ValueError math domain error
+OverflowError math range error
+ValueError math domain error
+OverflowError math range error
+57.564627324851145

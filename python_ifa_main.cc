@@ -781,11 +781,35 @@ static void scan_max_tuple_arity(PyDAST *n, int &mx) {
 // it can create, so the unroll must cover the largest call too; otherwise
 // `f(1, "two", 3.0)` printed its 3-tuple through the runtime-index tail and
 // mixed its slot types. Programs without `*args` are unaffected.
-static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args) {
+// The frontend's intrinsics: reserved names, lowered in place, whose
+// arguments never bind a `*args` tuple. __pyc_c_call__ passes two per C
+// argument, so time.strftime's 13-argument call counted as a 28-argument
+// call, every tuple method was generated for arities up to 28, and parsing
+// that source took logging's frontend from 1 s to 5 s, 50 s at one more
+// argument (issues/207).
+static bool is_intrinsic_call(PyDAST *power) {
+  if (power->kind != PY_power || power->children.n < 2) return false;
+  PyDAST *callee = power->children[0];
+  if (callee->kind != PY_name || !callee->str_val) return false;
+  cchar *nm = callee->str_val;
+  return !strcmp(nm, "__pyc_c_call__") || !strcmp(nm, "__pyc_primitive__") || !strcmp(nm, "__pyc_operator__");
+}
+
+static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args, bool skip_args = false) {
   if (!n) return;
   if (n->kind == PY_star_arg) has_star = true;
-  if (n->kind == PY_arglist && n->children.n > max_call_args) max_call_args = n->children.n;
-  for (PyDAST *c : n->children) scan_star_args(c, has_star, max_call_args);
+  if (n->kind == PY_arglist && !skip_args && n->children.n > max_call_args) max_call_args = n->children.n;
+  bool intrinsic = is_intrinsic_call(n);
+  for (int i = 0; i < n->children.n; i++) {
+    PyDAST *c = n->children[i];
+    // The intrinsic's own trailer (children[1], a PY_call holding the
+    // arglist) is not counted; what is nested in its arguments still is.
+    bool skip = intrinsic && i == 1 && c->kind == PY_call;
+    if (skip) {
+      for (PyDAST *a : c->children) scan_star_args(a, has_star, max_call_args, a->kind == PY_arglist);
+    } else
+      scan_star_args(c, has_star, max_call_args);
+  }
 }
 
 // ifa/185: the dispatch constraints of the generated tuple methods'

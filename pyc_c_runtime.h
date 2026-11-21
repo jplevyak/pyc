@@ -672,6 +672,12 @@ inline char *_CG_readdir_name(int64 h) {
   return _CG_String(e->d_name);
 }
 
+// math.frexp and math.modf (issues/207): the out-parameter halves.
+inline double _CG_frexp_m(double x) { int e; return frexp(x, &e); }
+inline int64 _CG_frexp_e(double x) { int e; frexp(x, &e); return (int64)e; }
+inline double _CG_modf_frac(double x) { double i; return modf(x, &i); }
+inline double _CG_modf_int(double x) { double i; modf(x, &i); return i; }
+
 // pyc_lib/os (issues/202): each call returns 0 or the errno, so the Python
 // side raises the OSError subclass CPython does without another call
 // between the failure and the read of errno. A helper that returns a
@@ -1314,6 +1320,89 @@ inline char *_CG_strftime_local(char *fmt, double t) {
     }
     free(buf);
   }
+}
+
+// pyc_lib/time (issues/207). The clocks CPython's time module reads, in
+// nanoseconds: 0 CLOCK_REALTIME (time_ns), 1 CLOCK_MONOTONIC (monotonic,
+// perf_counter), 2 CLOCK_PROCESS_CPUTIME_ID (process_time).
+inline int64 _CG_clock_ns(int64 which) {
+  clockid_t id = which == 1 ? CLOCK_MONOTONIC : which == 2 ? CLOCK_PROCESS_CPUTIME_ID : CLOCK_REALTIME;
+  struct timespec ts;
+  clock_gettime(id, &ts);
+  return (int64)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+// gmtime/localtime fill _cg_time_tm (defined in pyc_runtime.c, shared by
+// both backends); the fields are then read one at a time, in Python's
+// numbering: tm_mon 1-12, tm_wday Monday 0, tm_yday 1-366. Returns 0, or
+// the errno of a time outside what gmtime/localtime can represent.
+extern struct tm _cg_time_tm;
+inline int64 _CG_time_tm(int64 secs, int64 local) {
+  time_t t = (time_t)secs;
+  errno = 0;
+  struct tm *r = local ? localtime_r(&t, &_cg_time_tm) : gmtime_r(&t, &_cg_time_tm);
+  return r ? 0 : (errno ? errno : EOVERFLOW);
+}
+inline int64 _CG_time_tm_field(int64 i) {
+  struct tm *t = &_cg_time_tm;
+  switch (i) {
+    case 0: return t->tm_year + 1900;
+    case 1: return t->tm_mon + 1;
+    case 2: return t->tm_mday;
+    case 3: return t->tm_hour;
+    case 4: return t->tm_min;
+    case 5: return t->tm_sec;
+    case 6: return (t->tm_wday + 6) % 7;
+    case 7: return t->tm_yday + 1;
+    case 8: return t->tm_isdst;
+    case 9: return (int64)t->tm_gmtoff;
+    default: return 0;
+  }
+}
+inline char *_CG_time_tm_zone(void) { return _CG_String(_cg_time_tm.tm_zone ? _cg_time_tm.tm_zone : ""); }
+
+// A struct tm from Python's fields (already range-checked by the caller),
+// as CPython's gettmarg builds one.
+inline void _cg_tm_from(struct tm *t, int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec,
+                        int64 wday, int64 yday, int64 isdst, int64 gmtoff, const char *zone) {
+  memset(t, 0, sizeof(*t));
+  t->tm_year = (int)(year - 1900);
+  t->tm_mon = (int)(mon - 1);
+  t->tm_mday = (int)mday;
+  t->tm_hour = (int)hour;
+  t->tm_min = (int)min;
+  t->tm_sec = (int)sec;
+  t->tm_wday = (int)((wday + 1) % 7);
+  t->tm_yday = (int)(yday - 1);
+  t->tm_isdst = (int)isdst;
+  t->tm_gmtoff = (long)gmtoff;
+  t->tm_zone = zone && *zone ? zone : NULL;
+}
+inline char *_CG_strftime_fields(char *fmt, int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec,
+                                 int64 wday, int64 yday, int64 isdst, int64 gmtoff, char *zone) {
+  struct tm tm;
+  _cg_tm_from(&tm, year, mon, mday, hour, min, sec, wday, yday, isdst, gmtoff, zone);
+  size_t fl = strlen(fmt);
+  if (fl == 0) return _CG_String("");
+  for (size_t cap = 256 + fl * 4;; cap *= 2) {
+    char *buf = (char *)malloc(cap);
+    size_t n = strftime(buf, cap, fmt, &tm);
+    if (n > 0 || cap > 256 * fl + 65536) {
+      char *r = _CG_String_n(buf, n);
+      free(buf);
+      return r;
+    }
+    free(buf);
+  }
+}
+inline double _CG_mktime_fields(int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec, int64 wday,
+                                int64 yday, int64 isdst) {
+  struct tm tm;
+  _cg_tm_from(&tm, year, mon, mday, hour, min, sec, wday, yday, isdst, 0, "");
+  tm.tm_wday = -1;
+  time_t r = mktime(&tm);
+  if (r == (time_t)-1 && tm.tm_wday == -1) return -1.0e300;
+  return (double)r;
 }
 
 // 32 bits of OS entropy, for pyc_lib/random.py's seed on first use: CPython
