@@ -66,7 +66,7 @@ export default function Libraries() {
               {MODULES.map((m) => (
                 <tr key={m.name}>
                   <td>
-                    <a href={repo(`blob/main/pyc_lib/${m.name}.py`)}>
+                    <a href={repo(`blob/main/pyc_lib/${m.path ?? `${m.name}.py`}`)}>
                       <code>{m.name}</code>
                     </a>
                   </td>

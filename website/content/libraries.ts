@@ -8,28 +8,38 @@ export interface LibModule {
   status: Status;
   covers: string;
   note?: string;
+  /** The file under pyc_lib/, when it is not `<name>.py` (a package). */
+  path?: string;
 }
 
 export const MODULES: LibModule[] = [
-  { name: 'math', status: 'partial', covers: 'pi, e, tau, inf; sqrt, exp, log/log2/log10, pow, hypot, fabs, fmod, floor, ceil, trig and hyperbolic functions, radians, degrees', note: "Bound straight to libc, so results match CPython's C-backed math." },
-  { name: 'random', status: 'ok', covers: 'seed, random, getrandbits, uniform, randrange, randint, choice, shuffle, sample, triangular', note: 'True MT19937 with CPython’s seeding, so seeded programs match CPython draw for draw.' },
-  { name: 'collections', status: 'partial', covers: 'deque, defaultdict' },
+  { name: 'math', status: 'ok', covers: 'pi, e, tau, inf, nan; sqrt, exp/exp2/expm1, log/log1p/log2/log10, pow, trig, hyperbolic and their inverses, floor, ceil, trunc, fabs, fmod, remainder, copysign, frexp, ldexp, modf, nextafter, ulp, isnan/isinf/isfinite, isclose, gcd, lcm, factorial, comb, perm, isqrt, prod, hypot, dist, fsum, sumprod, erf/erfc, gamma/lgamma, cbrt', note: "Raises CPython's ValueError and OverflowError where CPython does (sqrt(-1), exp(1000)). fsum and gamma are CPython's own algorithms. Integer results wrap past 64 bits, as all pyc int arithmetic does." },
+  { name: 'random', status: 'ok', covers: 'seed, random, getrandbits, randbytes, uniform, randrange (with step), randint, choice, choices (weights, cum_weights), shuffle, sample, triangular, gauss, normalvariate, expovariate, lognormvariate', note: 'True MT19937 with CPython’s seeding, so seeded programs match CPython draw for draw.' },
+  { name: 'collections', status: 'partial', covers: 'deque (maxlen, rotate, extendleft, insert, remove, index, reverse), defaultdict, Counter (arithmetic, most_common, total, elements), OrderedDict (move_to_end, popitem(last=))', note: 'namedtuple is not implemented yet. Counter and OrderedDict are not dict subclasses, so isinstance(c, dict) is False.' },
+  { name: 'itertools', status: 'ok', covers: 'count, cycle, repeat, accumulate, chain (and from_iterable), islice, compress, dropwhile, takewhile, filterfalse, starmap, groupby, zip_longest, pairwise, batched, product, permutations, combinations, combinations_with_replacement', note: 'Each consumes its input exactly as CPython’s documented equivalent does.' },
+  { name: 'functools', status: 'partial', covers: 'reduce, lru_cache (with cache_info and cache_clear), cache, wraps, update_wrapper, cmp_to_key', note: 'partial and total_ordering are not implemented yet.' },
+  { name: 'bisect', status: 'ok', covers: 'bisect_left, bisect_right, insort_left, insort_right, with key=', note: "CPython's algorithms." },
+  { name: 'operator', status: 'partial', covers: 'the comparison, arithmetic, bitwise, sequence and in-place operator functions; itemgetter', note: 'attrgetter and methodcaller read an attribute named at run time, which pyc does not do.' },
   { name: 'heapq', status: 'ok', covers: 'heappush, heappop, heapreplace, heappushpop, heapify', note: "Mirrors CPython's heapq.py." },
-  { name: 'itertools', status: 'partial', covers: 'count, product' },
-  { name: 'functools', status: 'partial', covers: 'reduce' },
   { name: 'copy', status: 'ok', covers: 'copy, deepcopy' },
   { name: 're', status: 'partial', covers: 'compile, match, fullmatch, search; classes, groups, alternation, greedy and lazy quantifiers, anchors', note: 'A backtracking engine written in Python. findall, sub and split are not implemented yet.' },
-  { name: 'fnmatch', status: 'ok', covers: 'fnmatch, fnmatchcase, filter' },
-  { name: 'string', status: 'ok', covers: 'ascii_* constants, digits, punctuation, whitespace, printable, capwords' },
+  { name: 'string', status: 'ok', covers: 'ascii_* constants, digits, hexdigits, octdigits, punctuation, whitespace, printable, capwords, Template (substitute, safe_substitute, get_identifiers, is_valid)' },
+  { name: 'textwrap', status: 'ok', covers: 'TextWrapper, wrap, fill, shorten, dedent, indent', note: "A port of CPython 3.12's textwrap." },
+  { name: 'fnmatch', status: 'ok', covers: 'fnmatch, fnmatchcase, filter', note: "CPython's fnmatch." },
   { name: 'struct', status: 'partial', covers: 'pack, unpack, unpack_from, calcsize for the integer formats' },
   { name: 'array', status: 'partial', covers: 'array with typecode; tobytes/frombytes for integer typecodes' },
   { name: 'hashlib', status: 'partial', covers: 'md5 (RFC 1321)', note: 'The other algorithms raise NotImplementedError.' },
   { name: 'colorsys', status: 'ok', covers: 'rgb/yiq/hls/hsv conversions', note: "Ported from CPython's colorsys.py." },
   { name: 'getopt', status: 'ok', covers: 'getopt, gnu_getopt, GetoptError', note: "Ported from CPython's getopt.py." },
+  { name: 'logging', status: 'partial', covers: 'levels, getLogger and the logger hierarchy, LogRecord, Formatter (% style), Filter, StreamHandler, FileHandler, NullHandler, basicConfig, the module-level functions', note: "A port of the core of CPython's logging; output matches byte for byte. What is not ported is refused at compile time." },
   { name: 'io', status: 'partial', covers: 'StringIO, BytesIO' },
   { name: 'sys', status: 'partial', covers: 'argv, exit, maxsize, stdin/stdout/stderr, version, platform, setrecursionlimit' },
-  { name: 'os', status: 'partial', covers: 'listdir, walk, getcwd, chdir, mkdir, remove, rename, stat, system, path' },
-  { name: 'time', status: 'partial', covers: 'time, sleep' },
+  { name: 'os', status: 'partial', path: 'os/__init__.py', covers: 'getcwd, chdir, listdir, walk, mkdir, makedirs, rmdir, removedirs, remove, rename, replace, symlink, readlink, stat, lstat, access, environ, getenv, system, getpid, cpu_count; os.path (CPython’s posixpath)', note: "POSIX only. Failures raise CPython's OSError subclass and message." },
+  { name: 'pathlib', status: 'ok', covers: 'PurePath and Path: parsing, parts, suffixes, joinpath, relative_to, match, stat, exists/is_dir/is_file, read/write text and bytes, iterdir, walk, glob, rglob, resolve, mkdir, touch, unlink, rename', note: "A port of CPython 3.12's pathlib for its POSIX flavour." },
+  { name: 'time', status: 'partial', covers: 'time, time_ns, sleep, perf_counter, monotonic, process_time and their _ns forms, struct_time, gmtime, localtime, mktime, strftime, asctime, ctime' },
+  { name: 'dataclasses', status: 'partial', covers: '@dataclass and field(...)', note: 'The frontend generates the class CPython’s decorator builds. fields, asdict, astuple and replace are refused at import.' },
+  { name: 'typing', status: 'ok', covers: 'The names programs import: Any, Optional, Union, Callable, List, Dict, Tuple, Iterable, TypeVar, cast, overload, ...', note: 'Annotations are accepted and ignored; inference supplies the types.' },
+  { name: 'ctypes', status: 'partial', path: 'ctypes/__init__.py', covers: 'CDLL, argtypes, restype, the c_* types, Structure, POINTER, byref, pointer, sizeof', note: 'Lowered at compile time to direct C calls. A use outside the subset is refused with its line.' },
   { name: 'socket', status: 'partial', covers: 'socket (bind, listen, accept, recv, send, setsockopt), gethostname' },
   { name: 'select', status: 'partial', covers: 'select' },
   { name: 'serial', status: 'partial', covers: 'The pyserial API surface', note: 'Opening a port raises SerialException, as pyserial does for a port it cannot open.' },
@@ -42,17 +52,12 @@ export interface Wanted {
 
 // The next modules to write, ordered roughly by how often real programs import them.
 export const WANTED: Wanted[] = [
-  { name: 'dataclasses', why: 'The idiomatic record type. A natural fit: fields and their types are fixed per class.' },
   { name: 'enum', why: 'Enumerations compile to integers with names, with no run-time cost.' },
-  { name: 'typing', why: 'Accept annotations, and in strict mode check them against what inference found.' },
-  { name: 'itertools (complete)', why: 'chain, islice, permutations, combinations, groupby, accumulate, zip_longest.' },
-  { name: 'functools (complete)', why: 'partial, lru_cache, cache, cmp_to_key, total_ordering.' },
-  { name: 'collections (complete)', why: 'Counter, OrderedDict, namedtuple.' },
+  { name: 'collections.namedtuple', why: 'A tuple subclass with named fields; typing.NamedTuple with it.' },
+  { name: 'functools (complete)', why: 'partial and total_ordering.' },
   { name: 're (complete)', why: 'findall, finditer, sub, split, named groups, flags.' },
-  { name: 'bisect', why: 'Small, pure Python, widely used.' },
   { name: 'json', why: 'Serialization of typed records, and parsing into a declared shape.' },
   { name: 'asyncio', why: 'A CPython-compatible front end for the event loop async/await already compiles to.' },
-  { name: 'pathlib / os.path', why: 'Modern file-system access.' },
   { name: 'statistics, fractions, decimal', why: 'Numeric work beyond math.' },
   { name: 'hashlib (complete)', why: 'sha1 and the sha2 family.' },
   { name: 'unittest', why: 'Test the compiled program with the same tests that run under CPython.' },
