@@ -97,7 +97,7 @@ static bool manifest_valid(const std::string &manifest) {
   bool ok = true, any = false;
   while (ok && fgets(line, sizeof(line), fp)) {
     unsigned long long want = 0, have = 0;
-    char path[PATH_MAX + 1];
+    char path[4097];  // matches the %4096 width below; PATH_MAX is not defined on every platform
     if (sscanf(line, "%llx %4096[^\n]", &want, path) != 2) { ok = false; break; }
     any = true;
     if (!hash_file(path, &have) || have != want) ok = false;
