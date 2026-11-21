@@ -45,7 +45,7 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
 - **Modules**: `import`, `from … import`, packages and relative imports, all resolved at compile
   time. Partial implementations of common standard-library modules live in
   [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os` and `os.path`,
-  `pathlib`, `fnmatch`, `collections`, `heapq`, `copy`, `struct`, `string`, `socket`, `logging`
+  `pathlib`, `fnmatch`, `textwrap`, `collections`, `heapq`, `copy`, `struct`, `string`, `socket`, `logging`
   and parts of `re` and `itertools`. File I/O uses `open()`, which takes a str or a `pathlib`
   path.
 - **Type hints and dataclasses**: annotations are accepted and ignored, `typing` provides its

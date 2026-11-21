@@ -840,6 +840,9 @@ static bool ast_reaches_raise(PyDAST *n, PycCompiler &ctx) {
     case PY_yield_stmt:
     case PY_yield_expr:
     case PY_yield_from_expr:
+    // `del l[i]` and `del d[k]` raise IndexError and KeyError from the
+    // builtin __delitem__ (issues/205), as `del x` can raise NameError.
+    case PY_del_stmt:
       return true;
     case PY_power:
       for (int i = 1; i < n->children.n; i++) {

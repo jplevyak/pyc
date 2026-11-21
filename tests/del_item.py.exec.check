@@ -1,0 +1,9 @@
+['a', ' ', 'b']
+[' ', 'b']
+[' ']
+[2, 3]
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+KeyError 'c'
+{'b': 2}
+KeyError 1

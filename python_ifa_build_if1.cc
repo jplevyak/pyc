@@ -3144,6 +3144,10 @@ static void emit_del_target(PyDAST *tgt, PycAST *ast, PycCompiler &ctx) {
   } else {
     if1_gen(if1, &ast->code, a->code);
     call_method(&ast->code, ast, a->rval, make_symbol("__delitem__"), new_sym(ast), 1, a->sym);
+    // `del l[i]` out of range and `del d[k]` for a missing key raise, as a
+    // slice delete's bounds check does above (issues/175 measured the cost
+    // of a check after every item READ; a `del` statement is rare).
+    emit_exc_check(&ast->code, ast, ctx);
   }
 }
 

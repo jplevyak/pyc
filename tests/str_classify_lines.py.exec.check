@@ -1,0 +1,27 @@
+'' False False False False True True False False False
+'a' True True False False True True True False False
+'Z' True True False False True True True True False
+'ab1' False True False False True True True False False
+'a b' False False False False True True False False False
+'_' False False False False True True True False False
+'1' False True True True True True False False True
+'12' False True True True True True False False True
+'a_1' False False False False True True True False False
+'1a' False True False False True True False False False
+'\t' False False False False False True False False False
+'~' False False False False True True False False False
+'Hello World' False False False False True True False True False
+'Hello world' False False False False True True False False False
+'HELLO' True True False False True True True False False
+'A1 B2' False False False False True True False True False
+'aB' True True False False True True True False False
+' Ab' False False False False True True False True False
+'x\x7f' False False False False False True False False False
+'\x00' False False False False False True False False False
+'a   b   c' 'a       b       c' ['a\tb\tc'] ['a\tb\tc'] ['a\tb\tc']
+'ab\ncd\r\nef' 'ab\ncd\r\nef' ['ab', 'cd', 'ef'] ['ab\n', 'cd\r\n', 'ef'] ['ab\n', 'cd\r\n', 'ef']
+'x\x0by\x0cz\x1cw\r' 'x\x0by\x0cz\x1cw\r' ['x', 'y', 'z', 'w'] ['x\x0b', 'y\x0c', 'z\x1c', 'w\r'] ['x\x0b', 'y\x0c', 'z\x1c', 'w\r']
+'' '' [] [] []
+'\n' '\n' [''] ['\n'] ['\n']
+'a\n\nb\n' 'a\n\nb\n' ['a', '', 'b'] ['a\n', '\n', 'b\n'] ['a\n', '\n', 'b\n']
+'12345   6\n    x' '12345   6\n        x' ['12345\t6', '\tx'] ['12345\t6\n', '\tx'] ['12345\t6\n', '\tx']

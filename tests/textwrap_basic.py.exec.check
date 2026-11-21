@@ -1,0 +1,126 @@
+1 ['L', 'o', 'o', 'k', ',', 'g', 'o', 'o', 'f', '-', 'b', 'a', 'l', 'l', '-', '-', 'u', 's', 'e', 't', 'h', 'e', '-', 'b', 'o', 'p', 't', 'i', 'o', 'n', '!']
+5 ['Look,', 'goof-', 'ball', '--', 'use', 'the', '-b op', 'tion!']
+12 ['Look, goof-', 'ball -- use', 'the -b', 'option!']
+20 ['Look, goof-ball --', 'use the -b option!']
+40 ['Look, goof-ball -- use the -b option!']
+'* Look, goof-ball -- use\n  the -b option!'
+['Look, goof-ball', '-- use the -b', 'option!'] ['Look,', 'goof-ball', '-- use the', '-b option!']
+['Look, goof-ball --', ' use the -b ', 'option!'] ['Look, goof-ball -- use the -b', 'option!']
+['Look, goof-ball --', 'use the -b option!'] ['Look, goof-ball...']
+'Look, goof- [...]' 'Look, goof-ball -- use (more)'
+['Look, goof-', 'ball -- use', 'the -b', 'option!'] ['Look, goof-', 'ball -- use', 'the -b', 'option!'] ['Look, goof-', 'ball -- use', 'the -b', 'option!']
+1 ['T', 'h', 'e', 'q', 'u', 'i', 'c', 'k', 'b', 'r', 'o', 'w', 'n', 'f', 'o', 'x', 'j', 'u', 'm', 'p', 's', 'o', 'v', 'e', 'r', 't', 'h', 'e', 'l', 'a', 'z', 'y', 'd', 'o', 'g', '.', 'I', 't', 'w', 'a', 's', 'a', 'w', 'e', 'l', 'l', '-', 'k', 'n', 'o', 'w', 'n', 'f', 'a', 'c', 't', 't', 'h', 'a', 't', 'h', 'y', 'p', 'e', 'r', '-', 't', 'e', 'x', 't', '-', 'm', 'a', 'r', 'k', 'u', 'p', 'w', 'a', 's', 'c', 'o', '-', 'o', 'p', 't', 'e', 'd', 'b', 'y', 'm', 'i', 'd', '-', '1', '9', '9', '0', 's', 'w', 'e', 'b', '-', 'd', 'e', 's', 'i', 'g', 'n', 'e', 'r', 's', '.']
+5 ['The', 'quick', 'brown', 'fox', 'jumps', 'over', 'the', 'lazy', 'dog.', 'It', 'was a', 'well-', 'known', 'fact', 'that ', 'hyper', '-', 'text-', 'marku', 'p was', 'co-', 'opted', 'by mi', 'd-', '1990s', 'web-d', 'esign', 'ers.']
+12 ['The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. It was', 'a well-known', 'fact that', 'hyper-text-', 'markup was', 'co-opted by', 'mid-1990s', 'web-', 'designers.']
+20 ['The quick brown fox', 'jumps over the lazy', 'dog. It was a well-', 'known fact that', 'hyper-text-markup', 'was co-opted by', 'mid-1990s web-', 'designers.']
+40 ['The quick brown fox jumps over the lazy', 'dog. It was a well-known fact that', 'hyper-text-markup was co-opted by', 'mid-1990s web-designers.']
+'* The quick brown fox\n  jumps over the lazy\n  dog. It was a well-\n  known fact that hyper-\n  text-markup was co-\n  opted by mid-1990s web-\n  designers.'
+['The quick brown', 'fox jumps over', 'the lazy dog.', 'It was a', 'well-known fact', 'that hyper-text', '-markup was', 'co-opted by', 'mid-1990s', 'web-designers.'] ['The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. It', 'was a', 'well-known', 'fact that', 'hyper-', 'text-', 'markup was', 'co-opted', 'by', 'mid-1990s', 'web-', 'designers.']
+['The quick brown ', 'fox jumps over the', ' lazy dog. It was ', 'a well-known fact ', 'that hyper-text-', 'markup was co-', 'opted by mid-1990s', ' web-designers.'] ['The quick brown fox jumps over', 'the lazy dog.  It was a well-', 'known fact that hyper-text-', 'markup was co-opted by', 'mid-1990s web-designers.']
+['The quick brown fox', 'jumps over the [...]'] ['The quick brown...']
+'The quick [...]' 'The quick brown fox (more)'
+['The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. It was', 'a well-known', 'fact that', 'hyper-text-', 'markup was', 'co-opted by', 'mid-1990s', 'web-', 'designers.'] ['The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. It was', 'a well-known', 'fact that', 'hyper-text-', 'markup was', 'co-opted by', 'mid-1990s', 'web-', 'designers.'] ['The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. It was', 'a well-known', 'fact that', 'hyper-text-', 'markup was', 'co-opted by', 'mid-1990s', 'web-', 'designers.']
+1 [' ', 'l', 'e', 'a', 'd', 'i', 'n', 'g', 'a', 'n', 'd', 't', 'r', 'a', 'i', 'l', 'i', 'n', 'g', 's', 'p', 'a', 'c', 'e', 's']
+5 ['  lea', 'ding', 'and t', 'raili', 'ng   ', 'space', 's']
+12 ['  leading', 'and trailing', 'spaces']
+20 ['  leading and', 'trailing   spaces']
+40 ['  leading and trailing   spaces']
+'*   leading and trailing\n  spaces'
+['  leading and', 'trailing', 'spaces'] ['  leading', 'and', 'trailing', 'spaces']
+['  leading and ', 'trailing   spaces', '  '] ['  leading and trailing', 'spaces']
+['  leading and', 'trailing   spaces'] ['  leading and...']
+'leading and [...]' 'leading and trailing spaces'
+['  leading', 'and trailing', 'spaces'] ['  leading', 'and trailing', 'spaces'] ['  leading', 'and trailing', 'spaces']
+1 ['t', 'a', 'b', 's', 'e', 'p', 'a', 'r', 'a', 't', 'e', 'd', 'w', 'o', 'r', 'd', 's', 'a', 'n', 'd', 'a', 'v', 'e', 'r', 'y', 'l', 'o', 'n', 'g', 'w', 'o', 'r', 'd', 't', 'h', 'a', 't', 'd', 'o', 'e', 's', 'n', 'o', 't', 'f', 'i', 't', 'a', 'n', 'y', 'w', 'h', 'e', 'r', 'e', 'a', 't', 'a', 'l', 'l', 'i', 'n', 'i', 't']
+5 ['tab', 'separ', 'ated', 'words', 'and a', 'veryl', 'ongwo', 'rdtha', 'tdoes', 'notfi', 'tanyw', 'herea', 'tall', 'in it']
+12 ['tab', 'separated', 'words   and', 'a verylongwo', 'rdthatdoesno', 'tfitanywhere', 'atall in it']
+20 ['tab     separated', 'words   and a verylo', 'ngwordthatdoesnotfit', 'anywhereatall in it']
+40 ['tab     separated       words   and a', 'verylongwordthatdoesnotfitanywhereatall', 'in it']
+'* tab     separated\n  words   and a verylongw\n  ordthatdoesnotfitanywhe\n  reatall in it'
+['tab', 'separated', 'words   and a v', 'erylongwordthat', 'doesnotfitanywh', 'ereatall in it'] ['tab', 'separated', 'words', 'and a', 'verylongwordthatdoesnotfitanywhereatall', 'in it']
+['tab     separated', '       words   and', ' a verylongwordtha', 'tdoesnotfitanywher', 'eatall in it'] ['tab     separated       words', 'and a verylongwordthatdoesnotf', 'itanywhereatall in it']
+['tab     separated', 'words   and a [...]'] ['tab     separated...']
+'tab separated [...]' 'tab separated words and (more)'
+['tab', 'separated', 'words and a ', 'verylongword', 'thatdoesnotf', 'itanywhereat', 'all in it'] ['tab', 'separated', 'words and a ', 'verylongword', 'thatdoesnotf', 'itanywhereat', 'all in it'] ['tab', 'separated', 'words   and', 'a verylongwo', 'rdthatdoesno', 'tfitanywhere', 'atall in it']
+1 ['H', 'e', 'l', 'l', 'o', 't', 'h', 'e', 'r', 'e', '.', 'T', 'h', 'i', 's', 'i', 's', 'a', 's', 'e', 'n', 't', 'e', 'n', 'c', 'e', '.', 'A', 'n', 'd', 'a', 'n', 'o', 't', 'h', 'e', 'r', 'o', 'n', 'e', '!', 'I', 's', 'i', 't', '?', 'y', 'e', 's', '.']
+5 ['Hello', 'there', '.', 'This', 'is a ', 'sente', 'nce.', 'And a', 'nothe', 'r', 'one!', 'Is', 'it?', 'yes.']
+12 ['Hello there.', 'This is a', 'sentence.', 'And another', 'one! Is it?', 'yes.']
+20 ['Hello there. This is', 'a sentence. And', 'another one! Is it?', 'yes.']
+40 ['Hello there. This is a sentence. And', 'another one! Is it? yes.']
+'* Hello there. This is a\n  sentence. And another\n  one! Is it? yes.'
+['Hello there.', 'This is a', 'sentence. And', 'another one! Is', 'it? yes.'] ['Hello', 'there.', 'This is a', 'sentence.', 'And', 'another', 'one! Is', 'it? yes.']
+['Hello there. This ', 'is a sentence. And', ' another one! Is ', 'it? yes.'] ['Hello there.  This is a', 'sentence.  And another one!', 'Is it?  yes.']
+['Hello there. This is', 'a sentence. [...]'] ['Hello there. This...']
+'Hello there. [...]' 'Hello there. This is a (more)'
+['Hello there.', 'This is a', 'sentence.', 'And another', 'one! Is it?', 'yes.'] ['Hello there.', 'This is a', 'sentence.', 'And another', 'one! Is it?', 'yes.'] ['Hello there.', 'This is a', 'sentence.', 'And another', 'one! Is it?', 'yes.']
+1 ['x', '-', '-', 'y', 'a', '-', '-', 'b', '-', '-', '-', 'c', '3', '-', 'd', 'e', '-', 'f', '-', 'g', 'a', 'b', '-', 'c', 'd', 'a', 'b', 'c', '-', 'd', 'e', '-', 'f', 'g', '-', 'h', 'i', 'r', 'e', '-', 'x', 'a', '-', 'b', 'c', 'd']
+5 ['x--y', 'a--b', '---c', '3-d', 'e-f-g', 'ab-cd', 'abc-', 'de-', 'fg-hi', 're-x', 'a-bcd']
+12 ['x--y a--b', '---c 3-d', 'e-f-g ab-cd', 'abc-de-fg-hi', 're-x a-bcd']
+20 ['x--y a--b ---c 3-d', 'e-f-g ab-cd abc-de-', 'fg-hi re-x a-bcd']
+40 ['x--y a--b ---c 3-d e-f-g ab-cd abc-de-', 'fg-hi re-x a-bcd']
+'* x--y a--b ---c 3-d\n  e-f-g ab-cd abc-de-fg-\n  hi re-x a-bcd'
+['x--y a--b ---c', '3-d e-f-g ab-cd', 'abc-de-fg-hi', 're-x a-bcd'] ['x--y a--b', '---c 3-d', 'e-f-g ab-', 'cd abc-de-', 'fg-hi re-x', 'a-bcd']
+['x--y a--b ---c 3-d', ' e-f-g ab-cd abc-', 'de-fg-hi re-x ', 'a-bcd'] ['x--y a--b ---c 3-d e-f-g ab-cd', 'abc-de-fg-hi re-x a-bcd']
+['x--y a--b ---c 3-d', 'e-f-g ab-cd [...]'] ['x--y a--b ---c...']
+'x--y a--b ---c [...]' 'x--y a--b ---c 3-d (more)'
+['x--y a--b', '---c 3-d', 'e-f-g ab-cd', 'abc-de-fg-hi', 're-x a-bcd'] ['x--y a--b', '---c 3-d', 'e-f-g ab-cd', 'abc-de-fg-hi', 're-x a-bcd'] ['x--y a--b', '---c 3-d', 'e-f-g ab-cd', 'abc-de-fg-hi', 're-x a-bcd']
+1 []
+5 []
+12 []
+20 []
+40 []
+''
+[] []
+[] []
+[] []
+'' ''
+[] [] []
+1 []
+5 []
+12 []
+20 []
+40 []
+''
+[] []
+['     '] []
+[] []
+'' ''
+[] [] []
+1 ['o', 'n', 'e']
+5 ['one']
+12 ['one']
+20 ['one']
+40 ['one']
+'* one'
+['one'] ['one']
+['one'] ['one']
+['one'] ['one']
+'one' 'one'
+['one'] ['one'] ['one']
+1 ['e', 'm', '-', '-', 'd', 'a', 's', 'h', 'a', 'n', 'd', 'f', 'o', 'o', '-', '-', 'b', 'a', 'r', '.', '-', '-', 'b', 'a', 'z', 'a', 'n', 'd', '!', '-', '-', 'x']
+5 ['em--', 'dash', 'and', 'foo--', 'bar.', '--baz', 'and !', '--x']
+12 ['em--dash and', 'foo--bar.--', 'baz and !--x']
+20 ['em--dash and foo--', 'bar.--baz and !--x']
+40 ['em--dash and foo--bar.--baz and !--x']
+'* em--dash and foo--bar.\n  --baz and !--x'
+['em--dash and', 'foo--bar.--baz', 'and !--x'] ['em--dash', 'and foo--', 'bar.--baz', 'and !--x']
+['em--dash and foo--', 'bar.--baz and !--x'] ['em--dash and foo--bar.--baz', 'and !--x']
+['em--dash and foo--', 'bar.--baz and !--x'] ['em--dash and foo...']
+'em--dash and [...]' 'em--dash and foo--bar. (more)'
+['em--dash and', 'foo--bar.--', 'baz and !--x'] ['em--dash and', 'foo--bar.--', 'baz and !--x'] ['em--dash and', 'foo--bar.--', 'baz and !--x']
+1 ['_', 'u', 'n', 'd', 'e', 'r', '-', 's', 'c', 'o', 'r', 'e', '_', '9', '-', '9', 'a', '_', '-', 'b', 'w', 'e', 'l', 'l', ',', '-', 'k', 'n', 'o', 'w', 'n']
+5 ['_unde', 'r-sco', 're_', '9-9', 'a_-b ', 'well,', '-know', 'n']
+12 ['_under-', 'score_ 9-9', 'a_-b', 'well,-known']
+20 ['_under-score_ 9-9', 'a_-b well,-known']
+40 ['_under-score_ 9-9 a_-b well,-known']
+'* _under-score_ 9-9 a_-b\n  well,-known'
+['_under-score_', '9-9 a_-b', 'well,-known'] ['_under-', 'score_ 9-9', 'a_-b', 'well,-known']
+['_under-score_ 9-9 ', 'a_-b well,-known'] ['_under-score_ 9-9 a_-b', 'well,-known']
+['_under-score_ 9-9', 'a_-b well,-known'] ['_under-score_ 9-9...']
+'_under-score_ [...]' '_under-score_ 9-9 a_-b (more)'
+['_under-', 'score_ 9-9', 'a_-b', 'well,-known'] ['_under-', 'score_ 9-9', 'a_-b', 'well,-known'] ['_under-', 'score_ 9-9', 'a_-b', 'well,-known']
+['> a b c d e f g', 'h i j k l m n o', 'p'] > short
+'  def f():\n      return 1\n\nx' '\thello\n  \tworld\n' 'a\n  b\n\n\nc\n' 'no indent\n  x' 'a\nb'
+'> a\n\n>  b\n  \n> c' 'a\n+b\n'
+ValueError invalid width 0 (must be > 0)
+ValueError placeholder too large for max width

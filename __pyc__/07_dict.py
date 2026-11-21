@@ -222,7 +222,7 @@ class dict:
     return self
   def __delitem__(self, key):
     if self._mask == 0:
-      return None
+      raise KeyError(repr(key))
     h = key.__hash__()
     m = self._mask
     s = (h ^ (h >> 4) ^ (h >> 11)) & m
@@ -236,7 +236,9 @@ class dict:
         return None
       s = (s + 1) & m
       p = self._index[s]
-    return None
+    # A missing key raises, as CPython's: this returned None and deleted
+    # nothing (issues/205).
+    raise KeyError(repr(key))
   def pop(self, key):
     # shedskin_examples/sudoku5 (`cols.append(X.pop(j))`) needed this; the
     # class had none, so the call was unresolved. Removes and returns the

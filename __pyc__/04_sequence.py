@@ -96,7 +96,15 @@ class list:
                           int, i,
                           int, j,
                           int, s)
+  # `del l[i]`: a negative index counts from the end and one out of range
+  # raises, as CPython's. This deleted the slice [i:i+1], which is empty
+  # for i = -1, so `del l[-1]` silently deleted nothing (issues/205).
   def __delitem__(self, key):
+    n = self.__len__()
+    if key < 0:
+      key += n
+    if key < 0 or key >= n:
+      raise IndexError("list assignment index out of range")
     return self.__pyc_delslice__(key, key + 1, 1)
   def remove(self, item):
     i = 0

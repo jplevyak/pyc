@@ -375,6 +375,67 @@ class str:
       else:
         i += 1
     return c
+  # The ASCII classes, as CPython's. A non-ASCII character reaches these as
+  # its UTF-8 bytes, each >= 128, and counts as none of the classes, so
+  # "\u00e9".isalpha() is False where CPython's is True (issues/203).
+  # isascii is exact: UTF-8 is ASCII exactly when every byte is < 128.
+  def __pyc_all_ord__(self, lo1, hi1, lo2, hi2, lo3, hi3):
+    n = len(self)
+    if n == 0:
+      return False
+    i = 0
+    while i < n:
+      o = ord(self[i])
+      if not ((lo1 <= o and o <= hi1) or (lo2 <= o and o <= hi2) or (lo3 <= o and o <= hi3)):
+        return False
+      i += 1
+    return True
+  def isalpha(self):
+    return self.__pyc_all_ord__(65, 90, 97, 122, 1, 0)
+  def isalnum(self):
+    return self.__pyc_all_ord__(65, 90, 97, 122, 48, 57)
+  def isdecimal(self):
+    return self.__pyc_all_ord__(48, 57, 1, 0, 1, 0)
+  def isnumeric(self):
+    return self.__pyc_all_ord__(48, 57, 1, 0, 1, 0)
+  def isprintable(self):
+    if len(self) == 0:
+      return True
+    return self.__pyc_all_ord__(32, 126, 1, 0, 1, 0)
+  def isascii(self):
+    if len(self) == 0:
+      return True
+    return self.__pyc_all_ord__(0, 127, 1, 0, 1, 0)
+  def isidentifier(self):
+    n = len(self)
+    if n == 0:
+      return False
+    i = 0
+    while i < n:
+      c = self[i]
+      if not (c == "_" or c.isalpha() or (i > 0 and c.isdigit())):
+        return False
+      i += 1
+    return True
+  # CPython's: uppercase only after an uncased character, lowercase only
+  # after a cased one, and at least one cased character.
+  def istitle(self):
+    cased = False
+    prev_cased = False
+    for c in self:
+      if c.isupper():
+        if prev_cased:
+          return False
+        prev_cased = True
+        cased = True
+      elif c.islower():
+        if not prev_cased:
+          return False
+        prev_cased = True
+        cased = True
+      else:
+        prev_cased = False
+    return cased
   def isdigit(self):
     n = len(self)
     if n == 0:
@@ -386,24 +447,50 @@ class str:
         return False
       i += 1
     return True
-  def splitlines(self):
+  # CPython's line boundaries: \n, \r, \r\n, \v, \f and \x1c-\x1e (and
+  # \x85, \u2028, \u2029, which a UTF-8 byte str cannot see one at a time,
+  # issues/203). keepends keeps each line's boundary. This split on \n and
+  # \r only and had no keepends.
+  def splitlines(self, keepends=False):
     r = []
     n = len(self)
     i = 0
     start = 0
     while i < n:
-      if self[i] == "\n" or self[i] == "\r":
+      o = ord(self[i])
+      if o == 10 or o == 13 or o == 11 or o == 12 or o == 28 or o == 29 or o == 30:
         end = i
-        if self[i] == "\r" and i + 1 < n and self[i + 1] == "\n":
+        if o == 13 and i + 1 < n and self[i + 1] == "\n":
           i += 1
         i += 1
-        r.append(self.__pyc_substr__(start, end))
+        if keepends:
+          r.append(self.__pyc_substr__(start, i))
+        else:
+          r.append(self.__pyc_substr__(start, end))
         start = i
       else:
         i += 1
     if start < n:
       r.append(self.__pyc_substr__(start, n))
     return r
+  # CPython's: a tab advances to the next multiple of tabsize, and the
+  # column restarts after \n or \r.
+  def expandtabs(self, tabsize=8):
+    out = []
+    col = 0
+    for c in self:
+      if c == "\t":
+        if tabsize > 0:
+          k = tabsize - col % tabsize
+          out.append(" " * k)
+          col += k
+      elif c == "\n" or c == "\r":
+        out.append(c)
+        col = 0
+      else:
+        out.append(c)
+        col += 1
+    return "".join(out)
   def rjust(self, width, fillchar=" "):
     pad = width - len(self)
     if pad <= 0:
