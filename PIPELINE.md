@@ -71,7 +71,8 @@ pyc <file.py>
 │       │   └── mark_live_funs(fa)
 │       │
 │       ├── (optional)  fgraph        → ifa_graph(fn)               [ifa/analysis/graph.cc]
-│       ├── (optional)  fdump_html    → ifa_html(fn)                [ifa/common/html.cc]
+│       ├── (optional)  fdump_html / ifa_dump_json
+│       │                 → ifa_html(source, cg_base) after codegen [ifa/common/html.cc]
 │       │
 │       └── backend:
 │           ├── (default)      c_codegen_write_c → c_codegen_compile  [ifa/codegen/cg.cc]

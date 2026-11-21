@@ -155,6 +155,8 @@ test-core        unit + ir + e2e        ifa --test; ifa test-ir;
 test-ifa-llvm    V-language LLVM smoke  make -C ifa test_llvm
 test-dparse      grammar validation
 test-links       every doc link resolves (instant, needs no build)
+test-explorer    --html/--dump-json     ./test_explorer.py (codegen unchanged by
+                                        telemetry; passes rebuild; pyc -x)
 ```
 
 `make test-core` is the old `make test` if you want the compiler gates
