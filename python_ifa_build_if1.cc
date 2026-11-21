@@ -38,6 +38,12 @@ static char *pyda_trim(const char *s) {
 
 static void build_one_module_if1(PycModule *m, PycCompiler &ctx) {
   if (m->built_if1) return;
+  // A circular import (`pk/__init__.py` imports `pk.sub`, which imports
+  // `pk`) reaches this again for a module whose IF1 is still being built.
+  // CPython hands the second importer the partly initialized module; here
+  // that is the module already on this stack, so mark it before building,
+  // not after. Marking it after recursed until the stack overflowed.
+  m->built_if1 = true;
   // ctx.node is the import statement node whose ast->code the enclosing
   // statement loop consumes; the module builders below re-point ctx.node
   // at the imported module's scope node (enter_scope(PyDAST*)) without
@@ -57,7 +63,6 @@ static void build_one_module_if1(PycModule *m, PycCompiler &ctx) {
   build_module_attributes_if1(m, *m->ctx, c);
   build_if1_module_pyda(m->pymod, *m->ctx, c);
   m->ctx->mod = saved_mod;
-  m->built_if1 = true;
   ctx.node = saved_node;
 }
 
@@ -1143,6 +1148,12 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       PycAST *a0 = getAST(pos_args[0], ctx);
       ast->rval = new_sym(ast);
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
+      // list(x) runs x's iteration, which can raise (a generator's body, a
+      // user __next__), so it gets the check a call gets. Without it
+      // `try: list(gen()) except ValueError:` returned the items before the
+      // raise and reported the exception as unhandled later (issues/207).
+      // The post-FA fold removes it where x cannot raise.
+      emit_exc_check(&ast->code, ast, ctx);
       return 1;
     }
   }
@@ -1188,6 +1199,7 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     }
     else
       call_method(&ast->code, ast, a0->rval, make_symbol("__pyc_tolist__"), ast->rval, 0);
+    emit_exc_check(&ast->code, ast, ctx);  // as list(x) above
     return 1;
   }
 
@@ -1363,7 +1375,9 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
       ast->rval = new_sym(ast);
       ast->rval->aspect = ctx.cls();
       super_aspect_syms.add(ast->rval);
-      if1_move(if1, &ast->code, ctx.fun()->self, ast->rval);
+      // issues/193: `super()` is `super(__class__, <first argument>)`.
+      // `ctx.fun()->self` is not that: it is null in an ordinary method.
+      if1_move(if1, &ast->code, fun_has[0], ast->rval);
     } else if (n == 1) {
       PycAST *cls_ast = getAST(pos_args[0], ctx);
       if (!cls_ast->sym || cls_ast->sym->type_kind != Type_RECORD) fail("non-constant super() class");
@@ -3137,6 +3151,10 @@ static void emit_del_target(PyDAST *tgt, PycAST *ast, PycCompiler &ctx) {
   } else {
     if1_gen(if1, &ast->code, a->code);
     call_method(&ast->code, ast, a->rval, make_symbol("__delitem__"), new_sym(ast), 1, a->sym);
+    // `del l[i]` out of range and `del d[k]` for a missing key raise, as a
+    // slice delete's bounds check does above (issues/175 measured the cost
+    // of a check after every item READ; a `del` statement is rare).
+    emit_exc_check(&ast->code, ast, ctx);
   }
 }
 
@@ -3639,10 +3657,7 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               }
               for (seg = strtok(nullptr, "."); v && seg; seg = strtok(nullptr, ".")) {
                 if (v->is_module) {
-                  PycModule *mm = ctx.module_syms.get(v);
-                  PycScope *ms = mm ? mm->ctx->saved_scopes.get(mm->pymod) : nullptr;
-                  PycSymbol *member = ms ? ms->map.get(cannonicalize_string(seg)) : nullptr;
-                  v = (intptr_t)member > (intptr_t)NONLOCAL_DEF ? member->sym : nullptr;
+                  v = pyc_module_member(v, seg, ctx);
                   continue;
                 }
                 if (v->self && v->type_kind == Type_RECORD) {
@@ -3674,7 +3689,20 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
               PyDAST *arglist = dec->children[1];
               Code *send = if1_send1(if1, &def_ast->code, ast);
               if1_add_send_arg(if1, send, dval);
+              // Keyword arguments as an ordinary call passes them
+              // (`@lru_cache(maxsize=None)`): the value under its name. They
+              // were added as positionals with a null value, and the null
+              // asserted in if1_add_send_arg (issues/207).
               for (auto a : arglist->children.values()) {
+                if (a->kind == PY_star_arg || a->kind == PY_dstar_arg)
+                  fail("error line %d: '*' and '**' unpacking in a decorator's arguments is not supported (issues/207)",
+                       dec->line);
+                if (a->kind == PY_keyword_arg) {
+                  PycAST *vast = getAST(a->children[1], ctx);
+                  if1_gen(if1, &def_ast->code, vast->code);
+                  if1_add_send_arg(if1, send, vast->rval, cannonicalize_string(a->children[0]->str_val));
+                  continue;
+                }
                 PycAST *aast = getAST(a, ctx);
                 if1_gen(if1, &def_ast->code, aast->code);
                 if1_add_send_arg(if1, send, aast->rval);
@@ -4688,11 +4716,9 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             PycModule *mm = ctx.module_syms.get(cur_val);
             if (mm) {
               cchar *attr = trailer->children[0]->str_val;
-              PycScope *ms = mm->ctx->saved_scopes.get(mm->pymod);
-              PycSymbol *member = ms ? ms->map.get(cannonicalize_string(attr)) : nullptr;
-              if ((intptr_t)member <= (intptr_t)NONLOCAL_DEF)
-                fail("error line %d, module '%s' has no attribute '%s'", ctx.lineno, mm->name, attr);
-              cur_val = member->sym;
+              Sym *member = pyc_module_member(cur_val, attr, ctx);
+              if (!member) fail("error line %d, module '%s' has no attribute '%s'", ctx.lineno, mm->name, attr);
+              cur_val = member;
               // A STORE to it (`m.G = v`) assigns that module global itself:
               // the target is the variable, as for a plain name. It used to
               // leave ast->sym unset, and the assignment's if1_move asserted

@@ -531,6 +531,22 @@ scopes in `v[0]`. From project memory: this was a real bug.
 `import_scope` plugs the imported module's scope into `ctx.imports`
 so `find_PycSymbol` can find its bindings.
 
+**Comprehension scopes are not nesting levels.** A list, set, dict or
+generator comprehension enters its own `PycScope` (its targets are its
+own) but is lowered inline into the enclosing function, so the scope is
+marked `inline_scope` and a function defined inside it (a lambda in the
+element or the iterable) takes its nesting depth from the enclosing
+function. Counting the comprehension made the depth one more than the
+lambda's display and crashed `make_AVar` (issues/207).
+
+**Circular imports.** `import_file` registers the module before running
+`build_syms` on it, so a module that imports one already on the stack
+finds it. Pass 2 does the same: `build_one_module_if1` marks
+`built_if1` before building, not after, or `pk` importing `pk.sub`
+importing `pk` recursed until the stack overflowed. A name read at call
+time works; one read while the other module is still running sees the
+value bound later, where CPython raises `AttributeError` (issues/204).
+
 ---
 
 ## 7. Builtin module: `__pyc__/`
@@ -575,7 +591,7 @@ The frontend implements these (declared `virtual` in
 | `~PycCallbacks()` | `python_ifa_util.cc:27` | vtable anchor (out-of-line). |
 | `new_Sym(name)` | `python_ifa_sym.cc:25` | Allocate a `PycSymbol`; bind `sym->asymbol`. |
 | `finalize_functions()` | `python_ifa_sym.cc:172` | Per-Fun: extract `default_args` from `varargslist` and populate `fn->fun->default_args`. Handles `__new__` wrappers from `gen_class_pyda` (fn's `init` points to the matching `__init__`). |
-| `default_wrapper(f, defaults)` | `python_ifa_sym.cc:186` | Build a wrapper Fun that supplies default args at the specified positions. |
+| `default_wrapper(f, defaults)` | `python_ifa_sym.cc:234` | Build a wrapper Fun that supplies default args at the specified positions. Like `order_wrapper`, `signature_wrapper` and `unpack_wrapper`, it forwards through a fresh send that the matcher resolves again; for a method, the receiver formal carries the aspect of the wrapped method's class (`pin_wrapped_receiver`), so `Base.m(self)` and `super().m()` still reach the base method (issues/198). |
 | `reanalyze(violations)` | `python_ifa_sym.cc:216` | On NOTYPE violations for missing instance variables, add them to the receiver's class and return true to force another analysis pass. |
 | `c_codegen_pre_file(fp)` | `python_ifa_sym.cc:241` | Emit accumulated `__pyc_insert_c_code__` blobs (`c_code` Vec) at the top of the generated `.c`. |
 
@@ -682,6 +698,26 @@ The shim's text reaches the C backend through `ctx.c_code` and the LLVM
 backend through `codegen_extra_source`; the libraries a program names go to
 `codegen_link_libs`. Design, limits and the list of what is refused:
 [issues/188](issues/188-static-ctypes-subset.md).
+
+### 11.2 `typing` and `dataclasses`
+
+`lower_typing_and_dataclasses` (`python_ifa_dataclass.cc`) runs on the AST
+right after `lower_ctypes`, and for the same reason it comes before the
+property scan: a frozen dataclass's fields get `__pyc_set_NAME__` setters.
+It removes the body of `if TYPE_CHECKING:` and every `X: TypeAlias = ...`,
+and rewrites a module-level `@dataclass` class into the class CPython's
+decorator builds. Names are resolved through the module's own imports of
+`typing` and `dataclasses`. Two pieces of it live elsewhere:
+
+- `PyDAST::is_default_factory` marks a parameter default that
+  `PycCompiler::default_wrapper` CALLS on each call that omits it
+  (`field(default_factory=...)`).
+- `pyc_dataclass_check`, after `build_syms`, checks what only the class
+  hierarchy shows: every subclass of a dataclass is one.
+
+`PYC_DBG_DATACLASS=1` prints the generated Python. `pyc_lib/typing.py`
+binds the names; pyc never evaluates an annotation. Design and limits:
+[issues/195](issues/195-typing-and-dataclasses.md).
 
 ---
 
@@ -794,7 +830,41 @@ PY_decorated
 Decorators are wrapped in `PY_suite`, not direct children. Code that
 walks decorators must unwrap the `PY_suite` first.
 
-### 13.10 Builtin Sym redefinition
+### 13.10 Methods every class gets
+
+`gen_class_pyda` synthesises methods into every record class whose body
+does not define them, as CPython's defaults would behave:
+
+- `__i<op>__` falling back to `__<op>__` (`synthesize_default_iop`);
+- `__pyc_dict_into__` for a class with `keys` (`synthesize_dict_into`);
+- `__pyc_reversed__` calling `__reversed__` for a class that defines it
+  (`synthesize_reversed`): `reversed(x)` dispatches `__pyc_reversed__`, and
+  `__pyc_any_type__`'s default is the sequence protocol;
+- the `__call__` forwarder that makes an instance callable. It mirrors the
+  `__new__` wrapper: formals named after `__call__`'s, `*args`/`**kw`
+  formals marked `is_rest`, and `fn->init = __call__` so
+  `finalize_function` finds `__call__`'s defaults;
+- `__pyc_class_name__` returning the class's name and `__pyc_class__`
+  returning the class (`synthesize_class_name`), but only in a class that
+  INHERITS one: a class opts its subclasses in by defining them. These are
+  `type(self).__name__` and `type(self)` for library code: pathlib's
+  `PurePath` and `Path` define them (answering `PurePosixPath` and
+  `PosixPath`, as CPython's would), and a user subclass of `Path` then
+  prints and derives as itself. Not in every class: a method stored in the
+  prototype is a closure CreationSet whether or not anything calls it, and
+  synthesizing these everywhere cost the corpus +13.6 % CreationSets.
+
+The root types carry the protocol fallbacks that need no synthesis.
+`object` has the reflected binary operators (`a + b` with no `__add__` on
+`a` calls `b.__radd__(a)`; str defines the ones it lacks itself),
+`__gt__` to `__lt__`, the iteration fallback of `__contains__`, and
+`__pyc_fspath__` to `__fspath__` (str answers itself; `os.fspath` and
+`open()` call it). They go on `object` and not `__pyc_any_type__` for two
+reasons: None reaches `__pyc_any_type__`, and `None + 5` must stay a None
+receiver's run-time TypeError; and str reaches it too, so a `{str, C}`
+receiver could not tell str's override from the default.
+
+### 13.11 Builtin Sym redefinition
 `build_builtin_symbols` (`python_ifa_sym.cc:70`) sets up name aliases:
 - `sym_int->alias = sym_int64` (Python `int` ≡ `int64`).
 - `sym_float->alias = sym_float64`.
@@ -808,13 +878,13 @@ walks decorators must unwrap the `PY_suite` first.
 If you read a builtin Sym and the name looks "wrong," check this
 function.
 
-### 13.11 `pyc_compat.py` is a no-op shim
+### 13.12 `pyc_compat.py` is a no-op shim
 The import is recognised and skipped by `build_import_syms`. The
 file exists only so `import` lines pyc programs use are runnable under
 unmodified CPython. Adding fields to `pyc_compat` is fine; just don't
 expect pyc to *do* anything with the imports.
 
-### 13.12 Generated parser slowness on `__pyc__`
+### 13.13 Generated parser slowness on `__pyc__`
 The DParser GLR engine is super-linear on large complex files. The
 builtin module is intentionally loaded via `dparse_builtin_dir` (which
 concatenates the small files) rather than as one giant file, partly for

@@ -44,3 +44,125 @@ def split(s, sep=None, maxsplit=-1):
 
 def join(words, sep=" "):
     return sep.join(words)
+
+
+# string.Template, as CPython's (issues/207): `$$` is a `$`, `$name` and
+# `${name}` are placeholders whose name is `[_a-zA-Z][_a-zA-Z0-9]*`, and
+# anything else after a `$` is an invalid placeholder. A value is
+# converted with str(). Keyword values of different types in one call are
+# refused (issues/189); a dict of them works when its values share a type.
+def _tpl_is_start(c):
+    return c == '_' or ('a' <= c and c <= 'z') or ('A' <= c and c <= 'Z')
+
+
+def _tpl_is_part(c):
+    return _tpl_is_start(c) or ('0' <= c and c <= '9')
+
+
+class Template:
+    delimiter = '$'
+
+    def __init__(self, template):
+        self.template = template
+
+    # The pattern's matches, in order: (kind, start, end, name) with kind
+    # 0 escaped, 1 named, 2 braced, 3 invalid; `start` is the `$`.
+    def _scan(self):
+        out = []
+        s = self.template
+        n = len(s)
+        i = 0
+        while i < n:
+            if s[i] != '$':
+                i += 1
+                continue
+            j = i + 1
+            if j < n and s[j] == '$':
+                out.append((0, i, j + 1, ''))
+                i = j + 1
+                continue
+            if j < n and _tpl_is_start(s[j]):
+                k = j + 1
+                while k < n and _tpl_is_part(s[k]):
+                    k += 1
+                out.append((1, i, k, s[j:k]))
+                i = k
+                continue
+            if j < n and s[j] == '{' and j + 1 < n and _tpl_is_start(s[j + 1]):
+                k = j + 2
+                while k < n and _tpl_is_part(s[k]):
+                    k += 1
+                if k < n and s[k] == '}':
+                    out.append((2, i, k + 1, s[j + 1:k]))
+                    i = k + 1
+                    continue
+            out.append((3, i, j, ''))
+            i = j
+        return out
+
+    def _invalid(self, i):
+        lines = self.template[:i].splitlines(True)
+        if not lines:
+            colno = 1
+            lineno = 1
+        else:
+            colno = i - len(''.join(lines[:-1]))
+            lineno = len(lines)
+        raise ValueError('Invalid placeholder in string: line %d, col %d' % (lineno, colno))
+
+    def substitute(self, mapping=None, **kws):
+        out = []
+        last = 0
+        for m in self._scan():
+            kind = m[0]
+            out.append(self.template[last:m[1]])
+            last = m[2]
+            if kind == 0:
+                out.append('$')
+            elif kind == 3:
+                self._invalid(m[1] + 1)
+            else:
+                name = m[3]
+                if name in kws:
+                    out.append(str(kws[name]))
+                elif mapping is not None and name in mapping:
+                    out.append(str(mapping[name]))
+                else:
+                    raise KeyError(repr(name))
+        out.append(self.template[last:])
+        return ''.join(out)
+
+    def safe_substitute(self, mapping=None, **kws):
+        out = []
+        last = 0
+        for m in self._scan():
+            kind = m[0]
+            out.append(self.template[last:m[1]])
+            last = m[2]
+            if kind == 0:
+                out.append('$')
+            elif kind == 3:
+                out.append('$')
+            else:
+                name = m[3]
+                if name in kws:
+                    out.append(str(kws[name]))
+                elif mapping is not None and name in mapping:
+                    out.append(str(mapping[name]))
+                else:
+                    out.append(self.template[m[1]:m[2]])
+        out.append(self.template[last:])
+        return ''.join(out)
+
+    def get_identifiers(self):
+        ids = []
+        for m in self._scan():
+            if (m[0] == 1 or m[0] == 2) and m[3] not in ids:
+                ids.append(m[3])
+        return ids
+
+    def is_valid(self):
+        for m in self._scan():
+            if m[0] == 3:
+                return False
+        return True

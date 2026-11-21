@@ -33,11 +33,18 @@ extern _CG_int64 _CG_ffi_bytes_addr(char *b);
 extern char *_CG_ffi_cstr(_CG_int64 p);
 extern char *_CG_ffi_buf(_CG_int64 n);
 extern char *_CG_ffi_char(_CG_int64 v);
+extern _CG_int64 _CG_ffi_cb_ignored(char *msg);
+extern _CG_int64 _CG_ffi_copy(_CG_int64 dst, _CG_int64 src, _CG_int64 n);
+extern char *_CG_ffi_rd_cstr_n(_CG_int64 a, _CG_int64 n);
+extern char *_CG_ffi_rd_raw(_CG_int64 a, _CG_int64 n);
+extern _CG_int64 _CG_ffi_wr_chars(_CG_int64 a, char *b, _CG_int64 len, _CG_int64 n);
 extern _CG_int64 _CG_ffi_sizeof_ptr(void);
 extern _CG_int64 _CG_ffi_rd_ptr(_CG_int64 a);
 extern _CG_int64 _CG_ffi_wr_ptr(_CG_int64 a, _CG_int64 v);
 extern char *_CG_format_string(char *str, ...);
 extern char *_CG_format_string_tagged(char *str, const char *tags, ...);
+extern char *_CG_format_convs(const char *fmt);
+extern int64 _CG_str_is_ascii(const char *s);
 extern char *_CG_fmt_grow(char *out, size_t *cap, size_t len, size_t need);
 extern const char *_CG_widen_int_convs(const char *fmt);
 extern char *_CG_str_from_int(int64 x);
@@ -74,6 +81,7 @@ extern char *_CG_str_swapcase(const char *s);
 extern char *_CG_str_substr(const char *s, int64 i, int64 j);
 extern char *_CG_str_replace(const char *s, const char *old, const char *nw);
 extern int64 _CG_str_find(const char *s, const char *sub, int64 i, int64 e);
+extern int64 _CG_str_rfind(const char *s, const char *sub, int64 i, int64 e);
 extern char *_CG_one_char_string(unsigned char c);
 extern int64 _CG_int_pow(int64 b, int64 e);
 extern int64 _CG_errno(void);
@@ -81,6 +89,7 @@ extern char *_CG_locale_encoding(void);
 extern int64 _CG_entropy32(void);
 extern int64 _CG_sleep(double seconds);  /* issues/041 */
 extern char *_CG_gethostname(void);
+extern char *_CG_strftime_local(char *fmt, double t);
 extern int64 _CG_int_bit_count(int64 x);
 extern char *_CG_strerror(int64 e);
 extern char *_CG_char_from_string(void *s, int i);
@@ -127,6 +136,38 @@ extern int64 _CG_stat_int_field(const char *path, int64 field);
 extern int64 _CG_opendir(const char *path);
 extern int64 _CG_closedir(int64 h);
 extern char *_CG_readdir_name(int64 h);
+extern double _CG_frexp_m(double x);
+extern int64 _CG_frexp_e(double x);
+extern double _CG_modf_frac(double x);
+extern double _CG_modf_int(double x);
+extern int64 _CG_clock_ns(int64 which);
+extern int64 _CG_time_tm(int64 secs, int64 local);
+extern int64 _CG_time_tm_field(int64 i);
+extern char *_CG_time_tm_zone(void);
+extern char *_CG_strftime_fields(char *fmt, int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec,
+                                 int64 wday, int64 yday, int64 isdst, int64 gmtoff, char *zone);
+extern double _CG_mktime_fields(int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec, int64 wday,
+                                int64 yday, int64 isdst);
+extern int64 _CG_os_err(void);
+extern int64 _CG_os_mkdir(const char *p, int64 mode);
+extern int64 _CG_os_rmdir(const char *p);
+extern int64 _CG_os_unlink(const char *p);
+extern int64 _CG_os_chdir(const char *p);
+extern int64 _CG_os_rename(const char *a, const char *b);
+extern int64 _CG_os_symlink(const char *a, const char *b);
+extern int64 _CG_os_access(const char *p, int64 mode);
+extern int64 _CG_os_utime_now(const char *p);
+extern int64 _CG_os_create(const char *p, int64 mode, int64 excl);
+extern int64 _CG_os_cpu_count(void);
+extern int64 _CG_os_ignorable_errno(int64 e);
+extern int64 _CG_os_stat(const char *p, int64 follow);
+extern int64 _CG_os_stat_int(int64 i);
+extern double _CG_os_stat_time(int64 i);
+extern char *_CG_os_environ_at(int64 i);
+extern int64 _CG_os_setenv(const char *k, const char *v);
+extern int64 _CG_os_unsetenv(const char *k);
+extern char *_CG_os_readlink(const char *p);
+extern char *_CG_os_pw_home(const char *name);
 
 /* Real process argv storage -- definition (extern-declared in
  * pyc_c_runtime.h), same pattern as _CG_ready_queue_head below: one
@@ -134,6 +175,9 @@ extern char *_CG_readdir_name(int64 h);
  * _CG_set_argv before anything else runs. */
 int64 _cg_argc = 0;
 char **_cg_argv = 0;
+int _cg_os_err = 0;
+struct tm _cg_time_tm;
+struct stat _cg_os_st;
 
 /* ifa/issues/051: GC initialisation for the LLVM backend.
  *

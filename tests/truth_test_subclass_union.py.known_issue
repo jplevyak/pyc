@@ -1,0 +1,1 @@
+ifa/213 -- slot elision keeps the inherited __bool__ slot on R's CreationSet and drops it on L's after a truth test on {None, L, R}; the shared L.__init__ blind-casts between the two layouts and codegen refuses it. PYC_ELIDE_SLOTS=0 compiles it and prints CPython's 7.

@@ -54,7 +54,7 @@ Ordered by value against effort. Items in one row are independent.
 
 | order | do | why | unblocks |
 | --- | --- | --- | --- |
-| 1 | the silent wrong answers with a local fix: none left. [185](closed/185-list-eq-tuple-is-true.md) closed 2026-11-14; [180](180-method-assigned-across-classes-crashes.md) has been a compile-time refusal since 2026-11-07, so it is a row 5 item; [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 1 turned out to be a representation change (2026-11-14: instances copy class attributes too; two designs in the issue), so it is a decision, not a day | rule 1's worst outcome | |
+| 1 | the silent wrong answers with a local fix: [194](194-repr-of-an-empty-set.md) (one line, filed 2026-11-19), [200](200-percent-d-of-a-str-prints-a-pointer.md) (filed 2026-11-19), and the decision in [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) on a missing dict key (found 2026-11-20). [203](203-str-counts-utf8-bytes.md) is a representation decision, not a local fix. [185](closed/185-list-eq-tuple-is-true.md) closed 2026-11-14; [180](180-method-assigned-across-classes-crashes.md) has been a compile-time refusal since 2026-11-07, so it is a row 5 item; [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 1 turned out to be a representation change (2026-11-14: instances copy class attributes too; two designs in the issue), so it is a decision, not a day | rule 1's worst outcome | |
 | 2 | exception liveness along the call graph: [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 2 | the silent wrong answers on the exception side wait on it, and the up-front check is measured too expensive | [179](179-sequence-index-out-of-range-does-not-raise.md), tuple `__setitem__`, ifa/165. Not [172](172-stopiteration-value-reads-the-global-exception-slot.md), which needs exception VALUE flow (corrected 2026-11-14) |
 | 3 | [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) step 1 (operators, `ZeroDivisionError`) and [179](179-sequence-index-out-of-range-does-not-raise.md) | silent memory reads and a SIGFPE on the default path | |
 | 4 | the crashes: [173](173-silent-deviations-found-by-the-strict-suite-check.md) item 3 (recursion limit), [187](187-self-import-overflows-the-frontend.md) | a crash beats a wrong answer but not by much | corpus `loop` |
@@ -70,10 +70,14 @@ Ordered by value against effort. Items in one row are independent.
 | issue | what |
 | --- | --- |
 | [179](179-sequence-index-out-of-range-does-not-raise.md) | an out-of-range index into a list, str or bytes reads memory instead of raising `IndexError`. |
-| [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) | a raise inside an operator or `__getitem__` never reaches the handler; `7 // 0` is a SIGFPE; the item-subscript check costs +72 % compile time if emitted up front. |
+| [203](203-str-counts-utf8-bytes.md) | a str is UTF-8 bytes: `len`, indexing, slicing and iteration of non-ASCII text count bytes. Needs a representation decision. |
+| [194](194-repr-of-an-empty-set.md) | an empty set prints as `{}` (CPython: `set()`), through every route to its repr. |
+| [200](200-percent-d-of-a-str-prints-a-pointer.md) | `"%d" % "x"` prints the string's address; CPython raises TypeError. Every numeric conversion, both format paths. |
+| [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md) | a raise inside an operator or `__getitem__` never reaches the handler; `7 // 0` is a SIGFPE; the item-subscript check costs +72 % compile time if emitted up front. `d[k]` on a missing key returns a value and raises nothing (found 2026-11-20). |
 | [173](173-silent-deviations-found-by-the-strict-suite-check.md) | a subclass or an instance does not see a class attribute stored through the class after it was made (`C.k += 1; self.k`); a global read before its definition sees the later value; deep recursion overflows the C stack and `setrecursionlimit` is ignored. |
 | [180](180-method-assigned-across-classes-crashes.md) | `a.x = b.x` across unrelated classes compiles clean, then `a.x()` segfaults: a field holding a closure called as a method slot. |
 | [177](177-int64-overflow-at-run-time-is-silent.md) | run-time int64 overflow wraps silently in every mode (othello2); literals are warned or refused. |
+| [204](204-partly-initialized-module-read.md) | a circular import's read of a name not yet bound sees the later value, where CPython raises `AttributeError`. Only programs CPython stops. |
 
 ### Refused, not wrong
 
@@ -81,6 +85,12 @@ Ordered by value against effort. Items in one row are independent.
 | --- | --- |
 | [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
 | [190](190-class-name-attribute.md) | A class has no `__name__` (`C.__name__`, `cls.__name__`). |
+| [207](207-core-library-batch.md) | the core batch landed 2026-11-20: itertools, functools (`lru_cache`, `cache`, `wraps`, `cmp_to_key`), Counter/OrderedDict/deque, math (with CPython's errors), bisect, operator, time, random, string.Template. `partial`, `total_ordering`, `namedtuple`, `attrgetter` not done; `nonlocal` and builtin classes as values found unsupported. |
+| [205](205-textwrap.md) | `textwrap` landed 2026-11-20; widths count UTF-8 bytes (203). Fixed on the way: `del l[-1]` deleted nothing, `del` of a missing index or key did nothing, str lacked `isalpha`/`isalnum`/`expandtabs`/... |
+| [206](206-argparse.md) | `argparse` is refused at the import, with the reason (decided 2026-11-20): its Namespace's attributes are named and typed at run time. Two ways to support it are recorded. |
+| [202](202-os-and-pathlib.md) | `os` (now a package with a real `os.path`) and `pathlib` landed 2026-11-20, POSIX only; bytes paths, `OSError.errno`, the Windows flavour and binary `Path.open()` are refused. |
+| [197](197-logging.md) | `logging` landed 2026-11-19; the caller's location in a format, `exception()`, `exc_info`/`extra`, the `{`/`$` styles and `logging.handlers` are refused. |
+| [195](195-typing-and-dataclasses.md) | `typing` and `@dataclass` landed 2026-11-19; `NamedTuple`, `TypedDict`, `order=True`, `fields()`/`asdict()` and a non-dataclass subclass of a dataclass are refused. |
 | [186](186-duplicate-method-definitions-are-an-ambiguous-call.md) | a class defining a method twice is an ambiguous call; CPython takes the last. |
 | [189](189-unpacking-into-named-parameters.md) | `f(**d)` into named parameters (the forwarding decorator), `f(*xs)` of a list into them, and `**kw` with mixed value types. `f(*t)` of a tuple works (2026-11-14). |
 | [048](048-none-int-field-pair-runtime-abort.md) | a genuinely read `{None, scalar}`: refused in every mode; the permissive sentinel is built only when a program needs it. |
@@ -91,7 +101,9 @@ Ordered by value against effort. Items in one row are independent.
 | issue | what |
 | --- | --- |
 | [187](187-self-import-overflows-the-frontend.md) | `import X` from `X.py` recurses without bound in the frontend. |
+| [201](201-list-layout-tuple-at-a-computed-format-segfaults.md) | a list-layout tuple (`tuple(list)`, a slice) as a computed format's operand is passed as one argument and segfaults. |
 | [188](188-static-ctypes-subset.md) | **foreign calls**: the static `ctypes` subset landed 2026-11-11; callbacks, out-parameters, arrays, unions and `--jit` are not done. |
+| [196](196-compiling-shedskin-with-pyc.md) | **compiling shedskin itself**: `ast` (CPython's parser and node classes), `getattr` with a computed name, about 15 standard-library modules, `NamedTuple`. |
 | [025](025-shedskin-examples-coverage.md) | **the corpus**: all 77 compile since 2026-11-10 (othello3 in about 170 s, ifa/207 and ifa/186), 59 match, 17 unverifiable by the sweep and verified by hand, othello2 differs (177); the two edit candidates. |
 
 ### Closed on 2026-11-03
@@ -106,6 +118,16 @@ Ordered by value against effort. Items in one row are independent.
 | --- | --- | --- |
 | [007](closed/007-decorators-not-applied.md) | property setters and deleters, `property(...)` with any getter, class-based decorators, and decorators on methods (which were being dropped) all work | the file's own Residuals list, each a named refusal; 173 item 1 |
 | [182](closed/182-kwargs-and-keyword-only-parameters.md) | keyword-only parameters, `**kw`, named parameters after `*args`, and `f(*t)` / `f(**d)` into a `*args` / `**kw` callee all work; a call-site `*t` was being passed as one argument | [189](189-unpacking-into-named-parameters.md) |
+
+### Closed on 2026-11-19
+
+| closed | why | residual now in |
+| --- | --- | --- |
+| [191](closed/191-base-class-named-through-a-module.md) | a base class named through a module (`class C(m.B)`) resolves like `m.B` in an expression | |
+| [192](closed/192-multi-line-parenthesized-import.md) | `from m import (...)` across lines parses | |
+| [193](closed/193-zero-argument-super.md) | zero-argument `super()` works; it asserted in every method | |
+| [198](closed/198-base-method-call-through-a-wrapper-reaches-the-override.md) | `Base.m(self)` and `super().m()` needing a wrapper (a default, reordered keywords, `*args`, `f(*t)`) call the base method, not the receiver's override | |
+| [199](closed/199-percent-r-in-a-computed-format.md) | `%r` and `%a` in a computed format give the repr | `%a` of non-ASCII is refused (no `ascii()`) |
 
 Every archived file starts with a dated closure note. The archive is
 [`closed/`](closed/).

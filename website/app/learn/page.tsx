@@ -237,6 +237,31 @@ print(sorted(counts.items()))
 print(random.random())          # 0.7894507294053692, as in CPython
 `}</Code>
         <p>
+          <code>itertools</code>, <code>functools</code> and <code>collections</code> work the
+          way CPython&apos;s do, including <code>lru_cache</code>&apos;s statistics:
+        </p>
+        <Code title="words.py">{`
+from collections import Counter
+from functools import lru_cache
+from itertools import groupby, pairwise
+
+text = "the quick brown fox jumps over the lazy dog the end"
+counts = Counter(text.split())
+print(counts.most_common(2))        # [('the', 3), ('quick', 1)]
+
+for n, group in groupby(sorted(text.split(), key=len), key=len):
+    print(n, list(group))
+
+print([b - a for a, b in pairwise([1, 4, 9, 16, 25])])   # [3, 5, 7, 9]
+
+@lru_cache(maxsize=None)
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+print(fib(80), fib.cache_info())
+# 23416728348467685 CacheInfo(hits=78, misses=81, maxsize=None, currsize=81)
+`}</Code>
+        <p>
           See <Link href="/libraries/">Libraries</Link> for what each module covers.
         </p>
 

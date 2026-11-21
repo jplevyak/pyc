@@ -30,6 +30,12 @@ struct PycScope : public gc {
   // pair can sit in front of it. Read by PY_funcdef while emitting the
   // method's class setter, which is why it lives on the scope.
   bool iter_bridge;
+  // A comprehension's scope (list, set, dict, generator expression): it
+  // binds its own names but is lowered inline into the enclosing function,
+  // so it is not a level of function nesting. A function defined inside it
+  // (a lambda in the element or the iterable) nests in the enclosing
+  // function, as its display does.
+  bool inline_scope;
   // issues/169: closure conversion of a FUNCTION-LOCAL class. Its body and
   // its methods may read the enclosing function's locals. The class-body
   // function receives each such value as an extra formal (cap_formals, on
@@ -41,7 +47,7 @@ struct PycScope : public gc {
   Map<Sym *, cchar *> cap_fields;
   Sym *cap_self;
   PycScope()
-      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false), cap_self(0) {
+      : in(0), cls(0), fun(0), lbreak(0), lcontinue(0), lreturn(0), lyield(0), iter_bridge(false), inline_scope(false), cap_self(0) {
     id = scope_id++;
   }
 };
@@ -308,6 +314,7 @@ bool decorator_name_is(cchar *s, cchar *want);
 bool pyc_is_setter_name(cchar *name);   // issues/188 (python_ifa_main.cc)
 void pyc_add_setter_name(cchar *name);
 void pyc_add_property_name(cchar *name);
+void pyc_ffi_bind_exports(PycCompiler &ctx);  // issues/188 item 1 (python_ifa_ctypes.cc)
 bool pyc_is_deleter_name(cchar *name);  // issues/007
 bool pyc_has_property_names();
 bool pyc_is_property_name(cchar *name);  // issues/171 #13 (python_ifa_main.cc)
@@ -346,6 +353,9 @@ int report_import_errors(PycCompiler &ctx);
 
 // From python_ifa_build_syms.cc:
 PycModule *get_module(cchar *name, PycCompiler &ctx);
+// `M.attr` where M is a module marker (`Sym::is_module`): the member's Sym,
+// or null when M is not a module or has no such name.
+Sym *pyc_module_member(Sym *mod, cchar *attr, PycCompiler &ctx);
 // issues/113: PEP 328 -- turn a dot-prefixed relative module name into
 // an absolute dotted one, against the importing module's package.
 cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
@@ -354,6 +364,8 @@ cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
 // python_ifa_ctypes.cc: lower the static ctypes subset to pyc Python plus a C
 // shim, before build_syms. pyc_ffi_shim is the shim's text, or null.
 void lower_ctypes(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);
+void lower_typing_and_dataclasses(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);  // issues/195
+void pyc_dataclass_check(PycCompiler &ctx);  // issues/195, after build_syms
 extern cchar *pyc_ffi_shim;
 void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out);
 int build_syms(PycModule *x, PycCompiler &ctx);

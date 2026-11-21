@@ -1,1 +1,0 @@
-ifa/210 -- a list display of function constants: C stores a function into a void* element without a cast (a C++ compile error); LLVM stores no elements, so dispatch finds no branch and traps. CPython prints -2 and 25, which the check file records, so this flips to PASS when 210 is fixed.

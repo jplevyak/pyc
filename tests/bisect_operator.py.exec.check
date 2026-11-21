@@ -1,0 +1,12 @@
+4 2 0 5 2
+[1, 2, 3, 4, 4, 4, 8]
+2 1
+[('a', 1), ('b', 3), ('x', 4), ('c', 5)]
+ValueError lo must be non-negative
+5 abab -2 3.5 3 1
+-4 1024 True True True False True
+2 7 5 16 4 -6 3
+6 2 2 [1, 2]
+[9, 2] [1, 2] True
+[('c', 1), ('b', 2), ('a', 9)] ('x', 'z') y
+24 [-1, -2]

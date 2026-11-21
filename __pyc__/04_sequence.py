@@ -1,4 +1,10 @@
 class __list_iter__:
+  # list(it) of an iterator: drain what is left, as CPython's list() does.
+  def __pyc_tolist__(self):
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   thelist = None
   position = 0
   def __iter__(self):
@@ -96,7 +102,15 @@ class list:
                           int, i,
                           int, j,
                           int, s)
+  # `del l[i]`: a negative index counts from the end and one out of range
+  # raises, as CPython's. This deleted the slice [i:i+1], which is empty
+  # for i = -1, so `del l[-1]` silently deleted nothing (issues/205).
   def __delitem__(self, key):
+    n = self.__len__()
+    if key < 0:
+      key += n
+    if key < 0 or key >= n:
+      raise IndexError("list assignment index out of range")
     return self.__pyc_delslice__(key, key + 1, 1)
   def remove(self, item):
     i = 0
@@ -203,8 +217,6 @@ class list:
                           int, l,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), l))
-  def __radd__(self, l):
-    pass
   def __iadd__(self, l):
     # CPython's list += is extend() then `return self`: it MUTATES, so an
     # alias sees the change (`m = l; l += [2]` leaves m == [1, 2]). This
@@ -586,6 +598,12 @@ class list:
     return self.__len__() != 0
 
 class __tuple_iter__:
+  # list(it) of an iterator: drain what is left, as CPython's list() does.
+  def __pyc_tolist__(self):
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   thetuple = None
   position = 0
   def __iter__(self):

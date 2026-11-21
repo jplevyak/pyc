@@ -1,0 +1,1 @@
+issues/204: a read of a name a circular import has not bound yet sees the later value instead of raising AttributeError

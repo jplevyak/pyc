@@ -1,0 +1,2 @@
+b'ab'
+Unhandled exception: pyc: Path.open() in a binary mode; use read_bytes(), write_bytes() or open(path, 'rb') (issues/202)

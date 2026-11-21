@@ -125,6 +125,42 @@ class PermissionError(OSError):
 class IsADirectoryError(OSError):
   pass
 
+class FileExistsError(OSError):
+  pass
+
+class NotADirectoryError(OSError):
+  pass
+
+class BlockingIOError(OSError):
+  pass
+
+class ChildProcessError(OSError):
+  pass
+
+class InterruptedError(OSError):
+  pass
+
+class ProcessLookupError(OSError):
+  pass
+
+class TimeoutError(OSError):
+  pass
+
+class ConnectionError(OSError):
+  pass
+
+class BrokenPipeError(ConnectionError):
+  pass
+
+class ConnectionAbortedError(ConnectionError):
+  pass
+
+class ConnectionRefusedError(ConnectionError):
+  pass
+
+class ConnectionResetError(ConnectionError):
+  pass
+
 class IOError(OSError):
   pass
 

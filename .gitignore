@@ -74,6 +74,8 @@ tests/*
 # negation inside it can apply -- same reason tests/ir/ is listed above.
 # These hold only .py sources; nothing is built inside them.
 !tests/pyc_pkg/
+!tests/circ_pkg/
+!tests/partinit_pkg/
 tests/build/
 tests/__pycache__/
 tests/pyc_compat.py

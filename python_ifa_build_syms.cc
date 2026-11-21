@@ -76,6 +76,21 @@ static cchar *module_file(cchar *p, cchar *mod) {
 // Search every root for `mod`, importing it on the first hit. Roots that
 // are themselves packages are skipped -- a package's interior is reached
 // through its own dotted name, never as a root.
+// Standard-library modules pyc declines to provide, with the reason in
+// CPython's terms and what to use instead. Consulted only for the
+// diagnostic of an import that found no module; a program's own module of
+// the same name on the search path is found first and used.
+static cchar *refused_stdlib_module(cchar *mod) {
+  static const struct { cchar *name, *why; } refused[] = {
+      {"argparse",
+       "its parse_args() result names and types its attributes at run time, from the option strings, "
+       "which has no static representation (issues/206); use getopt or sys.argv"},
+  };
+  for (auto &r : refused)
+    if (!strcmp(mod, r.name)) return r.why;
+  return nullptr;
+}
+
 static PycModule *find_and_import(cchar *mod, PycCompiler &ctx) {
   if (PycModule *m = get_module(mod, ctx)) return m;
   for (auto p : ctx.search_path->values()) {
@@ -224,11 +239,10 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
   int import_line = ctx.lineno;
   PycModule *m = find_and_import(mod, ctx);
   // Plain dotted import with no matching file for the full dotted
-  // name (e.g. `import os.path`): pyc has no real package hierarchy,
-  // so fall back to the top-level component. This matches CPython's
-  // own binding behavior for this form (only the top package name is
-  // bound) and lets pyc_lib modules that already expose a submodule
-  // as a plain attribute (os.py's `path = _os_path()`) work as-is.
+  // name: fall back to the top-level component, which binds only the
+  // top package name, as CPython's own binding does for this form. (Its
+  // first user, `import os.path` against an os.py whose `path` was an
+  // object, is gone: os is a package with a real os/path.py, issues/202.)
   char *bind_mod = mod;
   if (!m && !from) {
     char *dot = strchr(mod, '.');
@@ -245,6 +259,10 @@ static void build_import_syms(char *sym, char *as, char *from, PycCompiler &ctx)
     // the undefined-name pass (issues/107) ran first and reported the
     // consequence -- minilight's `from ml import entry` failed with
     // "name 'entry' is not defined" and never mentioned `ml`.
+    if (cchar *why = refused_stdlib_module(mod)) {
+      add_import_error(ctx, "error line %d, pyc does not provide module '%s': %s", import_line, mod, why);
+      return;
+    }
     cchar *path = module_rel_path(mod);
     add_import_error(ctx, "error line %d, cannot find module '%s' (looked for '%s.py' and "
                           "'%s/__init__.py' on the search path)",
@@ -588,13 +606,40 @@ static bool pyda_class_body_has_method(PyDAST *cdef, cchar *name) {
 // PY_classdef does BEFORE the body -- unlike `sym->implements`, which
 // inherits_add only fills afterwards. A null entry means an unresolved
 // base; check_base reports that later, so tolerate it here.
+Sym *pyc_module_member(Sym *mod, cchar *attr, PycCompiler &ctx) {
+  PycModule *mm = mod && mod->is_module ? ctx.module_syms.get(mod) : nullptr;
+  if (!mm) return nullptr;
+  PycScope *ms = mm->ctx->saved_scopes.get(mm->pymod);
+  PycSymbol *member = ms ? ms->map.get(cannonicalize_string(attr)) : nullptr;
+  if ((intptr_t)member <= (intptr_t)NONLOCAL_DEF) return nullptr;
+  return member->sym;
+}
+
+// The Sym a class base names: a name, or a module member reached through
+// modules (`class C(m.B)`, `class C(pkg.m.B)`). Modules are compile-time
+// namespaces, so this is the same lookup `m.B` gets as an expression
+// (PY_power in build_if1). Null for any other expression.
+static Sym *pyda_base_sym(PyDAST *b, PycCompiler &ctx) {
+  if (b->kind != PY_power) return getAST(b, ctx)->sym;
+  Sym *cur = getAST(b->children[0], ctx)->sym;
+  for (int i = 1; i < b->children.n; i++) {
+    PyDAST *t = b->children[i];
+    if (t->kind != PY_attribute || !cur || !cur->is_module) return nullptr;
+    cchar *attr = t->children[0]->str_val;
+    Sym *m = pyc_module_member(cur, attr, ctx);
+    if (!m) fail("error line %d, module '%s' has no attribute '%s'", b->line, ctx.module_syms.get(cur)->name, attr);
+    cur = m;
+  }
+  return cur;
+}
+
 static void pyda_class_base_syms(PyDAST *cdef, PycCompiler &ctx, Vec<Sym *> &out) {
   for (int i = 1; i < cdef->children.n - 1; i++) {
     PyDAST *b = cdef->children[i];
     if (b->kind == PY_tuple)
-      for (int j = 0; j < b->children.n; j++) out.add(getAST(b->children[j], ctx)->sym);
+      for (int j = 0; j < b->children.n; j++) out.add(pyda_base_sym(b->children[j], ctx));
     else
-      out.add(getAST(b, ctx)->sym);
+      out.add(pyda_base_sym(b, ctx));
   }
 }
 
@@ -813,6 +858,9 @@ static bool ast_reaches_raise(PyDAST *n, PycCompiler &ctx) {
     case PY_yield_stmt:
     case PY_yield_expr:
     case PY_yield_from_expr:
+    // `del l[i]` and `del d[k]` raise IndexError and KeyError from the
+    // builtin __delitem__ (issues/205), as `del x` can raise NameError.
+    case PY_del_stmt:
       return true;
     case PY_power:
       for (int i = 1; i < n->children.n; i++) {
@@ -906,7 +954,17 @@ static Sym *def_fun_pyda(PyDAST *n, PycAST *ast, Sym *fn, PycCompiler &ctx) {
   else
     enter_scope(ctx, (Sym *)0);  // funcdef/lambda: in set later via scope_stack.last()->fun
   ctx.scope_stack.last()->fun = fn;
-  fn->nesting_depth = ctx.scope_stack.n - 1;
+  // The depth counts the enclosing scopes that are functions or class
+  // bodies, not the inline comprehension scopes between them: a lambda in a
+  // module-level `[f(x) for x in map(lambda y: y, xs)]` is at depth 1, as
+  // the module function that creates it is at 0. Counting the
+  // comprehension made its depth one more than its display and crashed
+  // flow analysis (make_AVar) for any lambda inside a comprehension
+  // (issues/207).
+  int depth = 0;
+  for (int i = 0; i < ctx.scope_stack.n - 1; i++)
+    if (!ctx.scope_stack[i]->inline_scope) depth++;
+  fn->nesting_depth = depth;
   ctx.lreturn() = ast->label[0] = if1_alloc_label(if1);
   return fn;
 }
@@ -1615,13 +1673,13 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
         PyDAST *base_ast = cdef->children[i];
         if (base_ast->kind == PY_tuple) {
           for (int j = 0; j < base_ast->children.n; j++) {
-            Sym *base = getAST(base_ast->children[j], ctx)->sym;
+            Sym *base = pyda_base_sym(base_ast->children[j], ctx);
             check_base(base);
             cdef_ast->sym->inherits_add(base);
             any_base = true;
           }
         } else {
-          Sym *base = getAST(base_ast, ctx)->sym;
+          Sym *base = pyda_base_sym(base_ast, ctx);
           check_base(base);
           cdef_ast->sym->inherits_add(base);
           any_base = true;
@@ -1777,7 +1835,15 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       build_syms_pyda(n->children[1], ctx);
       return 0;
 
-    case PY_annassign:
+    case PY_annassign: {
+      // issues/195: a bare annotation (`x: int`) in a class or module body
+      // binds nothing in CPython; it only records the annotation. Binding
+      // it made `x` a class member with no value, which a subclass then
+      // read ("unresolved member 'x' of class 'Base'"). In a function it
+      // does make `x` local, so it binds there.
+      PycScope *sc = ctx.scope_stack.last();
+      if (n->children.n == 2 && sc->in && sc->in == sc->cls) return 0;
+    }
       mark_store(n->children[0]);
       build_syms_pyda(n->children[0], ctx);
       if (n->children.n == 3) {
@@ -1796,6 +1862,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
     case PY_listcomp:
     case PY_genexpr: {
       enter_scope(n, ctx, nullptr);
+      ctx.scope_stack.last()->inline_scope = true;
       ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
       build_comprehension_body_syms(n, ctx);
       exit_scope(ctx);
@@ -2038,6 +2105,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // loop target doesn't leak into the enclosing scope).
       if (n->children.n == 3 && n->children[2]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
+        ctx.scope_stack.last()->inline_scope = true;
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
         build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
@@ -2060,6 +2128,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // into the enclosing scope).
       if (n->children.n == 2 && n->children[1]->kind == PY_comp_for) {
         enter_scope(n, ctx, nullptr);
+        ctx.scope_stack.last()->inline_scope = true;
         ctx.lyield() = ast->label[0] = if1_alloc_label(if1);
         build_comprehension_body_syms(n, ctx);
         exit_scope(ctx);
@@ -2768,6 +2837,42 @@ static void synthesize_default_iop(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym 
 // and every other type inherits the pairs loop (__pyc_any_type__). The
 // choice is then made by dispatch on x, per receiver type. The name is
 // CPython's own protocol here, not an inference about the program.
+// reversed(x) dispatches x.__pyc_reversed__() (05_builtins.py); CPython's
+// reversed() calls __reversed__ when the class defines one, and uses the
+// sequence protocol otherwise (__pyc_any_type__'s default). A class whose
+// body defines __reversed__ gets
+//   def __pyc_reversed__(self): return self.__reversed__()
+// It indexed 0..len-1 regardless, so an OrderedDict was read with integer
+// keys (issues/207).
+static void synthesize_reversed(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody) {
+  cchar *name = "__pyc_reversed__";
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
+  if (!ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, "__reversed__"))) return;
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, name));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, name));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  Code *b = 0;
+  Sym *res = new_sym(ast);
+  call_method(&b, ast, mfn->self, if1_make_symbol(if1, "__reversed__"), res, 0);
+  if1_move(if1, &b, res, mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(name)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, name), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
 static void synthesize_dict_into(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody) {
   cchar *name = "__pyc_dict_into__";
   if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
@@ -2795,6 +2900,62 @@ static void synthesize_dict_into(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *f
   Sym *res = new_sym(ast);
   if1_add_send_result(if1, send, res);
   if1_move(if1, &b, res, mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(name)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, name), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
+// The class's own name, as a method a class answers for itself:
+//   def __pyc_class_name__(self): return "<the class's __name__>"
+// synthesized for a class that does not define its own BUT inherits one: a
+// library class opts its subclasses in by defining it (pathlib's PurePath).
+// Not for every class: each synthesized method is a closure stored in the
+// prototype, a CreationSet whether or not anything calls it, and doing it
+// everywhere cost the corpus +13.6 % CreationSets (issues/202). A method, not a field,
+// so a receiver whose classes form a union answers by ordinary dispatch, and
+// a subclass answers with ITS name (CPython's `type(self).__name__`), not the
+// name of the class that defined the method reading it. Library code reads
+// it where CPython reads type(self).__name__ (pathlib's repr), and a class
+// may define it to answer as CPython's would (pathlib's Path is
+// `PosixPath`). Never read means never analysed: an uncalled method costs
+// a prototype store, and slot elision removes the slot (ifa/123).
+//
+// `__pyc_class__` is its companion, returning the class itself, for library
+// code that constructs with CPython's `type(self)(...)` (pathlib's
+// with_segments), so a subclass's derived objects are of the subclass.
+static void synthesize_class_name(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody,
+                                  bool the_class = false) {
+  cchar *name = the_class ? "__pyc_class__" : "__pyc_class_name__";
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
+  if (!cls->name) return;
+  bool inherited = false;  // from a class in the MRO that defines it
+  Vec<Sym *> mro;
+  c3_mro(cls, mro);
+  for (int i = 1; i < mro.n && !inherited; i++)
+    for (Sym *m : mro[i]->has)
+      if (m && m->name && m->in == mro[i] && !strcmp(m->name, name)) {
+        inherited = true;
+        break;
+      }
+  if (!inherited) return;
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, name));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, name));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  Code *b = 0;
+  if1_move(if1, &b, the_class ? cls : make_string(cls->name, (int)strlen(cls->name)), mfn->ret);
   if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
   if1_closure(if1, mfn, b, as.n, as.v);
   Sym *member = new_PycSymbol(name)->sym;
@@ -3009,6 +3170,9 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     synthesize_default_iop(ctx, ast, cls, fn, &body, "__ifloordiv__", "__floordiv__");
   }
   if (is_record) synthesize_dict_into(ctx, ast, cls, fn, &body);
+  if (is_record) synthesize_reversed(ctx, ast, cls, fn, &body);
+  if (is_record) synthesize_class_name(ctx, ast, cls, fn, &body);
+  if (is_record) synthesize_class_name(ctx, ast, cls, fn, &body, true);
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;
@@ -3295,11 +3459,27 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
   if (call_fun) {
     fn = new_fun(ast);
     fn->nesting_depth = ctx.scope_stack.n;
+    // finalize_function reads a class-AST wrapper's defaults from ->init
+    // (the __new__ wrapper's are __init__'s); this one's are __call__'s, so
+    // `k(1)` on `__call__(self, a, b=10)` fills b (issues/207).
+    fn->init = call_sym;
     Vec<Sym *> as;
     as.add(new_sym(ast, "__call__"));
     as[0]->must_implement_and_specialize(cls);
     int n_args = call_sym->has.n - 1;
-    for (int i = 2; i <= n_args; i++) as.add(new_sym(ast));
+    // Each formal takes the name of the __call__ parameter it forwards,
+    // and a `*args` or `**kw` formal is marked as one, as the __new__
+    // wrapper does for __init__ (issues/182): `c(1, 2)` on a
+    // `__call__(self, *args)` bound 2 actuals to 1 positional formal and
+    // failed to resolve, and keywords could not bind by name (issues/207).
+    for (int i = 2; i <= n_args; i++) {
+      Sym *cf = call_sym->has[i];
+      Sym *wf = new_sym(ast, cf->name);
+      if (ctx.star_formals.set_in(cf)) ctx.star_formals.set_add(wf), wf->is_rest = 1;
+      if (ctx.dstar_formals.set_in(cf)) ctx.dstar_formals.set_add(wf), wf->is_rest = 1;
+      if (ctx.kwonly_formals.set_in(cf)) ctx.kwonly_formals.set_add(wf);
+      as.add(wf);
+    }
     body = 0;
     Sym *t = new_sym(ast);
     Code *send = if1_send(if1, &body, 2, 1, sym___call__, as[0], (t = new_sym(ast)));

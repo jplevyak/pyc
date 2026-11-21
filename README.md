@@ -44,8 +44,15 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
   `tuple`, `dict`, `set`, `range`, `slice`, `None`, with `%`-formatting and f-strings.
 - **Modules**: `import`, `from … import`, packages and relative imports, all resolved at compile
   time. Partial implementations of common standard-library modules live in
-  [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os`, `collections`, `heapq`,
-  `copy`, `struct`, `string`, `socket` and parts of `re` and `itertools`. File I/O uses `open()`.
+  [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os` and `os.path`,
+  `pathlib`, `fnmatch`, `textwrap`, `collections`, `itertools`, `functools`, `bisect`,
+  `operator`, `heapq`, `copy`, `struct`, `string`, `socket`, `logging` and part of `re`
+  ([issues/207](issues/207-core-library-batch.md) lists what is not there). File I/O uses `open()`, which takes a str or a `pathlib`
+  path.
+- **Type hints and dataclasses**: annotations are accepted and ignored, `typing` provides its
+  names (`TYPE_CHECKING` blocks are skipped, `TypeAlias` assignments dropped), and `@dataclass`
+  generates `__init__`, `__repr__`, `__eq__` and `__hash__` as CPython does, with `field()`
+  defaults and factories, `frozen=True` and `__post_init__`.
 - **C libraries**: a static subset of `ctypes`. Declare a function with `CDLL`, `argtypes` and
   `restype` and it compiles to a direct call, with `Structure` and `POINTER` for C data. The same
   file runs under CPython. See [Calling a C library](#calling-a-c-library).
@@ -395,7 +402,7 @@ make test-links      # every relative Markdown link resolves (needs no build)
 ```
 
 The end-to-end suite compiles each `tests/*.py`, runs it, and compares its output with the
-expected output and with CPython's. When green it reports 524 passed and 16 known issues on each
+expected output and with CPython's. When green it reports 581 passed and 18 known issues on each
 backend. Tests carrying a `.known_issue` sidecar are filed bugs with CPython's answer as the
 expected output; they report `KNOWN` and flip to `PASS` once fixed. `make test` stops at the first
 failing group, so check its exit status rather than reading the tail of its output.
@@ -468,9 +475,26 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   an `except` clause is refused when the program raises `StopIteration` with more than one value
   type ([issues/172](issues/172-stopiteration-value-reads-the-global-exception-slot.md)).
 - **The standard library** is limited to the partial modules in `pyc_lib/`.
-- **`ctypes`** is a static subset: no callbacks (`CFUNCTYPE`), scalar out-parameters
-  (`byref(c_int())`), arrays, unions or `cast`, declarations must be at module top level, and a
-  program with foreign calls does not run under `--jit`
+- **`typing` and `dataclasses`**: `NamedTuple`, `TypedDict`, `Generic` and `Protocol` are not
+  provided. `@dataclass` must be on a class at module level, a subclass of a dataclass must be
+  one itself, and `order`, `kw_only`, `slots`, `InitVar`, `fields()`, `asdict()` and `replace()`
+  are refused ([issues/195](issues/195-typing-and-dataclasses.md)).
+- **`logging`** covers loggers, levels, `basicConfig`, `%`-style `Formatter`s, `Filter`s and the
+  stream, file and null handlers. A format naming the caller's location (`%(lineno)d`,
+  `%(funcName)s`, …), `exception()`, `exc_info`/`extra`, the `{`/`$` styles, `LoggerAdapter`
+  and `logging.handlers` are refused ([issues/197](issues/197-logging.md)).
+- **`os`, `os.path` and `pathlib`** are POSIX only, and take str paths or path objects, not
+  bytes. An `OSError` carries its message but not `errno`, `strerror` or `filename`. `pathlib`
+  has no Windows flavour and no `as_uri`, `owner`, `group` or `chmod`, and `Path.open()` is
+  text-only; `read_bytes()`, `write_bytes()` and `open(path, 'rb')` work
+  ([issues/202](issues/202-os-and-pathlib.md)).
+- **`argparse`** is refused at the import: the attributes of its `parse_args()` result are named
+  and typed at run time. `getopt` and `sys.argv` work ([issues/206](issues/206-argparse.md)).
+- **Non-ASCII text**: a `str` is stored as UTF-8 bytes, and `len`, indexing, slicing and
+  iteration count bytes, not characters ([issues/203](issues/203-str-counts-utf8-bytes.md)).
+- **`ctypes`** is a static subset: structures, pointers, arrays, scalar out-parameters and
+  `CFUNCTYPE` callbacks (through libffi), but no unions, bit fields or `cast`; declarations must
+  be at module top level, and a program with foreign calls does not run under `--jit`
   ([issues/188](issues/188-static-ctypes-subset.md)).
 - **Class attributes stored through the class after it is used**: an instance or a subclass keeps
   the value the class had when the instance or subclass was made, so `C.k += 1` is not seen

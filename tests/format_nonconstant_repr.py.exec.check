@@ -1,0 +1,10 @@
+'x'
+P-repr
+[s|'t']
+[P-str|P-repr]
+'a' and 3 and   2.5
+True and None and   1.0
+'q' q
+'ab'  |    ab|
+7 0.1 [1, 2]
+%r stays literal "it's"

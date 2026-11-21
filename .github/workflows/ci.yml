@@ -83,6 +83,7 @@ jobs:
             llvm-20-dev \
             lld-20 \
             libgc-dev \
+            libffi-dev \
             python3 \
             make
 

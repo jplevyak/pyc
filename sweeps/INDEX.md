@@ -47,6 +47,19 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__default__f430bd66+8a134d9c` | 2026-11-21 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=3025/872=3.47 pratio=2.14 n=77 |
+| `check__default__020ede00+4ce3adec` | 2026-11-20 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2791/812=3.44 pratio=2.34 n=77 |
+| `check__default__5ad2dc46+f9726c92` | 2026-11-20 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2791/812=3.44 pratio=2.34 n=77 |
+| `check__default__5ad2dc46+03b2a253` | 2026-11-20 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2791/812=3.44 pratio=2.34 n=77 |
+| `check__default__ce537989+8714296f` | 2026-11-19 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__default__d3c93d16+35a20895` | 2026-11-19 | programs=77 compile_fail=0 run_fail=1 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__default__9b95fc1a+c933c9ae` | 2026-11-19 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__default__d7cffe7d+786ca7ab` | 2026-11-19 | programs=77 compile_fail=0 run_fail=3 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__PYC_LLVM_1__b8f19ce6+64aba741` | 2026-11-18 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__default__b8f19ce6+49905899` | 2026-11-18 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__PYC_LLVM_1__ad72ad31+2a323769` | 2026-11-18 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__default__ad72ad31+54ab4ec7` | 2026-11-18 | programs=77 compile_fail=0 run_fail=1 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
+| `check__default__77ec9889+ca9a81bc` | 2026-11-18 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
 | `check__default__4c3220b7+ce9d4a40` | 2026-11-18 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
 | `check__PYC_LLVM_1__19a71648+e06aaf32` | 2026-11-14 | programs=77 compile_fail=1 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=18 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |
 | `check__default__c7badb43+dc450f88` | 2026-11-14 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=21 cs/shapes=2789/811=3.44 pratio=2.34 n=77 |

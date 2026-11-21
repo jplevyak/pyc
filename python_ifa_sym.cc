@@ -215,6 +215,22 @@ Sym *new_fun(PycAST *ast, Sym *fun) {
   return fun;
 }
 
+// issues/198: every wrapper below forwards its actuals with a fresh send,
+// and the matcher resolves that send from scratch. For a METHOD the callee
+// slot is the selector, so the send dispatches on the receiver's class --
+// and a call that named its target statically, `Base.m(self)` or
+// `super().m()` (whose receiver carries Sym::aspect, python_ifa_build_if1.cc),
+// lost that and reached the receiver's own override: a subclass's
+// `__init__(self, s=1)` calling `B.__init__(self)` called itself. A wrapper
+// exists for exactly one `f`, so its receiver formal dispatches as f's class
+// (the aspect mechanism those calls use) and the forwarding send can reach
+// only `f`.
+static void pin_wrapped_receiver(Fun *f, int i, Sym *a) {
+  Sym *self = f->sym->self;
+  if (self && i >= 0 && i < f->sym->has.n && f->sym->has[i] == self && self->must_specialize)
+    a->aspect = self->must_specialize;
+}
+
 Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   PycAST *ast = (PycAST *)f->ast;
   Sym *fn = new_fun(ast);
@@ -243,6 +259,19 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
   MPosition pos;
   pos.push(1);
   Code *body = 0;
+  // issues/195: a default flagged is_default_factory (a dataclass field's
+  // default_factory) is a callable, called on every call that omits it.
+  // The stored value is the factory, evaluated once where the def runs.
+  Map<MPosition *, Sym *> made;
+  for (MPosition *cp : defaults_set) {
+    if (!cp) continue;
+    PycAST *d = (PycAST *)f->default_args.get(cp);
+    if (!d->xpyd || !d->xpyd->is_default_factory) continue;
+    Sym *v = new_sym(ast);
+    Code *call = if1_send(if1, &body, 1, 1, d->sym, v);
+    call->ast = ast;
+    made.put(cp, v);
+  }
   Sym *ret = new_sym(ast);
   Code *send = if1_send(if1, &body, 0, 1, ret);
   send->ast = ast;
@@ -252,7 +281,8 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
     // send names the ones it passes.
     cchar *kwname = f->kwonly_pos && i + 1 >= f->kwonly_pos ? f->sym->has[i]->name : nullptr;
     if (defaults_set.set_in(cp)) {
-      if1_add_send_arg(if1, send, ((PycAST *)f->default_args.get(cp))->sym, kwname);
+      Sym *m = made.get(cp);
+      if1_add_send_arg(if1, send, m ? m : ((PycAST *)f->default_args.get(cp))->sym, kwname);
     } else {
       Sym *a = new_sym(ast);
       // Inherit clone_for_constants from the wrapped formal:
@@ -275,6 +305,7 @@ Fun *PycCompiler::default_wrapper(Fun *f, Vec<MPosition *> &default_args) {
         // position-order-independent and already proven correct.
         a->name = orig->name;
       }
+      pin_wrapped_receiver(f, i, a);
       as.add(a);
       if1_add_send_arg(if1, send, a, kwname);
     }
@@ -319,6 +350,7 @@ Fun *PycCompiler::signature_wrapper(Fun *f, int npositional, Vec<cchar *> &keywo
     if (i < nplain) {
       a->clone_for_constants = f->sym->has[i]->clone_for_constants;
       a->name = f->sym->has[i]->name;
+      pin_wrapped_receiver(f, i, a);
       bound[i] = a;
     } else if (f->rest_pos)
       surplus.add(a);
@@ -417,6 +449,7 @@ Fun *PycCompiler::unpack_wrapper(Fun *f, int star_at, int arity, Vec<cchar *> &n
       inner.add(d);
       inner_names.add(nullptr);
     } else {
+      if (i + 1 < star_at) pin_wrapped_receiver(f, i, a);
       inner.add(a);
       inner_names.add(nullptr);
     }
@@ -490,6 +523,7 @@ Fun *PycCompiler::order_wrapper(Fun *f, Map<MPosition *, MPosition *> &substitut
     // reordered call are these wrapper formals.
     Sym *orig = f->arg_syms.get(fcp);
     if (orig) a->clone_for_constants = orig->clone_for_constants;
+    pin_wrapped_receiver(f, i, a);
     as[ai] = a;
     pos.inc();
   }

@@ -1,0 +1,24 @@
+Counter({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1}) 5 0 5 [('a', 5), ('b', 2)] [('a', 5), ('b', 2), ('r', 2), ('c', 1), ('d', 1)] 11 ['a', 'a', 'a', 'a', 'a', 'b', 'b', 'c', 'd', 'r', 'r']
+Counter({'a': 7, 'r': 2, 'c': 1, 'd': 1, 'z': 1, 'b': -3}) Counter() Counter({'x': 2, 'y': 1}) Counter({'cats': 4, 'dogs': 2})
+Counter({'a': 3, 'b': 3, 'c': 1}) Counter({'a': 1}) Counter({'a': 2, 'b': 2, 'c': 1}) Counter({'a': 1, 'b': 1}) Counter({'b': 2}) Counter({'a': 1})
+Counter({'a': 3, 'b': 3, 'c': 1}) True True True
+Counter({'b': 3, 'c': 1}) True ['b', 'c'] {'b': 3, 'c': 1}
+('x', 2) 9
+OrderedDict({'b': 1, 'a': 2, 'c': 3}) ['b', 'a', 'c'] ['c', 'a', 'b'] OrderedDict() OrderedDict({1: 2, 3: 4})
+OrderedDict({'a': 2, 'c': 3, 'b': 1})
+OrderedDict({'a': 2}) ('b', 1) ('c', 3) OrderedDict({'a': 2})
+False True True
+KeyError 'nope'
+deque([0, 1, 2, 3, 4]) 5 0 4 True 1 3
+deque([3, 4, 0, 1, 2])
+deque([4, 0, 1, 2, 3])
+deque([10, 4, 0, 1, 2]) 11 3 deque([10, 4, 0, 1, 2])
+deque([2, 1, 0, 4]) [4, 0, 1, 2]
+deque([7, 99, 1, 0]) deque([7, 99, 1, 0]) True
+deque([3, 4, 5], maxlen=3) 3 None
+deque([9, 3, 4], maxlen=3)
+deque([4, 7, 8], maxlen=3) deque([])
+deque([1, 2, 3])
+IndexError pop from an empty deque
+ValueError 5 is not in deque
+{'a': [1, 3], 'b': [2]} [5] ['a', 'b', 'c']

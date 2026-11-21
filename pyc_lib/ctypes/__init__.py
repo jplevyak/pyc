@@ -21,6 +21,7 @@ PyDLL = 0
 cdll = 0
 Structure = 0
 POINTER = 0
+CFUNCTYPE = 0
 c_bool = 0
 c_char = 0
 c_byte = 0

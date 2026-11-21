@@ -92,3 +92,6 @@ class StringIO:
 
     def close(self):
         pass
+
+    def flush(self):
+        pass

@@ -1,0 +1,1 @@
+stderr only: CPython names the callback at its address and prints the traceback.

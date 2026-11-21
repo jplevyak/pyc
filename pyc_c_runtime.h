@@ -53,6 +53,8 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <pwd.h>
 #include <locale.h>
 #include <langinfo.h>
 #if __has_include(<sys/random.h>)
@@ -540,6 +542,28 @@ inline char *_CG_String_n(const void *x, size_t len) {
 inline _CG_int64 _CG_ffi_bytes_addr(char *b) { return (_CG_int64)(intptr_t)b; }
 inline char *_CG_ffi_cstr(_CG_int64 p) { return _CG_String((const void *)(intptr_t)p); }
 inline char *_CG_ffi_buf(_CG_int64 n) { return _CG_string_alloc((size_t)n); }
+// C storage copied by value (a Structure or an array stored into a field
+// or an element), and a c_char array read as bytes (to the first NUL, or
+// all of it) and written from bytes (with a NUL after, when there is room).
+inline _CG_int64 _CG_ffi_copy(_CG_int64 dst, _CG_int64 src, _CG_int64 n) {
+  memmove((void *)(intptr_t)dst, (const void *)(intptr_t)src, (size_t)n);
+  return 0;
+}
+inline char *_CG_ffi_rd_cstr_n(_CG_int64 a, _CG_int64 n) {
+  const char *p = (const char *)(intptr_t)a;
+  return _CG_String_n(p, strnlen(p, (size_t)n));
+}
+inline char *_CG_ffi_rd_raw(_CG_int64 a, _CG_int64 n) { return _CG_String_n((const void *)(intptr_t)a, (size_t)n); }
+inline _CG_int64 _CG_ffi_wr_chars(_CG_int64 a, char *b, _CG_int64 len, _CG_int64 n) {
+  memcpy((void *)(intptr_t)a, b, (size_t)len);
+  if (len < n) ((char *)(intptr_t)a)[len] = 0;
+  return 0;
+}
+// A ctypes callback raised: CPython prints it and the callback returns zero.
+inline _CG_int64 _CG_ffi_cb_ignored(char *msg) {
+  fprintf(stderr, "Exception ignored on calling ctypes callback function\n%s\n", msg);
+  return 0;
+}
 // A c_char's value: one byte, which may be NUL.
 inline char *_CG_ffi_char(_CG_int64 v) {
   char c = (char)v;
@@ -651,6 +675,107 @@ inline char *_CG_readdir_name(int64 h) {
   return _CG_String(e->d_name);
 }
 
+// math.frexp and math.modf (issues/207): the out-parameter halves.
+inline double _CG_frexp_m(double x) { int e; return frexp(x, &e); }
+inline int64 _CG_frexp_e(double x) { int e; frexp(x, &e); return (int64)e; }
+inline double _CG_modf_frac(double x) { double i; return modf(x, &i); }
+inline double _CG_modf_int(double x) { double i; modf(x, &i); return i; }
+
+// pyc_lib/os (issues/202): each call returns 0 or the errno, so the Python
+// side raises the OSError subclass CPython does without another call
+// between the failure and the read of errno. A helper that returns a
+// string leaves its errno in _CG_os_err() instead.
+// The storage is extern, defined once in pyc_runtime.c (the _cg_argv
+// pattern), so both backends share one copy.
+extern int _cg_os_err;
+extern struct stat _cg_os_st;
+inline int64 _CG_os_err(void) { return (int64)_cg_os_err; }
+inline int64 _CG_os_rc(int rc) { return rc == 0 ? 0 : (int64)errno; }
+inline int64 _CG_os_mkdir(const char *p, int64 mode) { return _CG_os_rc(mkdir(p, (mode_t)mode)); }
+inline int64 _CG_os_rmdir(const char *p) { return _CG_os_rc(rmdir(p)); }
+inline int64 _CG_os_unlink(const char *p) { return _CG_os_rc(unlink(p)); }
+inline int64 _CG_os_chdir(const char *p) { return _CG_os_rc(chdir(p)); }
+inline int64 _CG_os_rename(const char *a, const char *b) { return _CG_os_rc(rename(a, b)); }
+inline int64 _CG_os_symlink(const char *a, const char *b) { return _CG_os_rc(symlink(a, b)); }
+inline int64 _CG_os_access(const char *p, int64 mode) { return access(p, (int)mode) == 0; }
+inline int64 _CG_os_utime_now(const char *p) { return _CG_os_rc(utimes(p, NULL)); }
+inline int64 _CG_os_create(const char *p, int64 mode, int64 excl) {
+  int fd = open(p, O_CREAT | O_WRONLY | (excl ? O_EXCL : 0), (mode_t)mode);
+  if (fd < 0) return (int64)errno;
+  close(fd);
+  return 0;
+}
+inline int64 _CG_os_cpu_count(void) { return (int64)sysconf(_SC_NPROCESSORS_ONLN); }
+// pathlib's predicates read these errnos as "no" and raise on any other.
+inline int64 _CG_os_ignorable_errno(int64 e) { return e == ENOENT || e == ENOTDIR || e == EBADF || e == ELOOP; }
+
+// os.stat / os.lstat: one call fills this, and the fields are read from
+// it. Times as CPython builds them: `sec + nsec * 1e-9` for st_mtime, and
+// `sec * 10**9 + nsec` for st_mtime_ns.
+inline int64 _CG_os_stat(const char *p, int64 follow) {
+  return _CG_os_rc(follow ? stat(p, &_cg_os_st) : lstat(p, &_cg_os_st));
+}
+#ifdef __APPLE__
+#define _CG_ST_TIM(st, w) ((st).st_##w##timespec)
+#else
+#define _CG_ST_TIM(st, w) ((st).st_##w##tim)
+#endif
+inline int64 _CG_os_stat_int(int64 i) {
+  struct stat *s = &_cg_os_st;
+#define st (*s)
+  switch (i) {
+    case 0: return (int64)st.st_mode;
+    case 1: return (int64)st.st_ino;
+    case 2: return (int64)st.st_dev;
+    case 3: return (int64)st.st_nlink;
+    case 4: return (int64)st.st_uid;
+    case 5: return (int64)st.st_gid;
+    case 6: return (int64)st.st_size;
+    case 7: return (int64)_CG_ST_TIM(st, a).tv_sec;
+    case 8: return (int64)_CG_ST_TIM(st, m).tv_sec;
+    case 9: return (int64)_CG_ST_TIM(st, c).tv_sec;
+    case 10: return (int64)_CG_ST_TIM(st, a).tv_sec * 1000000000LL + _CG_ST_TIM(st, a).tv_nsec;
+    case 11: return (int64)_CG_ST_TIM(st, m).tv_sec * 1000000000LL + _CG_ST_TIM(st, m).tv_nsec;
+    case 12: return (int64)_CG_ST_TIM(st, c).tv_sec * 1000000000LL + _CG_ST_TIM(st, c).tv_nsec;
+    case 13: return (int64)st.st_blocks;
+    case 14: return (int64)st.st_blksize;
+    case 15: return (int64)st.st_rdev;
+    default: return 0;
+  }
+#undef st
+}
+inline double _CG_os_stat_time(int64 i) {
+  struct stat *s = &_cg_os_st;
+  struct timespec t = i == 0 ? _CG_ST_TIM(*s, a) : i == 1 ? _CG_ST_TIM(*s, m) : _CG_ST_TIM(*s, c);
+  return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+}
+
+// The i-th "KEY=VALUE" of the environment at the call, "" past the end.
+inline char *_CG_os_environ_at(int64 i) {
+  extern char **environ;
+  for (int64 k = 0; k < i; k++)
+    if (!environ[k]) return _CG_String("");
+  return _CG_String(environ[i] ? environ[i] : "");
+}
+inline int64 _CG_os_setenv(const char *k, const char *v) { return _CG_os_rc(setenv(k, v, 1)); }
+inline int64 _CG_os_unsetenv(const char *k) { return _CG_os_rc(unsetenv(k)); }
+
+inline char *_CG_os_readlink(const char *p) {
+  char buf[4096];
+  ssize_t n = readlink(p, buf, sizeof(buf) - 1);
+  _cg_os_err = n < 0 ? errno : 0;
+  if (n < 0) return _CG_String("");
+  buf[n] = 0;
+  return _CG_String(buf);
+}
+
+// The home directory from the password database, for expanduser when HOME
+// is unset (the current user) or for `~name`. "" when there is none.
+inline char *_CG_os_pw_home(const char *name) {
+  struct passwd *pw = *name ? getpwnam(name) : getpwuid(getuid());
+  return _CG_String(pw && pw->pw_dir ? pw->pw_dir : "");
+}
+
 // issues/165: Python's `%d` is C's `int` conversion -- 32 bits -- but
 // every integer pyc pushes into this vararg list is widened to int64 (see
 // format_string_codegen in python_ifa_main.cc and the matching emitter in
@@ -692,6 +817,10 @@ inline const char *_CG_widen_int_convs(const char *fmt) {
        hand-written "%ld" does not become "%lldd" */
     while (*p && strchr("hlLqjzt", *p)) p++;
     if (*p && strchr("diouxX", *p)) { *o++ = 'l'; *o++ = 'l'; }
+    /* issues/199: an argument meeting %r or %a reaches here already its
+       repr (__pyc_fmtval__, or the frontend's conversion), so it prints as
+       a string; C has no %r, and vsnprintf printed the spec itself */
+    if (*p == 'r' || *p == 'a') { *o++ = 's'; p++; continue; }
     if (*p) *o++ = *p++;
   }
   *o = 0;
@@ -775,7 +904,8 @@ inline char *_CG_format_string_tagged(char *str, const char *tags, ...) {
         spec[si++] = 'l'; spec[si++] = 'l'; spec[si++] = conv; spec[si] = 0;
         m = snprintf(sbuf, sizeof(sbuf), spec, v);
         if (m >= (int)sizeof(sbuf)) { big = (char *)GC_MALLOC_ATOMIC((size_t)m + 1); snprintf(big, (size_t)m + 1, spec, v); }
-      } else if (strchr("feEgGFaA", conv)) {
+      } else if (strchr("feEgGF", conv)) {
+        /* not C's %a/%A: Python's %a is ascii(x), a string (issues/199) */
         double v = (tag == 'f') ? va_arg(ap, double) : (double)va_arg(ap, int64);
         spec[si++] = conv; spec[si] = 0;
         m = snprintf(sbuf, sizeof(sbuf), spec, v);
@@ -827,6 +957,38 @@ inline char *_CG_format_string_tagged(char *str, const char *tags, ...) {
     memcpy(s, out, len);
     return s;
   }
+}
+
+// issues/199: the conversion each argument of a %-format meets, one
+// character per argument ('s', 'r', 'd', ...), skipping `%%` and a
+// `%(key)` name. A computed format's arguments are converted before the
+// format is applied (str.__mod__, issues/168), and an argument meeting %r
+// or %a must convert through __repr__, which only the run-time format can
+// say.
+inline char *_CG_format_convs(const char *fmt) {
+  size_t n = _CG_string_len(fmt), k = 0;
+  char *out = _CG_string_alloc(n);
+  const char *p = fmt;
+  while (*p) {
+    if (*p++ != '%') continue;
+    if (*p == '%') { p++; continue; }
+    if (*p == '(') {
+      while (*p && *p != ')') p++;
+      if (*p) p++;
+    }
+    while (*p && (strchr("-+ #0", *p) || (*p >= '0' && *p <= '9') || *p == '.')) p++;
+    while (*p && strchr("hlLqjzt", *p)) p++;
+    if (!*p) break;
+    out[k++] = *p++;
+  }
+  _CG_string_set_len(out, k);
+  return out;
+}
+inline int64 _CG_str_is_ascii(const char *s) {
+  size_t n = _CG_string_len(s);
+  for (size_t i = 0; i < n; i++)
+    if ((unsigned char)s[i] >= 0x80) return 0;
+  return 1;
 }
 
 inline char *_CG_format_string(char *str, ...) {
@@ -1139,6 +1301,111 @@ inline char *_CG_gethostname(void) {
   if (gethostname(buf, sizeof(buf)) != 0) buf[0] = 0;
   buf[sizeof(buf) - 1] = 0;
   return _CG_String(buf);
+}
+
+// time.strftime(format) and logging's %(asctime)s: libc strftime of a
+// time.time() value in local time, as CPython's time.localtime does (the
+// seconds are floored). The buffer grows until the result fits, as
+// CPython's does; an empty result is a real empty string.
+inline char *_CG_strftime_local(char *fmt, double t) {
+  time_t tt = (time_t)floor(t);
+  struct tm tm;
+  localtime_r(&tt, &tm);
+  size_t fl = strlen(fmt);
+  if (fl == 0) return _CG_String("");
+  for (size_t cap = 256 + fl * 4;; cap *= 2) {
+    char *buf = (char *)malloc(cap);
+    size_t n = strftime(buf, cap, fmt, &tm);
+    if (n > 0 || cap > 256 * fl + 65536) {
+      char *r = _CG_String_n(buf, n);
+      free(buf);
+      return r;
+    }
+    free(buf);
+  }
+}
+
+// pyc_lib/time (issues/207). The clocks CPython's time module reads, in
+// nanoseconds: 0 CLOCK_REALTIME (time_ns), 1 CLOCK_MONOTONIC (monotonic,
+// perf_counter), 2 CLOCK_PROCESS_CPUTIME_ID (process_time).
+inline int64 _CG_clock_ns(int64 which) {
+  clockid_t id = which == 1 ? CLOCK_MONOTONIC : which == 2 ? CLOCK_PROCESS_CPUTIME_ID : CLOCK_REALTIME;
+  struct timespec ts;
+  clock_gettime(id, &ts);
+  return (int64)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+// gmtime/localtime fill _cg_time_tm (defined in pyc_runtime.c, shared by
+// both backends); the fields are then read one at a time, in Python's
+// numbering: tm_mon 1-12, tm_wday Monday 0, tm_yday 1-366. Returns 0, or
+// the errno of a time outside what gmtime/localtime can represent.
+extern struct tm _cg_time_tm;
+inline int64 _CG_time_tm(int64 secs, int64 local) {
+  time_t t = (time_t)secs;
+  errno = 0;
+  struct tm *r = local ? localtime_r(&t, &_cg_time_tm) : gmtime_r(&t, &_cg_time_tm);
+  return r ? 0 : (errno ? errno : EOVERFLOW);
+}
+inline int64 _CG_time_tm_field(int64 i) {
+  struct tm *t = &_cg_time_tm;
+  switch (i) {
+    case 0: return t->tm_year + 1900;
+    case 1: return t->tm_mon + 1;
+    case 2: return t->tm_mday;
+    case 3: return t->tm_hour;
+    case 4: return t->tm_min;
+    case 5: return t->tm_sec;
+    case 6: return (t->tm_wday + 6) % 7;
+    case 7: return t->tm_yday + 1;
+    case 8: return t->tm_isdst;
+    case 9: return (int64)t->tm_gmtoff;
+    default: return 0;
+  }
+}
+inline char *_CG_time_tm_zone(void) { return _CG_String(_cg_time_tm.tm_zone ? _cg_time_tm.tm_zone : ""); }
+
+// A struct tm from Python's fields (already range-checked by the caller),
+// as CPython's gettmarg builds one.
+inline void _cg_tm_from(struct tm *t, int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec,
+                        int64 wday, int64 yday, int64 isdst, int64 gmtoff, const char *zone) {
+  memset(t, 0, sizeof(*t));
+  t->tm_year = (int)(year - 1900);
+  t->tm_mon = (int)(mon - 1);
+  t->tm_mday = (int)mday;
+  t->tm_hour = (int)hour;
+  t->tm_min = (int)min;
+  t->tm_sec = (int)sec;
+  t->tm_wday = (int)((wday + 1) % 7);
+  t->tm_yday = (int)(yday - 1);
+  t->tm_isdst = (int)isdst;
+  t->tm_gmtoff = (long)gmtoff;
+  t->tm_zone = zone && *zone ? zone : NULL;
+}
+inline char *_CG_strftime_fields(char *fmt, int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec,
+                                 int64 wday, int64 yday, int64 isdst, int64 gmtoff, char *zone) {
+  struct tm tm;
+  _cg_tm_from(&tm, year, mon, mday, hour, min, sec, wday, yday, isdst, gmtoff, zone);
+  size_t fl = strlen(fmt);
+  if (fl == 0) return _CG_String("");
+  for (size_t cap = 256 + fl * 4;; cap *= 2) {
+    char *buf = (char *)malloc(cap);
+    size_t n = strftime(buf, cap, fmt, &tm);
+    if (n > 0 || cap > 256 * fl + 65536) {
+      char *r = _CG_String_n(buf, n);
+      free(buf);
+      return r;
+    }
+    free(buf);
+  }
+}
+inline double _CG_mktime_fields(int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec, int64 wday,
+                                int64 yday, int64 isdst) {
+  struct tm tm;
+  _cg_tm_from(&tm, year, mon, mday, hour, min, sec, wday, yday, isdst, 0, "");
+  tm.tm_wday = -1;
+  time_t r = mktime(&tm);
+  if (r == (time_t)-1 && tm.tm_wday == -1) return -1.0e300;
+  return (double)r;
 }
 
 // 32 bits of OS entropy, for pyc_lib/random.py's seed on first use: CPython
@@ -1897,6 +2164,14 @@ inline int64 _CG_str_find(const char *s, const char *sub, int64 i, int64 e) {
   size_t m = _CG_string_len(sub);
   for (; i + (int64)m <= e; i++)
     if (!m || !memcmp(s + i, sub, m)) return i;
+  return -1;
+}
+// str.rfind: the LAST match starting at or after i and ending by e (the
+// bounds normalized by __pyc__/01_str.py as for find).
+inline int64 _CG_str_rfind(const char *s, const char *sub, int64 i, int64 e) {
+  int64 m = (int64)_CG_string_len(sub);
+  for (int64 j = e - m; j >= i; j--)
+    if (!m || !memcmp(s + j, sub, (size_t)m)) return j;
   return -1;
 }
 

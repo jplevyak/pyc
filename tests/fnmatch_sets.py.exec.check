@@ -1,0 +1,29 @@
+'*' ['', 'a', 'abc', 'ax', 'bx', 'dx', '^x', ']x', '-x', 'ex', 'cx', 'x.py', 'aXc', '[', 'a[', '[!]', 'abbc', 'Abc', 'z', 'y', '\\x', 'zz', '-', '!x', 'b'] True
+'*.py' ['x.py'] True
+'a?c' ['abc', 'aXc'] True
+'[abc]x' ['ax', 'bx', 'cx'] True
+'[!abc]x' ['dx', '^x', ']x', '-x', 'ex', '\\x', '!x'] True
+'[^a]x' ['ax', '^x'] True
+'[]a]x' ['ax', ']x'] True
+'[!]a]x' ['bx', 'dx', '^x', '-x', 'ex', 'cx', '\\x', '!x'] True
+'[a-c]x' ['ax', 'bx', 'cx'] True
+'[z-a]x' [] True
+'[!z-a]x' ['ax', 'bx', 'dx', '^x', ']x', '-x', 'ex', 'cx', '\\x', '!x'] True
+'[-a]x' ['ax', '-x'] True
+'[a-]x' ['ax', '-x'] True
+'[!-a]x' ['bx', 'dx', '^x', ']x', 'ex', 'cx', '\\x', '!x'] True
+'[a-c-e]x' ['ax', 'bx', '-x', 'ex', 'cx'] True
+'[' ['['] True
+'a[' ['a['] True
+'[!]' ['[!]'] True
+'[]' [] True
+'*[' ['[', 'a['] True
+'a*b*c' ['abc', 'abbc'] True
+'**' ['', 'a', 'abc', 'ax', 'bx', 'dx', '^x', ']x', '-x', 'ex', 'cx', 'x.py', 'aXc', '[', 'a[', '[!]', 'abbc', 'Abc', 'z', 'y', '\\x', 'zz', '-', '!x', 'b'] True
+'A*' ['Abc'] True
+'[a-cx-z]' ['a', 'z', 'y', 'b'] True
+'[\\]x' ['\\x'] True
+'?*?' ['abc', 'ax', 'bx', 'dx', '^x', ']x', '-x', 'ex', 'cx', 'x.py', 'aXc', 'a[', '[!]', 'abbc', 'Abc', '\\x', 'zz', '!x'] True
+'[!a-c-]' ['[', 'z', 'y'] True
+'[a-c-]' ['a', '-', 'b'] True
+['a.py'] False

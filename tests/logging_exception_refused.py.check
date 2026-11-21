@@ -1,0 +1,12 @@
+logging_exception_refused.py:7:38: error: illegal call argument type expression illegal: str 
+    lg.exception("failed")
+                          ^
+logging_exception_refused.py:7:38: error: unresolved member 'exception' of classes
+  class 'RootLogger'
+  class 'Logger'
+    lg.exception("failed")
+                          ^
+logging_exception_refused.py:7:38: error: expression has no type
+    lg.exception("failed")
+                          ^
+fail: program does not type

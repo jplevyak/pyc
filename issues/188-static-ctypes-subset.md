@@ -1,7 +1,7 @@
 # 188 — a static subset of `ctypes`: calling C libraries from pyc programs
 
-**Status:** open. The core landed 2026-11-11, and step 0 and item 2 on
-2026-11-18 (`python_ifa_ctypes.cc`, `pyc_lib/ctypes/`, tests `ctypes_*`);
+**Status:** open. The core landed 2026-11-11, and step 0 and items 1, 2
+and 3 on 2026-11-18 (`python_ifa_ctypes.cc`, `pyc_lib/ctypes/`, tests `ctypes_*`);
 what is left is the list under
 [Not done](#not-done).
 
@@ -44,6 +44,8 @@ C shim. Nothing in ifa knows about it.
 | `class S(Structure)` with `_fields_` | a class over C-layout storage, a getter and a setter per field |
 | `POINTER(T)` | a generated pointer class per interned pointee type (a scalar, `S`, or a pointer to one): nominal, so `POINTER(S)` and `POINTER(T)` do not mix. A pointer object is a one-word C cell, as in CPython |
 | `c_int(5)`, `x.value` | a box: a generated class over a one-scalar C cell, one per canonical class (`c_int32` is `c_int`), shared by every module through the builtin module |
+| `c_int * 4`, `S * 2` | an array class per interned (element, length), as CPython caches them; `a[i]` is a value for a scalar element and a view for C storage. An array converts where `POINTER(elem)` is declared |
+| a field of type `S` or `T * n` | a view at the field's offset that keeps the owner alive; a store copies. A `c_char * n` field reads as `bytes` to the first NUL |
 | `sizeof(T)` | the C compiler's `sizeof`; `sizeof(x)` of an instance is a run-time method |
 | `byref(s)`, `pointer(s)` | run-time functions in `pyc_lib/ctypes` |
 
@@ -99,21 +101,24 @@ the default search path (`--libs "-L. -lfoo -Wl,-rpath,."`).
 A library that is not a string literal, `None` or `find_library("lit")`; a
 function called with no `argtypes` (pyc does not guess a signature from the
 arguments); a declaration that is not at module top level; and any other use
-of a ctypes name (`cast`, `CFUNCTYPE`, `c_wchar`, constructing a pointer
-from a value: write `pointer(x)`).
+of a ctypes name (`cast`, `WINFUNCTYPE`, `c_wchar`, constructing a pointer
+from a value: write `pointer(x)`, and calling a `CFUNCTYPE(...)` expression
+directly: bind the type to a name first).
 
 ## Not done
 
-1. **Callbacks** (`CFUNCTYPE`). A pyc function is cloned per contour and C
-   needs one entry point, so the declared signature has to seed flow
-   analysis as an external caller. Anything a library retains
-   (`user_data`) then needs pinning, because Boehm does not scan the
-   library's heap.
+1. ~~**Callbacks** (`CFUNCTYPE`)~~: done 2026-11-18, see Item 1 under the
+   plan below. A Python object as `user_data` (`py_object`) is not
+   supported, and a callback from a thread the library created is not
+   detected.
 2. ~~**Scalar boxes and out-parameters**~~: done 2026-11-18, see Item 2 under the plan below. `p[i]` on a
    NULL pointer does not reach an `except` yet: that is
    [175](175-an-exception-raised-in-an-operator-method-does-not-propagate.md)'s
    item-subscript half. `p.contents` on NULL does.
-3. **Arrays** (`c_int * 4`) and a Structure held by value in a field.
+3. ~~**Arrays** (`c_int * 4`) and a Structure held by value in a field~~:
+   done 2026-11-18, see Item 3 under the plan below. An out-of-range `a[i]`
+   raises `IndexError` but nothing reports it (175's item-subscript half
+   again): the program goes on with a zero.
 4. **`Union`, bit fields, `_pack_`.**
 5. **Declarations across modules**: `POINTER(S)` must be written in the
    module that defines `S`. Generated bindings do this anyway.
@@ -274,7 +279,7 @@ Not done: `POINTER(T)(x)` (write `pointer(x)`), a box's `from_param`,
 shape is `tests/ctypes_pointers`' `POINTER(POINTER(Node))` with `byref`,
 which libc's `memcpy` writes; it was not run against glib.
 
-### Item 3 — arrays, and a Structure held by value in a field
+### Item 3 — arrays, and a Structure held by value in a field (done 2026-11-18)
 
 The surface: `A = c_int * 4`, `A(1, 2)` (the rest zero), `a[i]`,
 `a[i] = v`, `len(a)`, iteration, `list(a)`, an array as an argument (it
@@ -305,10 +310,48 @@ out-of-range `IndexError`, an array field and a struct field showing the
 aliasing view and the copy on store, `c_char * 8` reading as `bytes`, and
 an array passed to `memset` or `memcpy`.
 
+**What landed.** `K_ARRAY` with `elem` and `n`, interned per (element,
+length) like pointers. `T * N` takes an integer literal or a module-level
+name bound to one; anything else is refused with its line. Array classes
+whose root is a scalar go into the builtin module with the boxes; those over
+a Structure follow it in its module, as its pointer types do.
+
+- `A(x, y)` is rewritten to `A().__pyc_ffi_ini__(0, x).__pyc_ffi_ini__(1, y)`,
+  so construction is `a[i] = x` for each item, with no varargs and any mix
+  of item types. Too many items is a compile error (CPython: `IndexError`
+  at run time), so are keyword and star arguments.
+- Elements and fields share one reader and one writer per type
+  (`py_read_at`, `py_write_at`): a scalar is a value through the box
+  accessors, a Structure or an array a view (`__pyc_ffi_view_K__`,
+  `__pyc_ffi_aview_K__`), a pointer a cell view. A store of C storage is a
+  copy (`_CG_ffi_copy`), checked by dispatch on `__pyc_ffi_val_K__` /
+  `__pyc_ffi_aval_K__`, so storing the wrong Structure is a compile error.
+- `c_char * N`: `.value` (to the first NUL), `.raw`, and as a field `bytes`
+  in and out, with CPython's `bytes too long (9, maximum length 8)`
+  `ValueError`. A value of exactly N bytes gets no NUL.
+- No `byref(a)`. CPython's is a pointer to the ARRAY, which a
+  `POINTER(elem)` parameter rejects (`expected LP_c_int instance instead of
+  pointer to c_int_Array_4`); `a` itself converts. An array as a declared
+  argument or result type is refused (declare `POINTER(elem)`), as is
+  `POINTER` of an array type.
+- The array's `sizeof` is emitted into the shim when its class is
+  generated, not when the type is interned: only then is an element
+  Structure complete.
+- **Found on the way, pre-existing:** `from ctypes import X` with ONE name
+  was not seen as a ctypes import at all (a lone name is not wrapped in a
+  list node), so such a module was never lowered and its ctypes names were
+  `pyc_lib`'s placeholders. `tests/ctypes_single_import.py`.
+
+Not done: slicing an array (CPython gives a list), `a == b`, `repr`.
+
 ### Item 1 — callbacks (`CFUNCTYPE`)
 
-The target is the CPython ctypes documentation's own example, verified
-above:
+Rewritten 2026-11-18: the ifa half is a **generic exported function**, a
+feature of ifa rather than of Python, tested in ifa's own IF1 harness before
+pyc uses it. The earlier draft (an FA root specific to callbacks, with a
+frontend guard as a stepping stone) is in git.
+
+The target is the CPython ctypes documentation's own example:
 
 ```python
 CMP = CFUNCTYPE(c_int, POINTER(c_int), POINTER(c_int))
@@ -316,88 +359,162 @@ def cmp(a, b): return a[0] - b[0]
 libc.qsort(arr, len(arr), sizeof(c_int), CMP(cmp))
 ```
 
-Three problems, each with its own mechanism.
+C has to call a pyc function, which needs two things ifa owns: a fixed C
+entry point, and flow analysis that sees the function as called. Everything
+else is frontend, shim and runtime.
 
-**(a) C needs one fixed entry point with the declared signature.** A pyc
-function is named `_CG_f_<symid>_<i>` and its C signature drops dead and
-constant arguments (`write_c_fun_proto` emits only live ones), so the shim
-cannot call it directly. The lowering generates one pyc trampoline per
-`CFUNCTYPE` type, `def __pyc_ffi_cbt_K__(cb, a0, a1): ...`. It converts
-each word argument into the Python value the callback expects (an `int`, a
-`float`, `bytes` through `_CG_ffi_cstr`, a `POINTER` cell), calls
-`cb.fn(...)`, and converts the result back. The trampoline is marked
-**exported** under a C name. That is a generic ifa feature, not a Python
-one (`Sym::export_name`, a header change, so `make clean`). Both backends
-then emit `extern "C" <word> _CG_ffi_cb_K(<word>...)` with the full
-declared arity, forwarding to the live arguments of the trampoline's single
-clone: `cg.cc` for C, and `llvm.cc` / `cg_emit_llvm.cc` for LLVM.
+#### Part A (ifa): exported functions
 
-**(b) FA has to see the trampoline as called, with the declared types.**
-FA has one root today (`make_top_edge` / `refresh_top_edge`, `fa.cc` around
-line 3492). Add one root edge per exported function, with each formal
-filtered to its declared type: the machine-word `int` or `float`, and the
-callback object's class for `cb`. That is a genuine external caller, which
-is what the item asks for. The alternative is a call from `main` behind an
-opaque false guard. It needs no ifa change, but it emits dead code and is
-the kind of structural workaround the directives warn against, so use it
-only as a stepping stone. The trampoline is only ever reached from its
-root, so FA has no demand that would split it. If it ever has two clones,
-that is an internal error naming the demand, not something to work around.
+**Landed 2026-11-18** as
+[ifa/212](../ifa/issues/212-exported-functions.md), which records what was
+built and how it is tested. The design below held, with two findings: DCE
+had to treat an exported function's result as live, and mark it after every
+function's reset; and ifa/121's reference scan needed the entry points as a
+root.
 
-**(c) A C function pointer cannot carry a closure: libffi closures**
-(decided 2026-11-18, over a fixed trampoline pool). `CB(f)` builds an
-instance of `__pyc_ffi_CB_K__`, a collected object holding `fn`, and
-allocates a libffi closure for it (`ffi_closure_alloc` +
-`ffi_prep_closure_loc`, as CPython does). Its `ffi_cif` is built once per
-`CFUNCTYPE` type from the declared C types, which the lowering knows
-statically. The closure's handler is a shim function that reads the C
-arguments from libffi's `args[]`, widens them to words, and calls
-`_CG_ffi_cb_K(cb, ...)`. The closure's `user_data` is the CB object, held as
-a pointer Boehm does **not** see (libffi's closure memory is not scanned), and
-a finalizer on the CB object frees the closure. So the callback lives exactly
-as long as the program keeps the CB object, which is CPython's rule (calling
-a collected callback is undefined behaviour there too). `fn` is an ordinary
-field, so FA sees every callable stored at every `CB(f)` site and dispatches
-over them. There is no limit on how many callbacks are alive at once.
+An exported function is one that code outside the program calls: a
+callback, a library entry point, a JIT lookup by name. ifa learns it from
+the IR, not from a language.
 
-The cost is a library: the generated program links `-lffi`, and **only** when
-it declares a `CFUNCTYPE`, through `codegen_link_libs` as the `CDLL` entries
-are. `make PORTABLE=1 dist` must bundle a static `libffi.a` in `lib/pyc`, as
-it bundles Boehm's, and `dist_smoke.sh` must gain a callback program so the
-self-containment check covers it. CI installs `libffi-dev` (ubuntu) and
-`libffi` (Homebrew).
-
-What else follows from these:
-
-- **A callback that raises.** No pyc exception may unwind through C. The
-  trampoline catches everything, prints CPython's `Exception ignored on
-  calling ctypes callback function: <function ...>` and the exception to
-  stderr, and returns zero. Nothing reaches the caller, as in CPython.
-- **Retention (`user_data`).** A library that keeps the function pointer
-  needs the program to keep the CB object, as in CPython. A Python object
-  passed as `user_data` needs `py_object`, which is out of scope. The
-  supported shape is a `c_void_p` of `None` or the address of a ctypes
-  object the program keeps. Pinning a pointer handed to C is
-  `GC_malloc_uncollectable` storage, and that waits for a program that
-  needs it.
-- **Threads.** A callback from a thread the library created is refused in
-  documentation and not detected; pyc does not register foreign threads
-  with Boehm.
-- A `CFUNCTYPE` restype or argtype of `c_void_p` or `c_char_p` follows the
-  existing result rules (the `PYC_FFI_VOIDP_INT` gate).
-
-**Test** `tests/ctypes_callbacks.py`: the `qsort` example, `bsearch`, two
-`CB` objects alive at once, a closure capturing a local, a
-raising callback (its stderr goes in a `.check` for the "Exception ignored"
-line), and `--strict`. A `--jit` run stays refused (item 6).
+- **IR.** `Fun` gets an export: a C name, and one declared type `Sym` per
+  formal (after the closure itself) and for the result. The types are
+  ifa's own: `int64`, `float64`, or a class `Sym`, whose values reach C as
+  an opaque pointer. The IF1 text format spells it
+  `:export ("name" (int64 float64 %Cls) int64)`; the IR serializer carries
+  it.
+- **FA: one root per exported function**, beside `make_top_edge` /
+  `refresh_top_edge` (`fa.cc`). The edge binds the closure position to the
+  function's own symbol, as the top edge binds `__main__`. Each formal is
+  filtered to its declared type, and its argument AVar is seeded:
+  - a scalar with the type's abstract type: "some `int64`", the same fact
+    `__pyc_c_call__(int, ...)` gives a result;
+  - an object with every CreationSet of the declared class. `Sym::creators`
+    grows during a pass, so the seeding happens where a CreationSet of that
+    class is made (`creation_point`), every pass, not once. This keys on
+    TYPE, so it passes the provenance test: C hands back some instance of
+    the class, and the analysis does not claim to know which.
+  - Re-seeded in `refresh_top_edge`'s place, every pass, because every pass
+    re-derives from bottom.
+- **Reachability.** Every walk that starts at `fa->top_edge` (the live-ES
+  walk near `fa.cc` line 13500, `mark_es_cs_backedges`, the edge worklist,
+  `mark_live_funs`) starts from every root.
+- **One clone.** C can call only one entry point, so an exported function
+  must end FA with exactly one EntrySet. A split of one is a demand nobody
+  can satisfy: FA reports it as an error naming the demand, and does not
+  pick a clone. Nothing calls an exported function but its root, so no
+  demand should arise; if one does, that is the bug to find.
+- **Codegen, both backends.** The clone keeps its normal name and its
+  live-argument signature. Beside it, `extern "C" <ret> <name>(<declared
+  args>)` forwards to it, dropping the arguments the clone does not take and
+  converting each declared type to the clone's representation. C backend in
+  `cg.cc`, LLVM in `llvm.cc` / `cg_emit_llvm.cc`. An exported function is
+  never inlined away or removed as dead.
+- **Exceptions** stay out of ifa: an exported function must not let one
+  escape, and the frontend that marks it is responsible for that (pyc's
+  trampoline catches everything). ifa checks it: an exported function whose
+  clone can raise is an error.
+- **Tests in ifa alone**, IF1 fixtures under `ifa/tests/ir/`: `fa` (the
+  formals' types, an object formal receiving every CreationSet of its
+  class), `clone` (one EntrySet), `codegen-c` and `codegen-llvm` (the
+  wrapper and its forwarding, with a dead and a constant formal dropped from
+  the clone but kept by the wrapper). An unexported twin of each fixture
+  must be unchanged.
 
 **Stop conditions, written before starting:**
 
-- If the exported trampoline ever gets more than one clone on the corpus or
-  the suite, stop and find the demand. Do not pick one clone.
-- If the extra FA root changes any corpus program's contour count or
-  verdict, it is not inert. Every program that does not import ctypes must
-  be unaffected, so check it with a `check` sweep before and after.
+- If an exported function ever gets two EntrySets in a fixture, the suite
+  or the corpus, stop and find the demand. Do not pick one.
+- The extra roots must be inert for a program that exports nothing. Check
+  with `make test` (goldens unchanged) and a corpus `check` sweep: every
+  contour count and verdict identical before and after.
+
+#### Part B (pyc): `CFUNCTYPE` on top of Part A
+
+- `CB = CFUNCTYPE(res, *args)` (and `ctypes.CFUNCTYPE`) at module level is
+  a type, like `POINTER`. The lowering generates, per type:
+  - `__pyc_ffi_CB_K__`, a class holding `fn`; `CB(f)` constructs it.
+  - a trampoline `def __pyc_ffi_cbt_K__(cb, a0, ...)`, exported as
+    `_CG_ffi_cb_K` with declared types `(__pyc_ffi_CB_K__, int64 |
+    float64, ...)`. It converts each word into the Python value the callback
+    expects (an `int`, a `float`, `bytes` through `_CG_ffi_cstr`, a
+    `POINTER` view over the address), calls `cb.fn(...)`, converts the result
+    back, and catches everything: on an exception it prints CPython's
+    `Exception ignored on calling ctypes callback function: <function ...>`
+    and the exception to stderr, and returns 0.
+- **The C function pointer: libffi closures** (decided 2026-11-18, over a
+  fixed trampoline pool). `CB(f)` allocates a libffi closure
+  (`ffi_closure_alloc` + `ffi_prep_closure_loc`, as CPython does) with one
+  `ffi_cif` per `CFUNCTYPE` type, built from the declared C types. Its
+  handler, in the shim, reads the C arguments from libffi's `args[]`,
+  widens them to words, and calls `_CG_ffi_cb_K(cb, ...)`. `user_data` is
+  the CB object, held where Boehm does not look, and a finalizer on the CB
+  object frees the closure. So the callback lives exactly as long as the
+  program keeps the CB object, which is CPython's rule.
+- A `CB` instance converts where its type is declared as an argument
+  (`__pyc_ffi_as_...`, as pointers do), giving the closure's code address.
+- **Linking.** The program links `-lffi` only when it declares a
+  `CFUNCTYPE`, through `codegen_link_libs` as `CDLL` entries do. `make
+  PORTABLE=1 dist` bundles a static `libffi.a` in `lib/pyc`, as it bundles
+  Boehm's, and `dist_smoke.sh` gains a callback program. CI installs
+  `libffi-dev` (ubuntu) and `libffi` (Homebrew).
+- **Retention.** A library that keeps the function pointer needs the program
+  to keep the CB object, as in CPython. A Python object passed as
+  `user_data` needs `py_object`, out of scope.
+- **Threads.** A callback from a thread the library created is refused in
+  documentation and not detected: pyc does not register foreign threads
+  with Boehm.
+- A `c_void_p` or `c_char_p` in a `CFUNCTYPE` follows the existing rules
+  (`PYC_FFI_VOIDP_INT`).
+
+**Test** `tests/ctypes_callbacks.py`: the `qsort` example, `bsearch`, two
+`CB` objects alive at once, a closure capturing a local, a raising callback
+(its stderr in a `.check`), and `--strict`. `--jit` stays refused (item 6),
+though exported names are one of the two things it lacks.
+
+**What landed (Part B, 2026-11-18).** As planned, with these findings:
+
+- `pyc_ffi_bind_exports` (after `build_syms`) binds the export from the
+  generated `funcdef` and `classdef` NODES: the trampoline's Sym and the
+  CB class's Sym, no name lookup. The trampoline is a module-level `def`,
+  so pyc gives it nesting depth 1; ifa's root edge takes its display from
+  the top contour (ifa/212).
+- Wiring the first callback through found four defects in Part A, all
+  fixed there (ifa/212): the root edge had no display; the class's
+  prototype (`Sym::self`) reached the object formal as if it were an
+  instance; the root edge was skipped when its object argument was still
+  empty and never retried; and a `can_raise` check refused every trampoline,
+  since `Fun::can_raise` cannot tell a caught exception from an escaping one.
+- On LLVM, `CB(f)` passed `null` for `f`: a function used as a call ARGUMENT
+  had no value there (ifa/210). Fixed in `emit_send_call`: the function's
+  address, as `emit_move` stores it. Plain Python had the same crash.
+- CPython passes a `c_int` (or a Structure) by reference where `POINTER` of
+  it is declared (`bsearch(key, ...)`); the box and the Structure now
+  convert there.
+- A raising callback is its own test, `tests/ctypes_callback_raises.py`:
+  the harness compares stderr too, and pyc's message omits CPython's
+  `<function f at 0x...>` and traceback (`.python.expect_fail`).
+- The shim includes `<ffi.h>` (or the SDK's `<ffi/ffi.h>`) and declares
+  `GC_register_finalizer` itself, so it needs no GC header. A program links
+  `<lib/pyc>/ffi/lib/libffi.a` when pyc carries it, else `-lffi`; `make
+  dist` bundles it beside Boehm's (`FFI_STATIC_LIB`, `FFI_INCLUDE`), and CI
+  and the release install libffi.
+- A `CFUNCTYPE`'s argument and result types: scalars and `POINTER`s
+  (no pointer result, no Structure by value); `use_errno` refused.
+
+Measured: `make test` green on both backends; the corpus `check` sweep
+`check__default__ad72ad31+54ab4ec7` matches Part A's row for row except
+`chaos`'s run timeout, which ran alone in 77 s of the 120 s cap (a parallel
+sweep's fabricated timeout); the LLVM sweep
+`check__PYC_LLVM_1__ad72ad31+2a323769` matches `19a71648`'s row for row
+(`doom`'s compile failure is in both). `make PORTABLE=1 dist` bundles
+`lib/pyc/ffi`, and `dist_smoke.sh` (now with `ctypes_callbacks`) passes on
+both backends; the programs it builds link no shared libffi.
+
+#### What else Part A buys
+
+The same export, with no callback involved, is how pyc would build a
+library that C calls (`.so` with named entry points), and gives the JIT a
+stable name to look up.
 
 ## Verification
 

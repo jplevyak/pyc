@@ -28,10 +28,16 @@ class __pyc_any_type__:
     for pair in self:
       d[pair[0]] = pair[1]
     return d
-  def __pyc_fmtval__(self):
+  # issues/199: `c` is the conversion this argument meets ("" past the
+  # last one): %r and %a take the repr, as CPython's do.
+  def __pyc_fmtval__(self, c):
+    if c == "r":
+      return self.__repr__()
+    if c == "a":
+      return __pyc_fmt_ascii__(self.__repr__())
     return self.__str__()
-  def __pyc_fmtconv__(self):
-    return self.__pyc_fmtval__()
+  def __pyc_fmtconv__(self, convs):
+    return self.__pyc_fmtval__(convs[0:1])
   def __pyc_to_bool__(self):
     # issues/089: __pyc_any_type__ is ifa's own universal top type
     # (sym_any, python_ifa_sym.cc renames it "__pyc_any_type__") --
@@ -101,6 +107,15 @@ class __pyc_any_type__:
     # SYNTHESIZED recursive override (gen_class_pyda), lists a
     # handwritten one (04_sequence.py).
     return __pyc_primitive__(__pyc_symbol__("copy"), self)
+  # reversed(x) by the sequence protocol, CPython's fallback when x has no
+  # __reversed__ (05_builtins.py).
+  def __pyc_reversed__(self):
+    r = []
+    i = len(self) - 1
+    while i >= 0:
+      r.append(self[i])
+      i = i - 1
+    return r
   def __format__(self, spec):
     # issues/006: default __format__ for classes with no override.
     # CPython's object.__format__ raises TypeError for a non-empty
@@ -169,6 +184,53 @@ class object:
     # "unresolved call '__bytes__'" compile-time reject, matching every
     # other unimplemented-dunder case in this codebase.
     return self.__bytes__()
+  # os.fspath(p), and what open() does with its path: a str is its own
+  # path (01_str.py) and anything else is asked for __fspath__ (pathlib's
+  # paths), a compile error if it has none, where CPython raises TypeError.
+  # A method rather than isinstance(p, str), so a value that is a str in one
+  # place and a path object in another (`Path("a", p)`'s *args) dispatches;
+  # on `object`, not __pyc_any_type__, which str also reaches, so the two
+  # candidates are told apart by the class tag.
+  def __pyc_fspath__(self):
+    return self.__fspath__()
+  # CPython's REFLECTED binary operators: `a + b` calls a.__add__(b) and,
+  # when type(a) has no __add__, b.__radd__(a). The frontend lowers `a + b`
+  # to an __add__ send on a (python_ifa_build_if1.cc), so this is the
+  # fallback for a receiver whose class defines no __add__, as object's
+  # __gt__ -> __lt__ is for ordering. A class with its own __add__ overrides
+  # it; one with neither leaves __radd__ unresolved, a compile error where
+  # CPython raises TypeError. Not modelled: a forward method that returns
+  # NotImplemented, and CPython's rule that a right operand whose type is a
+  # SUBCLASS of the left's is asked first.
+  #
+  # On `object`, not __pyc_any_type__: None reaches the latter, and `None + 5`
+  # must stay the run-time TypeError of a None receiver (ifa/165), not become
+  # an unresolved `int.__radd__`. str defines the ones it lacks itself
+  # (01_str.py), for `"dir" / path`.
+  def __add__(self, x):
+    return x.__radd__(self)
+  def __sub__(self, x):
+    return x.__rsub__(self)
+  def __mul__(self, x):
+    return x.__rmul__(self)
+  def __truediv__(self, x):
+    return x.__rtruediv__(self)
+  def __floordiv__(self, x):
+    return x.__rfloordiv__(self)
+  def __mod__(self, x):
+    return x.__rmod__(self)
+  def __pow__(self, x):
+    return x.__rpow__(self)
+  def __lshift__(self, x):
+    return x.__rlshift__(self)
+  def __rshift__(self, x):
+    return x.__rrshift__(self)
+  def __and__(self, x):
+    return x.__rand__(self)
+  def __or__(self, x):
+    return x.__ror__(self)
+  def __xor__(self, x):
+    return x.__rxor__(self)
   def __bool__(self):
     return True
   def __len__(self):
@@ -372,7 +434,7 @@ class __pyc_None_type__:
 
 class bool:
   # issues/168: a computed format's argument stays a bool (__pyc_any_type__).
-  def __pyc_fmtval__(self):
+  def __pyc_fmtval__(self, c):
     return self
   # issues/176: int(True) == 1, float(False) == 0.0.
   def __pyc_int__(self):
@@ -580,6 +642,11 @@ class bool:
       return True
     else:
       return not x
+  # abs(True) is 1, an int, as CPython's.
+  def __abs__(self):
+    if self:
+      return 1
+    return 0
   def __str__(self):
     if (self):
       return "True"
@@ -599,6 +666,12 @@ class bool:
     return __pyc_c_call__(str, "_CG_format_int_spec", int, v, str, spec)
 
 class __base_iter__:
+  # list(it) of an iterator: drain what is left, as CPython's list() does.
+  def __pyc_tolist__(self):
+    r = []
+    while self.__pyc_more__():
+      r.append(self.__next__())
+    return r
   thestr = None
   position = 0
   slen = 0

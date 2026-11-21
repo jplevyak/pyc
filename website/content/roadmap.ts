@@ -85,28 +85,38 @@ export const TRACKS: Track[] = [
   {
     id: 'libraries',
     title: 'Libraries',
-    summary: 'Grow pyc_lib from 22 modules toward the part of the standard library real programs use.',
+    summary: 'Grow pyc_lib from 30 modules toward the part of the standard library real programs use.',
     milestones: [
+      {
+        title: 'The core library',
+        state: 'done',
+        items: [
+          'itertools: the full set, from chain and islice to groupby and batched',
+          'functools: lru_cache, cache, wraps, cmp_to_key',
+          'collections: Counter, OrderedDict, the rest of deque and defaultdict',
+          'math with CPython’s errors; bisect, operator; time, random and string additions',
+          'os and os.path, pathlib, textwrap, logging',
+        ],
+      },
       {
         title: 'Finish the modules that exist',
         state: 'active',
         items: [
-          'itertools: chain, islice, permutations, combinations, groupby, accumulate',
-          'functools: partial, lru_cache, cmp_to_key, total_ordering',
-          'collections: Counter, OrderedDict, namedtuple',
+          'functools: partial, total_ordering',
+          'collections: namedtuple',
           're: findall, finditer, sub, split, named groups',
         ],
       },
       {
         title: 'The modern idioms',
         state: 'planned',
-        items: ['dataclasses', 'enum', 'typing (accepted, and checked under --strict)', 'bisect'],
+        items: ['dataclasses (fields, asdict, replace)', 'enum', 'typing checked under --strict'],
       },
       {
         title: 'Applications',
         state: 'planned',
         items: [
-          'json, pathlib',
+          'json',
           'asyncio front end over pyc’s event loop',
           'statistics, fractions, decimal',
           'unittest, so the same tests run compiled and under CPython',

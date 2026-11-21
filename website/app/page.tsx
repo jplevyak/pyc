@@ -230,8 +230,8 @@ $ pyc --strict counter.py
               <h3>More libraries</h3>
               <p>
                 {FACTS.libModules} standard-library modules ship today, from <code>math</code>{' '}
-                and <code>random</code> (true MT19937) to <code>re</code>, <code>struct</code>{' '}
-                and <code>heapq</code>. Each one is real or it raises. None returns made-up values.
+                and <code>random</code> (true MT19937) to <code>itertools</code>,{' '}
+                <code>functools</code>, <code>collections</code> and <code>pathlib</code>. Each one is real or it raises. None returns made-up values.
               </p>
               <p>
                 <Link href="/libraries/">Library status →</Link>

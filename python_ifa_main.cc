@@ -678,6 +678,8 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
     if (report_import_errors(*ctx) > 0) return -1;
     if (report_undefined_names(*ctx) > 0) return -1;
   }
+  pyc_ffi_bind_exports(*ctx);  // issues/188: callback trampolines are exported (ifa/212)
+  pyc_dataclass_check(*ctx);    // issues/195
   // issue 011: user-level call graph (the builtin module's own was
   // already computed once in ast_to_if1_baseline). all_mods.n here
   // (not the n_user snapshot) so imports build_syms pulled in mid-loop
@@ -779,11 +781,35 @@ static void scan_max_tuple_arity(PyDAST *n, int &mx) {
 // it can create, so the unroll must cover the largest call too; otherwise
 // `f(1, "two", 3.0)` printed its 3-tuple through the runtime-index tail and
 // mixed its slot types. Programs without `*args` are unaffected.
-static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args) {
+// The frontend's intrinsics: reserved names, lowered in place, whose
+// arguments never bind a `*args` tuple. __pyc_c_call__ passes two per C
+// argument, so time.strftime's 13-argument call counted as a 28-argument
+// call, every tuple method was generated for arities up to 28, and parsing
+// that source took logging's frontend from 1 s to 5 s, 50 s at one more
+// argument (issues/207).
+static bool is_intrinsic_call(PyDAST *power) {
+  if (power->kind != PY_power || power->children.n < 2) return false;
+  PyDAST *callee = power->children[0];
+  if (callee->kind != PY_name || !callee->str_val) return false;
+  cchar *nm = callee->str_val;
+  return !strcmp(nm, "__pyc_c_call__") || !strcmp(nm, "__pyc_primitive__") || !strcmp(nm, "__pyc_operator__");
+}
+
+static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args, bool skip_args = false) {
   if (!n) return;
   if (n->kind == PY_star_arg) has_star = true;
-  if (n->kind == PY_arglist && n->children.n > max_call_args) max_call_args = n->children.n;
-  for (PyDAST *c : n->children) scan_star_args(c, has_star, max_call_args);
+  if (n->kind == PY_arglist && !skip_args && n->children.n > max_call_args) max_call_args = n->children.n;
+  bool intrinsic = is_intrinsic_call(n);
+  for (int i = 0; i < n->children.n; i++) {
+    PyDAST *c = n->children[i];
+    // The intrinsic's own trailer (children[1], a PY_call holding the
+    // arglist) is not counted; what is nested in its arguments still is.
+    bool skip = intrinsic && i == 1 && c->kind == PY_call;
+    if (skip) {
+      for (PyDAST *a : c->children) scan_star_args(a, has_star, max_call_args, a->kind == PY_arglist);
+    } else
+      scan_star_args(c, has_star, max_call_args);
+  }
 }
 
 // ifa/185: the dispatch constraints of the generated tuple methods'
@@ -990,24 +1016,26 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
   // __pyc_fmtconv__ is the one-value case). A list-layout tuple has one
   // element type, so its runtime loop builds a list-layout tuple back.
   for (int k : arities) {
-    fputs("  def __pyc_fmtconv__(self):\n", f);
+    fputs("  def __pyc_fmtconv__(self, convs):\n", f);
     if (!k) {
       fputs("    return self\n", f);
     } else {
       fputs("    return (", f);
-      for (int i = 0; i < k; i++) fprintf(f, "%s__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__pyc_fmtval__()", i ? ", " : "", i);
+      for (int i = 0; i < k; i++)
+        fprintf(f, "%s__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d).__pyc_fmtval__(convs[%d:%d])",
+                i ? ", " : "", i, i, i + 1);
       fputs(k == 1 ? ",)\n" : ")\n", f);
     }
-    specs.push_back(spec_for(self_k(k), 1));
+    specs.push_back(spec_for(self_k(k), 2));
   }
-  fputs("  def __pyc_fmtconv__(self):\n", f);
+  fputs("  def __pyc_fmtconv__(self, convs):\n", f);
   fputs("    n = len(self)\n", f);
   fputs("    if n == 0: return self\n", f);
   fputs("    r = []\n", f);
   fputs("    for i in range(n):\n", f);
-  fputs("      r.append(self[i].__pyc_fmtval__())\n", f);
+  fputs("      r.append(self[i].__pyc_fmtval__(convs[i:i + 1]))\n", f);
   fputs("    return __pyc_primitive__(__pyc_symbol__(\"make_seq\"), tuple, r)\n", f);
-  specs.push_back(spec_for(none, 1));
+  specs.push_back(spec_for(none, 2));
 
   // CPython's tuple.index: start/stop normalized like a slice (as list.index
   // in 04_sequence.py), ValueError when absent.
@@ -1710,6 +1738,7 @@ int ast_to_if1(Vec<PycModule *> &mods) {
   Vec<PyDAST *> imported;
   prescan_imported_modules(mods, *make_search_path(), imported);
   lower_ctypes(mods, imported);  // issues/188: before the property scan, which reads the classes it generates
+  lower_typing_and_dataclasses(mods, imported);  // issues/195: also before it (a frozen field's setter)
   inject_property_accessors(mods, imported);  // issues/171 #13: @property getters
   Vec<PyDAST *> asts;
   for (PycModule *m : mods) asts.add(m->pymod);

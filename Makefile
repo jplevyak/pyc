@@ -150,6 +150,13 @@ endif
 GC_STATIC_LIB = $(call static_lib,gc)
 GC_PREFIX     = $(shell echo $(realpath $(GC_STATIC_LIB)) | sed 's|/lib/.*||')
 GC_INCLUDE   ?= $(GC_PREFIX)/include
+# libffi, which `make dist` ships beside Boehm's for programs that declare a
+# ctypes CFUNCTYPE (issues/188): the static archive, and the directory the
+# compiler finds ffi.h in (Debian's is multiarch; Homebrew's libffi is
+# keg-only, so pass FFI_STATIC_LIB and FFI_INCLUDE there).
+FFI_STATIC_LIB ?= $(or $(call static_lib,ffi),$(wildcard $(shell brew --prefix libffi 2>/dev/null)/lib/libffi.a))
+FFI_INCLUDE    ?= $(or $(patsubst %/ffi.h,%,$(firstword $(filter %/ffi.h,$(shell printf '\043include <ffi.h>\n' | \
+                    $(CXX) -E -M -x c - 2>/dev/null)))),$(wildcard $(shell brew --prefix libffi 2>/dev/null)/include))
 
 # Version stamp ---------------------------------------------------------------
 
@@ -175,7 +182,7 @@ VERSIONCFLAGS = -DPYC_VERSION=\"$(PYC_VERSION)\"
 
 PYC_DEPEND_SRCS = pyc.cc repl.cc python_ifa_util.cc python_ifa_sym.cc \
                   python_ifa_build_syms.cc python_ifa_build_if1.cc \
-                  python_ifa_main.cc python_ifa_ctypes.cc python_parse.cc version.cc
+                  python_ifa_main.cc python_ifa_ctypes.cc python_ifa_dataclass.cc python_parse.cc version.cc
 PYC_SRCS = $(PYC_DEPEND_SRCS) gnuc.g.d_parser.cc python.g.d_parser.cc
 # Note: under USE_LLVM, the LLVM codegen sources (codegen/llvm.cc,
 # codegen/llvm_codegen.cc, codegen/llvm_primitives.cc) are already
@@ -290,6 +297,7 @@ pyc-static: $(PYC_OBJS) $(IFALIB) $(JIT_RUNTIME_OBJ) pyc_jit_exports.list
 #     libpyc_runtime.a  pyc_runtime_lto.o              the LLVM backend's
 #     gc/include  gc/lib     with BUNDLE_GC=1: a static Boehm GC that the
 #                            programs pyc builds link, so they need no libgc
+#     ffi/include ffi/lib    and a static libffi, for ctypes callbacks
 #   <prefix>/share/man/man1/pyc.1
 #
 # PYC_INSTALL_BIN picks the binary (pyc, or pyc-static for `make dist`);
@@ -313,6 +321,11 @@ ifdef BUNDLE_GC
 	$(if $(call static_lib,gccpp),install -m 644 $(call static_lib,gccpp) $(INSTALL_LIBDIR)/gc/lib)
 	install -m 644 $(GC_INCLUDE)/gc.h $(INSTALL_LIBDIR)/gc/include
 	cp -R $(GC_INCLUDE)/gc $(INSTALL_LIBDIR)/gc/include/
+	@test -n "$(FFI_STATIC_LIB)" || { echo "BUNDLE_GC: no static libffi.a (set FFI_STATIC_LIB)"; exit 1; }
+	@test -f "$(FFI_INCLUDE)/ffi.h" || { echo "BUNDLE_GC: no ffi.h in '$(FFI_INCLUDE)' (set FFI_INCLUDE)"; exit 1; }
+	install -d $(INSTALL_LIBDIR)/ffi/lib $(INSTALL_LIBDIR)/ffi/include
+	install -m 644 $(FFI_STATIC_LIB) $(INSTALL_LIBDIR)/ffi/lib/libffi.a
+	install -m 644 $(FFI_INCLUDE)/ffi.h $(FFI_INCLUDE)/ffitarget.h $(INSTALL_LIBDIR)/ffi/include
 endif
 
 deinstall:

@@ -187,7 +187,7 @@ import_name: 'import' dotted_as_names {
   $$.ast = new_pyast_collect(PY_import_name, &$n);
 };
 import_from: ('from' import_from_mod
-              'import' ('*' | '(' import_as_names ')' | import_as_names)) {
+              'import' ('*' | LP import_as_names RP | import_as_names)) {
   $$.ast = new_pyast_collect(PY_import_from, &$n);
 };
 // issues/113: the module part of `from X import Y` gets its own rule so
