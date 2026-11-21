@@ -13,8 +13,8 @@
 
 extern D_Symbol d_symbols_python[];
 
-  int python_indent(PythonGlobals *pg);
-  int python_dedent(PythonGlobals *pg);
+  int python_indent(PythonGlobals **p_globals);
+  int python_dedent(PythonGlobals **p_globals);
   void python_whitespace(struct D_Parser *p, d_loc_t *loc, void **p_globals);
   int py_node_indent(struct D_Parser *p, const char *s);
   int py_next_indent(struct D_Parser *p);
@@ -604,8 +604,8 @@ yield_expr: 'yield' testlist? {
 /* additional material from http://www.python.org/doc/current/ref/grammar.txt */
 
 NL: ${scan python_scan_nl};
-INDENT: [ if (!python_indent((PythonGlobals *)$g)) return -1; ] ;
-DEDENT: [ if (!python_dedent((PythonGlobals *)$g)) return -1; ] ;
+INDENT: [ if (!python_indent(&$g)) return -1; ] ;
+DEDENT: [ if (!python_dedent(&$g)) return -1; ] ;
 MATCH_KW: "[a-zA-Z_][a-zA-Z0-9_]*" $term -1 [ if ($n.end - $n.start_loc.s != 5 || strncmp($n.start_loc.s, "match", 5)) return -1; ] {
   $$.ast = new_pyast(PY_match_kw, &$n);
   $$.ast->str_val = pyast_dupstr($n.start_loc.s, 5);
@@ -663,12 +663,12 @@ octdigit ::= "[0-7]";
 hexdigit ::= digit | "[a-fA-F]";
 bindigit ::= "[01]";
 
-LP ::= '(' [ ((PythonGlobals *)$g)->implicit_line_joining++; ];
-RP ::= ')' [ ((PythonGlobals *)$g)->implicit_line_joining--; ];
-LB ::= '[' [ ((PythonGlobals *)$g)->implicit_line_joining++; ];
-RB ::= ']' [ ((PythonGlobals *)$g)->implicit_line_joining--; ];
-LC ::= '{' [ ((PythonGlobals *)$g)->implicit_line_joining++; ];
-RC ::= '}' [ ((PythonGlobals *)$g)->implicit_line_joining--; ];
+LP ::= '(' [ $g->implicit_line_joining++; ];
+RP ::= ')' [ $g->implicit_line_joining--; ];
+LB ::= '[' [ $g->implicit_line_joining++; ];
+RB ::= ']' [ $g->implicit_line_joining--; ];
+LC ::= '{' [ $g->implicit_line_joining++; ];
+RC ::= '}' [ $g->implicit_line_joining--; ];
 
 // Default rule for single RHS non-terminals
 _ : {
@@ -776,7 +776,8 @@ Ldone:;
     return py_node_indent(p, p->loc.s);
   }
 
-  int python_indent(PythonGlobals *pg) {
+  int python_indent(PythonGlobals **p_globals) {
+    PythonGlobals *pg = *p_globals;
     if (pg) {
       if (pg->current_indent[-1] > pg->current_indent[-2])
         return 1;
@@ -789,8 +790,9 @@ Ldone:;
     return 0;
   }
 
-  int python_dedent(PythonGlobals *pg) {
+  int python_dedent(PythonGlobals **p_globals) {
     int x;
+    PythonGlobals *pg = *p_globals;
     if (pg && pg->current_indent[-1] < pg->current_indent[-2]) {
       pg->current_indent--;
       x = pg->current_indent[-1] = pg->current_indent[0];
