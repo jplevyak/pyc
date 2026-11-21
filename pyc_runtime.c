@@ -136,6 +136,26 @@ extern int64 _CG_stat_int_field(const char *path, int64 field);
 extern int64 _CG_opendir(const char *path);
 extern int64 _CG_closedir(int64 h);
 extern char *_CG_readdir_name(int64 h);
+extern int64 _CG_os_err(void);
+extern int64 _CG_os_mkdir(const char *p, int64 mode);
+extern int64 _CG_os_rmdir(const char *p);
+extern int64 _CG_os_unlink(const char *p);
+extern int64 _CG_os_chdir(const char *p);
+extern int64 _CG_os_rename(const char *a, const char *b);
+extern int64 _CG_os_symlink(const char *a, const char *b);
+extern int64 _CG_os_access(const char *p, int64 mode);
+extern int64 _CG_os_utime_now(const char *p);
+extern int64 _CG_os_create(const char *p, int64 mode, int64 excl);
+extern int64 _CG_os_cpu_count(void);
+extern int64 _CG_os_ignorable_errno(int64 e);
+extern int64 _CG_os_stat(const char *p, int64 follow);
+extern int64 _CG_os_stat_int(int64 i);
+extern double _CG_os_stat_time(int64 i);
+extern char *_CG_os_environ_at(int64 i);
+extern int64 _CG_os_setenv(const char *k, const char *v);
+extern int64 _CG_os_unsetenv(const char *k);
+extern char *_CG_os_readlink(const char *p);
+extern char *_CG_os_pw_home(const char *name);
 
 /* Real process argv storage -- definition (extern-declared in
  * pyc_c_runtime.h), same pattern as _CG_ready_queue_head below: one
@@ -143,6 +163,8 @@ extern char *_CG_readdir_name(int64 h);
  * _CG_set_argv before anything else runs. */
 int64 _cg_argc = 0;
 char **_cg_argv = 0;
+int _cg_os_err = 0;
+struct stat _cg_os_st;
 
 /* ifa/issues/051: GC initialisation for the LLVM backend.
  *

@@ -203,8 +203,6 @@ class list:
                           int, l,
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), self),
                           int, __pyc_primitive__(__pyc_symbol__("sizeof_element"), l))
-  def __radd__(self, l):
-    pass
   def __iadd__(self, l):
     # CPython's list += is extend() then `return self`: it MUTATES, so an
     # alias sees the change (`m = l; l += [2]` leaves m == [1, 2]). This

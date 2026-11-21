@@ -69,9 +69,11 @@ class __pyc_file__:
         break
       r.append(l)
     return r
+  # The count written, as CPython's write returns: characters for a text
+  # file, bytes for a binary one. Both returned None.
   def write(self, s):
     __pyc_c_call__(int, "_CG_fwrite_str", int, self.handle, str, s)
-    return None
+    return len(s)
   def flush(self):
     __pyc_c_call__(int, "_CG_fflush", int, self.handle)
     return None
@@ -128,7 +130,11 @@ class __pyc_file__:
 def __pyc_open_error_message__(path, e):
   return "[Errno " + str(e) + "] " + __pyc_c_call__(str, "_CG_strerror", int, e) + ": " + repr(path)
 
+# open() takes a path-like object, as CPython's does: a str, or an object
+# with __fspath__ (pathlib's paths, 00_runtime.py's __pyc_fspath__). The
+# file's name and an error's message are the str, as CPython's are.
 def open(path, mode="r"):
+  path = path.__pyc_fspath__()
   h = __pyc_c_call__(int, "_CG_fopen", str, path, str, mode)
   if h == 0:
     e = __pyc_c_call__(int, "_CG_errno")
@@ -229,7 +235,7 @@ class __pyc_binfile__:
     return r
   def write(self, s):
     __pyc_c_call__(int, "_CG_fwrite_str", int, self.handle, bytes, s)
-    return None
+    return len(s)
   def flush(self):
     __pyc_c_call__(int, "_CG_fflush", int, self.handle)
     return None
@@ -272,6 +278,7 @@ class __pyc_binfile__:
 
 def open_binary(path, mode="rb"):
   # Same raises as open() above, repeated for the reason given there.
+  path = path.__pyc_fspath__()
   h = __pyc_c_call__(int, "_CG_fopen", str, path, str, mode)
   if h == 0:
     e = __pyc_c_call__(int, "_CG_errno")

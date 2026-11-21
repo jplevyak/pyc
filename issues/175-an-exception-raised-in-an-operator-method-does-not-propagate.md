@@ -18,10 +18,26 @@ try: print(V() + V())
 except ValueError: print("caught add")           # CPython: caught.   pyc: pending past the expression
 ```
 
-The same for `d[k]` on a dict without the key, or a class whose
-`__getitem__` raises, inside `except KeyError:`: the handler does not run
-and the program exits 0 with NO output, because nothing reports the
-pending exception. `b'%c' % 300` prints `b''` where CPython raises
+The same for a class whose `__getitem__` raises, inside
+`except KeyError:`: the handler does not run, and the pending exception is
+reported as unhandled at the next call's check, after the statement has
+gone on with whatever the method returned.
+
+**`d[k]` on a dict without the key is worse (found 2026-11-20, issues/202):
+`dict.__getitem__` does not raise at all.** It ends with
+`return self._vals[0]` (`__pyc__/07_dict.py`), so a missing key reads the
+first value, or past the end of an empty dict, and the program goes on:
+
+```python
+d = {"a": 1}
+print(d["b"])          # CPython: KeyError 'b'.   pyc: 1, exit status 0
+```
+
+Making it raise is a one-line change, but until this issue's step 2 the
+raise does not reach an `except KeyError:` around the subscript, so the
+common `try: v = d[k] except KeyError: ...` idiom would stop the program
+instead of taking the handler. Which of the two wrong answers is less bad
+is the decision; both are silent today. `b'%c' % 300` prints `b''` where CPython raises
 `OverflowError`.
 
 ## Mechanism

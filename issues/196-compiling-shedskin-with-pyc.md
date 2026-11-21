@@ -71,7 +71,7 @@ used when the class has no such member.
 | --- | --- | --- |
 | `ast` | 12 modules | item 1 |
 | `logging` | `__init__`, `log`, `error`, `infer`, `typestr`, `cmake`, `extmod` | **done 2026-11-19** ([197](197-logging.md)); `logging.Formatter` subclassed |
-| `pathlib` | 10 modules incl. `python`, `cpp`, `graph`, `state/*` | everywhere |
+| `pathlib` | 10 modules incl. `python`, `cpp`, `graph`, `state/*` | **done 2026-11-20** ([202](202-os-and-pathlib.md)), with a real `os.path` |
 | `argparse` | `__init__`, `config`, `cmake` | the command line |
 | `subprocess`, `platform` | `__init__`, `config`, `makefile`, `cmake` | |
 | `shutil`, `glob`, `zipfile`, `sysconfig` | `makefile`, `cmake` | build-system generation only |

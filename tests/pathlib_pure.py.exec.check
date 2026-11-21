@@ -1,0 +1,27 @@
+PurePosixPath('a/b/c.txt') a/b/c.txt c.txt '.txt' ['.txt'] 'c' ('a', 'b', 'c.txt') PurePosixPath('a/b') False '' '' [PurePosixPath('a/b'), PurePosixPath('a'), PurePosixPath('.')] 3
+PurePosixPath('/usr/lib/x.tar.gz') /usr/lib/x.tar.gz x.tar.gz '.gz' ['.tar', '.gz'] 'x.tar' ('/', 'usr', 'lib', 'x.tar.gz') PurePosixPath('/usr/lib') True '/' '/' [PurePosixPath('/usr/lib'), PurePosixPath('/usr'), PurePosixPath('/')] 3
+PurePosixPath('//srv/x') //srv/x x '' [] 'x' ('//', 'srv', 'x') PurePosixPath('//srv') True '//' '//' [PurePosixPath('//srv'), PurePosixPath('//')] 2
+PurePosixPath('/a') /a a '' [] 'a' ('/', 'a') PurePosixPath('/') True '/' '/' [PurePosixPath('/')] 1
+PurePosixPath('.') .  '' [] '' () PurePosixPath('.') False '' '' [] 0
+PurePosixPath('.') .  '' [] '' () PurePosixPath('.') False '' '' [] 0
+PurePosixPath('a/b/c') a/b/c c '' [] 'c' ('a', 'b', 'c') PurePosixPath('a/b') False '' '' [PurePosixPath('a/b'), PurePosixPath('a'), PurePosixPath('.')] 3
+PurePosixPath('..') .. .. '' [] '..' ('..',) PurePosixPath('.') False '' '' [PurePosixPath('.')] 1
+PurePosixPath('../a') ../a a '' [] 'a' ('..', 'a') PurePosixPath('..') False '' '' [PurePosixPath('..'), PurePosixPath('.')] 2
+PurePosixPath('.bashrc') .bashrc .bashrc '' [] '.bashrc' ('.bashrc',) PurePosixPath('.') False '' '' [PurePosixPath('.')] 1
+PurePosixPath('x.') x. x. '' [] 'x.' ('x.',) PurePosixPath('.') False '' '' [PurePosixPath('.')] 1
+PurePosixPath('/') /  '' [] '' ('/',) PurePosixPath('/') True '/' '/' [] 0
+/c/d x/y/z q/r a/b/c
+a/b.txt a/b.x a/b.tar a/c.md a/z.py
+ValueError Invalid name ''
+ValueError Invalid name 'x/y'
+ValueError Invalid name '.'
+ValueError PurePosixPath('/') has an empty name
+ValueError Invalid suffix 'txt'
+b/c . True False
+ValueError '/a/b' is not in the subpath of '/c'
+../b
+True True False False True False
+True True False True True True True [PurePosixPath('a'), PurePosixPath('a/c'), PurePosixPath('b')]
+True False True PurePosixPath('x') PosixPath('y') True PosixPath('.') <PurePosixPath.parents>
+2 q f g h/i
+MyPath('x/y') MyPath('x') MyPath('x/y/z') X/Y/Z True

@@ -1,0 +1,19 @@
+FileExistsError [Errno 17] File exists: '_pl_fs_t/a'
+FileNotFoundError [Errno 2] No such file or directory: '_pl_fs_t/q/r'
+9 2
+FileExistsError [Errno 17] File exists: '_pl_fs_t/.hidden.py'
+'print(1)\n' b'\x00\x01zz'
+True True True False False
+[PosixPath('_pl_fs_t/.hidden.py'), PosixPath('_pl_fs_t/a')] ['b', 'x.py']
+True True False a
+True True
+True True True True /x/~
+9 True
+_pl_fs_t/a/w.py True False
+FileNotFoundError [Errno 2] No such file or directory: '_pl_fs_t/nope.txt'
+OSError True
+'print(1)\n' _pl_fs_t/a/w.py
+'print(1)\n'
+FileNotFoundError [Errno 2] No such file or directory: '_pl_fs_t/missing'
+True True 9
+False

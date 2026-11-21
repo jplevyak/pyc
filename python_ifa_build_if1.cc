@@ -38,6 +38,12 @@ static char *pyda_trim(const char *s) {
 
 static void build_one_module_if1(PycModule *m, PycCompiler &ctx) {
   if (m->built_if1) return;
+  // A circular import (`pk/__init__.py` imports `pk.sub`, which imports
+  // `pk`) reaches this again for a module whose IF1 is still being built.
+  // CPython hands the second importer the partly initialized module; here
+  // that is the module already on this stack, so mark it before building,
+  // not after. Marking it after recursed until the stack overflowed.
+  m->built_if1 = true;
   // ctx.node is the import statement node whose ast->code the enclosing
   // statement loop consumes; the module builders below re-point ctx.node
   // at the imported module's scope node (enter_scope(PyDAST*)) without
@@ -57,7 +63,6 @@ static void build_one_module_if1(PycModule *m, PycCompiler &ctx) {
   build_module_attributes_if1(m, *m->ctx, c);
   build_if1_module_pyda(m->pymod, *m->ctx, c);
   m->ctx->mod = saved_mod;
-  m->built_if1 = true;
   ctx.node = saved_node;
 }
 

@@ -175,6 +175,53 @@ class object:
     # "unresolved call '__bytes__'" compile-time reject, matching every
     # other unimplemented-dunder case in this codebase.
     return self.__bytes__()
+  # os.fspath(p), and what open() does with its path: a str is its own
+  # path (01_str.py) and anything else is asked for __fspath__ (pathlib's
+  # paths), a compile error if it has none, where CPython raises TypeError.
+  # A method rather than isinstance(p, str), so a value that is a str in one
+  # place and a path object in another (`Path("a", p)`'s *args) dispatches;
+  # on `object`, not __pyc_any_type__, which str also reaches, so the two
+  # candidates are told apart by the class tag.
+  def __pyc_fspath__(self):
+    return self.__fspath__()
+  # CPython's REFLECTED binary operators: `a + b` calls a.__add__(b) and,
+  # when type(a) has no __add__, b.__radd__(a). The frontend lowers `a + b`
+  # to an __add__ send on a (python_ifa_build_if1.cc), so this is the
+  # fallback for a receiver whose class defines no __add__, as object's
+  # __gt__ -> __lt__ is for ordering. A class with its own __add__ overrides
+  # it; one with neither leaves __radd__ unresolved, a compile error where
+  # CPython raises TypeError. Not modelled: a forward method that returns
+  # NotImplemented, and CPython's rule that a right operand whose type is a
+  # SUBCLASS of the left's is asked first.
+  #
+  # On `object`, not __pyc_any_type__: None reaches the latter, and `None + 5`
+  # must stay the run-time TypeError of a None receiver (ifa/165), not become
+  # an unresolved `int.__radd__`. str defines the ones it lacks itself
+  # (01_str.py), for `"dir" / path`.
+  def __add__(self, x):
+    return x.__radd__(self)
+  def __sub__(self, x):
+    return x.__rsub__(self)
+  def __mul__(self, x):
+    return x.__rmul__(self)
+  def __truediv__(self, x):
+    return x.__rtruediv__(self)
+  def __floordiv__(self, x):
+    return x.__rfloordiv__(self)
+  def __mod__(self, x):
+    return x.__rmod__(self)
+  def __pow__(self, x):
+    return x.__rpow__(self)
+  def __lshift__(self, x):
+    return x.__rlshift__(self)
+  def __rshift__(self, x):
+    return x.__rrshift__(self)
+  def __and__(self, x):
+    return x.__rand__(self)
+  def __or__(self, x):
+    return x.__ror__(self)
+  def __xor__(self, x):
+    return x.__rxor__(self)
   def __bool__(self):
     return True
   def __len__(self):

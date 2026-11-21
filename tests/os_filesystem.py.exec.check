@@ -1,0 +1,18 @@
+exists: [Errno 17] File exists: '_os_fs_t/x/y'
+FNF: [Errno 2] No such file or directory: '_os_fs_t/no/such'
+True True True False 5
+5 5 10 True True True
+True False x True
+True
+_os_fs_t ['lnk', 'x', 'z'] []
+_os_fs_t/x ['y'] ['f.txt']
+_os_fs_t/x/y [] []
+_os_fs_t/z [] []
+['lnk', 'x', 'z']
+[Errno 2] No such file or directory: '_os_fs_t/x/f.txt' -> '_os_fs_t/x/h.txt'
+[Errno 2] No such file or directory: '_os_fs_t/nope'
+True
+[Errno 2] No such file or directory: '_os_fs_t/nope'
+[Errno 20] Not a directory: '_os_fs_t/x/g.txt'
+True True
+True

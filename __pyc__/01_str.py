@@ -1,4 +1,7 @@
 class str:
+  # os.fspath(s) and open(s): a str is its own path (00_runtime.py).
+  def __pyc_fspath__(self):
+    return self
   def __add__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("::"), x)
   def __iadd__(self, x):
@@ -61,6 +64,26 @@ class str:
     # `encoding` is accepted for call-site compatibility and otherwise
     # ignored. Mirrors bytes.decode()'s identity cast the other way.
     return __pyc_c_call__(bytes, "_CG_string_identity", str, self)
+  # The reflected fallback for the operators str does not define, as
+  # object's (00_runtime.py): `"dir" / path` calls path.__rtruediv__.
+  def __sub__(self, x):
+    return x.__rsub__(self)
+  def __truediv__(self, x):
+    return x.__rtruediv__(self)
+  def __floordiv__(self, x):
+    return x.__rfloordiv__(self)
+  def __pow__(self, x):
+    return x.__rpow__(self)
+  def __lshift__(self, x):
+    return x.__rlshift__(self)
+  def __rshift__(self, x):
+    return x.__rrshift__(self)
+  def __and__(self, x):
+    return x.__rand__(self)
+  def __or__(self, x):
+    return x.__ror__(self)
+  def __xor__(self, x):
+    return x.__rxor__(self)
   def __mul__(self, l):
     return __pyc_c_call__(str, "_CG_string_mult", str, self, int, l)
   def __rmul__(self, l):

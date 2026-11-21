@@ -2841,6 +2841,62 @@ static void synthesize_dict_into(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *f
       ->ast = ast;
 }
 
+// The class's own name, as a method a class answers for itself:
+//   def __pyc_class_name__(self): return "<the class's __name__>"
+// synthesized for a class that does not define its own BUT inherits one: a
+// library class opts its subclasses in by defining it (pathlib's PurePath).
+// Not for every class: each synthesized method is a closure stored in the
+// prototype, a CreationSet whether or not anything calls it, and doing it
+// everywhere cost the corpus +13.6 % CreationSets (issues/202). A method, not a field,
+// so a receiver whose classes form a union answers by ordinary dispatch, and
+// a subclass answers with ITS name (CPython's `type(self).__name__`), not the
+// name of the class that defined the method reading it. Library code reads
+// it where CPython reads type(self).__name__ (pathlib's repr), and a class
+// may define it to answer as CPython's would (pathlib's Path is
+// `PosixPath`). Never read means never analysed: an uncalled method costs
+// a prototype store, and slot elision removes the slot (ifa/123).
+//
+// `__pyc_class__` is its companion, returning the class itself, for library
+// code that constructs with CPython's `type(self)(...)` (pathlib's
+// with_segments), so a subclass's derived objects are of the subclass.
+static void synthesize_class_name(PycCompiler &ctx, PycAST *ast, Sym *cls, Sym *fn, Code **classbody,
+                                  bool the_class = false) {
+  cchar *name = the_class ? "__pyc_class__" : "__pyc_class_name__";
+  if (ctx.scope_stack.last()->map.get(if1_cannonicalize_string(if1, name))) return;  // defines its own
+  if (!cls->name) return;
+  bool inherited = false;  // from a class in the MRO that defines it
+  Vec<Sym *> mro;
+  c3_mro(cls, mro);
+  for (int i = 1; i < mro.n && !inherited; i++)
+    for (Sym *m : mro[i]->has)
+      if (m && m->name && m->in == mro[i] && !strcmp(m->name, name)) {
+        inherited = true;
+        break;
+      }
+  if (!inherited) return;
+  Sym *mfn = new_fun(ast);
+  mfn->nesting_depth = fn->nesting_depth + 1;
+  mfn->self = new_sym(ast);
+  mfn->self->must_implement_and_specialize(cls);
+  mfn->self->in = mfn;
+  Vec<Sym *> as;
+  as.add(new_sym(ast, name));
+  as[0]->must_implement_and_specialize(if1_make_symbol(if1, name));
+  mfn->name = as[0]->name;
+  as.add(mfn->self);
+  Code *b = 0;
+  if1_move(if1, &b, the_class ? cls : make_string(cls->name, (int)strlen(cls->name)), mfn->ret);
+  if1_send(if1, &b, 4, 0, sym_primitive, sym_reply, mfn->cont, mfn->ret)->ast = ast;
+  if1_closure(if1, mfn, b, as.n, as.v);
+  Sym *member = new_PycSymbol(name)->sym;
+  member->var = new Var(member);
+  member->alias = mfn;
+  member->in = cls;
+  cls->has.add(member);
+  if1_send(if1, classbody, 5, 1, sym_operator, fn->self, sym_setter, if1_make_symbol(if1, name), mfn, new_sym(ast))
+      ->ast = ast;
+}
+
 void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_size, bool derive_compare) {
   // cdef is the PY_classdef node
   Sym *fn = ast->rval, *cls = ast->sym;
@@ -3044,6 +3100,8 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     synthesize_default_iop(ctx, ast, cls, fn, &body, "__ifloordiv__", "__floordiv__");
   }
   if (is_record) synthesize_dict_into(ctx, ast, cls, fn, &body);
+  if (is_record) synthesize_class_name(ctx, ast, cls, fn, &body);
+  if (is_record) synthesize_class_name(ctx, ast, cls, fn, &body, true);
   if1_move(if1, &body, fn->self, fn->ret, ast);
   if1_label(if1, &body, ast, ast->label[0]);
   if1_send(if1, &body, 4, 0, sym_primitive, sym_reply, fn->cont, fn->ret)->ast = ast;

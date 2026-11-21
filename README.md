@@ -44,9 +44,10 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
   `tuple`, `dict`, `set`, `range`, `slice`, `None`, with `%`-formatting and f-strings.
 - **Modules**: `import`, `from … import`, packages and relative imports, all resolved at compile
   time. Partial implementations of common standard-library modules live in
-  [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os`, `collections`, `heapq`,
-  `copy`, `struct`, `string`, `socket`, `logging` and parts of `re` and `itertools`. File I/O
-  uses `open()`.
+  [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os` and `os.path`,
+  `pathlib`, `fnmatch`, `collections`, `heapq`, `copy`, `struct`, `string`, `socket`, `logging`
+  and parts of `re` and `itertools`. File I/O uses `open()`, which takes a str or a `pathlib`
+  path.
 - **Type hints and dataclasses**: annotations are accepted and ignored, `typing` provides its
   names (`TYPE_CHECKING` blocks are skipped, `TypeAlias` assignments dropped), and `@dataclass`
   generates `__init__`, `__repr__`, `__eq__` and `__hash__` as CPython does, with `field()`
@@ -481,6 +482,13 @@ pyc compiles a large subset of Python 3, not all of it. Bugs and gaps are tracke
   stream, file and null handlers. A format naming the caller's location (`%(lineno)d`,
   `%(funcName)s`, …), `exception()`, `exc_info`/`extra`, the `{`/`$` styles, `LoggerAdapter`
   and `logging.handlers` are refused ([issues/197](issues/197-logging.md)).
+- **`os`, `os.path` and `pathlib`** are POSIX only, and take str paths or path objects, not
+  bytes. An `OSError` carries its message but not `errno`, `strerror` or `filename`. `pathlib`
+  has no Windows flavour and no `as_uri`, `owner`, `group` or `chmod`, and `Path.open()` is
+  text-only; `read_bytes()`, `write_bytes()` and `open(path, 'rb')` work
+  ([issues/202](issues/202-os-and-pathlib.md)).
+- **Non-ASCII text**: a `str` is stored as UTF-8 bytes, and `len`, indexing, slicing and
+  iteration count bytes, not characters ([issues/203](issues/203-str-counts-utf8-bytes.md)).
 - **`ctypes`** is a static subset: structures, pointers, arrays, scalar out-parameters and
   `CFUNCTYPE` callbacks (through libffi), but no unions, bit fields or `cast`; declarations must
   be at module top level, and a program with foreign calls does not run under `--jit`

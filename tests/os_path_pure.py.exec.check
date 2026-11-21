@@ -1,0 +1,20 @@
+a/b/c /b/c x a
+'a/b.txt' ('a', 'b.txt') ('a/b', '.txt') b.txt 'a' a/b.txt False ('', '', 'a/b.txt')
+'/a/b' ('/a', 'b') ('/a/b', '') b '/a' /a/b True ('', '/', 'a/b')
+'/' ('/', '') ('/', '')  '/' / True ('', '/', '')
+'//a' ('//', 'a') ('//a', '') a '//' //a True ('', '//', 'a')
+'a/' ('a', '') ('a/', '')  'a' a False ('', '', 'a/')
+'a//' ('a', '') ('a//', '')  'a' a False ('', '', 'a//')
+'.bashrc' ('', '.bashrc') ('.bashrc', '') .bashrc '' .bashrc False ('', '', '.bashrc')
+'a/.b.c' ('a', '.b.c') ('a/.b', '.c') .b.c 'a' a/.b.c False ('', '', 'a/.b.c')
+'a.b/c' ('a.b', 'c') ('a.b/c', '') c 'a.b' a.b/c False ('', '', 'a.b/c')
+'..' ('', '..') ('..', '') .. '' .. False ('', '', '..')
+'x.' ('', 'x.') ('x', '.') x. '' x. False ('', '', 'x.')
+'/a/b/..' ('/a/b', '..') ('/a/b/..', '') .. '/a/b' /a True ('', '/', 'a/b/..')
+/a/b/d ../.. .
+/usr/l /usr
+../b/c . ../../x
+val val None dflt True val/val/$NOPE_X/${}/$
+True ~nosuchuserxyz/a
+False
+KeyError 'PYC_T_V'

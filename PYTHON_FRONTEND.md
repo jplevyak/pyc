@@ -531,6 +531,14 @@ scopes in `v[0]`. From project memory: this was a real bug.
 `import_scope` plugs the imported module's scope into `ctx.imports`
 so `find_PycSymbol` can find its bindings.
 
+**Circular imports.** `import_file` registers the module before running
+`build_syms` on it, so a module that imports one already on the stack
+finds it. Pass 2 does the same: `build_one_module_if1` marks
+`built_if1` before building, not after, or `pk` importing `pk.sub`
+importing `pk` recursed until the stack overflowed. A name read at call
+time works; one read while the other module is still running sees the
+value bound later, where CPython raises `AttributeError` (issues/204).
+
 ---
 
 ## 7. Builtin module: `__pyc__/`
@@ -814,7 +822,34 @@ PY_decorated
 Decorators are wrapped in `PY_suite`, not direct children. Code that
 walks decorators must unwrap the `PY_suite` first.
 
-### 13.10 Builtin Sym redefinition
+### 13.10 Methods every class gets
+
+`gen_class_pyda` synthesises methods into every record class whose body
+does not define them, as CPython's defaults would behave:
+
+- `__i<op>__` falling back to `__<op>__` (`synthesize_default_iop`);
+- `__pyc_dict_into__` for a class with `keys` (`synthesize_dict_into`);
+- `__pyc_class_name__` returning the class's name and `__pyc_class__`
+  returning the class (`synthesize_class_name`), but only in a class that
+  INHERITS one: a class opts its subclasses in by defining them. These are
+  `type(self).__name__` and `type(self)` for library code: pathlib's
+  `PurePath` and `Path` define them (answering `PurePosixPath` and
+  `PosixPath`, as CPython's would), and a user subclass of `Path` then
+  prints and derives as itself. Not in every class: a method stored in the
+  prototype is a closure CreationSet whether or not anything calls it, and
+  synthesizing these everywhere cost the corpus +13.6 % CreationSets.
+
+The root types carry the protocol fallbacks that need no synthesis.
+`object` has the reflected binary operators (`a + b` with no `__add__` on
+`a` calls `b.__radd__(a)`; str defines the ones it lacks itself),
+`__gt__` to `__lt__`, the iteration fallback of `__contains__`, and
+`__pyc_fspath__` to `__fspath__` (str answers itself; `os.fspath` and
+`open()` call it). They go on `object` and not `__pyc_any_type__` for two
+reasons: None reaches `__pyc_any_type__`, and `None + 5` must stay a None
+receiver's run-time TypeError; and str reaches it too, so a `{str, C}`
+receiver could not tell str's override from the default.
+
+### 13.11 Builtin Sym redefinition
 `build_builtin_symbols` (`python_ifa_sym.cc:70`) sets up name aliases:
 - `sym_int->alias = sym_int64` (Python `int` ≡ `int64`).
 - `sym_float->alias = sym_float64`.
@@ -828,13 +863,13 @@ walks decorators must unwrap the `PY_suite` first.
 If you read a builtin Sym and the name looks "wrong," check this
 function.
 
-### 13.11 `pyc_compat.py` is a no-op shim
+### 13.12 `pyc_compat.py` is a no-op shim
 The import is recognised and skipped by `build_import_syms`. The
 file exists only so `import` lines pyc programs use are runnable under
 unmodified CPython. Adding fields to `pyc_compat` is fine; just don't
 expect pyc to *do* anything with the imports.
 
-### 13.12 Generated parser slowness on `__pyc__`
+### 13.13 Generated parser slowness on `__pyc__`
 The DParser GLR engine is super-linear on large complex files. The
 builtin module is intentionally loaded via `dparse_builtin_dir` (which
 concatenates the small files) rather than as one giant file, partly for

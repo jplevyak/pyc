@@ -53,6 +53,8 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <pwd.h>
 #include <locale.h>
 #include <langinfo.h>
 
@@ -668,6 +670,101 @@ inline char *_CG_readdir_name(int64 h) {
   struct dirent *e = readdir((DIR *)(intptr_t)h);
   if (!e) return _CG_String("");
   return _CG_String(e->d_name);
+}
+
+// pyc_lib/os (issues/202): each call returns 0 or the errno, so the Python
+// side raises the OSError subclass CPython does without another call
+// between the failure and the read of errno. A helper that returns a
+// string leaves its errno in _CG_os_err() instead.
+// The storage is extern, defined once in pyc_runtime.c (the _cg_argv
+// pattern), so both backends share one copy.
+extern int _cg_os_err;
+extern struct stat _cg_os_st;
+inline int64 _CG_os_err(void) { return (int64)_cg_os_err; }
+inline int64 _CG_os_rc(int rc) { return rc == 0 ? 0 : (int64)errno; }
+inline int64 _CG_os_mkdir(const char *p, int64 mode) { return _CG_os_rc(mkdir(p, (mode_t)mode)); }
+inline int64 _CG_os_rmdir(const char *p) { return _CG_os_rc(rmdir(p)); }
+inline int64 _CG_os_unlink(const char *p) { return _CG_os_rc(unlink(p)); }
+inline int64 _CG_os_chdir(const char *p) { return _CG_os_rc(chdir(p)); }
+inline int64 _CG_os_rename(const char *a, const char *b) { return _CG_os_rc(rename(a, b)); }
+inline int64 _CG_os_symlink(const char *a, const char *b) { return _CG_os_rc(symlink(a, b)); }
+inline int64 _CG_os_access(const char *p, int64 mode) { return access(p, (int)mode) == 0; }
+inline int64 _CG_os_utime_now(const char *p) { return _CG_os_rc(utimes(p, NULL)); }
+inline int64 _CG_os_create(const char *p, int64 mode, int64 excl) {
+  int fd = open(p, O_CREAT | O_WRONLY | (excl ? O_EXCL : 0), (mode_t)mode);
+  if (fd < 0) return (int64)errno;
+  close(fd);
+  return 0;
+}
+inline int64 _CG_os_cpu_count(void) { return (int64)sysconf(_SC_NPROCESSORS_ONLN); }
+// pathlib's predicates read these errnos as "no" and raise on any other.
+inline int64 _CG_os_ignorable_errno(int64 e) { return e == ENOENT || e == ENOTDIR || e == EBADF || e == ELOOP; }
+
+// os.stat / os.lstat: one call fills this, and the fields are read from
+// it. Times as CPython builds them: `sec + nsec * 1e-9` for st_mtime, and
+// `sec * 10**9 + nsec` for st_mtime_ns.
+inline int64 _CG_os_stat(const char *p, int64 follow) {
+  return _CG_os_rc(follow ? stat(p, &_cg_os_st) : lstat(p, &_cg_os_st));
+}
+#ifdef __APPLE__
+#define _CG_ST_TIM(st, w) ((st).st_##w##timespec)
+#else
+#define _CG_ST_TIM(st, w) ((st).st_##w##tim)
+#endif
+inline int64 _CG_os_stat_int(int64 i) {
+  struct stat *s = &_cg_os_st;
+#define st (*s)
+  switch (i) {
+    case 0: return (int64)st.st_mode;
+    case 1: return (int64)st.st_ino;
+    case 2: return (int64)st.st_dev;
+    case 3: return (int64)st.st_nlink;
+    case 4: return (int64)st.st_uid;
+    case 5: return (int64)st.st_gid;
+    case 6: return (int64)st.st_size;
+    case 7: return (int64)_CG_ST_TIM(st, a).tv_sec;
+    case 8: return (int64)_CG_ST_TIM(st, m).tv_sec;
+    case 9: return (int64)_CG_ST_TIM(st, c).tv_sec;
+    case 10: return (int64)_CG_ST_TIM(st, a).tv_sec * 1000000000LL + _CG_ST_TIM(st, a).tv_nsec;
+    case 11: return (int64)_CG_ST_TIM(st, m).tv_sec * 1000000000LL + _CG_ST_TIM(st, m).tv_nsec;
+    case 12: return (int64)_CG_ST_TIM(st, c).tv_sec * 1000000000LL + _CG_ST_TIM(st, c).tv_nsec;
+    case 13: return (int64)st.st_blocks;
+    case 14: return (int64)st.st_blksize;
+    case 15: return (int64)st.st_rdev;
+    default: return 0;
+  }
+#undef st
+}
+inline double _CG_os_stat_time(int64 i) {
+  struct stat *s = &_cg_os_st;
+  struct timespec t = i == 0 ? _CG_ST_TIM(*s, a) : i == 1 ? _CG_ST_TIM(*s, m) : _CG_ST_TIM(*s, c);
+  return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+}
+
+// The i-th "KEY=VALUE" of the environment at the call, "" past the end.
+inline char *_CG_os_environ_at(int64 i) {
+  extern char **environ;
+  for (int64 k = 0; k < i; k++)
+    if (!environ[k]) return _CG_String("");
+  return _CG_String(environ[i] ? environ[i] : "");
+}
+inline int64 _CG_os_setenv(const char *k, const char *v) { return _CG_os_rc(setenv(k, v, 1)); }
+inline int64 _CG_os_unsetenv(const char *k) { return _CG_os_rc(unsetenv(k)); }
+
+inline char *_CG_os_readlink(const char *p) {
+  char buf[4096];
+  ssize_t n = readlink(p, buf, sizeof(buf) - 1);
+  _cg_os_err = n < 0 ? errno : 0;
+  if (n < 0) return _CG_String("");
+  buf[n] = 0;
+  return _CG_String(buf);
+}
+
+// The home directory from the password database, for expanduser when HOME
+// is unset (the current user) or for `~name`. "" when there is none.
+inline char *_CG_os_pw_home(const char *name) {
+  struct passwd *pw = *name ? getpwnam(name) : getpwuid(getuid());
+  return _CG_String(pw && pw->pw_dir ? pw->pw_dir : "");
 }
 
 // issues/165: Python's `%d` is C's `int` conversion -- 32 bits -- but
