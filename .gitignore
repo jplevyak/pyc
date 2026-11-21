@@ -46,8 +46,6 @@ pyc.cat
 *.py.c
 *.py.html
 *.py.json
-*.py_pass_*.js
-*.py_pass_*.json
 
 # Profiling / debug output
 callgrind.out.*
@@ -83,8 +81,6 @@ tests/*.out
 tests/*.py.c
 tests/*.py.html
 tests/*.py.json
-tests/*.py_pass_*.js
-tests/*.py_pass_*.json
 tests/*.py.s
 # the LLVM backend's foreign-call shim (codegen_extra_source), written beside the program
 tests/*.ffi.cc
@@ -229,3 +225,4 @@ shedskin_examples/*/log/
 # pygmy writes its output into the CWD, so a run from the repo root
 # leaves this at top level.
 /pygmy.ppm
+ifa/common/explorer/*.inc

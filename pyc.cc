@@ -275,10 +275,8 @@ static ArgumentDescription arg_desc[] = {
     {"browse", 'B', "Generate HTML and open in local browser (implies --html)", "F", &ifa_open_html, "PYC_BROWSE", NULL},
     {"html-open", ' ', "Generate HTML and open in local browser (implies --html)", "F", &ifa_open_html, "PYC_HTML_OPEN",
      NULL},
-    {"html-max-size", ' ', "Max HTML telemetry size in MB (default 100)", "I", &ifa_html_max_size_mb, "PYC_HTML_MAX_SIZE",
+    {"html-max-size", ' ', "Budget in MB for per-pass explorer detail (default 100)", "I", &ifa_html_max_size_mb, "PYC_HTML_MAX_SIZE",
      NULL},
-    {"html-pass-limit", ' ', "Pass companion file size threshold in MB (default 2)", "I", &ifa_html_pass_limit_mb,
-     "PYC_HTML_PASS_LIMIT", NULL},
     {"dump-json", ' ', "Output compilation database as JSON", "F", &ifa_dump_json, "PYC_DUMP_JSON", NULL},
     {"system-directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
     {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
@@ -367,8 +365,8 @@ void compile(cchar *fn) {
   if (fgraph) ifa_graph(fn);
   // pyc -x: codegen's .c/.ll/.o and the executable go in the cache entry
   // being built, not beside the source (which may not be writable).
-  // The explorer reads the program from `source_fn` and finds codegen's
-  // output next to `fn`; under -x those differ.
+  // The explorer reads the program from `source_fn` and writes beside it,
+  // and finds codegen's output next to `fn`; under -x those differ.
   cchar *source_fn = fn;
   if (exec_out_fn) fn = exec_out_fn;
   auto maybe_dump_html = [&]() {
@@ -490,7 +488,7 @@ int main(int argc, char *argv[]) {
   {
     bool saw_x = false;
     static cchar *takes_value[] = {"-o", "-D", "-l", "--output", "--system-directory", "--log", "--cflags", "--libs", "--fa-inline",
-                                   "--narrow", "--dump-ir-after", "--html-max-size", "--html-pass-limit", nullptr};
+                                   "--narrow", "--dump-ir-after", "--html-max-size", nullptr};
     for (int i = 1; i < argc; i++) {
       cchar *a = argv[i];
       if (!strcmp(a, "--")) { if (i + 1 < argc) exec_script = i + 1; break; }
