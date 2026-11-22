@@ -326,6 +326,7 @@ void compile(cchar *fn) {
   // an interactive CPython (its input is compiled from a temporary file).
   cchar *script = do_repl ? "" : fn;
   if (ifa_analyze(fn) < 0) fail("program does not type");
+  if (!pyc_report_accommodations()) fail("program does not type");
   // issue 011: Fun::calls (built by clone(), inside ifa_analyze())
   // now exists -- compute the precise, post-FA can-raise bit before
   // any codegen consumes it.

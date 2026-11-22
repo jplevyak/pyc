@@ -1,0 +1,24 @@
+7 True
+0 0 0 0
+True True
+True
+2
+b'xy'
+[]
+(24, 80) (24, 80)
+2
+termios.error (25, 'Inappropriate ioctl for device')
+TypeError tcsetattr, arg 3: must be 7 element list
+TypeError tcsetattr: attributes[6] must be 32 element list
+TypeError tcsetattr: elements of attributes must be characters or integers
+termios.error (22, 'Invalid argument')
+termios.error (22, 'Invalid argument')
+termios.error (25, 'Inappropriate ioctl for device')
+OverflowError winsize value(s) out of range.
+1
+0 True
+b'\x03\x00\x00\x00'
+OSError [Errno 9] Bad file descriptor
+ValueError ioctl string arg too long
+ValueError fcntl string arg too long
+OSError [Errno 25] Inappropriate ioctl for device

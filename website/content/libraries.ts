@@ -42,6 +42,8 @@ export const MODULES: LibModule[] = [
   { name: 'ctypes', status: 'partial', path: 'ctypes/__init__.py', covers: 'CDLL, argtypes, restype, the c_* types, Structure, POINTER, byref, pointer, sizeof', note: 'Lowered at compile time to direct C calls. A use outside the subset is refused with its line.' },
   { name: 'socket', status: 'partial', covers: 'socket (bind, listen, accept, recv, send, setsockopt), gethostname' },
   { name: 'select', status: 'partial', covers: 'select', note: "CPython's results, timeouts and errors, over poll(2). poll, epoll and kqueue are not provided." },
+  { name: 'termios', status: 'partial', covers: 'tcgetattr, tcsetattr, tcsendbreak, tcdrain, tcflush, tcflow, tcgetwinsize, tcsetwinsize, and the constants Linux and macOS share', note: 'tcgetattr returns its cc list as ints, where CPython mixes 1-byte bytes and ints: a permissive accommodation (PYC_TERMIOS_CC_INT) that warns at each call and is refused under --strict.' },
+  { name: 'fcntl', status: 'partial', covers: 'fcntl, ioctl (integer and buffer forms), flock, F_* and LOCK_* constants', note: 'A mutable-buffer (bytearray) argument raises NotImplementedError; lockf is not provided.' },
   { name: 'serial', status: 'partial', covers: 'The pyserial API surface', note: 'Opening a port raises SerialException, as pyserial does for a port it cannot open.' },
 ];
 

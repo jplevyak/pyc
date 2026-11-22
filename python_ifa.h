@@ -127,6 +127,9 @@ bool pyc_needs_whole_program_frontend(Vec<PycModule *> &mods);
 // or codegen -- that's the earliest point Fun::calls (built by
 // clone(), partway through ifa_analyze()) exists and is stable.
 void compute_fun_can_raise();
+// __pyc_accommodation__ (python_ifa_main.cc): report the accommodations the
+// analysed program reaches; false when --strict (or FLAG=0) refuses one.
+bool pyc_report_accommodations();
 
 // Stage-3 REPL: split ast_to_if1 into a one-time baseline (builtin module
 // only) and a per-iteration extend (user module).  The REPL parent calls

@@ -235,7 +235,26 @@ The full set of macros/inlines includes math (`pow`, `sin`, `cos`,
 Anything you can do in C, the runtime can emit. New primitives need
 a matching `_CG_*` macro added here.
 
-### 3.10 hashlib and libcrypto (`pyc_runtime.c`, `_CG_hash_*`)
+### 3.10 An accommodation made in library code: `__pyc_accommodation__`
+
+An accommodation (issues/171) is normally the compiler's. When a library
+module has to make one, `pyc_lib/termios.py`'s `tcgetattr` returning its
+`cc` list as ints for one, it declares it where it makes it:
+
+```python
+__pyc_primitive__(__pyc_symbol__("__pyc_accommodation__"), "PYC_TERMIOS_CC_INT",
+                  "termios.tcgetattr returns its cc list as ints, where CPython ...")
+```
+
+The primitive (`python_ifa_main.cc`) emits no code. Its transfer function
+records which contours reach it, and `pyc_report_accommodations`, run once
+analysis has converged, reports each call into a live one. Permissive mode
+warns at each call site, naming the flag. `--strict`, or the flag set to
+`0`, makes the same report an error and refuses the program. So the rule is
+the compiler's, the library cannot decide it for itself, and nothing
+recognises the library function by name.
+
+### 3.11 hashlib and libcrypto (`pyc_runtime.c`, `_CG_hash_*`)
 
 `pyc_lib/hashlib.py` is a thin class over C digests. The runtime
 `dlopen`s OpenSSL's `libcrypto.so.3` (then `.so.1.1`) on first use and

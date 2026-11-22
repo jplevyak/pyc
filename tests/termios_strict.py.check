@@ -1,0 +1,2 @@
+termios_strict.py:9: error: termios.tcgetattr returns its cc list as ints, where CPython gives a 1-byte bytes for each element other than VMIN and VTIME in non-canonical mode; accepted only by permissive mode's PYC_TERMIOS_CC_INT accommodation (issues/171)
+fail: program does not type

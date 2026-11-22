@@ -108,6 +108,25 @@ char *_CG_poll_new(long long n);
 long long _CG_poll_set(char *b, long long i, long long fd, long long kind);
 long long _CG_poll_wait(char *b, double timeout);
 long long _CG_poll_ready(char *b, long long i);
+// termios and fcntl (pyc_lib/termios.py, fcntl.py), in pyc_runtime.c.
+long long _CG_termios_const(long long which);
+char *_CG_tc_get(long long fd);
+long long _CG_tc_field(char *t, long long which);
+long long _CG_tc_cc(char *t, long long i);
+long long _CG_tc_set(long long fd, long long when, long long iflag, long long oflag, long long cflag,
+                     long long lflag, long long ispeed, long long ospeed, char *cc);
+long long _CG_tc_sendbreak(long long fd, long long duration);
+long long _CG_tc_drain(long long fd);
+long long _CG_tc_flush(long long fd, long long queue);
+long long _CG_tc_flow(long long fd, long long action);
+long long _CG_tc_getwinsize(long long fd);
+long long _CG_tc_setwinsize(long long fd, long long rows, long long cols);
+long long _CG_fcntl_const(long long which);
+long long _CG_fcntl_int(long long fd, long long cmd, long long arg);
+char *_CG_fcntl_buf(long long fd, long long cmd, char *arg);
+long long _CG_ioctl_int(long long fd, long long request, long long arg);
+char *_CG_ioctl_buf(long long fd, long long request, char *arg);
+long long _CG_flock(long long fd, long long op);
 
 #ifdef __cplusplus
 }

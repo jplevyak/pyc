@@ -1784,3 +1784,273 @@ _CG_int64 _CG_os_set_blocking(_CG_int64 fd, _CG_int64 blocking) {
   _cg_os_err = f < 0 ? errno : 0;
   return f < 0 ? -1 : 0;
 }
+
+/* ---------------------------------------------------------------------
+ * termios and fcntl (pyc_lib/termios.py, pyc_lib/fcntl.py). Same error
+ * convention as the descriptor calls above: -1 (or any value, returning
+ * bytes) with the errno in _cg_os_err. A struct termios travels to Python
+ * as a bytes value of its own size, so its layout is the platform's, never
+ * restated in Python.
+ * ------------------------------------------------------------------- */
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <sys/file.h>
+
+/* termios constants, in pyc_lib/termios.py's order (generated together). */
+static const _CG_int64 _cg_termios_consts[] = {
+  /* tcsetattr when */
+  (_CG_int64)TCSANOW,
+  (_CG_int64)TCSADRAIN,
+  (_CG_int64)TCSAFLUSH,
+  /* tcflush queue */
+  (_CG_int64)TCIFLUSH,
+  (_CG_int64)TCOFLUSH,
+  (_CG_int64)TCIOFLUSH,
+  /* tcflow action */
+  (_CG_int64)TCOOFF,
+  (_CG_int64)TCOON,
+  (_CG_int64)TCIOFF,
+  (_CG_int64)TCION,
+  /* baud rates */
+  (_CG_int64)B0,
+  (_CG_int64)B50,
+  (_CG_int64)B75,
+  (_CG_int64)B110,
+  (_CG_int64)B134,
+  (_CG_int64)B150,
+  (_CG_int64)B200,
+  (_CG_int64)B300,
+  (_CG_int64)B600,
+  (_CG_int64)B1200,
+  (_CG_int64)B1800,
+  (_CG_int64)B2400,
+  (_CG_int64)B4800,
+  (_CG_int64)B9600,
+  (_CG_int64)B19200,
+  (_CG_int64)B38400,
+  (_CG_int64)B57600,
+  (_CG_int64)B115200,
+  (_CG_int64)B230400,
+  /* iflag */
+  (_CG_int64)IGNBRK,
+  (_CG_int64)BRKINT,
+  (_CG_int64)IGNPAR,
+  (_CG_int64)PARMRK,
+  (_CG_int64)INPCK,
+  (_CG_int64)ISTRIP,
+  (_CG_int64)INLCR,
+  (_CG_int64)IGNCR,
+  (_CG_int64)ICRNL,
+  (_CG_int64)IXON,
+  (_CG_int64)IXANY,
+  (_CG_int64)IXOFF,
+  (_CG_int64)IMAXBEL,
+  /* oflag */
+  (_CG_int64)OPOST,
+  (_CG_int64)ONLCR,
+  (_CG_int64)OCRNL,
+  (_CG_int64)ONOCR,
+  (_CG_int64)ONLRET,
+  /* cflag */
+  (_CG_int64)CSIZE,
+  (_CG_int64)CS5,
+  (_CG_int64)CS6,
+  (_CG_int64)CS7,
+  (_CG_int64)CS8,
+  (_CG_int64)CSTOPB,
+  (_CG_int64)CREAD,
+  (_CG_int64)PARENB,
+  (_CG_int64)PARODD,
+  (_CG_int64)HUPCL,
+  (_CG_int64)CLOCAL,
+  (_CG_int64)CRTSCTS,
+  /* lflag */
+  (_CG_int64)ISIG,
+  (_CG_int64)ICANON,
+  (_CG_int64)ECHO,
+  (_CG_int64)ECHOE,
+  (_CG_int64)ECHOK,
+  (_CG_int64)ECHONL,
+  (_CG_int64)NOFLSH,
+  (_CG_int64)TOSTOP,
+  (_CG_int64)IEXTEN,
+  (_CG_int64)ECHOCTL,
+  (_CG_int64)ECHOKE,
+  (_CG_int64)ECHOPRT,
+  (_CG_int64)FLUSHO,
+  (_CG_int64)PENDIN,
+  /* cc indices */
+  (_CG_int64)NCCS,
+  (_CG_int64)VEOF,
+  (_CG_int64)VEOL,
+  (_CG_int64)VEOL2,
+  (_CG_int64)VERASE,
+  (_CG_int64)VWERASE,
+  (_CG_int64)VINTR,
+  (_CG_int64)VKILL,
+  (_CG_int64)VQUIT,
+  (_CG_int64)VSTART,
+  (_CG_int64)VSTOP,
+  (_CG_int64)VSUSP,
+  (_CG_int64)VREPRINT,
+  (_CG_int64)VLNEXT,
+  (_CG_int64)VDISCARD,
+  (_CG_int64)VMIN,
+  (_CG_int64)VTIME,
+  /* ioctl requests and modem bits */
+  (_CG_int64)TIOCMGET,
+  (_CG_int64)TIOCMSET,
+  (_CG_int64)TIOCMBIS,
+  (_CG_int64)TIOCMBIC,
+  (_CG_int64)TIOCM_LE,
+  (_CG_int64)TIOCM_DTR,
+  (_CG_int64)TIOCM_RTS,
+  (_CG_int64)TIOCM_ST,
+  (_CG_int64)TIOCM_SR,
+  (_CG_int64)TIOCM_CTS,
+  (_CG_int64)TIOCM_CAR,
+  (_CG_int64)TIOCM_CD,
+  (_CG_int64)TIOCM_RNG,
+  (_CG_int64)TIOCM_RI,
+  (_CG_int64)TIOCM_DSR,
+  (_CG_int64)FIONREAD,
+  (_CG_int64)TIOCOUTQ,
+  (_CG_int64)TIOCEXCL,
+  (_CG_int64)TIOCNXCL,
+  (_CG_int64)TIOCGWINSZ,
+  (_CG_int64)TIOCSWINSZ,
+};
+
+_CG_int64 _CG_termios_const(_CG_int64 which) {
+  if (which < 0 || which >= (_CG_int64)(sizeof(_cg_termios_consts) / sizeof(_cg_termios_consts[0]))) abort();
+  return _cg_termios_consts[which];
+}
+
+char *_CG_tc_get(_CG_int64 fd) {
+  char *t = _CG_string_alloc(sizeof(struct termios));
+  _cg_os_err = tcgetattr((int)fd, (struct termios *)t) < 0 ? errno : 0;
+  return t;
+}
+
+/* 0..3 the iflag, oflag, cflag and lflag words; 4, 5 the input and output
+ * speeds (a B* constant, as CPython reports them). */
+_CG_int64 _CG_tc_field(char *t, _CG_int64 which) {
+  struct termios *m = (struct termios *)t;
+  switch (which) {
+    case 0: return (_CG_int64)m->c_iflag;
+    case 1: return (_CG_int64)m->c_oflag;
+    case 2: return (_CG_int64)m->c_cflag;
+    case 3: return (_CG_int64)m->c_lflag;
+    case 4: return (_CG_int64)cfgetispeed(m);
+    default: return (_CG_int64)cfgetospeed(m);
+  }
+}
+
+_CG_int64 _CG_tc_cc(char *t, _CG_int64 i) { return (_CG_int64)((struct termios *)t)->c_cc[i]; }
+
+/* CPython's tcsetattr: start from the descriptor's current settings, so
+ * fields the list does not carry keep their values. cc is NCCS bytes. */
+_CG_int64 _CG_tc_set(_CG_int64 fd, _CG_int64 when, _CG_int64 iflag, _CG_int64 oflag, _CG_int64 cflag,
+                     _CG_int64 lflag, _CG_int64 ispeed, _CG_int64 ospeed, char *cc) {
+  struct termios m;
+  if (tcgetattr((int)fd, &m) < 0) goto fail;
+  m.c_iflag = (tcflag_t)iflag;
+  m.c_oflag = (tcflag_t)oflag;
+  m.c_cflag = (tcflag_t)cflag;
+  m.c_lflag = (tcflag_t)lflag;
+  if (cfsetispeed(&m, (speed_t)ispeed) < 0 || cfsetospeed(&m, (speed_t)ospeed) < 0) goto fail;
+  memcpy(m.c_cc, cc, NCCS);
+  if (tcsetattr((int)fd, (int)when, &m) < 0) goto fail;
+  _cg_os_err = 0;
+  return 0;
+fail:
+  _cg_os_err = errno;
+  return -1;
+}
+
+static _CG_int64 _cg_rc(int r) {
+  _cg_os_err = r < 0 ? errno : 0;
+  return r < 0 ? -1 : r;
+}
+
+_CG_int64 _CG_tc_sendbreak(_CG_int64 fd, _CG_int64 duration) { return _cg_rc(tcsendbreak((int)fd, (int)duration)); }
+_CG_int64 _CG_tc_drain(_CG_int64 fd) { return _cg_rc(tcdrain((int)fd)); }
+_CG_int64 _CG_tc_flush(_CG_int64 fd, _CG_int64 queue) { return _cg_rc(tcflush((int)fd, (int)queue)); }
+_CG_int64 _CG_tc_flow(_CG_int64 fd, _CG_int64 action) { return _cg_rc(tcflow((int)fd, (int)action)); }
+
+/* rows | cols << 32, or -1 */
+_CG_int64 _CG_tc_getwinsize(_CG_int64 fd) {
+  struct winsize w;
+  if (_cg_rc(ioctl((int)fd, TIOCGWINSZ, &w)) < 0) return -1;
+  return (_CG_int64)w.ws_row | ((_CG_int64)w.ws_col << 32);
+}
+
+/* CPython's: the pixel sizes are kept from the current setting. */
+_CG_int64 _CG_tc_setwinsize(_CG_int64 fd, _CG_int64 rows, _CG_int64 cols) {
+  struct winsize w;
+  if (_cg_rc(ioctl((int)fd, TIOCGWINSZ, &w)) < 0) return -1;
+  w.ws_row = (unsigned short)rows;
+  w.ws_col = (unsigned short)cols;
+  return _cg_rc(ioctl((int)fd, TIOCSWINSZ, &w));
+}
+
+/* fcntl constants, in pyc_lib/fcntl.py's order. */
+_CG_int64 _CG_fcntl_const(_CG_int64 which) {
+  static const _CG_int64 consts[] = {
+    F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL, F_SETFL, FD_CLOEXEC,
+    LOCK_SH, LOCK_EX, LOCK_NB, LOCK_UN,
+  };
+  if (which < 0 || which >= (_CG_int64)(sizeof(consts) / sizeof(consts[0]))) abort();
+  return consts[which];
+}
+
+_CG_int64 _CG_fcntl_int(_CG_int64 fd, _CG_int64 cmd, _CG_int64 arg) {
+  int r;
+  do r = fcntl((int)fd, (int)cmd, (int)arg);
+  while (r < 0 && errno == EINTR);
+  return _cg_rc(r);
+}
+
+/* CPython's buffer forms: the argument is copied into a 1024-byte buffer
+ * (the caller has checked its length), the call may write into it, and the
+ * result is a bytes of the argument's length. */
+static char *_cg_buf_result(int r, char *buf, size_t n) {
+  if (r < 0) {
+    _cg_os_err = errno;
+    return _CG_string_alloc(0);
+  }
+  _cg_os_err = 0;
+  char *out = _CG_string_alloc(n);
+  memcpy(out, buf, n);
+  return out;
+}
+
+char *_CG_fcntl_buf(_CG_int64 fd, _CG_int64 cmd, char *arg) {
+  char buf[1024];
+  size_t n = _CG_string_len(arg);
+  memset(buf, 0, sizeof(buf));
+  if (n) memcpy(buf, arg, n);
+  int r;
+  do r = fcntl((int)fd, (int)cmd, buf);
+  while (r < 0 && errno == EINTR);
+  return _cg_buf_result(r, buf, n);
+}
+
+_CG_int64 _CG_ioctl_int(_CG_int64 fd, _CG_int64 request, _CG_int64 arg) {
+  return _cg_rc(ioctl((int)fd, (unsigned long)request, (int)arg));
+}
+
+char *_CG_ioctl_buf(_CG_int64 fd, _CG_int64 request, char *arg) {
+  char buf[1024];
+  size_t n = _CG_string_len(arg);
+  memset(buf, 0, sizeof(buf));
+  if (n) memcpy(buf, arg, n);
+  return _cg_buf_result(ioctl((int)fd, (unsigned long)request, buf), buf, n);
+}
+
+_CG_int64 _CG_flock(_CG_int64 fd, _CG_int64 op) {
+  int r;
+  do r = flock((int)fd, (int)op);
+  while (r < 0 && errno == EINTR);
+  return _cg_rc(r);
+}
