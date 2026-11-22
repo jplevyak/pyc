@@ -1,0 +1,30 @@
+False True
+True
+5
+2 True True [] []
+b'hel' b'lo'
+True
+1 True b'' b'xy'
+False
+BlockingIOError [Errno 11] Resource temporarily unavailable
+([], [], [])
+True True
+([], [], [])
+True True
+True b''
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'int'
+OSError [Errno 22] Invalid argument
+ValueError timeout must be non-negative
+ValueError file descriptor cannot be a negative integer (-1)
+ValueError filedescriptor out of range in select()
+18
+FileExistsError [Errno 17] File exists: 'os_fd_select.tmp'
+FileNotFoundError [Errno 2] No such file or directory: 'no/such/dir/file'
+b'line one\nline two\n' b''
+b'line one\nline two\nthree\n'
+True True
+True b'typed\n'

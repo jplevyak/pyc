@@ -34,14 +34,14 @@ export const MODULES: LibModule[] = [
   { name: 'logging', status: 'partial', covers: 'levels, getLogger and the logger hierarchy, LogRecord, Formatter (% style), Filter, StreamHandler, FileHandler, NullHandler, basicConfig, the module-level functions', note: "A port of the core of CPython's logging; output matches byte for byte. What is not ported is refused at compile time." },
   { name: 'io', status: 'partial', covers: 'StringIO, BytesIO' },
   { name: 'sys', status: 'partial', covers: 'argv, exit, maxsize, stdin/stdout/stderr, version, platform, setrecursionlimit' },
-  { name: 'os', status: 'partial', path: 'os/__init__.py', covers: 'getcwd, chdir, listdir, walk, mkdir, makedirs, rmdir, removedirs, remove, rename, replace, symlink, readlink, stat, lstat, access, environ, getenv, system, getpid, cpu_count; os.path (CPython’s posixpath)', note: "POSIX only. Failures raise CPython's OSError subclass and message." },
+  { name: 'os', status: 'partial', path: 'os/__init__.py', covers: 'getcwd, chdir, listdir, walk, mkdir, makedirs, rmdir, removedirs, remove, rename, replace, symlink, readlink, stat, lstat, access, environ, getenv, system, getpid, cpu_count; open, read, write, close, pipe, openpty, isatty, get_blocking, set_blocking and the O_* flags; os.path (CPython’s posixpath)', note: "POSIX only. Failures raise CPython's OSError subclass and message." },
   { name: 'pathlib', status: 'ok', covers: 'PurePath and Path: parsing, parts, suffixes, joinpath, relative_to, match, stat, exists/is_dir/is_file, read/write text and bytes, iterdir, walk, glob, rglob, resolve, mkdir, touch, unlink, rename', note: "A port of CPython 3.12's pathlib for its POSIX flavour." },
   { name: 'time', status: 'partial', covers: 'time, time_ns, sleep, perf_counter, monotonic, process_time and their _ns forms, struct_time, gmtime, localtime, mktime, strftime, asctime, ctime' },
   { name: 'dataclasses', status: 'partial', covers: '@dataclass and field(...)', note: 'The frontend generates the class CPython’s decorator builds. fields, asdict, astuple and replace are refused at import.' },
   { name: 'typing', status: 'ok', covers: 'The names programs import: Any, Optional, Union, Callable, List, Dict, Tuple, Iterable, TypeVar, cast, overload, ...', note: 'Annotations are accepted and ignored; inference supplies the types.' },
   { name: 'ctypes', status: 'partial', path: 'ctypes/__init__.py', covers: 'CDLL, argtypes, restype, the c_* types, Structure, POINTER, byref, pointer, sizeof', note: 'Lowered at compile time to direct C calls. A use outside the subset is refused with its line.' },
   { name: 'socket', status: 'partial', covers: 'socket (bind, listen, accept, recv, send, setsockopt), gethostname' },
-  { name: 'select', status: 'partial', covers: 'select' },
+  { name: 'select', status: 'partial', covers: 'select', note: "CPython's results, timeouts and errors, over poll(2). poll, epoll and kqueue are not provided." },
   { name: 'serial', status: 'partial', covers: 'The pyserial API surface', note: 'Opening a port raises SerialException, as pyserial does for a port it cannot open.' },
 ];
 

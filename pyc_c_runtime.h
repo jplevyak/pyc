@@ -92,6 +92,23 @@ long long _CG_hash_backend(char *state);
 char *_CG_bytes_hex(char *b);
 char *_CG_hash_pbkdf2(long long alg, char *password, char *salt, long long iterations, long long dklen);
 
+// File-descriptor I/O (pyc_lib/os) and select (pyc_lib/select), in
+// pyc_runtime.c. A failure leaves its errno in _CG_os_err().
+long long _CG_os_const(long long which);
+long long _CG_os_open(char *path, long long flags, long long mode);
+char *_CG_os_read(long long fd, long long n);
+long long _CG_os_write(long long fd, char *data);
+long long _CG_os_close(long long fd);
+long long _CG_os_isatty(long long fd);
+long long _CG_os_pipe(void);
+long long _CG_os_openpty(void);
+long long _CG_os_get_blocking(long long fd);
+long long _CG_os_set_blocking(long long fd, long long blocking);
+char *_CG_poll_new(long long n);
+long long _CG_poll_set(char *b, long long i, long long fd, long long kind);
+long long _CG_poll_wait(char *b, double timeout);
+long long _CG_poll_ready(char *b, long long i);
+
 #ifdef __cplusplus
 }
 #endif

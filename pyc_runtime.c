@@ -1581,3 +1581,206 @@ char *_CG_hash_pbkdf2(_CG_int64 alg, char *password, char *salt, _CG_int64 itera
   }
   return out;
 }
+
+/* ---------------------------------------------------------------------
+ * File-descriptor I/O for pyc_lib/os (os.open/read/write/close/pipe/
+ * openpty/isatty) and readiness for pyc_lib/select.
+ *
+ * Each call that can fail returns -1 (or, returning bytes, any value) and
+ * leaves the errno in _cg_os_err, 0 on success, so the Python side raises
+ * the OSError subclass CPython does. Interrupted calls are retried (PEP
+ * 475; pyc has no signal handlers to run in between), except close, which
+ * CPython does not retry either. Descriptors pyc creates are
+ * non-inheritable (close-on-exec), as CPython's are (PEP 446).
+ * ------------------------------------------------------------------- */
+
+/* Declared here because glibc hides them unless _XOPEN_SOURCE (or, for
+ * pipe2, _GNU_SOURCE) is set. */
+#ifdef __linux__
+extern int pipe2(int fds[2], int flags);
+#endif
+extern int posix_openpt(int flags);
+extern int grantpt(int fd);
+extern int unlockpt(int fd);
+extern char *ptsname(int fd);
+
+/* Constants whose values the platform decides: O_* flags, errnos and
+ * select's FD_SETSIZE. The index is the table in pyc_lib/os and select. */
+_CG_int64 _CG_os_const(_CG_int64 which) {
+  static const _CG_int64 consts[] = {
+    O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC, O_NONBLOCK,
+    O_NOCTTY, O_CLOEXEC, O_SYNC, O_DSYNC, O_DIRECTORY, O_NOFOLLOW, O_ACCMODE, O_NDELAY,
+    EAGAIN, EWOULDBLOCK, EINPROGRESS, EALREADY, EBADF, EINVAL, FD_SETSIZE,
+  };
+  if (which < 0 || which >= (_CG_int64)(sizeof(consts) / sizeof(consts[0]))) abort();
+  return consts[which];
+}
+
+static int _cg_set_cloexec(int fd) {
+  int f = fcntl(fd, F_GETFD);
+  return f < 0 ? -1 : fcntl(fd, F_SETFD, f | FD_CLOEXEC);
+}
+
+_CG_int64 _CG_os_open(char *path, _CG_int64 flags, _CG_int64 mode) {
+  int fd;
+  do fd = open(path, (int)flags | O_CLOEXEC, (mode_t)mode);
+  while (fd < 0 && errno == EINTR);
+  _cg_os_err = fd < 0 ? errno : 0;
+  return fd;
+}
+
+char *_CG_os_read(_CG_int64 fd, _CG_int64 n) {
+  if (n < 0) {
+    _cg_os_err = EINVAL;
+    return _CG_string_alloc(0);
+  }
+  char *buf = _CG_string_alloc((size_t)n);
+  ssize_t r;
+  do r = read((int)fd, buf, (size_t)n);
+  while (r < 0 && errno == EINTR);
+  if (r < 0) {
+    _cg_os_err = errno;
+    return _CG_string_alloc(0);
+  }
+  _cg_os_err = 0;
+  if ((_CG_int64)r < n) { /* a short read: return just what was read */
+    buf[r] = 0;
+    _CG_string_set_len(buf, r);
+  }
+  return buf;
+}
+
+_CG_int64 _CG_os_write(_CG_int64 fd, char *data) {
+  size_t n = _CG_string_len(data);
+  ssize_t r;
+  do r = write((int)fd, n ? data : "", n);
+  while (r < 0 && errno == EINTR);
+  _cg_os_err = r < 0 ? errno : 0;
+  return (_CG_int64)r;
+}
+
+_CG_int64 _CG_os_close(_CG_int64 fd) {
+  int r = close((int)fd);
+  _cg_os_err = r < 0 ? errno : 0;
+  return r;
+}
+
+_CG_int64 _CG_os_isatty(_CG_int64 fd) { return isatty((int)fd) == 1; }
+
+/* A pair of descriptors packed as first | second << 32, or -1. */
+_CG_int64 _CG_os_pipe(void) {
+  int p[2];
+#ifdef __linux__
+  int r = pipe2(p, O_CLOEXEC);
+#else
+  int r = pipe(p);
+  if (r == 0 && (_cg_set_cloexec(p[0]) < 0 || _cg_set_cloexec(p[1]) < 0)) {
+    int e = errno;
+    close(p[0]);
+    close(p[1]);
+    errno = e;
+    r = -1;
+  }
+#endif
+  _cg_os_err = r < 0 ? errno : 0;
+  return r < 0 ? -1 : ((_CG_int64)p[0] | ((_CG_int64)p[1] << 32));
+}
+
+/* openpty(3) without libutil (a separate library on older glibc and in
+ * <util.h> on macOS): CPython's own fallback, posix_openpt + ptsname. */
+_CG_int64 _CG_os_openpty(void) {
+  int master = posix_openpt(O_RDWR | O_NOCTTY), slave = -1;
+  if (master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0 && _cg_set_cloexec(master) == 0) {
+    char *name = ptsname(master);
+    if (name) {
+      do slave = open(name, O_RDWR | O_NOCTTY | O_CLOEXEC);
+      while (slave < 0 && errno == EINTR);
+    }
+  }
+  if (slave < 0) {
+    int e = errno;
+    if (master >= 0) close(master);
+    _cg_os_err = e ? e : EIO;
+    return -1;
+  }
+  _cg_os_err = 0;
+  return (_CG_int64)master | ((_CG_int64)slave << 32);
+}
+
+/* select.select over poll(2). A poll set is a bytes value of n pollfd
+ * entries, one per (list, element): the Python side fills it with
+ * _CG_poll_set and reads it back with _CG_poll_ready. kind is 1 for the
+ * read list, 2 write, 4 exceptional; readiness is what select(2) reports
+ * (Linux's POLLIN_SET/POLLOUT_SET/POLLEX_SET), so a hung-up or errored
+ * descriptor is readable, as select says it is. */
+char *_CG_poll_new(_CG_int64 n) {
+  char *b = _CG_string_alloc((size_t)n * sizeof(struct pollfd));
+  memset(b, 0, (size_t)n * sizeof(struct pollfd));
+  return b;
+}
+
+_CG_int64 _CG_poll_set(char *b, _CG_int64 i, _CG_int64 fd, _CG_int64 kind) {
+  struct pollfd *p = (struct pollfd *)b + i;
+  p->fd = (int)fd;
+  p->events = kind == 1 ? POLLIN : kind == 2 ? POLLOUT : POLLPRI;
+  p->revents = 0;
+  return 0;
+}
+
+static double _cg_monotonic(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+/* timeout in seconds, negative to wait indefinitely. Returns the number of
+ * ready entries, or -1 with the errno in _cg_os_err; a descriptor that is
+ * not open is EBADF, as select(2) reports it. */
+_CG_int64 _CG_poll_wait(char *b, double timeout) {
+  nfds_t n = (nfds_t)(_CG_string_len(b) / sizeof(struct pollfd));
+  struct pollfd *p = (struct pollfd *)b;
+  double deadline = timeout >= 0 ? _cg_monotonic() + timeout : 0;
+  for (;;) {
+    int ms = -1;
+    if (timeout >= 0) {
+      double left = deadline - _cg_monotonic();
+      /* rounded up, as CPython rounds a select timeout (never early) */
+      ms = left <= 0 ? 0 : left >= (double)INT_MAX / 1000 ? INT_MAX : (int)ceil(left * 1000);
+    }
+    int r = poll(p, n, ms);
+    if (r < 0 && errno == EINTR) continue;
+    if (r < 0) {
+      _cg_os_err = errno;
+      return -1;
+    }
+    for (nfds_t i = 0; i < n; i++)
+      if (p[i].revents & POLLNVAL) {
+        _cg_os_err = EBADF;
+        return -1;
+      }
+    _cg_os_err = 0;
+    return r;
+  }
+}
+
+_CG_int64 _CG_poll_ready(char *b, _CG_int64 i) {
+  struct pollfd *p = (struct pollfd *)b + i;
+  short r = p->revents;
+  if (p->events == POLLIN) return (r & (POLLIN | POLLHUP | POLLERR)) != 0;
+  if (p->events == POLLOUT) return (r & (POLLOUT | POLLERR)) != 0;
+  return (r & POLLPRI) != 0;
+}
+
+/* os.get_blocking: 1 blocking, 0 not, -1 on error. */
+_CG_int64 _CG_os_get_blocking(_CG_int64 fd) {
+  int f = fcntl((int)fd, F_GETFL);
+  _cg_os_err = f < 0 ? errno : 0;
+  return f < 0 ? -1 : !(f & O_NONBLOCK);
+}
+
+_CG_int64 _CG_os_set_blocking(_CG_int64 fd, _CG_int64 blocking) {
+  int f = fcntl((int)fd, F_GETFL);
+  if (f >= 0) f = fcntl((int)fd, F_SETFL, blocking ? (f & ~O_NONBLOCK) : (f | O_NONBLOCK));
+  _cg_os_err = f < 0 ? errno : 0;
+  return f < 0 ? -1 : 0;
+}
