@@ -36,6 +36,29 @@ R_OK = 4
 
 error = OSError
 
+# open() flags: their values are the platform's, read from C
+# (_CG_os_const's table, pyc_runtime.c).
+O_RDONLY = __pyc_c_call__(int, "_CG_os_const", int, 0)
+O_WRONLY = __pyc_c_call__(int, "_CG_os_const", int, 1)
+O_RDWR = __pyc_c_call__(int, "_CG_os_const", int, 2)
+O_APPEND = __pyc_c_call__(int, "_CG_os_const", int, 3)
+O_CREAT = __pyc_c_call__(int, "_CG_os_const", int, 4)
+O_EXCL = __pyc_c_call__(int, "_CG_os_const", int, 5)
+O_TRUNC = __pyc_c_call__(int, "_CG_os_const", int, 6)
+O_NONBLOCK = __pyc_c_call__(int, "_CG_os_const", int, 7)
+O_NOCTTY = __pyc_c_call__(int, "_CG_os_const", int, 8)
+O_CLOEXEC = __pyc_c_call__(int, "_CG_os_const", int, 9)
+O_SYNC = __pyc_c_call__(int, "_CG_os_const", int, 10)
+O_DSYNC = __pyc_c_call__(int, "_CG_os_const", int, 11)
+O_DIRECTORY = __pyc_c_call__(int, "_CG_os_const", int, 12)
+O_NOFOLLOW = __pyc_c_call__(int, "_CG_os_const", int, 13)
+O_ACCMODE = __pyc_c_call__(int, "_CG_os_const", int, 14)
+O_NDELAY = __pyc_c_call__(int, "_CG_os_const", int, 15)
+_EAGAIN = __pyc_c_call__(int, "_CG_os_const", int, 16)
+_EWOULDBLOCK = __pyc_c_call__(int, "_CG_os_const", int, 17)
+_EINPROGRESS = __pyc_c_call__(int, "_CG_os_const", int, 18)
+_EALREADY = __pyc_c_call__(int, "_CG_os_const", int, 19)
+
 
 def fspath(p):
     return p.__pyc_fspath__()
@@ -46,9 +69,13 @@ def strerror(code):
 
 
 # The OSError subclass CPython picks for an errno, with its message. The
-# errno values are POSIX's and the same on Linux and macOS; any other is a
-# plain OSError, as CPython's is for an errno it has no subclass for.
+# errno values tested as literals are POSIX's and the same on Linux and
+# macOS; EAGAIN and its kin differ (11 on Linux, 35 on macOS), so those come
+# from C. Any other is a plain OSError, as CPython's is for an errno it has
+# no subclass for.
 def _raise(e, msg):
+    if e == _EAGAIN or e == _EWOULDBLOCK or e == _EINPROGRESS or e == _EALREADY:
+        raise BlockingIOError(msg)
     if e == 2:
         raise FileNotFoundError(msg)
     if e == 17:
@@ -72,6 +99,10 @@ def _raise(e, msg):
 
 def _fail(e, filename):
     _raise(e, "[Errno " + str(e) + "] " + strerror(e) + ": " + repr(filename))
+
+
+def _fail_fd(e):
+    _raise(e, "[Errno " + str(e) + "] " + strerror(e))
 
 
 def _fail2(e, a, b):
@@ -199,6 +230,83 @@ def access(p, mode):
 
 def system(cmd):
     return __pyc_c_call__(int, "system", str, cmd)
+
+
+# File-descriptor I/O. Descriptors pyc creates are non-inheritable, as
+# CPython's are (PEP 446), and an interrupted call is retried (PEP 475).
+# dir_fd is not provided (a compile error, not a wrong answer).
+def open(path, flags, mode=0o777):
+    path = fspath(path)
+    fd = __pyc_c_call__(int, "_CG_os_open", str, path, int, flags, int, mode)
+    if fd < 0:
+        _fail(__pyc_c_call__(int, "_CG_os_err"), path)
+    return fd
+
+
+def read(fd, n):
+    data = __pyc_c_call__(bytes, "_CG_os_read", int, fd, int, n)
+    e = __pyc_c_call__(int, "_CG_os_err")
+    if e != 0:
+        _fail_fd(e)
+    return data
+
+
+def _bytes_like(data):
+    if isinstance(data, str):
+        raise TypeError("a bytes-like object is required, not 'str'")
+    if isinstance(data, int):
+        raise TypeError("a bytes-like object is required, not 'int'")
+    return bytes(data)
+
+
+def write(fd, data):
+    n = __pyc_c_call__(int, "_CG_os_write", int, fd, bytes, _bytes_like(data))
+    if n < 0:
+        _fail_fd(__pyc_c_call__(int, "_CG_os_err"))
+    return n
+
+
+def close(fd):
+    if __pyc_c_call__(int, "_CG_os_close", int, fd) != 0:
+        _fail_fd(__pyc_c_call__(int, "_CG_os_err"))
+
+
+def _fd_pair(p):
+    if p < 0:
+        _fail_fd(__pyc_c_call__(int, "_CG_os_err"))
+    return (p & 0xffffffff, p >> 32)
+
+
+def pipe():
+    return _fd_pair(__pyc_c_call__(int, "_CG_os_pipe"))
+
+
+def openpty():
+    return _fd_pair(__pyc_c_call__(int, "_CG_os_openpty"))
+
+
+def isatty(fd):
+    return __pyc_c_call__(int, "_CG_os_isatty", int, fd) != 0
+
+
+def ttyname(fd):
+    name = __pyc_c_call__(str, "_CG_os_ttyname", int, fd)
+    e = __pyc_c_call__(int, "_CG_os_err")
+    if e != 0:
+        _fail_fd(e)
+    return name
+
+
+def get_blocking(fd):
+    r = __pyc_c_call__(int, "_CG_os_get_blocking", int, fd)
+    if r < 0:
+        _fail_fd(__pyc_c_call__(int, "_CG_os_err"))
+    return r == 1
+
+
+def set_blocking(fd, blocking):
+    if __pyc_c_call__(int, "_CG_os_set_blocking", int, fd, int, 1 if blocking else 0) != 0:
+        _fail_fd(__pyc_c_call__(int, "_CG_os_err"))
 
 
 def getpid():

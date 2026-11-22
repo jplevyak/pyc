@@ -81,6 +81,54 @@ int _CG_net_accept(int fd);
 int _CG_net_close(int fd);
 int _CG_net_poll_read(int fd, int timeout_ms);
 
+// hashlib (pyc_runtime.c): a hash state is a bytes value the hash object
+// owns and these update in place; libcrypto's when it loads (dlopen), the
+// built-in code otherwise. _CG_bytes_hex is bytes.hex().
+char *_CG_hash_new(long long alg, long long outlen, char *key, char *salt, char *person);
+long long _CG_hash_update(char *state, char *data);
+char *_CG_hash_digest(char *state, long long n);
+char *_CG_hash_copy(char *state);
+long long _CG_hash_backend(char *state);
+char *_CG_bytes_hex(char *b);
+char *_CG_hash_pbkdf2(long long alg, char *password, char *salt, long long iterations, long long dklen);
+
+// File-descriptor I/O (pyc_lib/os) and select (pyc_lib/select), in
+// pyc_runtime.c. A failure leaves its errno in _CG_os_err().
+long long _CG_os_const(long long which);
+long long _CG_os_open(char *path, long long flags, long long mode);
+char *_CG_os_read(long long fd, long long n);
+long long _CG_os_write(long long fd, char *data);
+long long _CG_os_close(long long fd);
+long long _CG_os_isatty(long long fd);
+char *_CG_os_ttyname(long long fd);
+long long _CG_os_pipe(void);
+long long _CG_os_openpty(void);
+long long _CG_os_get_blocking(long long fd);
+long long _CG_os_set_blocking(long long fd, long long blocking);
+char *_CG_poll_new(long long n);
+long long _CG_poll_set(char *b, long long i, long long fd, long long kind);
+long long _CG_poll_wait(char *b, double timeout);
+long long _CG_poll_ready(char *b, long long i);
+// termios and fcntl (pyc_lib/termios.py, fcntl.py), in pyc_runtime.c.
+long long _CG_termios_const(long long which);
+char *_CG_tc_get(long long fd);
+long long _CG_tc_field(char *t, long long which);
+long long _CG_tc_cc(char *t, long long i);
+long long _CG_tc_set(long long fd, long long when, long long iflag, long long oflag, long long cflag,
+                     long long lflag, long long ispeed, long long ospeed, char *cc);
+long long _CG_tc_sendbreak(long long fd, long long duration);
+long long _CG_tc_drain(long long fd);
+long long _CG_tc_flush(long long fd, long long queue);
+long long _CG_tc_flow(long long fd, long long action);
+long long _CG_tc_getwinsize(long long fd);
+long long _CG_tc_setwinsize(long long fd, long long rows, long long cols);
+long long _CG_fcntl_const(long long which);
+long long _CG_fcntl_int(long long fd, long long cmd, long long arg);
+char *_CG_fcntl_buf(long long fd, long long cmd, char *arg);
+long long _CG_ioctl_int(long long fd, long long request, long long arg);
+char *_CG_ioctl_buf(long long fd, long long request, char *arg);
+long long _CG_flock(long long fd, long long op);
+
 #ifdef __cplusplus
 }
 #endif

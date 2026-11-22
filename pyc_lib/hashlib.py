@@ -1,134 +1,223 @@
-# pyc shim for `hashlib`.
+# pyc shim for `hashlib`: every algorithm in CPython's
+# `algorithms_guaranteed` (md5, sha1, sha224/256/384/512, sha3_224/256/384/512,
+# shake_128/256, blake2b/s), plus new(), pbkdf2_hmac() and file_digest().
 #
-# md5 is a real implementation (RFC 1321), so `hashlib.md5(data).hexdigest()`
-# is CPython's answer (rsync, the only corpus user). The other algorithms
-# raise NotImplementedError: issues/041's rule is "real or raise", and the
-# stub that stood here returned "" from every digest, a silent wrong answer.
+# The digests are C, in pyc_runtime.c (`_CG_hash_*`): OpenSSL's libcrypto,
+# loaded at run time when present (its SHA-NI/AVX2 code, as CPython's hashlib
+# uses), and otherwise built-in C. The built-in code is C because SHA-512/384,
+# Keccak and BLAKE2b work in unsigned 64-bit words with wraparound, which
+# pyc's int64 cannot express with CPython semantics (issues/177).
+# PYC_HASHLIB_BUILTIN=1 forces the built-in code. A hash's state is a bytes
+# value the hash object owns and the C updates in place; copy() duplicates it.
+#
+# One class serves every algorithm, so hashlib.new() returns one type
+# whatever the name. Not provided: scrypt and the OpenSSL-only algorithms in
+# CPython's algorithms_available (sha512_256, ripemd160, ...), which are a
+# missing name or "unsupported hash type", never a wrong digest.
 
-_MD5_S = [
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-]
+_MD5 = 0
+_SHA1 = 1
+_SHA224 = 2
+_SHA256 = 3
+_SHA384 = 4
+_SHA512 = 5
+_SHA3_224 = 6
+_SHA3_256 = 7
+_SHA3_384 = 8
+_SHA3_512 = 9
+_SHAKE_128 = 10
+_SHAKE_256 = 11
+_BLAKE2B = 12
+_BLAKE2S = 13
 
-_MD5_K = [
-    3614090360, 3905402710, 606105819, 3250441966, 4118548399, 1200080426, 2821735955, 4249261313,
-    1770035416, 2336552879, 4294925233, 2304563134, 1804603682, 4254626195, 2792965006, 1236535329,
-    4129170786, 3225465664, 643717713, 3921069994, 3593408605, 38016083, 3634488961, 3889429448,
-    568446438, 3275163606, 4107603335, 1163531501, 2850285829, 4243563512, 1735328473, 2368359562,
-    4294588738, 2272392833, 1839030562, 4259657740, 2763975236, 1272893353, 4139469664, 3200236656,
-    681279174, 3936430074, 3572445317, 76029189, 3654602809, 3873151461, 530742520, 3299628645,
-    4096336452, 1126891415, 2878612391, 4237533241, 1700485571, 2399980690, 4293915773, 2240044497,
-    1873313359, 4264355552, 2734768916, 1309151649, 4149444226, 3174756917, 718787259, 3951481745,
-]
+_NAMES = ["md5", "sha1", "sha224", "sha256", "sha384", "sha512",
+          "sha3_224", "sha3_256", "sha3_384", "sha3_512", "shake_128", "shake_256",
+          "blake2b", "blake2s"]
+_DIGEST_SIZES = [16, 20, 28, 32, 48, 64, 28, 32, 48, 64, 0, 0, 64, 32]
+_BLOCK_SIZES = [64, 64, 64, 64, 128, 128, 144, 136, 104, 72, 168, 136, 128, 64]
+
+algorithms_guaranteed = {"md5", "sha1", "sha224", "sha256", "sha384", "sha512",
+                         "sha3_224", "sha3_256", "sha3_384", "sha3_512", "shake_128", "shake_256",
+                         "blake2b", "blake2s"}
+algorithms_available = {"md5", "sha1", "sha224", "sha256", "sha384", "sha512",
+                        "sha3_224", "sha3_256", "sha3_384", "sha3_512", "shake_128", "shake_256",
+                        "blake2b", "blake2s"}
 
 
-def _rotl32(x, c):
-    x = x & 0xffffffff
-    return ((x << c) | (x >> (32 - c))) & 0xffffffff
+def _buffer(data):
+    if isinstance(data, str):
+        raise TypeError("Strings must be encoded before hashing")
+    return bytes(data)
 
 
-class _md5:
-    def __init__(self, data):
-        self._data = b""
-        self.name = "md5"
-        self.digest_size = 16
-        self.block_size = 64
-        self.update(data)
+def _state(alg, digest_size, key, salt, person):
+    return __pyc_c_call__(bytes, "_CG_hash_new", int, alg, int, digest_size, bytes, key, bytes, salt,
+                          bytes, person)
+
+
+class _Hash:
+    def __init__(self, alg, state, digest_size):
+        self._alg = alg
+        self._state = state
+        self.name = _NAMES[alg]
+        self.digest_size = digest_size
+        self.block_size = _BLOCK_SIZES[alg]
 
     def update(self, data):
-        self._data = self._data + bytes(data)
+        __pyc_c_call__(int, "_CG_hash_update", bytes, self._state, bytes, _buffer(data))
 
-    def digest(self):
-        msg = self._data
-        n = len(msg)
-        pad = [0x80]
-        while (n + len(pad)) % 64 != 56:
-            pad.append(0)
-        # MD5 takes the bit length mod 2^64. A byte length fits int64, so
-        # n * 8 < 2^64 holds for any message that fits in memory; the mask
-        # was a no-op, and its literal does not fit pyc's int64 (issues/177).
-        bits = n * 8
-        for i in range(8):
-            pad.append((bits >> (8 * i)) & 0xff)
-        msg = msg + bytes(pad)
-        a0 = 0x67452301
-        b0 = 0xefcdab89
-        c0 = 0x98badcfe
-        d0 = 0x10325476
-        m = [0] * 16
-        for off in range(0, len(msg), 64):
-            for j in range(16):
-                p = off + 4 * j
-                m[j] = msg[p] | (msg[p + 1] << 8) | (msg[p + 2] << 16) | (msg[p + 3] << 24)
-            a = a0
-            b = b0
-            c = c0
-            d = d0
-            for i in range(64):
-                if i < 16:
-                    f = (b & c) | ((~b) & d)
-                    g = i
-                elif i < 32:
-                    f = (d & b) | ((~d) & c)
-                    g = (5 * i + 1) % 16
-                elif i < 48:
-                    f = b ^ c ^ d
-                    g = (3 * i + 5) % 16
-                else:
-                    f = c ^ (b | ((~d) & 0xffffffff))
-                    g = (7 * i) % 16
-                f = (f + a + _MD5_K[i] + m[g]) & 0xffffffff
-                a = d
-                d = c
-                c = b
-                b = (b + _rotl32(f, _MD5_S[i])) & 0xffffffff
-            a0 = (a0 + a) & 0xffffffff
-            b0 = (b0 + b) & 0xffffffff
-            c0 = (c0 + c) & 0xffffffff
-            d0 = (d0 + d) & 0xffffffff
-        out = []
-        for w in [a0, b0, c0, d0]:
-            for i in range(4):
-                out.append((w >> (8 * i)) & 0xff)
-        return bytes(out)
+    def _length(self, length, method):
+        if self._alg == _SHAKE_128 or self._alg == _SHAKE_256:
+            if length is None:
+                raise TypeError(method + "() missing required argument 'length' (pos 1)")
+            if length < 0:
+                # CPython raises SystemError here; pyc has no SystemError.
+                raise ValueError("length must be non-negative")
+            return length
+        if length is not None:
+            owner = "HASH"
+            if self._alg == _BLAKE2B or self._alg == _BLAKE2S:
+                owner = self.name
+            raise TypeError(owner + "." + method + "() takes no arguments (1 given)")
+        return self.digest_size
 
-    def hexdigest(self):
-        h = ""
-        for x in self.digest():
-            h += "%02x" % x
-        return h
+    def digest(self, length=None):
+        n = self._length(length, "digest")
+        return __pyc_c_call__(bytes, "_CG_hash_digest", bytes, self._state, int, n)
+
+    def hexdigest(self, length=None):
+        n = self._length(length, "hexdigest")
+        d = __pyc_c_call__(bytes, "_CG_hash_digest", bytes, self._state, int, n)
+        return __pyc_c_call__(str, "_CG_bytes_hex", bytes, d)
 
     def copy(self):
-        r = _md5(b"")
-        r._data = self._data
-        return r
+        return _Hash(self._alg, __pyc_c_call__(bytes, "_CG_hash_copy", bytes, self._state), self.digest_size)
 
 
-def md5(arg=b""):
-    return _md5(arg)
+def _make(alg, data):
+    h = _Hash(alg, _state(alg, _DIGEST_SIZES[alg], b"", b"", b""), _DIGEST_SIZES[alg])
+    h.update(data)
+    return h
 
 
-def _not_implemented(name):
-    raise NotImplementedError("pyc: hashlib." + name + " is not implemented (issues/041)")
+def _blake2(alg, data, digest_size, key, salt, person):
+    limit = _DIGEST_SIZES[alg]
+    if digest_size < 1 or digest_size > limit:
+        raise ValueError("digest_size must be between 1 and " + str(limit) + " bytes")
+    key = _buffer(key)
+    salt = _buffer(salt)
+    person = _buffer(person)
+    if len(key) > limit:
+        raise ValueError("maximum key length is " + str(limit) + " bytes")
+    if len(salt) > limit // 4:
+        raise ValueError("maximum salt length is " + str(limit // 4) + " bytes")
+    if len(person) > limit // 4:
+        raise ValueError("maximum person length is " + str(limit // 4) + " bytes")
+    h = _Hash(alg, _state(alg, digest_size, key, salt, person), digest_size)
+    h.update(data)
+    return h
 
 
-def sha1(arg=b""):
-    _not_implemented("sha1")
+def md5(data=b"", *, usedforsecurity=True):
+    return _make(_MD5, data)
 
 
-def sha224(arg=b""):
-    _not_implemented("sha224")
+def sha1(data=b"", *, usedforsecurity=True):
+    return _make(_SHA1, data)
 
 
-def sha256(arg=b""):
-    _not_implemented("sha256")
+def sha224(data=b"", *, usedforsecurity=True):
+    return _make(_SHA224, data)
 
 
-def sha384(arg=b""):
-    _not_implemented("sha384")
+def sha256(data=b"", *, usedforsecurity=True):
+    return _make(_SHA256, data)
 
 
-def sha512(arg=b""):
-    _not_implemented("sha512")
+def sha384(data=b"", *, usedforsecurity=True):
+    return _make(_SHA384, data)
+
+
+def sha512(data=b"", *, usedforsecurity=True):
+    return _make(_SHA512, data)
+
+
+def sha3_224(data=b"", *, usedforsecurity=True):
+    return _make(_SHA3_224, data)
+
+
+def sha3_256(data=b"", *, usedforsecurity=True):
+    return _make(_SHA3_256, data)
+
+
+def sha3_384(data=b"", *, usedforsecurity=True):
+    return _make(_SHA3_384, data)
+
+
+def sha3_512(data=b"", *, usedforsecurity=True):
+    return _make(_SHA3_512, data)
+
+
+def shake_128(data=b"", *, usedforsecurity=True):
+    return _make(_SHAKE_128, data)
+
+
+def shake_256(data=b"", *, usedforsecurity=True):
+    return _make(_SHAKE_256, data)
+
+
+def blake2b(data=b"", *, digest_size=64, key=b"", salt=b"", person=b"", usedforsecurity=True):
+    return _blake2(_BLAKE2B, data, digest_size, key, salt, person)
+
+
+def blake2s(data=b"", *, digest_size=32, key=b"", salt=b"", person=b"", usedforsecurity=True):
+    return _blake2(_BLAKE2S, data, digest_size, key, salt, person)
+
+
+# CPython 3.12 resolves a name through OpenSSL first, which also accepts the
+# md5/sha1/sha2 names in any case ("SHA256"); the others are exact.
+def _lookup(name):
+    for i in range(len(_NAMES)):
+        if _NAMES[i] == name:
+            return i
+    lower = name.lower()
+    for i in range(_SHA512 + 1):
+        if _NAMES[i] == lower:
+            return i
+    raise ValueError("unsupported hash type " + name)
+
+
+def new(name, data=b"", *, usedforsecurity=True):
+    alg = _lookup(name)
+    if alg == _BLAKE2B or alg == _BLAKE2S:
+        return _blake2(alg, data, _DIGEST_SIZES[alg], b"", b"", b"")
+    return _make(alg, data)
+
+
+def pbkdf2_hmac(hash_name, password, salt, iterations, dklen=None):
+    alg = _lookup(hash_name)
+    password = _buffer(password)
+    salt = _buffer(salt)
+    if alg == _SHAKE_128 or alg == _SHAKE_256:
+        raise ValueError("unsupported hash type " + hash_name)
+    if iterations < 1:
+        raise ValueError("iteration value must be greater than 0.")
+    n = _DIGEST_SIZES[alg]
+    if dklen is not None:
+        n = dklen
+    if n < 1:
+        raise ValueError("key length must be greater than 0.")
+    return __pyc_c_call__(bytes, "_CG_hash_pbkdf2", int, alg, bytes, password, bytes, salt, int, iterations,
+                          int, n)
+
+
+# CPython's file_digest takes a name or a constructor; this one takes a name.
+# The file must be open in binary mode.
+def file_digest(fileobj, digest):
+    h = new(digest)
+    while True:
+        chunk = fileobj.read(262144)
+        if not chunk:
+            break
+        h.update(chunk)
+    return h

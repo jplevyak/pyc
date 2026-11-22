@@ -235,6 +235,49 @@ The full set of macros/inlines includes math (`pow`, `sin`, `cos`,
 Anything you can do in C, the runtime can emit. New primitives need
 a matching `_CG_*` macro added here.
 
+### 3.10 An accommodation made in library code: `__pyc_accommodation__`
+
+An accommodation (issues/171) is normally the compiler's. When a library
+module has to make one, `pyc_lib/termios.py`'s `tcgetattr` returning its
+`cc` list as ints for one, it declares it where it makes it:
+
+```python
+__pyc_primitive__(__pyc_symbol__("__pyc_accommodation__"), "PYC_TERMIOS_CC_INT",
+                  "termios.tcgetattr returns its cc list as ints, where CPython ...")
+```
+
+The primitive (`python_ifa_main.cc`) emits no code. Its transfer function
+records which contours reach it, and `pyc_report_accommodations`, run once
+analysis has converged, reports each call into a live one. Permissive mode
+warns at each call site, naming the flag. `--strict`, or the flag set to
+`0`, makes the same report an error and refuses the program. So the rule is
+the compiler's, the library cannot decide it for itself, and nothing
+recognises the library function by name.
+
+### 3.11 hashlib and libcrypto (`pyc_runtime.c`, `_CG_hash_*`)
+
+`pyc_lib/hashlib.py` is a thin class over C digests. The runtime
+`dlopen`s OpenSSL's `libcrypto.so.3` (then `.so.1.1`) on first use and
+calls its EVP API, which is CPython's code path and its hardware
+acceleration (SHA-NI, AVX2): sha256 ~7x and pbkdf2 ~3.5x the built-in C
+on an x86-64 with SHA-NI. It is never LINKED, so a program does not need
+it to start (the release contract: libc and zstd only).
+
+- **Fallback.** No libcrypto, an algorithm it refuses (FIPS and md5), or
+  `PYC_HASHLIB_BUILTIN=1`: the built-in C. BLAKE2 always uses the
+  built-in code (key/salt/person are not EVP digest parameters, and
+  OpenSSL is no faster). `tests/hashlib_builtin.py` runs the suite with
+  the override, so both paths stay tested wherever CI has libcrypto.
+- **State.** A hash's state is a bytes value its object owns and the C
+  mutates in place. An `EVP_MD_CTX` is freed by a Boehm finalizer, and a
+  finalizer costs about as much as hashing a short message, so a hash
+  holds its first 256 bytes in the state and takes a context only when
+  its input passes that; a shorter message is digested by the built-in
+  code.
+- **macOS.** No libcrypto is loaded there (the system's aborts the
+  process by design), so it uses the built-in C. CommonCrypto would be
+  the native accelerated path; not done.
+
 ---
 
 ## 4. The Python builtin module (`__pyc__/`)

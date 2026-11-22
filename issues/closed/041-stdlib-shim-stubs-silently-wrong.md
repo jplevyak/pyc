@@ -31,7 +31,10 @@ compile or run reports it.
 - **`hashlib`** (FIXED 2026-10-07): `md5` is a real RFC 1321
   implementation (`tests/hashlib_md5.py`), which is what rsync uses. The
   other algorithms raise `NotImplementedError` rather than returning an
-  empty digest.
+  empty digest. (2026-11-22: superseded. Every algorithm in CPython's
+  `algorithms_guaranteed` is now real, in C in `pyc_runtime.c`
+  (`_CG_hash_*`), with `new`, `pbkdf2_hmac` and `file_digest`;
+  `tests/hashlib_all.py` matches CPython on both backends and `--strict`.)
 - **`struct` gaps:** float codes (`f`, `d`), `s`/`p` and `?` raise, which
   is correct. (`minpng`'s `pack('<BHH', bool(last), ...)` is fixed, with
   no corpus edit: `pack` reads its `*args` through a per-position unroll,

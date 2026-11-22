@@ -1,0 +1,2 @@
+pyserial is not part of CPython: an interpreter without it installed cannot
+import this test. .exec.check is pyserial 3.5 under CPython 3.12.

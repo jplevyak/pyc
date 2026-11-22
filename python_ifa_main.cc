@@ -501,6 +501,67 @@ static void writeln_codegen(FILE *fp, PNode *n, Fun *f) {
   fputs(");\n", fp);
 }
 
+// __pyc_accommodation__(FLAG, MESSAGE): library code declaring an
+// accommodation (issues/171) where it makes one. termios.tcgetattr, for
+// one, returns its cc list as ints, where CPython mixes bytes and ints.
+// The rule is the compiler's: on under --permissive unless the
+// environment sets FLAG=0, refused under --strict, and announced either
+// way. The library cannot decide that itself, and the frontend must not
+// recognise the library function by name, so the declaration is a
+// primitive: the transfer function only RECORDS which contours reach it,
+// and pyc_report_accommodations judges once analysis has converged, so a
+// contour reached only in a transient pass reports nothing.
+static std::vector<std::pair<PNode *, EntrySet *>> pyc_accommodation_sites;
+
+static void accommodation_transfer_function(PNode *pn, EntrySet *es) {
+  if (pn->lvals.n) update_gen(make_AVar(pn->lvals[0], es), make_abstract_type(sym_nil_type));
+  static std::set<std::pair<PNode *, EntrySet *>> seen;
+  if (seen.insert({pn, es}).second) pyc_accommodation_sites.push_back({pn, es});
+}
+
+static void accommodation_codegen(FILE *fp, PNode *n, Fun *f) {
+  if (n->lvals.n && n->lvals[0]->cg_string) fprintf(fp, "%s = 0;\n", n->lvals[0]->cg_string);
+}
+
+static cchar *accommodation_arg(PNode *pn, int i) {
+  if (pn->rvals.n <= i || !pn->rvals[i]->sym || !pn->rvals[i]->sym->constant)
+    fail("internal error: __pyc_accommodation__ takes two string constants, a flag and a message");
+  return pn->rvals[i]->sym->constant;
+}
+
+// Reports each accommodation the analysed program reaches, at each call
+// into the contour that reached it. Returns false when one is refused.
+bool pyc_report_accommodations() {
+  bool ok = true;
+  std::set<std::string> printed;
+  for (auto &site : pyc_accommodation_sites) {
+    PNode *pn = site.first;
+    EntrySet *es = site.second;
+    if (!fa || !fa->ess_set.set_in(es)) continue;
+    cchar *flag = accommodation_arg(pn, 2), *msg = accommodation_arg(pn, 3);
+    cchar *v = getenv(flag);
+    bool accept = fruntime_errors && (!v || atoi(v));
+    std::vector<std::pair<std::string, int>> where;
+    for (AEdge *e : es->edges)
+      if (e && e->pnode && e->pnode->code && e->pnode->code->ast)
+        where.push_back({e->pnode->code->pathname() ? e->pnode->code->pathname() : "?", e->pnode->code->line()});
+    if (where.empty()) where.push_back({"?", 0});
+    std::sort(where.begin(), where.end());
+    for (auto &w : where) {
+      std::string key = std::string(flag) + "|" + w.first + ":" + std::to_string(w.second);
+      if (!printed.insert(key).second) continue;
+      if (accept)
+        fprintf(stderr, "%s:%d: warning: %s: %s. Permissive only; %s=0 or --strict refuses (issues/171)\n",
+                w.first.c_str(), w.second, flag, msg, flag);
+      else
+        fprintf(stderr, "%s:%d: error: %s; accepted only by permissive mode's %s accommodation (issues/171)\n",
+                w.first.c_str(), w.second, msg, flag);
+    }
+    if (!accept) ok = false;
+  }
+  return ok;
+}
+
 static void add_primitive_transfer_functions() {
   // The 4th arg to prim_reg (llvm_cgfn) and the special-case
   // `to_string` LLVM cgfn retired with v1 LLVM (issue 014).
@@ -519,6 +580,10 @@ static void add_primitive_transfer_functions() {
   prim_reg(cannonicalize_string("__pyc_net_wait_read__"), return_nil_transfer_function)->is_visible = 1;
   prim_reg(cannonicalize_string("__pyc_net_wait_write__"), return_nil_transfer_function)->is_visible = 1;
   prim_reg(cannonicalize_string("__pyc_sleep__"), return_nil_transfer_function)->is_visible = 1;
+  RegisteredPrim *acc = prim_reg(cannonicalize_string("__pyc_accommodation__"), accommodation_transfer_function,
+                                 accommodation_codegen);
+  acc->is_visible = 1;
+  acc->is_functional = 0;  // never folded or deleted: reaching it is the point
 }
 
 /*

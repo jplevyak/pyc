@@ -88,9 +88,10 @@ def _run_test(g, args, envs):
         with open(f"{g}.flags") as f:
             flags = f.read().strip()
 
-    # Per-test environment, one KEY=VALUE per line in `<test>.py.env`.
-    # Needed for anything the compiler exposes as an env var rather than a
-    # command-line flag -- the splitter-stage probe (PYC_DBG_STAGES) and the
+    # Per-test environment, one KEY=VALUE per line in `<test>.py.env`, for
+    # both the compile and the run of the binary. Needed for anything the
+    # compiler or runtime exposes as an env var rather than a command-line
+    # flag (PYC_HASHLIB_BUILTIN, tests/hashlib_builtin.py) -- the splitter-stage probe (PYC_DBG_STAGES) and the
     # off-by-default splitter flags the tests/splitter_*.py set exercises.
     test_env = {}
     if os.path.exists(f"{g}.env"):
@@ -227,7 +228,8 @@ def _run_test(g, args, envs):
 
     try:
         with open(exec_out_path, "w") as outf:
-            res = subprocess.run(exec_cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT, timeout=args.timeout)
+            res = subprocess.run(exec_cmd, cwd=build_dir, stdout=outf, stderr=subprocess.STDOUT, timeout=args.timeout,
+                                 env={**os.environ, **test_env} if test_env else None)
             rc = res.returncode
     except subprocess.TimeoutExpired:
         return {"name": name, "status": "FAIL", "stage": f"EXEC-TIMEOUT", "msg": f"log: {envs['BUILD']}/{name}.exec.out"}
