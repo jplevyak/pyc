@@ -257,7 +257,11 @@ class LowLevel:
        """Calculates a checksum of "data"."""
        checksum = 0
 
-       for i in range(length/2):
+       # pyc: type-error fix (shedskin_examples/PYC_CHANGES.md). Python 2's
+       # integer `/`; in CPython 3 `length/2` is a float and range() raises
+       # TypeError whenever a device is attached. Unreachable in the corpus
+       # run (no comport), so its output is unchanged.
+       for i in range(length//2):
            checksum = checksum ^ (data[i*2] | (data[i*2+1] << 8))    #xor-ing
        return 0xffff & (checksum ^ 0xffff)         #inverting
 

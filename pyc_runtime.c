@@ -1611,6 +1611,12 @@ _CG_int64 _CG_os_const(_CG_int64 which) {
     O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC, O_NONBLOCK,
     O_NOCTTY, O_CLOEXEC, O_SYNC, O_DSYNC, O_DIRECTORY, O_NOFOLLOW, O_ACCMODE, O_NDELAY,
     EAGAIN, EWOULDBLOCK, EINPROGRESS, EALREADY, EBADF, EINVAL, FD_SETSIZE,
+#ifdef __linux__
+    1, /* 23: the platform is Linux (pyc_lib/serial picks Linux's ioctls) */
+#else
+    0,
+#endif
+    ENOTTY,
   };
   if (which < 0 || which >= (_CG_int64)(sizeof(consts) / sizeof(consts[0]))) abort();
   return consts[which];
@@ -1666,6 +1672,14 @@ _CG_int64 _CG_os_close(_CG_int64 fd) {
 }
 
 _CG_int64 _CG_os_isatty(_CG_int64 fd) { return isatty((int)fd) == 1; }
+
+/* os.ttyname: the terminal's path, or "" with the errno in _cg_os_err. */
+char *_CG_os_ttyname(_CG_int64 fd) {
+  char buf[4096];
+  int e = ttyname_r((int)fd, buf, sizeof(buf));
+  _cg_os_err = e;
+  return _CG_String(e ? "" : buf);
+}
 
 /* A pair of descriptors packed as first | second << 32, or -1. */
 _CG_int64 _CG_os_pipe(void) {

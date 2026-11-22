@@ -164,6 +164,14 @@ def tcgetattr(fd):
     __pyc_primitive__(__pyc_symbol__("__pyc_accommodation__"), "PYC_TERMIOS_CC_INT",
                       "termios.tcgetattr returns its cc list as ints, where CPython gives a 1-byte bytes for each "
                       "element other than VMIN and VTIME in non-canonical mode")
+    return _tcgetattr_ints(fd)
+
+
+# tcgetattr without the declaration, for library code that reads cc only at
+# VMIN/VTIME after making the terminal non-canonical, or only passes it back
+# to tcsetattr -- where the ints are what CPython gives, or are accepted as
+# its bytes (pyc_lib/serial/serialposix.py). Not CPython API.
+def _tcgetattr_ints(fd):
     t = __pyc_c_call__(bytes, "_CG_tc_get", int, _fd(fd))
     if __pyc_c_call__(int, "_CG_os_err") != 0:
         _fail()

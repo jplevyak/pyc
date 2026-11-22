@@ -289,6 +289,14 @@ def isatty(fd):
     return __pyc_c_call__(int, "_CG_os_isatty", int, fd) != 0
 
 
+def ttyname(fd):
+    name = __pyc_c_call__(str, "_CG_os_ttyname", int, fd)
+    e = __pyc_c_call__(int, "_CG_os_err")
+    if e != 0:
+        _fail_fd(e)
+    return name
+
+
 def get_blocking(fd):
     r = __pyc_c_call__(int, "_CG_os_get_blocking", int, fd)
     if r < 0:

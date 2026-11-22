@@ -100,6 +100,7 @@ char *_CG_os_read(long long fd, long long n);
 long long _CG_os_write(long long fd, char *data);
 long long _CG_os_close(long long fd);
 long long _CG_os_isatty(long long fd);
+char *_CG_os_ttyname(long long fd);
 long long _CG_os_pipe(void);
 long long _CG_os_openpty(void);
 long long _CG_os_get_blocking(long long fd);
