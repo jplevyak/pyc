@@ -2,11 +2,13 @@
 # `algorithms_guaranteed` (md5, sha1, sha224/256/384/512, sha3_224/256/384/512,
 # shake_128/256, blake2b/s), plus new(), pbkdf2_hmac() and file_digest().
 #
-# The digests are C, in pyc_runtime.c (`_CG_hash_*`). SHA-512/384, Keccak and
-# BLAKE2b work in unsigned 64-bit words with wraparound, which pyc's int64
-# cannot express with CPython semantics (issues/177); CPython's hashlib is C
-# too. A hash's state is an immutable bytes value: update() replaces it with
-# an updated copy, so copy() shares it and no bytes object is mutated.
+# The digests are C, in pyc_runtime.c (`_CG_hash_*`): OpenSSL's libcrypto,
+# loaded at run time when present (its SHA-NI/AVX2 code, as CPython's hashlib
+# uses), and otherwise built-in C. The built-in code is C because SHA-512/384,
+# Keccak and BLAKE2b work in unsigned 64-bit words with wraparound, which
+# pyc's int64 cannot express with CPython semantics (issues/177).
+# PYC_HASHLIB_BUILTIN=1 forces the built-in code. A hash's state is a bytes
+# value the hash object owns and the C updates in place; copy() duplicates it.
 #
 # One class serves every algorithm, so hashlib.new() returns one type
 # whatever the name. Not provided: scrypt and the OpenSSL-only algorithms in
@@ -62,7 +64,7 @@ class _Hash:
         self.block_size = _BLOCK_SIZES[alg]
 
     def update(self, data):
-        self._state = __pyc_c_call__(bytes, "_CG_hash_update", bytes, self._state, bytes, _buffer(data))
+        __pyc_c_call__(int, "_CG_hash_update", bytes, self._state, bytes, _buffer(data))
 
     def _length(self, length, method):
         if self._alg == _SHAKE_128 or self._alg == _SHAKE_256:
@@ -89,7 +91,7 @@ class _Hash:
         return __pyc_c_call__(str, "_CG_bytes_hex", bytes, d)
 
     def copy(self):
-        return _Hash(self._alg, self._state, self.digest_size)
+        return _Hash(self._alg, __pyc_c_call__(bytes, "_CG_hash_copy", bytes, self._state), self.digest_size)
 
 
 def _make(alg, data):

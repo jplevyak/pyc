@@ -31,6 +31,20 @@ print(h.hexdigest(), c.hexdigest(), c.hexdigest() == hashlib.sha256(b"abc").hexd
 print(hashlib.new("SHA256", b"x").hexdigest(), hashlib.sha1(bytearray(b"bytes")).hexdigest())
 print(len(hashlib.sha512(b"x").digest()), hashlib.md5(b"x", usedforsecurity=False).hexdigest())
 
+# A digest and a copy taken while the input is still short, then updates
+# that carry both past the runtime's 256-byte prefix (pyc_runtime.c).
+for name in ["md5", "sha256", "sha512", "sha3_256", "shake_128"]:
+    h = hashlib.new(name, b"p" * 200)
+    early = h.hexdigest(16) if name == "shake_128" else h.hexdigest()
+    c = h.copy()
+    h.update(b"q" * 100)
+    c.update(b"r" * 1000)
+    h.update(b"s")
+    if name == "shake_128":
+        print(name, early, h.hexdigest(16), c.hexdigest(16))
+    else:
+        print(name, early, h.hexdigest(), c.hexdigest())
+
 print(hashlib.blake2b(b"x", digest_size=8).hexdigest())
 print(hashlib.blake2b(b"msg", key=b"secret", salt=b"salty", person=b"me").hexdigest())
 print(hashlib.blake2s(b"msg", digest_size=20, key=b"k" * 32, salt=b"12345678", person=b"abcdefgh").hexdigest())

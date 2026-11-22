@@ -22,6 +22,8 @@
  * _CG_float_printf) — they use C++ overloading and are already guarded
  * with #ifdef __cplusplus in the header. */
 #include "pyc_c_runtime.h"
+#include <dlfcn.h>
+#include <limits.h>
 
 /* Force external symbol emission for every inline function the LLVM
  * backend references by name.  C99: an `extern` declaration in a TU
@@ -1304,40 +1306,218 @@ static void _h_final(_CG_hash_ctx *ctx, uint8_t *out, size_t n) {
   }
 }
 
-static void _h_load(_CG_hash_ctx *ctx, char *s) {
-  assert(s && _CG_string_len(s) == sizeof(*ctx));
-  memcpy(ctx, s, sizeof(*ctx));
+/* libcrypto, loaded at run time (dlopen), never linked: a program pyc
+ * builds must not need it to start (the release contract is libc and zstd
+ * only, dist_smoke.sh), and it is OpenSSL's architecture-specific code that
+ * is wanted (SHA-NI, AVX2), the same digests CPython's hashlib computes.
+ * Where it is absent, refuses an algorithm (a FIPS build and md5), or
+ * PYC_HASHLIB_BUILTIN is set, the built-in C above is used, as CPython falls
+ * back to its own _md5/_sha2. BLAKE2 always uses the built-in code: it takes
+ * key/salt/person/digest_size parameters the EVP digest API does not, and
+ * OpenSSL is no faster at it. */
+typedef struct {
+  int tried, ok;
+  void *(*ctx_new)(void);
+  void (*ctx_free)(void *);
+  const void *(*by_name)(const char *);
+  const void *(*fetch)(void *, const char *, const char *); /* OpenSSL 3 only */
+  int (*init)(void *, const void *, void *);
+  int (*update)(void *, const void *, size_t);
+  int (*final)(void *, unsigned char *, unsigned int *);
+  int (*final_xof)(void *, unsigned char *, size_t);
+  int (*copy)(void *, const void *);
+  int (*pbkdf2)(const char *, int, const unsigned char *, int, int, const void *, int, unsigned char *);
+  const void *md[_H_NALG];
+  int md_tried[_H_NALG];
+} _h_ossl_t;
+static _h_ossl_t _h_ossl;
+
+static int _h_ossl_load(void) {
+  if (_h_ossl.tried) return _h_ossl.ok;
+  _h_ossl.tried = 1;
+  const char *force = getenv("PYC_HASHLIB_BUILTIN");
+  if (force && *force && strcmp(force, "0") != 0) return 0;
+  static const char *libs[] = {"libcrypto.so.3", "libcrypto.so.1.1"};
+  void *h = 0;
+  for (size_t i = 0; i < sizeof(libs) / sizeof(libs[0]) && !h; i++) h = dlopen(libs[i], RTLD_NOW | RTLD_LOCAL);
+  if (!h) return 0;
+#define _H_SYM(field, name) \
+  if (!(*(void **)&_h_ossl.field = dlsym(h, name))) return 0
+  _H_SYM(ctx_new, "EVP_MD_CTX_new");
+  _H_SYM(ctx_free, "EVP_MD_CTX_free");
+  _H_SYM(by_name, "EVP_get_digestbyname");
+  _H_SYM(init, "EVP_DigestInit_ex");
+  _H_SYM(update, "EVP_DigestUpdate");
+  _H_SYM(final, "EVP_DigestFinal_ex");
+  _H_SYM(final_xof, "EVP_DigestFinalXOF");
+  _H_SYM(copy, "EVP_MD_CTX_copy_ex");
+  _H_SYM(pbkdf2, "PKCS5_PBKDF2_HMAC");
+#undef _H_SYM
+  *(void **)&_h_ossl.fetch = dlsym(h, "EVP_MD_fetch");
+  return _h_ossl.ok = 1;
 }
 
-static char *_h_store(const _CG_hash_ctx *ctx) {
-  char *s = _CG_string_alloc(sizeof(*ctx));
-  memcpy(s, ctx, sizeof(*ctx));
+/* The EVP_MD for an algorithm, or 0 when the built-in code is to be used. */
+static const void *_h_ossl_md(int64_t alg) {
+  static const char *names[_H_NALG] = {"MD5", "SHA1", "SHA224", "SHA256", "SHA384", "SHA512",
+                                       "SHA3-224", "SHA3-256", "SHA3-384", "SHA3-512", "SHAKE128", "SHAKE256",
+                                       0, 0};
+  if (!names[alg] || !_h_ossl_load()) return 0;
+  if (!_h_ossl.md_tried[alg]) {
+    _h_ossl.md_tried[alg] = 1;
+    /* OpenSSL 3: an explicitly fetched EVP_MD, kept for the process.
+     * get_digestbyname's legacy one makes every DigestInit fetch it
+     * again, under a lock: 3x CPython's time on small messages. */
+    _h_ossl.md[alg] = _h_ossl.fetch ? _h_ossl.fetch(0, names[alg], 0) : _h_ossl.by_name(names[alg]);
+  }
+  return _h_ossl.md[alg];
+}
+
+/* A hash's state: a bytes value the hash object owns and these functions
+ * update in place, as the ctypes subset does with _CG_ffi_buf.
+ *
+ * A libcrypto context is malloc'd and freed by a GC finalizer, and a Boehm
+ * finalizer costs about as much as hashing a short message (measured:
+ * 4M sha256 objects took 4.5 s with one each, 2.1 s without; CPython, which
+ * frees by refcount, 1.5 s). So a hash takes one only once its input
+ * passes _H_PREFIX bytes. Until then the input waits in `prefix`, and a
+ * digest runs the built-in code over it, which at that size beats setting
+ * up a context.
+ *
+ * mode: _HM_PREFIX  the input so far is in prefix; b is initialized, unfed
+ *       _HM_BUILTIN b, the built-in state, is in use
+ *       _HM_EVP     evp, libcrypto's EVP_MD_CTX, is in use */
+#define _H_PREFIX 256
+enum { _HM_PREFIX, _HM_BUILTIN, _HM_EVP };
+typedef struct {
+  _CG_hash_ctx b;
+  void *evp;
+  int64_t mode, prefix_len;
+  uint8_t prefix[_H_PREFIX];
+} _CG_hash_state;
+
+static _CG_hash_state *_h_state(char *s) {
+  assert(s && _CG_string_len(s) == sizeof(_CG_hash_state));
+  return (_CG_hash_state *)s;
+}
+
+static void _h_evp_finalize(void *obj, void *cd) {
+  (void)cd;
+  _CG_hash_state *st = (_CG_hash_state *)((char *)obj + 8); /* past the bytes length word */
+  if (st->evp) _h_ossl.ctx_free(st->evp);
+  st->evp = 0;
+}
+
+static char *_h_state_alloc(void) {
+  char *s = _CG_string_alloc(sizeof(_CG_hash_state));
+  memset(s, 0, sizeof(_CG_hash_state));
   return s;
 }
 
-char *_CG_hash_new(_CG_int64 alg, _CG_int64 outlen, char *key, char *salt, char *person) {
-  _CG_hash_ctx ctx;
-  assert(alg >= 0 && alg < _H_NALG);
-  _h_init(&ctx, alg, outlen, (const uint8_t *)key, _CG_string_len(key), (const uint8_t *)salt,
-          _CG_string_len(salt), (const uint8_t *)person, _CG_string_len(person));
-  return _h_store(&ctx);
+static void _h_state_own(char *s, void *evp) {
+  _CG_hash_state *st = _h_state(s);
+  st->evp = evp;
+  st->mode = _HM_EVP;
+  GC_register_finalizer(s - 8, _h_evp_finalize, 0, 0, 0);
 }
 
-char *_CG_hash_update(char *state, char *data) {
-  _CG_hash_ctx ctx;
-  _h_load(&ctx, state);
+char *_CG_hash_new(_CG_int64 alg, _CG_int64 outlen, char *key, char *salt, char *person) {
+  assert(alg >= 0 && alg < _H_NALG);
+  char *s = _h_state_alloc();
+  _CG_hash_state *st = _h_state(s);
+  _h_init(&st->b, alg, outlen, (const uint8_t *)key, _CG_string_len(key), (const uint8_t *)salt,
+          _CG_string_len(salt), (const uint8_t *)person, _CG_string_len(person));
+  st->mode = _h_ossl_md(alg) ? _HM_PREFIX : _HM_BUILTIN;
+  return s;
+}
+
+/* Leave _HM_PREFIX: onto libcrypto if it takes this algorithm, else onto
+ * the built-in state, carrying the prefix either way. */
+static void _h_leave_prefix(char *s) {
+  _CG_hash_state *st = _h_state(s);
+  const void *md = _h_ossl_md(st->b.alg);
+  void *evp = md ? _h_ossl.ctx_new() : 0;
+  if (evp && _h_ossl.init(evp, md, 0) == 1 &&
+      (!st->prefix_len || _h_ossl.update(evp, st->prefix, (size_t)st->prefix_len) == 1)) {
+    _h_state_own(s, evp);
+  } else {
+    if (evp) _h_ossl.ctx_free(evp);
+    if (st->prefix_len) _h_update(&st->b, st->prefix, (size_t)st->prefix_len);
+    st->mode = _HM_BUILTIN;
+  }
+  st->prefix_len = 0;
+}
+
+_CG_int64 _CG_hash_update(char *state, char *data) {
+  _CG_hash_state *st = _h_state(state);
   size_t n = _CG_string_len(data);
-  if (n) _h_update(&ctx, (const uint8_t *)data, n);
-  return _h_store(&ctx);
+  if (!n) return 0;
+  if (st->mode == _HM_PREFIX) {
+    if ((size_t)st->prefix_len + n <= _H_PREFIX) {
+      memcpy(st->prefix + st->prefix_len, data, n);
+      st->prefix_len += (int64_t)n;
+      return 0;
+    }
+    _h_leave_prefix(state);
+  }
+  if (st->mode == _HM_EVP) {
+    if (_h_ossl.update(st->evp, data, n) != 1) {
+      fprintf(stderr, "hashlib: libcrypto failed to update a digest\n");
+      abort();
+    }
+  } else {
+    _h_update(&st->b, (const uint8_t *)data, n);
+  }
+  return 0;
 }
 
 char *_CG_hash_digest(char *state, _CG_int64 n) {
-  _CG_hash_ctx ctx;
-  _h_load(&ctx, state);
+  _CG_hash_state *st = _h_state(state);
   char *out = _CG_string_alloc((size_t)n);
+  if (st->mode == _HM_EVP) {
+    /* finalizing consumes a context, so finalize a copy */
+    void *tmp = _h_ossl.ctx_new();
+    int ok = tmp && _h_ossl.copy(tmp, st->evp) == 1;
+    if (ok && (st->b.alg == _H_SHAKE128 || st->b.alg == _H_SHAKE256)) {
+      if (n) ok = _h_ossl.final_xof(tmp, (unsigned char *)out, (size_t)n) == 1;
+    } else if (ok) {
+      unsigned char full[64];
+      unsigned int len = 0;
+      ok = _h_ossl.final(tmp, full, &len) == 1 && (_CG_int64)len >= n;
+      if (ok) memcpy(out, full, (size_t)n);
+    }
+    if (tmp) _h_ossl.ctx_free(tmp);
+    if (!ok) {
+      fprintf(stderr, "hashlib: libcrypto failed to finalize a digest\n");
+      abort();
+    }
+    return out;
+  }
+  _CG_hash_ctx ctx = st->b;
+  if (st->mode == _HM_PREFIX && st->prefix_len) _h_update(&ctx, st->prefix, (size_t)st->prefix_len);
   _h_final(&ctx, (uint8_t *)out, (size_t)n);
   return out;
 }
+
+char *_CG_hash_copy(char *state) {
+  _CG_hash_state *st = _h_state(state);
+  char *s = _h_state_alloc();
+  memcpy(s, st, sizeof(*st));
+  _h_state(s)->evp = 0;
+  if (st->mode == _HM_EVP) {
+    void *evp = _h_ossl.ctx_new();
+    if (!evp || _h_ossl.copy(evp, st->evp) != 1) {
+      fprintf(stderr, "hashlib: libcrypto failed to copy a digest context\n");
+      abort();
+    }
+    _h_state_own(s, evp);
+  }
+  return s;
+}
+
+/* Diagnostics: 0 while the input is in the prefix, 1 on the built-in
+ * code, 2 on libcrypto. */
+_CG_int64 _CG_hash_backend(char *state) { return _h_state(state)->mode; }
 
 /* bytes.hex() and hexdigest() */
 char *_CG_bytes_hex(char *b) {
@@ -1354,6 +1534,14 @@ char *_CG_bytes_hex(char *b) {
 /* PBKDF2 (RFC 8018) over HMAC (RFC 2104) with a fixed-size digest. The
  * inner and outer contexts are keyed once and copied per block. */
 char *_CG_hash_pbkdf2(_CG_int64 alg, char *password, char *salt, _CG_int64 iterations, _CG_int64 dklen) {
+  size_t plen0 = _CG_string_len(password), slen0 = _CG_string_len(salt);
+  const void *md = _h_ossl_md(alg);
+  if (md && plen0 <= INT_MAX && slen0 <= INT_MAX && iterations <= INT_MAX && dklen <= INT_MAX) {
+    char *out = _CG_string_alloc((size_t)dklen);
+    if (_h_ossl.pbkdf2(password ? password : "", (int)plen0, (const unsigned char *)(salt ? salt : ""), (int)slen0,
+                       (int)iterations, md, (int)dklen, (unsigned char *)out) == 1)
+      return out;
+  }
   _CG_hash_ctx ictx, octx, c;
   uint8_t key[200], pad[200], u[64], t[64];
   size_t B, H, plen = _CG_string_len(password), slen = _CG_string_len(salt);
