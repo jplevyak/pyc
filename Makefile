@@ -208,7 +208,7 @@ CLEAN_FILES = *.cat $(PYC_OBJS:.o=.d) pyc_runtime.o pyc_runtime.d libpyc_runtime
 
 .PHONY: all defaulttarget install deinstall dist clean realclean clean-tests \
         test test-core test-e2e test-unit test-ir test-dparse test_dparse \
-        test-links test_links test_llvm test-ifa-llvm test_ifa_llvm \
+        test-links test_links test-explorer test_explorer test_llvm test-ifa-llvm test_ifa_llvm \
         $(IFALIB) pullifa pushifa diffifa show-sweep
 
 all: defaulttarget
@@ -393,7 +393,7 @@ dist:
 #
 # See tests/README.md and ifa/testing/TEST_RUNNER.md for adding / debugging tests.
 
-test: test-core test-ifa-llvm test-dparse test-links
+test: test-core test-ifa-llvm test-dparse test-links test-explorer
 
 test-core: test-unit test-ir test-e2e
 
@@ -427,6 +427,13 @@ test-ir:
 # `closed/` never updated the links pointing at it, and nothing checked.
 test-links test_links:
 	@python3 check_doc_links.py
+
+# The compilation explorer (--html / --dump-json): telemetry must not change
+# codegen, the delta-encoded passes must rebuild, the FA hooks must fire,
+# and pyc -x must keep the source view (test_explorer.py says why each).
+test-explorer test_explorer: $(PYC) libpyc_runtime.a
+	@echo "--- Compilation explorer ---"
+	python3 test_explorer.py
 
 # pyc's parser must agree with CPython's on every test: accept what
 # `ast.parse` accepts and reject what it rejects (issues/106 -- pyc used to

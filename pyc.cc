@@ -2,6 +2,8 @@
 #define EXTERN
 #include "defs.h"
 #include "exc_check_fold.h"
+#include "html.h"
+#include "inline.h"
 #include "python_parse.h"
 #include <signal.h>
 #include <sys/resource.h>
@@ -270,6 +272,12 @@ static ArgumentDescription arg_desc[] = {
     {"safe", ' ', "Safe mode: permissive, plus zero-initialize locals that may be read before assignment",
      "F", &pyc_safe_mode, "PYC_SAFE", safe_mode_arg},
     {"html", ' ', "Output as HTML", "F", &fdump_html, "PYC_HTML", NULL},
+    {"browse", 'B', "Generate HTML and open in local browser (implies --html)", "F", &ifa_open_html, "PYC_BROWSE", NULL},
+    {"html-open", ' ', "Generate HTML and open in local browser (implies --html)", "F", &ifa_open_html, "PYC_HTML_OPEN",
+     NULL},
+    {"html-max-size", ' ', "Budget in MB for per-pass explorer detail (default 100)", "I", &ifa_html_max_size_mb, "PYC_HTML_MAX_SIZE",
+     NULL},
+    {"dump-json", ' ', "Output compilation database as JSON", "F", &ifa_dump_json, "PYC_DUMP_JSON", NULL},
     {"system-directory", 'D', "System Directory", "S511", system_dir, "PYC_SYSTEM_DIRECTORY", NULL},
     {"verbose", 'v', "Verbosity Level", "+", &verbose_level, "PYC_VERBOSE", NULL},
     {"debug", 'd', "Debugging Level", "+", &debug_level, "PYC_DEBUG", NULL},
@@ -355,17 +363,18 @@ void compile(cchar *fn) {
   { extern void compute_clone_equivalence(FA *); compute_clone_equivalence(pdb->fa); }  // ifa/121
   ifa_phase("clone-equivalence");
   if (fgraph) ifa_graph(fn);
-  if (fdump_html) {
-    char mktree_dir[512];
-    strcpy(mktree_dir, system_dir);
-    ifa_html(fn, mktree_dir);
-  }
   // pyc -x: codegen's .c/.ll/.o and the executable go in the cache entry
   // being built, not beside the source (which may not be writable).
+  // The explorer reads the program from `source_fn` and writes beside it,
+  // and finds codegen's output next to `fn`; under -x those differ.
+  cchar *source_fn = fn;
   if (exec_out_fn) fn = exec_out_fn;
+  auto maybe_dump_html = [&]() {
+    if (fdump_html || ifa_dump_json) ifa_html(source_fn, fn);
+  };
   if (fcg) {
 #ifdef USE_LLVM
-        if (codegen_llvm) {
+    if (codegen_llvm) {
       // The only LLVM path.  Despite the name `llvm.cc`, the
       // emission internally routes through cg_normalize_v2 +
       // cg_v2_emit_llvm_module (see llvm.cc:155 — old direct
@@ -373,6 +382,7 @@ void compile(cchar *fn) {
       llvm_codegen_write_ir(pdb->fa, if1->top->fun, fn);
       ifa_phase("write-llvm-ir");
       { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
+      maybe_dump_html();
       if (codegen_jit) {
         if (codegen_extra_source || codegen_link_libs.n)
           fail("foreign (ctypes) calls are not supported under --jit: the shim and the library are linked, not loaded");
@@ -391,9 +401,12 @@ void compile(cchar *fn) {
       c_codegen_write_c(pdb->fa, if1->top->fun, fn);
       ifa_phase("write-c");
       { extern void sum_audit_check(cchar *); sum_audit_check("after-cg"); }  // ifa/120
+      maybe_dump_html();
       if (c_codegen_compile(fn)) fail("compilation failure");
       ifa_phase("cc");
     }
+  } else {
+    maybe_dump_html();
   }
   return;
 }
@@ -475,7 +488,7 @@ int main(int argc, char *argv[]) {
   {
     bool saw_x = false;
     static cchar *takes_value[] = {"-o", "-D", "-l", "--output", "--system-directory", "--log", "--cflags", "--libs", "--fa-inline",
-                                   "--narrow", "--dump-ir-after", nullptr};
+                                   "--narrow", "--dump-ir-after", "--html-max-size", nullptr};
     for (int i = 1; i < argc; i++) {
       cchar *a = argv[i];
       if (!strcmp(a, "--")) { if (i + 1 < argc) exec_script = i + 1; break; }
@@ -508,6 +521,18 @@ int main(int argc, char *argv[]) {
 #endif
   ifa_verbose = verbose_level;
   ifa_debug = debug_level;
+  if (ifa_open_html) {
+    fdump_html = 1;
+  }
+  if (fdump_html) {
+    ifa_dump_html = 1;
+    fa_events_enable();
+    inline_events_enable();
+  }
+  if (ifa_dump_json) {
+    fa_events_enable();
+    inline_events_enable();
+  }
   // Propagate the --verify-each flag down to the ifa lib's llvm.cc,
   // which reads PYC_VERIFY_EACH (the lib doesn't see pyc's defs.h
   // globals). Setting it from either the CLI flag or

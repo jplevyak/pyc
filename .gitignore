@@ -42,8 +42,10 @@ pyc.cat
 /ifa/ifa
 /ifa/ifa-test
 
-# Compiled C output from pyc compilations
+# Compiled C and HTML/JSON explorer output from pyc compilations
 *.py.c
+*.py.html
+*.py.json
 
 # Profiling / debug output
 callgrind.out.*
@@ -77,6 +79,8 @@ tests/__pycache__/
 tests/pyc_compat.py
 tests/*.out
 tests/*.py.c
+tests/*.py.html
+tests/*.py.json
 tests/*.py.s
 # the LLVM backend's foreign-call shim (codegen_extra_source), written beside the program
 tests/*.ffi.cc
@@ -221,3 +225,4 @@ shedskin_examples/*/log/
 # pygmy writes its output into the CWD, so a run from the repo root
 # leaves this at top level.
 /pygmy.ppm
+ifa/common/explorer/*.inc

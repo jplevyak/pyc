@@ -250,7 +250,10 @@ go before `-x`'s script, as in `#!/usr/bin/env -S pyc -b -x`.
 | `-O`, `--optimize` | Compile the generated C at `-O2` (the default) |
 | `--no-optimize` | Compile the generated C at `-O0`, for debugging |
 | `-g`, `--debug-info` | Emit debug information |
-| `--html` | Emit an HTML visualization of the type-annotated program |
+| `--html` | Write `<file>.html`, a single-page compilation explorer: source, IF1/CFG, every flow-analysis pass and why each contour split, and the emitted C/LLVM |
+| `-B`, `--browse` | `--html`, then open it in the default browser (`$BROWSER` if set) |
+| `--dump-json` | Write the same compilation database as `<file>.json`, for tools |
+| `--html-max-size <MB>` | Budget for per-pass explorer detail (default 100); later passes keep only their summary, the final pass is always complete |
 | `-v`, `--verbose` / `-d`, `--debug` | Increase verbosity / debug output (repeat for more) |
 | `--version`, `--license`, `-h`, `--help` | Version, license, help (`--help` also lists development options) |
 
