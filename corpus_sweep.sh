@@ -323,7 +323,10 @@ mkdir -p "$SWEEPS"
 # would report a stale answer as current.
 CONTENT=$( { sha1sum "$ROOT/pyc" 2>/dev/null || echo nopyc
              cat "$ROOT"/__pyc__/*.py 2>/dev/null | sha1sum
-             cat "$ROOT"/pyc_lib/*.py 2>/dev/null | sha1sum
+             # every library module, packages included (pyc_lib/os/,
+             # pyc_lib/serial/): `pyc_lib/*.py` alone missed an edit to a
+             # package module, which changes no binary and no top-level file.
+             find "$ROOT/pyc_lib" -name '*.py' -not -path '*/__pycache__/*' | LC_ALL=C sort | xargs cat 2>/dev/null | sha1sum
              # issues/163: THIS SCRIPT is part of what is measured. It decides
              # what counts as a match, so changing the verdict logic must
              # invalidate the cache -- otherwise a re-run silently replays old
