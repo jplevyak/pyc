@@ -81,6 +81,14 @@ int _CG_net_accept(int fd);
 int _CG_net_close(int fd);
 int _CG_net_poll_read(int fd, int timeout_ms);
 
+// hashlib (pyc_runtime.c): a hash state is an immutable bytes value;
+// update returns an updated copy. _CG_bytes_hex is bytes.hex().
+char *_CG_hash_new(long long alg, long long outlen, char *key, char *salt, char *person);
+char *_CG_hash_update(char *state, char *data);
+char *_CG_hash_digest(char *state, long long n);
+char *_CG_bytes_hex(char *b);
+char *_CG_hash_pbkdf2(long long alg, char *password, char *salt, long long iterations, long long dklen);
+
 #ifdef __cplusplus
 }
 #endif

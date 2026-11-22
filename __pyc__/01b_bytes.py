@@ -266,6 +266,9 @@ class bytes:
   def replace(self, old, new):
     # Same length-prefixed buffer as str, so str's one-pass helper serves.
     return __pyc_c_call__(bytes, "_CG_str_replace", bytes, self, bytes, old, bytes, new)
+  def hex(self):
+    # CPython's bytes.hex() with no separator; hex(sep) is not provided.
+    return __pyc_c_call__(str, "_CG_bytes_hex", bytes, self)
   def decode(self, encoding="utf-8"):
     # ASCII/latin-1-safe byte-for-byte reinterpretation of the same
     # underlying buffer as str -- not real codec-aware decoding (no

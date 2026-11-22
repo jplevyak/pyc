@@ -28,7 +28,7 @@ export const MODULES: LibModule[] = [
   { name: 'fnmatch', status: 'ok', covers: 'fnmatch, fnmatchcase, filter', note: "CPython's fnmatch." },
   { name: 'struct', status: 'partial', covers: 'pack, unpack, unpack_from, calcsize for the integer formats' },
   { name: 'array', status: 'partial', covers: 'array with typecode; tobytes/frombytes for integer typecodes' },
-  { name: 'hashlib', status: 'partial', covers: 'md5 (RFC 1321)', note: 'The other algorithms raise NotImplementedError.' },
+  { name: 'hashlib', status: 'ok', covers: 'every algorithm in algorithms_guaranteed (md5, sha1, sha224/256/384/512, sha3_*, shake_128/256, blake2b/s with key, salt and person), new, pbkdf2_hmac, file_digest', note: 'Digests in C in the runtime. scrypt and the OpenSSL-only names (sha512_256, ripemd160) are not provided; file_digest takes an algorithm name.' },
   { name: 'colorsys', status: 'ok', covers: 'rgb/yiq/hls/hsv conversions', note: "Ported from CPython's colorsys.py." },
   { name: 'getopt', status: 'ok', covers: 'getopt, gnu_getopt, GetoptError', note: "Ported from CPython's getopt.py." },
   { name: 'logging', status: 'partial', covers: 'levels, getLogger and the logger hierarchy, LogRecord, Formatter (% style), Filter, StreamHandler, FileHandler, NullHandler, basicConfig, the module-level functions', note: "A port of the core of CPython's logging; output matches byte for byte. What is not ported is refused at compile time." },
@@ -59,6 +59,5 @@ export const WANTED: Wanted[] = [
   { name: 'json', why: 'Serialization of typed records, and parsing into a declared shape.' },
   { name: 'asyncio', why: 'A CPython-compatible front end for the event loop async/await already compiles to.' },
   { name: 'statistics, fractions, decimal', why: 'Numeric work beyond math.' },
-  { name: 'hashlib (complete)', why: 'sha1 and the sha2 family.' },
   { name: 'unittest', why: 'Test the compiled program with the same tests that run under CPython.' },
 ];
