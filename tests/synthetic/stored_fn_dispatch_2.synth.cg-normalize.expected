@@ -1,0 +1,32 @@
+;; phase: cg-normalize
+
+(summary fa_rc=-1 clone_rc=0 funs=1 globals=10 types=0)
+
+;; globals
+(slot %s0 :kind global :type ? :name __primitive)
+(slot %s1 :kind global :type ? :name reply)
+(slot %s5 :kind global :type ? :name new)
+(slot %s10 :kind global :type ? :name __operator)
+(slot %s14 :kind global :type ? :name .=)
+(slot %s78 :kind global :type ? :name leaf0)
+(slot %s83 :kind global :type ? :name leaf1)
+(slot %s89 :kind global :type ? :name call_via)
+(slot %s92 :kind global :type ? :name fn)
+(slot %s106 :kind global :type ? :name __main__)
+
+;; funs
+(fun #3 :main
+  :return-type ?
+  :arg-types (?)
+  :locals 5 :blocks 1
+  (block #0 :label entry :preds 0 :succs 0
+    :body (
+      (ALLOC :slot %s99)
+      (STORE_FIELD %s99 %s78)
+      (ALLOC :slot %s101)
+      (STORE_FIELD %s101 %s83)
+      (CALL :slot %s103 %s89 %s99)
+      (CALL :slot %s104 %s89 %s101)
+    )
+    :term (RET %s69))
+)

@@ -126,10 +126,16 @@ int xmkdir(cchar *p, mode_t mode) {
   *ss++ = '\\'; \
   *ss++ = _c;   \
   break;
-char *escape_string(cchar *s) {
-  char *ss = (char *)MALLOC((strlen(s) + 3) * 4), *sss = ss;
+// ifa/issues/070: iterates exactly `len` bytes rather than scanning for a
+// NUL terminator, so a literal constant containing an embedded NUL (from
+// a \x00/\0 escape) escapes past it correctly instead of truncating --
+// the embedded NUL byte itself still goes through the same `default:
+// non-printable -> \xNN` branch as any other non-printable byte, no
+// special-case needed for it specifically.
+char *escape_string(cchar *s, int len) {
+  char *ss = (char *)MALLOC((len + 3) * 4), *sss = ss;
   *ss++ = '\"';
-  for (; *s; s++) {
+  for (int i = 0; i < len; i++, s++) {
     switch (*s) {
       case '\b':
         ESC('b');
@@ -152,13 +158,18 @@ char *escape_string(cchar *s) {
         break;
 
       default:
-        if (isprint(*s)) {
+        if (isprint((unsigned char)*s)) {
           *ss++ = *s;
         } else {
+          // Three-digit OCTAL, not \xNN: a C hex escape consumes EVERY
+          // following hex digit, so b'\x12\x34' ("\x12" then '4') came out
+          // as "\x124" -- "hex escape sequence out of range", and a silent
+          // wrong byte where the value happens to fit. Octal stops at three.
+          unsigned char c = (unsigned char)*s;
           *ss++ = '\\';
-          *ss++ = 'x';
-          *ss++ = tohex2(*s);
-          *ss++ = tohex1(*s);
+          *ss++ = (char)('0' + ((c >> 6) & 7));
+          *ss++ = (char)('0' + ((c >> 3) & 7));
+          *ss++ = (char)('0' + (c & 7));
         }
         break;
     }
@@ -167,6 +178,8 @@ char *escape_string(cchar *s) {
   *ss = 0;
   return sss;
 }
+
+char *escape_string(cchar *s) { return escape_string(s, (int)strlen(s)); }
 
 char *quote_string(cchar *s) {
   int l = strlen(s);

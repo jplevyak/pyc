@@ -2,10 +2,14 @@
 #ifndef _ifa_common_common_H_
 #define _ifa_common_common_H_
 
+// Boehm GC is a hard dependency. LEAK_DETECT selects the
+// debugging GC build; the default selects the C++-flavored GC.
+// The historical non-GC build path has been removed (the runtime
+// and IFA library both assume Boehm GC).
 #ifdef LEAK_DETECT
 #define GC_DEBUG
 #include "gc.h"
-#define MEM_INIT() GC_INIT()
+#define MEM_INIT() do { GC_INIT(); mem_init_heap(); } while (0)
 #define MALLOC(_n) GC_MALLOC(_n)
 #define REALLOC(_p, _n) GC_REALLOC((_p), (_n))
 #define MEMALIGN(_p, _n, _a) _p = GC_MALLOC(_n)
@@ -13,28 +17,44 @@
 #define FREE(_p) GC_FREE(_p)
 #define DELETE(_x)
 #else
-#ifdef USE_GC
 #include "gc_cpp.h"
-#define MEM_INIT() GC_INIT()
+#define MEM_INIT() do { GC_INIT(); mem_init_heap(); } while (0)
 #define MALLOC(_n) GC_MALLOC(_n)
 #define REALLOC(_p, _n) GC_REALLOC((_p), (_n))
 #define MEMALIGN(_p, _n, _a) _p = GC_MALLOC(_n)
 #define FREE(_x) (void)(_x)
 #define DELETE(_x) (void)(_x)
-#else
-#define MEM_INIT()
-#define MALLOC ::malloc
-#define REALLOC ::realloc
-#define MEMALIGN(_p, _a, _n) ::posix_memalign((void **)&(_p), (_a), (_n))
-#define FREE ::free
-#define DELETE(_x) delete _x
-class gc {};
-#endif
 #endif
 
+#include <stdlib.h>
+#include <unistd.h>
+
+// The compilers' starting heap (not generated programs', which have their
+// own MEM_INIT). The collector runs when the heap cannot satisfy an
+// allocation, so a small starting heap collects over and over while the
+// analysis grows: on sunfish, 4 GiB takes the compile from 139 s to 50 s
+// and 8 GiB only to 47 s (ifa/207). Pages are touched only as they are
+// allocated, so a small program stays small. Limited to an eighth of
+// physical memory because parallel compiles add up; GC_expand_hp failing
+// just leaves the collector's default. GC_INITIAL_HEAP_SIZE still decides
+// when it is set.
+static inline void mem_init_heap() {
+  if (getenv("GC_INITIAL_HEAP_SIZE")) return;
+  size_t want = (size_t)4 << 30;
+  long pages = sysconf(_SC_PHYS_PAGES), page_size = sysconf(_SC_PAGESIZE);
+  if (pages > 0 && page_size > 0 && (size_t)pages * page_size / 8 < want) want = (size_t)pages * page_size / 8;
+  (void)GC_expand_hp(want);
+}
+
 #define round2(_x, _n) ((_x + ((_n)-1)) & ~((_n)-1))
-#define tohex1(_x) ((((_x)&15) > 9) ? (((_x)&15) - 10 + 'A') : (((_x)&15) + '0'))
-#define tohex2(_x) ((((_x) >> 4) > 9) ? (((_x) >> 4) - 10 + 'A') : (((_x) >> 4) + '0'))
+// (unsigned char) cast is required: `char` is signed on this platform, so
+// a raw high-bit-set byte (0x80-0xFF -- routine in bytes literals/binary
+// data, e.g. escape_string()'s callers) sign-extends before the shift/mask
+// below, producing a nibble outside 0-15 and a garbage non-hex-digit
+// output character instead of a hex digit (found via a corpus bytes
+// literal that escaped to an invalid `\x` C escape sequence).
+#define tohex1(_x) (((((unsigned char)(_x)) & 15) > 9) ? ((((unsigned char)(_x)) & 15) - 10 + 'A') : ((((unsigned char)(_x)) & 15) + '0'))
+#define tohex2(_x) (((((unsigned char)(_x)) >> 4) > 9) ? ((((unsigned char)(_x)) >> 4) - 10 + 'A') : ((((unsigned char)(_x)) >> 4) + '0'))
 #define numberof(_x) ((sizeof(_x)) / (sizeof((_x)[0])))
 
 #ifdef EXTERN

@@ -1,0 +1,58 @@
+;; phase: codegen-c
+
+(summary fa_rc=0 clone_rc=0 funs=1 bytes=541)
+
+;; c-output (#include line stripped):
+
+/*
+ Type Declarations
+*/
+
+
+/*
+ Function Prototypes
+*/
+
+typedef _CG_function _CG_pf0;
+_CG_nil_type _CG_f_84_0/*__main__*/();
+
+/*
+ Type Definitions
+*/
+
+
+/*
+ Type Objects
+*/
+
+
+/*
+ Builtin Functions
+*/
+
+
+/*
+ Global Variables
+*/
+
+
+/*
+ Functions
+*/
+
+_CG_nil_type _CG_f_84_0/*__main__*/() {
+  _CG_int32 t0 = {};
+  _CG_int32 t1 = {};
+
+  t1 = 42;
+  t0 = t1;
+  _CG_prim_primitive_observe(t0);
+  return 0;
+}
+
+int main(int argc, char *argv[]) {
+  MEM_INIT();
+  _CG_set_argv(argc, argv);
+  _CG_f_84_0/*__main__*/();
+  return 0;
+}

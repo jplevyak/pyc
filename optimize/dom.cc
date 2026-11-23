@@ -70,6 +70,17 @@ static void df_link(Dom *v, Dom *w, Vec<Dom *> &vertex) {
 
 static void compute_semi(Dom *w, Vec<Dom *> &vertex) {
   for (Dom *v : w->pred) {
+    // A pred never reached by df_traversal (semi < 0) is not
+    // reachable from the root, so no semidominator path can run
+    // through it -- and its Dom was never initialized for
+    // df_eval/df_compress (null ancestor chain: the CALL-graph
+    // build_call_dominators allocates Doms for every fa->funs entry
+    // but only traverses those reachable from top; a fun referenced
+    // by call edges yet unreachable from the root left a live pred
+    // edge here and df_compress dereferenced its null ancestor --
+    // same universe-mismatch family as build_cfg_dominators' edge
+    // pruning above).
+    if (v->semi < 0) continue;
     int semiu = df_eval(v, vertex)->semi;
     if (semiu < w->semi) w->semi = semiu;
   }
@@ -104,7 +115,18 @@ static void find_dominator_frontier_internal(Dom *n) {
 
 static void find_dominator_frontier(Dom *n, Vec<Dom *> &vertex) {
   find_dominator_frontier_internal(n);
-  for (Dom *x : vertex) if (x != VNULL) x->front.set_to_vec();
+  // ifa/issues/112: set_to_vec() compacts the hash slots but PRESERVES
+  // their order, so the frontier still came out heap-ordered even with
+  // issue 035's Dom::id serial. place_phi (ssu.cc) walks `front`, so
+  // that order decides the sequence phis are added in, hence each
+  // PNode's `phi` order, hence collect_Vars' var order, hence every
+  // t<N> name and -- via cg.cc's `!cg_get_string(v)` first-claimant
+  // rule -- WHICH clone declares a Var shared between clones. Sorting
+  // by the id 035 already added makes all of that reproducible.
+  for (Dom *x : vertex) if (x != VNULL) {
+    x->front.set_to_vec();
+    if (x->front.n > 1) qsort_by_id(x->front);
+  }
 }
 
 static void dom_replace(Dom *d, void *a, void *b) {
@@ -153,12 +175,30 @@ void build_cfg_dominators(Fun *f) {
     p->dom = new Dom(p);
     p->rdom = new Dom(p);
   }
+  // The node universe is collect_PNodes' backward-from-exit
+  // reachability -- the same universe every other pass uses. A CFG
+  // region that is forward-reachable from entry but has NO path to
+  // exit is outside it: its PNodes have no Dom (null), yet universe
+  // nodes still hold cfg_succ edges INTO the region, so df_traversal
+  // (forward from entry) used to walk through a null Dom and
+  // segfault. The one observed producer of such a region (othello2's
+  // vs_cpu_ugi: a break-label scoping bug lowering `break` to a
+  // goto-to-self cycle) was a frontend bug, fixed at the source
+  // (python_ifa_build_syms.cc, PY_for_stmt/PY_while_stmt label
+  // save/restore) -- this guard stays as defense-in-depth, because
+  // pruning such edges is sound for dominance within the universe:
+  // a path entry -> n -> exit can never detour through a no-exit
+  // region (once in, never out), so no dominance relation among
+  // universe nodes depends on them. NOTE: liveness/SSU (ssu.cc) walk
+  // the same universe and would also misbehave on a real no-exit
+  // region, so if one ever becomes legitimately constructible, it
+  // needs a universe-level answer, not more edge guards.
   for (PNode *p : pnodes) {
-    for (PNode *pp : p->cfg_pred) {
+    for (PNode *pp : p->cfg_pred) if (pp->dom) {
       p->dom->pred.add(pp->dom);
       p->rdom->succ.add(pp->rdom);
     }
-    for (PNode *pp : p->cfg_succ) {
+    for (PNode *pp : p->cfg_succ) if (pp->dom) {
       p->dom->succ.add(pp->dom);
       p->rdom->pred.add(pp->rdom);
     }
@@ -172,9 +212,16 @@ void build_call_dominators(FA *fa) {
   for (Fun *f : fa->funs) {
     Vec<Fun *> calls;
     f->calls_funs(calls);
-    for (Fun *ff : calls) f->dom->succ.add(ff->dom);
+    // Only `fa->funs` were given a Dom above, but calls_funs /
+    // called_by_funs can name a Fun outside that set, whose `dom` is
+    // then null -- and df_traversal derefs every succ entry
+    // unconditionally. Guard exactly as the CFG loop above already does
+    // (`if (pp->dom)`). Latent: it needs a call graph big enough to
+    // reach such a Fun, which is why it surfaced only when contour
+    // splitting produced more of them (ifa/issues/055).
+    for (Fun *ff : calls) if (ff && ff->dom) f->dom->succ.add(ff->dom);
     f->called_by_funs(calls);
-    for (Fun *ff : calls) f->dom->pred.add(ff->dom);
+    for (Fun *ff : calls) if (ff && ff->dom) f->dom->pred.add(ff->dom);
   }
   build_dominators(if1->top->fun->dom);
 }

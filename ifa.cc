@@ -1,9 +1,11 @@
+#include <string>
 #include "ifa.h"
 #include "ast.h"
 #include "cg.h"
 #include "clone.h"
 #include "optimize/dead.h"
 #include "optimize/dom.h"
+#include "analysis/escape.h"
 #include "fa.h"
 #include "fun.h"
 #include "graph.h"
@@ -11,7 +13,12 @@
 #include "if1.h"
 #include "ifadefs.h"
 #include "optimize/inline.h"
+
+void ifa_dbg_bodies(cchar *tag);  // ifa/issues/112 probe, defined below
+void dbg_trace_avar(cchar *where);  // ifa/issues/112, analysis/clone.cc
+void dbg_trace_fa_state(cchar *where);  // ifa/issues/112, analysis/fa.cc
 #include "log.h"
+#include "pattern.h"
 #include "pdb.h"
 
 void ifa_init(IFACallbacks *callbacks) {
@@ -20,7 +27,37 @@ void ifa_init(IFACallbacks *callbacks) {
   init_ast(callbacks);
 }
 
+void ifa_reset() {
+  // Per-subsystem state. Order matters where one resetter touches
+  // pointers held by another (e.g., fa_reset clears AType globals which
+  // reference Sym globals that ast_reset nulls).
+  fa_reset();
+  pattern_reset();
+  ast_reset();
+  if1 = NULL;
+  pdb = NULL;
+}
+
+// PYC_DBG_PHASES=1: print the wall-clock time each pipeline stage took.
+// Call it AFTER a stage, with the stage's name.
+void ifa_phase(cchar *tag) {
+  static int on = -1;
+  static struct timespec last;
+  if (on < 0) on = getenv("PYC_DBG_PHASES") ? atoi(getenv("PYC_DBG_PHASES")) : 0;
+  if (!on) return;
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  static struct timespec first = now;
+  if (!last.tv_sec) last = first;
+  fprintf(stderr, "PHASE %-22s %8.2f s  (at %8.2f)  %7.2f GiB allocated, %lu collections\n", tag,
+          (now.tv_sec - last.tv_sec) + (now.tv_nsec - last.tv_nsec) * 1e-9,
+          (now.tv_sec - first.tv_sec) + (now.tv_nsec - first.tv_nsec) * 1e-9,
+          GC_get_total_bytes() / (double)((size_t)1 << 30), (unsigned long)GC_get_gc_no());
+  last = now;
+}
+
 int ifa_analyze(cchar *fn) {
+  ifa_phase("frontend");
   if1_finalize(if1);
   if1_write_log();
   if (!fdce_if1) fail("unable to translate dead code");
@@ -31,13 +68,197 @@ int ifa_analyze(cchar *fn) {
   }
   FA *fa = pdb->fa;
   fa->fn = fn;
+  ifa_phase("if1-finalize");
   if (fa->analyze(if1->top->fun) < 0) return -1;
+  ifa_phase("flow-analysis");
+  // ESCAPE_PLAN.md Phases 2-4: intra+inter-procedural escape
+  // lattice.  Runs BEFORE clone so the per-EntrySet escape
+  // signature is available to ES_FN::equivalent — that lets
+  // clone refuse to merge EntrySets whose formals diverge in
+  // escape status (Phase 4).  No-op when
+  // ifa_escape_in_fa==0; codegen then uses the Stage 3
+  // fallback.
+  dbg_trace_avar("after-analyze");   // ifa/issues/112
+  dbg_trace_fa_state("after-analyze");
+  compute_escape(fa);
+  ifa_phase("escape");
+  dbg_trace_avar("after-escape");
+  dbg_trace_fa_state("after-escape");
   if (clone(fa) < 0) return -1;
+  ifa_phase("clone");
   for (Fun *f : fa->funs) build_cfg_dominators(f);
+  ifa_phase("dominators");
   if (mark_live_code(fa) < 0) return -1;
+  ifa_phase("mark-live-code");
   if (get_int_config("alog.test.fa") > 0) log_test_fa(fa);
   frequency_estimation(fa);
+  ifa_phase("frequency");
+  sum_audit_check("after-clone");  // ifa/120
+  ifa_dbg_bodies("after-clone");
   return 0;
+}
+
+// ifa/issues/112 probe: fingerprint every live Fun's BODY MEMBERSHIP --
+// which PNodes belong to which Fun -- at a named pipeline point. Two
+// runs that agree at a point have a deterministic IR there, so any
+// emitted-C difference arises LATER. Answers "is this a codegen issue,
+// or does it predate codegen?" without reading either.
+void ifa_dbg_bodies(cchar *tag) {
+  if (!getenv("IFA_DBG_BODIES")) return;
+  // inline_single_sends guards on `f->sym->has.index(fs)` and bails when
+  // that index runs past the call site's rvals -- so a class's `has`
+  // ORDER can flip an inlining decision. issues/121 canonicalised
+  // promotion order only WITHIN a reanalyze round, so this checks
+  // whether has order is actually stable run to run.
+  {
+    Vec<Sym *> recs;
+    for (Sym *s2 : if1->allsyms) if (s2 && s2->type_kind == Type_RECORD && s2->has.n) recs.add(s2);
+    qsort_by_id(recs);
+    unsigned long hh = 1469598103934665603UL;
+    for (Sym *s2 : recs) {
+      for (Sym *m : s2->has) hh = (hh ^ (unsigned long)(m ? m->id : 0)) * 1099511628211UL;
+      hh = (hh ^ 0x9e3779b9UL) * 1099511628211UL;
+    }
+    fprintf(stderr, "HASORDER %s nrec=%d h=%lx\n", tag, recs.n, hh);
+  }
+  // How many DISTINCT unions do the Type_SUM Syms actually represent?
+  // make_LUB_type is a default no-op, so each construction mints a fresh
+  // Sym; if the Sym count exceeds the count of distinct component-name
+  // signatures, structurally equal unions exist as separate Syms.
+  {
+    Vec<cchar *> sigs;
+    int nsum = 0;
+    for (Sym *s2 : if1->allsyms) {
+      if (!s2 || s2->type_kind != Type_SUM) continue;
+      ++nsum;
+      std::string key;
+      Vec<cchar *> nms;
+      for (Sym *m : s2->has) if (m) nms.add(m->name ? m->name : "?");
+      if (nms.n > 1) qsort(nms.v, nms.n, sizeof(nms[0]), [](const void *a, const void *b) {
+        return strcmp(*(cchar *const *)a, *(cchar *const *)b);
+      });
+      for (cchar *nm : nms) { key += nm; key += "|"; }
+      cchar *k = if1_cannonicalize_string(if1, key.c_str(), key.c_str() + key.size());
+      bool dup = false;
+      for (cchar *e : sigs) if (e == k) { dup = true; break; }
+      if (!dup) sigs.add(k);
+    }
+    fprintf(stderr, "SUMDUP %s sum_syms=%d distinct_unions=%d\n", tag, nsum, sigs.n);
+    // ifa/120: the union Syms IN USE -- the type of a live Fun's Var, or a
+    // list element's type -- against the distinct unions they stand for,
+    // keyed on component IDS (names are not unique). sum_syms above counts
+    // every Sym ever minted, including duplicates interning discarded.
+    Vec<Sym *> used;
+    for (Fun *f : pdb->fa->funs) if (f && f->live)
+      for (Var *v : f->fa_all_Vars) if (v && v->type) {
+        Sym *t = v->type;
+        if (t->type_kind == Type_SUM) used.set_add(t);
+        if (t->element && t->element->type && t->element->type->type_kind == Type_SUM) used.set_add(t->element->type);
+      }
+    used.set_to_vec();
+    Vec<cchar *> idsigs;
+    for (Sym *t : used) {
+      Vec<int> ids;
+      for (Sym *m : t->has) ids.add(m ? m->id : -1);
+      if (ids.n > 1) qsort(ids.v, ids.n, sizeof(int), [](const void *a, const void *b) {
+        return *(const int *)a - *(const int *)b;
+      });
+      std::string key = t->creators.n ? "cs:" : "";
+      for (int id : ids) key += std::to_string(id) + ",";
+      cchar *k = if1_cannonicalize_string(if1, key.c_str(), key.c_str() + key.size());
+      idsigs.set_add((char *)k);
+    }
+    idsigs.set_to_vec();
+    fprintf(stderr, "SUMDUP %s used_sum_syms=%d distinct_by_id=%d\n", tag, used.n, idsigs.n);
+  }
+  Vec<Fun *> funs;
+  for (Fun *f : pdb->fa->funs) if (f) funs.add(f);
+  // The RAW order matters on its own: codegen emits bodies with
+  // `for (Fun *f : fa->funs)` (cg.cc), so fa->funs order is emission
+  // order. Print it before sorting, or a reordering here is invisible.
+  {
+    unsigned long ho = 1469598103934665603UL;
+    for (Fun *f : funs) ho = (ho ^ (unsigned long)f->id) * 1099511628211UL;
+    fprintf(stderr, "FUNORDER %s n=%d h=%lx\n", tag, funs.n, ho);
+  }
+  qsort_by_id(funs);
+  for (Fun *f : funs) {
+    Vec<PNode *> ps;
+    for (PNode *p : f->fa_all_PNodes) if (p) ps.add(p);
+    qsort_by_id(ps);
+    unsigned long h = 1469598103934665603UL;  // FNV-1a
+    for (PNode *p : ps) {
+      unsigned long v = (unsigned long)p->id * 31 + (unsigned long)(p->code ? p->code->kind : 0);
+      h = (h ^ v) * 1099511628211UL;
+    }
+    // Count phi/phy too: they are NOT in fa_all_PNodes, so a hash over
+    // that list alone cannot see SSU placement differences (ifa/112 --
+    // this is what made the emitted-C instability look like a codegen
+    // issue when the phi COUNT was already varying).
+    int nphi = 0, nphy = 0;
+    for (PNode *p : ps) { nphi += p->phi.n; nphy += p->phy.n; }
+    // Hash rvals too. Membership and phi counts alone are NOT enough:
+    // simple_inlining rewrites a call site's ARGUMENT LIST in place
+    // (inline.cc), which changes rvals without changing which PNodes
+    // belong to which Fun -- invisible to a membership-only hash, and
+    // that gap is what made this look like a codegen issue (ifa/112).
+    unsigned long hr = 1469598103934665603UL;
+    for (PNode *p : ps) {
+      for (Var *v : p->rvals) hr = (hr ^ (unsigned long)(v ? v->id : 0)) * 1099511628211UL;
+      hr = (hr ^ 0x9e3779b9UL) * 1099511628211UL;  // node separator
+    }
+    // Var TYPE identity: inline_single_sends decides with
+    // `p->rvals[i]->type == v->type`, a Sym POINTER compare, so if
+    // structurally-equal types are sometimes one Sym and sometimes two,
+    // that guard flips (ifa/112).
+    unsigned long ht = 1469598103934665603UL;
+    // RENAMING-INVARIANT: number each distinct type Sym by first
+    // encounter and hash those ordinals, not the ids. Raw ids differ
+    // whenever new_Sym() is called in a different order, which is mere
+    // renaming; what the `==` guard in inline_single_sends actually
+    // depends on is WHICH Vars share a type -- this relation.
+    Vec<Sym *> seen;
+    Vec<Var *> tv;
+    for (PNode *p : ps) {
+      for (Var *v : p->rvals) tv.add(v);
+      for (Var *v : p->lvals) tv.add(v);
+    }
+    for (Var *v : tv) {
+      Sym *t = v ? v->type : nullptr;
+      int ord = -1;
+      for (int i = 0; i < seen.n; i++) if (seen[i] == t) { ord = i; break; }
+      if (ord < 0) { ord = seen.n; seen.add(t); }
+      ht = (ht ^ (unsigned long)ord) * 1099511628211UL;
+    }
+    // STRUCTURAL signature of each Var's type, independent of Sym
+    // identity: kind plus the sorted component ordinals. If this is
+    // stable while the identity relation above is not, interning is
+    // failing (same structure, two Syms). If this is ALSO unstable, the
+    // types genuinely differ and the cause is upstream (ifa/112).
+    unsigned long hstruct = 1469598103934665603UL;
+    for (Var *v : tv) {
+      Sym *t = v ? v->type : nullptr;
+      hstruct = (hstruct ^ (unsigned long)(t ? t->type_kind : 0)) * 1099511628211UL;
+      // Hash NAMES, not ids: a Sym id moves whenever new_Sym() runs in
+      // a different order, so an id-based "structural" hash is not
+      // renaming-invariant either -- the same trap one level down.
+      if (t && t->type_kind == Type_SUM) {
+        Vec<cchar *> nms;
+        for (Sym *m : t->has) if (m) nms.add(m->name ? m->name : "?");
+        if (nms.n > 1) qsort(nms.v, nms.n, sizeof(nms[0]), [](const void *a, const void *b) {
+          return strcmp(*(cchar *const *)a, *(cchar *const *)b);
+        });
+        for (cchar *nm : nms)
+          for (cchar *c = nm; *c; c++) hstruct = (hstruct ^ (unsigned long)*c) * 1099511628211UL;
+      } else if (t) {
+        cchar *nm = t->name ? t->name : "?";
+        for (cchar *c = nm; *c; c++) hstruct = (hstruct ^ (unsigned long)*c) * 1099511628211UL;
+      }
+      hstruct = (hstruct ^ 0x9e3779b9UL) * 1099511628211UL;
+    }
+    fprintf(stderr, "BODY %s fun=%d n=%d phi=%d phy=%d h=%lx rv=%lx ty=%lx\n", tag, f->id, ps.n, nphi, nphy, h, hr, ht);
+    fprintf(stderr, "TYSTRUCT %s fun=%d h=%lx\n", tag, f->id, hstruct);
+  }
 }
 
 void ifa_graph(cchar *fn) { graph(pdb->fa, fn); }
@@ -48,17 +269,24 @@ void ifa_code(cchar *fn) {
   char hfn[512];
   snprintf(hfn, sizeof(hfn), "%s.code", fn);
   FILE *fp = fopen(hfn, "w");
-  if1_write(fp, pdb->if1, 0);
+  if1_write(fp, pdb->if1);
+  fclose(fp);
 }
 
 int ifa_optimize() {
   mark_live_funs(fa);
+  ifa_phase("mark-live-funs");
   if (simple_inlining(pdb->fa) < 0) return -1;
+  ifa_phase("inlining");
   mark_live_types(pdb->fa);
   mark_live_funs(pdb->fa);
   return 0;
 }
 
-void ifa_cg(cchar *fn) { c_codegen_write_c(pdb->fa, if1->top->fun, fn); }
+void ifa_cg(cchar *fn) {
+  ifa_dbg_bodies("before-cg");
+  c_codegen_write_c(pdb->fa, if1->top->fun, fn);
+  sum_audit_check("after-cg");  // ifa/120
+}
 
 void ifa_compile(cchar *fn) { c_codegen_compile(fn); }

@@ -11,78 +11,52 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/DIBuilder.h"
 #include <memory>
-#include <map>
-#include <vector>
 
-// Global LLVM state shared across all translation units
+// Global LLVM state shared by llvm.cc (entry points, main wrapper)
+// and cg_ir_v2_emit_llvm.cc (the production emit path).
 extern std::unique_ptr<llvm::LLVMContext> TheContext;
 extern std::unique_ptr<llvm::Module> TheModule;
+
+// Optimize TheModule as `-b` does (clang -O2 with LTO; it also lowers the
+// coroutines). With `link_runtime` the runtime bitcode is linked in and the
+// module internalized; the JIT passes false. Returns the target machine it
+// optimized for. llvm.cc.
+namespace llvm { class TargetMachine; }
+std::unique_ptr<llvm::TargetMachine> llvm_optimize_module(bool link_runtime, bool *linked_runtime);
 extern std::unique_ptr<llvm::IRBuilder<>> Builder;
 extern std::unique_ptr<llvm::DIBuilder> DBuilder;
 extern llvm::DICompileUnit *CU;
 extern llvm::DIFile *UnitFile;
-extern Vec<Fun*> *all_funs_global;
 
-// ============================================================================
-// Type System (llvm.cc)
-// ============================================================================
+// Bring up TheContext / TheModule / Builder / DBuilder.  Exposed
+// for unit tests that need a live LLVMContext (production path
+// calls it from llvm_codegen_print_ir).
+void llvm_codegen_initialize(FA *fa);
 
-// Convert IF1 type to LLVM type
-llvm::Type *getLLVMType(Sym *sym);
-
-// Convert IF1 type to LLVM debug info type
-llvm::DIType *getLLVMDIType(Sym *sym, llvm::DIFile *di_file);
-
-// Build C-style type strings for all symbols (needed before type translation)
+// Build the `_CG_*` type-string prefixes on builtin Syms and run
+// the cg_string assignment passes (consumed by cg_normalize_v2
+// when it reads f->cg_string / s->cg_string).
 void llvm_build_type_strings(FA *fa);
 
-// ============================================================================
-// Value/Constant Management (llvm.cc)
-// ============================================================================
+// Diagnostic prints from the LLVM backend.  Gated on `ifa_debug`
+// (settable via `-d` / `-d -d` / ifa_debug = N) so default runs
+// are silent and golden-file tests can diff stdout/stderr cleanly.
+#define DEBUG_LOG(...) do { if (ifa_debug) fprintf(stderr, "DEBUG: " __VA_ARGS__); } while (0)
 
-// Get or create LLVM value for a Var
-llvm::Value *getLLVMValue(Var *var, Fun *ifa_fun);
+// Active-emission helpers for frontend-registered RegisteredPrim::llvm_cgfn
+// callbacks invoked from emit_send_primitive().
+llvm::Value *llvm_emit_get_var(Var *v);
+void llvm_emit_put_result(Var *dst, llvm::Value *val);
+llvm::Type *llvm_emit_type(Sym *s);
 
-// Set LLVM value for a Var (handles both SSA and memory-based vars)
-void setLLVMValue(Var *var, llvm::Value *val, Fun *ifa_fun);
-
-// Get LLVM constant for a compile-time constant Var
-llvm::Constant *getLLVMConstant(Var *var);
-
-// ============================================================================
-// Function Translation (llvm_codegen.cc)
-// ============================================================================
-
-// Create LLVM function declaration (signature only)
-llvm::Function *createFunction(Fun *ifa_fun, llvm::Module *module);
-
-// Translate function body (PNodes) to LLVM IR
-void translateFunctionBody(Fun *ifa_fun);
-
-// Get or create LLVM BasicBlock for an IF1 Label
-llvm::BasicBlock *getLLVMBasicBlock(Label *label, llvm::Function *func);
-
-// Label to BasicBlock mapping (per-function, managed by llvm_codegen.cc)
-extern std::map<Label *, llvm::BasicBlock *> label_to_bb_map;
-
-// ============================================================================
-// Primitive Operations (llvm_primitives.cc)
-// ============================================================================
-
-// Translate primitive operation (arithmetic, comparisons, tuple ops, etc.)
-int write_llvm_prim(Fun *ifa_fun, PNode *n);
-
-// Translate function call
-void write_send(Fun *f, PNode *n);
-
-// ============================================================================
-// Utilities
-// ============================================================================
-
-// Check if a Var represents a closure
-int is_closure_var(Var *v);
-
-// Get target function from a call PNode
-Fun *get_target_fun(PNode *n, Fun *f);
+// LLVM 23 changed BasicBlock::getTerminator() to assert hasTerminator().
+inline bool bb_has_terminator(const llvm::BasicBlock *bb) {
+  if (!bb) return false;
+#if LLVM_VERSION_MAJOR >= 23
+  return bb->hasTerminator();
+#else
+  return bb->getTerminator() != nullptr;
+#endif
+}
 
 #endif // _llvm_internal_H_

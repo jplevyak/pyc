@@ -1,0 +1,33 @@
+;; phase: cg-normalize
+
+(summary fa_rc=-1 clone_rc=0 funs=1 globals=11 types=0)
+
+;; globals
+(slot %s0 :kind global :type ? :name __primitive)
+(slot %s1 :kind global :type ? :name reply)
+(slot %s5 :kind global :type ? :name new)
+(slot %s10 :kind global :type ? :name __operator)
+(slot %s14 :kind global :type ? :name .=)
+(slot %s81 :kind global :type ? :name read_fa)
+(slot %s84 :kind global :type ? :name fa)
+(slot %s91 :kind const :type ?)
+(slot %s94 :kind const :type ?)
+(slot %s95 :kind global :type ? :name fb)
+(slot %s100 :kind global :type ? :name __main__)
+
+;; funs
+(fun #1 :main
+  :return-type ?
+  :arg-types (?)
+  :locals 5 :blocks 1
+  (block #0 :label entry :preds 0 :succs 0
+    :body (
+      (ALLOC :slot %s90)
+      (STORE_FIELD %s90 %s91)
+      (ALLOC :slot %s93)
+      (STORE_FIELD %s93 %s94)
+      (CALL :slot %s97 %s81 %s90)
+      (CALL :slot %s98 %s81 %s93)
+    )
+    :term (RET %s69))
+)

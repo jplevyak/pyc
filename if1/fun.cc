@@ -33,6 +33,7 @@ void Fun::init_fun() {
   wraps = 0;
   size = -1;
   live = 0;
+  can_raise = 0;
   cg_string = 0;
   cg_structural_string = 0;
   llvm = 0;
@@ -51,7 +52,7 @@ static void build_uses(Fun *f) {
   for (PNode *p : nodes) build_uses(p);
 }
 
-Fun::Fun(Sym *asym) {
+Fun::Fun(Sym *asym, int build_flags) {
   sym = asym;
   asym->fun = this;
   ast = sym->ast;
@@ -62,12 +63,14 @@ Fun::Fun(Sym *asym) {
     else
       printf("function %d\n", asym->id);
   }
-  build_cfg();
-  build_ssu();
-  build_uses(this);
-  setup_ast();
-  check_invariants(this);
+  if (build_flags & FUN_BUILD_CFG)    build_cfg();
+  if (build_flags & FUN_BUILD_SSU)    build_ssu();
+  if (build_flags & FUN_BUILD_USES)   build_uses(this);
+  if (build_flags & FUN_BUILD_AST)    setup_ast();
+  if (build_flags & FUN_BUILD_CHECK)  check_invariants(this);
 }
+
+Fun::Fun(Sym *asym) : Fun(asym, FUN_BUILD_ALL) {}
 
 Fun::Fun() {
   sym = NULL;
@@ -117,6 +120,67 @@ void Fun::collect_Vars(Vec<Var *> &avars, Vec<PNode *> *nodes, int flags) {
   for (int i = 0; i < nodes->n; i++) {
     collect_Vars_PNode(nodes->v[i], vars, flags);
     for (PNode *p : nodes->v[i]->cfg_pred) if (sv.set_add(p)) nodes->add(p);
+  }
+  // ifa/issues/112 probe: separate the two candidates. `nodes` is the
+  // CFG traversal (driven by cfg_pred order); `vars` is what
+  // collect_Vars_PNode pulls out of each node, including phi/phy. If
+  // nodes is stable and vars is not, the variance is inside the node,
+  // not in the walk.
+  static int dbg = -1;  // collect_Vars is hot; resolve the env once
+  if (dbg < 0) dbg = getenv("IFA_DBG_BODIES") ? 1 : 0;
+  if (dbg) {
+    unsigned long hn = 1469598103934665603UL, hv = 1469598103934665603UL;
+    for (PNode *p : *nodes) hn = (hn ^ (unsigned long)p->id) * 1099511628211UL;
+    for (Var *v : vars.asvec) hv = (hv ^ (unsigned long)v->id) * 1099511628211UL;
+    // SEQUENCE vs MULTISET: hv hashes the ids in order, hs hashes them
+    // sorted. If hs matches across runs but hv does not, the same Vars
+    // come out in a different ORDER. If hs differs too, the Var IDS
+    // themselves differ and the cause is upstream, in creation order.
+    Vec<Var *> sorted;
+    for (Var *v : vars.asvec) if (v) sorted.add(v);
+    qsort_by_id(sorted);
+    unsigned long hs = 1469598103934665603UL;
+    for (Var *v : sorted) hs = (hs ^ (unsigned long)v->id) * 1099511628211UL;
+    // Hash the phi/phy ORDER within each node. rvals/lvals are fixed
+    // Vecs and this caller may drop tvals, so if the node set and the
+    // var multiset both match while the sequence does not, a permuted
+    // `phi`/`phy` is the only thing left (ifa/112).
+    unsigned long hp = 1469598103934665603UL;
+    for (PNode *p : *nodes) {
+      for (PNode *q : p->phi) hp = (hp ^ (unsigned long)q->id) * 1099511628211UL;
+      for (PNode *q : p->phy) hp = (hp ^ ((unsigned long)q->id * 7)) * 1099511628211UL;
+    }
+    // Per-CATEGORY sequence hashes. nodes, phi order and the var
+    // multiset all match at the first divergence, so exactly one of
+    // these Vecs is being walked in a different order (ifa/112).
+    unsigned long hr = 1469598103934665603UL, hl = 1469598103934665603UL;
+    unsigned long ht = 1469598103934665603UL, hpv = 1469598103934665603UL;
+    for (PNode *p : *nodes) {
+      for (Var *v : p->rvals) if (v) hr = (hr ^ (unsigned long)v->id) * 1099511628211UL;
+      for (Var *v : p->lvals) if (v) hl = (hl ^ (unsigned long)v->id) * 1099511628211UL;
+      for (Var *v : p->tvals) if (v) ht = (ht ^ (unsigned long)v->id) * 1099511628211UL;
+      for (PNode *q : p->phi) {
+        for (Var *v : q->rvals) if (v) hpv = (hpv ^ (unsigned long)v->id) * 1099511628211UL;
+        for (Var *v : q->lvals) if (v) hpv = (hpv ^ ((unsigned long)v->id * 3)) * 1099511628211UL;
+      }
+      for (PNode *q : p->phy) {
+        for (Var *v : q->rvals) if (v) hpv = (hpv ^ ((unsigned long)v->id * 5)) * 1099511628211UL;
+        for (Var *v : q->lvals) if (v) hpv = (hpv ^ ((unsigned long)v->id * 7)) * 1099511628211UL;
+      }
+    }
+    fprintf(stderr, "CV nodes=%lx vars=%lx sorted=%lx n=%d phiord=%lx rv=%lx lv=%lx tv=%lx pv=%lx\n",
+            hn, hv, hs, vars.asvec.n, hp, hr, hl, ht, hpv);
+    // Drill-down: IFA_DBG_CV_NODES=<hn> dumps every node's rvals for the
+    // call whose node-set hash matches, so two runs can be diffed to the
+    // exact PNode whose rvals are permuted.
+    static const char *want = getenv("IFA_DBG_CV_NODES");
+    if (want && strtoul(want, nullptr, 16) == hn) {
+      for (PNode *p : *nodes) {
+        fprintf(stderr, "CVN pnode=%d kind=%d rvals=", p->id, p->code ? p->code->kind : -1);
+        for (Var *v : p->rvals) fprintf(stderr, "%d,", v ? v->id : -1);
+        fprintf(stderr, "\n");
+      }
+    }
   }
   for (MPosition *p : positional_arg_positions) vars.add(args.get(p));
   for (Var *v : rets) vars.add(v);
@@ -261,18 +325,35 @@ void rebuild_cfg_pred_index(Fun *f) {
 }
 
 void check_invariants(Fun *f) {
-#ifndef DEBUG
+#ifdef DEBUG
+  // ifa/204 row 1. Both closures index the Vec: a range-for over a Vec
+  // that grows inside the loop stops at the end it saw on entry, so the
+  // backward walk used to stop one hop from exit and the check fired on
+  // straight-line code -- unnoticed only because it was compiled out
+  // (`#ifndef DEBUG` in a build that always defines DEBUG).
   if (!f->entry) return;
   Accum<PNode *> nodes;
   nodes.add(f->exit);
-  for (PNode *p : nodes.asvec) for (PNode *n : p->cfg_pred) nodes.add(n);
-  for (PNode *p : nodes.asvec) {
-    for (PNode *n : p->cfg_pred) assert(n->cfg_succ.in(p));
-    for (PNode *n : p->cfg_succ) assert(n->cfg_pred.in(p));
-  }
+  for (int i = 0; i < nodes.asvec.n; i++)
+    for (PNode *n : nodes.asvec[i]->cfg_pred) nodes.add(n);
   Accum<PNode *> forward_nodes;
   forward_nodes.add(f->entry);
-  for (PNode *p : nodes.asvec) for (PNode *n : p->cfg_succ) forward_nodes.add(n);
-  assert(!nodes.asset.some_disjunction(forward_nodes.asset));
+  for (int i = 0; i < forward_nodes.asvec.n; i++)
+    for (PNode *n : forward_nodes.asvec[i]->cfg_succ) forward_nodes.add(n);
+  Accum<PNode *> *walks[2] = {&nodes, &forward_nodes};
+  for (Accum<PNode *> *a : walks)
+    for (PNode *p : a->asvec) {
+      for (PNode *n : p->cfg_pred) assert(n->cfg_succ.in(p));
+      for (PNode *n : p->cfg_succ) assert(n->cfg_pred.in(p));
+    }
+  if (nodes.asset.some_disjunction(forward_nodes.asset)) {
+    fprintf(stderr, "check_invariants: %s: the nodes reachable from entry and the nodes reaching exit differ\n",
+            f->sym && f->sym->name ? f->sym->name : "?");
+    for (PNode *p : nodes.asvec)
+      if (!forward_nodes.asset.set_in(p)) fprintf(stderr, "  reaches exit, unreachable from entry: PNode %d\n", p->id);
+    for (PNode *p : forward_nodes.asvec)
+      if (!nodes.asset.set_in(p)) fprintf(stderr, "  reachable from entry, never reaches exit: PNode %d\n", p->id);
+    assert(!"check_invariants: CFG node universe");
+  }
 #endif
 }

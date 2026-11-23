@@ -115,4 +115,40 @@ extern Prim *prim_typeof;
 #define P_prim_typeof 54
 extern Prim *prim_typeof_element;
 #define P_prim_typeof_element 55
+// Real-identity comparison (CPython `is` semantics on
+// non-None operands).  Lowers to pointer equality in C
+// codegen.  Issue 028 step 4 — the previous `__is__`
+// method dispatch on `__pyc_any_type__` returned False
+// unconditionally and silently broke `z is z.next`-style
+// single-node-ring checks in mutable data structures.
+extern Prim *prim_is;
+#define P_prim_is 56
+extern Prim *prim_await;
+#define P_prim_await 57
+extern Prim *prim_copy;
+#define P_prim_copy 58
+// issues/014: `yield expr` inside a generator function -- lowers to
+// co_yield in cg.cc (is_generator), same non-functional/one-arg shape
+// as prim_await above (which it's modeled on directly).
+extern Prim *prim_yield;
+#define P_prim_yield 59
+// Python's id(): the operand's address as an int64 (heap objects) or
+// its value bits (unboxed scalars -- diverges from CPython's
+// every-int-is-an-object identity, fine for the identity-comparison
+// idiom id(a) == id(b)). Exposed as `def id(x)` via __pyc_primitive__
+// in __pyc__/05_builtins.py (issue 025: timsort, pylife).
+extern Prim *prim_id;
+#define P_prim_id 60
+// (index 62 was prim_tuple_lt/prim_tuple_eq -- removed once tuple
+// __lt__/__eq__ became plain-Python constant-index folds, issue 069.)
+
+// issues/110: the DYNAMIC-LENGTH counterpart of prim_make. Given an
+// iterable, produce a tuple CreationSet whose generic ELEMENT is seeded
+// from that iterable's element, rather than one field per fixed
+// argument. Populating the element is what makes tuple_able() false, so
+// clone.cc lays the CreationSet out as a list -- variable length, known
+// element type -- which is the representation a dynamic `tuple(xs)`
+// needs and which shedskin spells `tuple<T>`. Reuses freed index 61.
+extern Prim *prim_make_seq;
+#define P_prim_make_seq 61
 #endif

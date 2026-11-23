@@ -1,0 +1,256 @@
+# Issue 019: v2 LLVM flat-list literals lack pyc's runtime list header
+
+**Status:** **closed June 2026** — fix landed across commits
+`9f816af` (E.1 helper), `b222ff4` (E.2 flat path), and
+`5a0ff11` (E.3 struct-shape two-stage construction). The v2
+LLVM backend now allocates list literals through pyc's runtime
+contract on both shapes; `tests/list_concat.py`,
+`tests/list_or_concat.py`, and the broader list / for-over-list
+cohort (11 + 5 tests) pass on v2 LLVM. C-backend 80/0 unchanged;
+ifa unit tests 99/0 unchanged.
+
+**Affects:** `ifa/codegen/cg_normalize_v2.cc` (`lower_send_alloc`)
+and `ifa/codegen/cg_ir_v2_emit_llvm.cc`'s `CG2_ALLOC` emit
+under `IFA_LLVM_V2=1`. Surfaced while investigating
+`tests/list_concat.py` (`x = [1] + [2,3,4,5,6]`) after closing
+[018-v2-loop-after-undef.md](018-v2-loop-after-undef.md).
+
+## What landed (closes the issue)
+
+The implementation follows option **(a)** from the structural-fix
+list below — a v2-side `_CG_to_list` equivalent that runs after
+each list/tuple `make` SEND in the same block. Concretely:
+
+- **Flat-array shape** (`[1]`, `[]`, single-element-typed lists):
+  `lower_send_alloc` (`cg_normalize_v2.cc:822-877`) emits
+  `CG2_SIZEOF(elem_type)` → `size_v`, then a single
+  `CG2_C_CALL _CG_prim_tuple_list_internal(size_v, element_count)`
+  into `dst`. Per-element initializers go through `CG2_INDEX_STORE`
+  with the element-type stride.  The runtime helper
+  (`pyc_runtime.c:150-158`) carves out the 16-byte header and
+  returns `base + _CG_SIZEOF_LIST_HDR`, so `dst - 16` reads the
+  header pyc's downstream runtime helpers expect.
+- **Struct-shape** (multi-element heterogeneous tuple-lists like
+  `[2, 3, 4, 5, 6]`): `lower_send_alloc` (`cg_normalize_v2.cc:892-943`)
+  emits `CG2_SIZEOF(struct_t)`, then
+  `CG2_C_CALL _CG_prim_tuple_list_internal(sizeof(struct),
+  element_count + 1)` into an intermediate `list_tmp` (the +1
+  preserves the pyc analyzer's over-alloc convention from
+  `cg.cc:141`). `CG2_FIELD_STORE`s write the elements into
+  `list_tmp`. After the field-store loop, a second
+  `CG2_C_CALL _CG_to_list_runtime(list_tmp, sizeof(struct),
+  semantic_n)` (`cg_normalize_v2.cc:1029-1054`) re-emits the
+  payload with `header.len = element_count` into `dst`. The
+  `_CG_to_list_runtime` helper (`pyc_runtime.c:197-208`) mirrors
+  the C-side `_CG_TUPLE_TO_LIST_FUN` macro in
+  `pyc_c_runtime.h:262`.
+- **Runtime list helpers**: `_CG_list_add`, `_CG_list_mult`,
+  `_CG_list_resize`, `_CG_list_getslice`, `_CG_list_setslice` are
+  exported from `libpyc_runtime.a` as plain externs taking int64
+  size args (issue 020, commit `7dc970b`), matching the v2 emit's
+  `CG2_SIZEOF_ELEMENT` which produces i64.
+
+The dst's CGv2Type is intentionally **not** rewritten — downstream
+`CG2_FIELD_LOAD` / `CG2_SIZEOF_ELEMENT` / etc. see the same type
+the FA produced. The struct path's intermediate `list_tmp` is what
+the FIELD_STOREs target; dst still holds the FA's declared type
+(opaque ptr for the flat case, struct ptr for the struct case).
+
+## How each June-2026 entanglement was resolved
+
+1. **Two-stage allocation (`+1` over-alloc + `_CG_to_list`)** —
+   resolved by E.3 in `lower_send_alloc`. Stage 1's alloc count
+   is `pn->rvals.n - 2` (matches `cg.cc:141`). Stage 2's call
+   takes the semantic count `pn->rvals.n - 3`. The intermediate
+   `list_tmp` keeps the same CGv2Type as `dst`, so the analyzer's
+   GEP indices into the struct remain valid for the FIELD_STOREs.
+2. **`sizeof_element` semantics** — resolved by computing
+   `CG2_SIZEOF` over the **element type** (flat path) or
+   **struct type** (struct path) at the call site, instead of
+   relying on `CG2_SIZEOF_ELEMENT`'s downstream computation. The
+   flat-path size matches the analyzer's folded constant
+   (`_CG_prim_sizeof_element(_c, _l) = sizeof(element)`), and the
+   struct path uses the full struct size for `_CG_to_list_runtime`'s
+   memcpy.
+3. **Cascading dst CGv2Type rewrites** — avoided entirely by
+   keeping `dst->type` untouched. The struct path's FIELD_STOREs
+   target the intermediate `list_tmp` (same type as `dst`), so no
+   downstream consumer sees a changed type.
+
+## Verification (June 2026)
+
+- `tests/list_concat.py` → `[1, 2, 3, 4, 5, 6]` on both backends.
+- `tests/list_or_concat.py` → `[1, 2, 3]\n[1, 2, 3]` on both backends.
+- `PYC_FLAGS=-b ./test_pyc` → **80 passed, 0 failed, 1 expected fail,
+  1 skipped** (parity with the C backend).
+- `PYC_FLAGS=-b ./test_pyc list` (11 list-cohort tests) → 11/0.
+- `PYC_FLAGS=-b ./test_pyc tuple` (5 tuple tests) → 5/0.
+- `PYC_FLAGS=-b ./test_pyc for_` (5 for-loop tests) → 5/0.
+- `nm libpyc_runtime.a | grep "T _CG_(prim_tuple_list_internal|
+  to_list_runtime|list_add)"` shows all three exports.
+- `make test-unit` → 99/0.
+- Inspecting the `.ll` for `list_concat.py` shows the expected call
+  sequence: `_CG_prim_tuple_list_internal(i32 8, i32 1)` (flat
+  `[1]`), `_CG_prim_tuple_list_internal(i32 40, i32 6)` followed
+  by `_CG_to_list_runtime(ptr %list_tmp, i32 40, i32 5)` (struct
+  `[2,3,4,5,6]`), then `_CG_list_add(ptr, ptr, i64 8, i64 8)`.
+
+## Symptom
+
+`tests/list_concat.py`, `tests/list_or_concat.py`, and any
+program that runs a list-literal through `list.__add__` /
+`list.__mul__` / similar runtime helpers segfaults under
+`IFA_LLVM_V2=1 -b`. The C backend is unaffected.
+
+`_CG_list_add` (and friends, in `pyc_c_runtime.h`) reads pyc's
+list header — a 16-byte struct at `ptr - 16` carrying
+`total_len`, `len`, and an internal `ptr` field. The v2 LLVM
+backend's `CG2_ALLOC` emits a raw `GC_malloc(size)` for a list
+literal and stores element values starting at byte 0; nothing
+allocates or initializes the header. So the runtime helper
+reads garbage memory and crashes (or returns a bogus length
+that's then used for downstream walks).
+
+The two pyc literal-list shapes both hit this gap differently:
+
+- **Tuple-list / multi-element struct** (`[2, 3, 4, 5, 6]`):
+  the C backend goes through `_CG_prim_tuple_list_internal`
+  which allocates `n * elem_size + 16` bytes and skips the
+  header before returning. v2 emits a struct of the right
+  field count, but the struct itself doesn't include the
+  header — `_CG_list_add(list_ptr - 16 ...)` reads memory
+  before the allocation.
+
+- **Flat single-element list** (`[1]`): the C backend uses
+  `_CG_prim_list` which is the same internal but typed for
+  flat arrays. v2 emits `GC_malloc(8)` for the int64, with
+  element stride GEP for the store (this commit's fix). No
+  header, same crash.
+
+The store sequence the v2 emit now produces for `[1]` is
+correct in isolation (`getelementptr i64, ptr %v9, i64 0;
+store i64 1, ptr %1`), but `_CG_list_add` still reads garbage
+from `ptr - 16`.
+
+## Suspected root cause
+
+`cg_normalize_v2.cc`'s `lower_send_alloc` doesn't know about
+pyc's list header convention. It treats every `P_prim_make`
+SEND as "allocate a struct of the declared type" and emits one
+CG2_ALLOC for that struct. The struct doesn't include the
+16-byte header.
+
+The C backend works because `_CG_prim_tuple_list` and friends
+are runtime helpers that hide the header allocation behind a
+macro/inline call — pyc emits one symbol call and the runtime
+helper takes care of the header. The v2 emit could do the
+same: route `P_prim_make` on list/tuple symbols through a
+CG2_C_CALL to `_CG_prim_tuple_list_internal` (or a new typed
+wrapper) and skip the inline alloc + field-store sequence
+entirely.
+
+## Verification plan
+
+When fixing:
+
+1. `tests/list_concat.py` (`[1] + [2,3,4,5,6]`) prints
+   `[1, 2, 3, 4, 5, 6]` under `IFA_LLVM_V2=1 -b`.
+2. `tests/list_or_concat.py` (uses `or` + list concat) passes
+   on the same harness.
+3. `nm <obj>` shows `_CG_prim_tuple_list_internal` (or
+   whichever helper closes this) as an undefined reference
+   that `libpyc_runtime.a` satisfies.
+4. C-backend 74/0 unchanged; unit tests 105/0 unchanged.
+
+## What this unblocks
+
+- `tests/list_concat.py`, `tests/list_or_concat.py` and any
+  test that exercises list runtime helpers (`__add__`,
+  `__mul__`, slicing, etc.) move from segv/wrong-output to
+  passing.
+- Pyc-suite v2 LLVM ratchet should gain ~2-3 tests at the
+  literal-list boundary.
+- Aligns the v2 emit's list-allocation strategy with the
+  established runtime contract used by `pyc_c_runtime.h`,
+  removing the second source of pyc-list-layout knowledge
+  (right now it lives in both `pyc_runtime.c` and the v2
+  emit).
+
+## June 2026 attempt — diagnostics worth keeping
+
+An attempted fix (reverted; commits 7f4c1c2 and earlier are
+the baseline) added an out-of-line `_CG_prim_tuple_list_internal`
+to `pyc_runtime.c` and routed `lower_send_alloc` for
+list/tuple-symbol SENDs through a `CG2_C_CALL` to it. That
+piece compiled and produced the right shape for the simple
+case (`print([1, 2, 3, 4])` worked), but uncovered three
+deeper entanglements that any future fix needs to handle
+together:
+
+1. **The C backend's two-stage allocation.** Looking at
+   `cg.cc:140` (struct path), pyc allocates with
+   `_CG_prim_tuple_list(_c, rvals.n - 2)` — that's
+   `element_count + 1`, the over-alloc count. The struct
+   it returns has `header.len = element_count + 1` (semantic
+   length **plus one**). The conversion that fixes this lives
+   in `_CG_TUPLE_TO_LIST_FUN(_s, _n)` (`pyc_c_runtime.h:216`),
+   which `list.__add__` and other consumers call as
+   `_CG_to_list(struct_ptr)` — it allocates a new list with
+   `header.len = _n` (the **correct** count) and memcpys the
+   struct's payload. v2 has no equivalent of `_CG_to_list`,
+   so any v2 route through the runtime helper must either
+   skip the over-alloc convention or replicate the conversion.
+
+2. **`sizeof_element` returns sizeof(element), not
+   sizeof(struct).** In the C output for `[1] + [2,3,4,5,6]`,
+   `_CG_list_add(t2, t3, 8, 8)` — both size args are 8.
+   That's because `_CG_prim_sizeof_element(_c, _l) sizeof(*_l)`
+   for the struct-ptr `_l` of type `_CG_ps3343` is
+   `sizeof(_CG_s3343) = 40` at the C level, but pyc's
+   *analyzer* constant-folds the argument to a known semantic
+   element size (8 for int64) before the call. The v2
+   `CG2_SIZEOF_ELEMENT` emit, by contrast, computes from the
+   CGv2Type at LLVM-emit time and gets 40 for the struct,
+   which propagates into `_CG_list_add` and overruns the
+   source buffer. Any attempt that updates the alloc shape
+   has to coordinate with `CG2_SIZEOF_ELEMENT` so both sides
+   see the same "element size" semantics. Falling back to
+   `struct->fields[0]->type` in the emit works for
+   homogeneous lists but is fragile (heterogeneous tuples
+   would still mislead).
+
+3. **dst's CGv2Type rewriting cascades.** When the FA leaves
+   the dst's type as opaque `t_ptr` (which is the common case
+   for flat single-element lists like `[1]`), `CG2_SIZEOF_ELEMENT`
+   can't compute a stride at all. Attempting to "upgrade" the
+   dst's CGv2Type in `lower_send_alloc` to a more specific
+   `ptr_<elem>` breaks downstream FIELD_STORE call sites that
+   were using the original struct shape — the GEP indices that
+   pyc's analyzer generated for the struct's layout no longer
+   match the new flat type. The two views (struct-layout-with-
+   named-fields vs flat-array-of-elements) are mutually
+   incompatible at the LLVM type level even though they
+   produce identical byte offsets for homogeneous lists.
+
+The structurally correct fix is probably one of:
+
+- **(a)** Add a v2-side `_CG_to_list` equivalent that runs
+  after each list/tuple `make` SEND in the same block. Keep
+  the existing CG2_ALLOC + FIELD_STORE shape for the
+  literal's construction; immediately follow it with a
+  `CG2_C_CALL` to the conversion helper that re-emits the
+  payload with the correct header.len. This is the closest
+  match to what the C backend already does, including
+  preserving the +1 convention's intent.
+
+- **(b)** Skip the +1 convention entirely in v2 and route
+  `make` through the runtime helper with `(sizeof(element),
+  element_count)`. Requires CG2_SIZEOF_ELEMENT to agree on
+  the element-size semantics across both paths, plus
+  re-emitting per-element stores using INDEX_STORE
+  exclusively (not FIELD_STORE) so the GEP stride matches
+  what `_CG_list_add` will memcpy.
+
+Either path is a substantial refactor that needs to be done
+as one coherent commit, not incrementally — the partial
+states leave the pyc-suite half-broken.

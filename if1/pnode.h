@@ -8,6 +8,7 @@ struct LoopNode;
 class Fun;
 class MPosition;
 class Sym;
+class VarIdHashFns;  // var.h (issue 035)
 
 /* #define CONC_IMPLEMENTED 1 */
 
@@ -19,6 +20,8 @@ class PNode : public gc {
   int id;
   uint live : 1;
   uint fa_live : 1;
+  uint fa_noreturn : 1;  // ifa/178: does not complete in any contour of this clone (gate_send)
+  uint fa_noreturn_raises : 1;  // ifa/049: ...and in every contour it is a call that raises
   Vec<Var *> lvals;  // variables this node assigns
   Vec<Var *> rvals;  // variables this node reads
   Vec<Var *> tvals;  // temporary variables used by this node
@@ -40,8 +43,8 @@ class PNode : public gc {
 
   // Temporary Space
   union {
-    LoopNode *loop_node;                          // loop.cpp
-    BlockHash<Var *, PointerHashFns> *live_vars;  // ssu.cpp
+    LoopNode *loop_node;                        // loop.cpp
+    BlockHash<Var *, VarIdHashFns> *live_vars;  // ssu.cpp (id-hashed, issue 035)
   };
   Map<PNode *, int> cfg_pred_index;  // cg.cpp
   Dom *dom, *rdom;                   // dominators and reverse dominators dom.cpp
@@ -56,6 +59,16 @@ class PNode : public gc {
 };
 
 int compar_pnodes(const void *ai, const void *aj);
+
+// Content-based hashing for `Vec<PNode*>::set_add` / `set_in` (used
+// extensively by cfg_succ/cfg_pred/phi/phy and codegen's visited-node
+// tracking, e.g. cg.cc's write_c_pnode `done` set). `id` is monotonically
+// assigned at construction (pnode.cc), so iteration/lookup is deterministic
+// and collision-free across runs (see ifa/notes/004; like Var, this was a
+// pointer-hashed id-bearing type missing from that landing's six).
+template <> struct PointerHash<PNode *> {
+  static uintptr_t hash(PNode *c) { return c ? (uintptr_t)c->id : 0; }
+};
 
 typedef Vec<PNode *> VecPNode;
 typedef Map<PNode *, VecPNode> MapPNVecPN;

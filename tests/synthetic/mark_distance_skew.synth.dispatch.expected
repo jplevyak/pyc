@@ -1,0 +1,24 @@
+;; phase: dispatch
+
+(summary rc=-1 ess=3 edges=12)
+
+(es @__main__#0
+  send sink (imm) => ?
+    → %sink#0
+      args→ [1]:{sink} [2]:{int32}
+  send relay (imm) => ?
+    → %relay#0
+      args→ [1]:{relay} [2]:{int32}
+  send sink ? => ?
+    → %sink#0
+      args→ [1]:{sink} [2]:{int32}
+)
+
+(es %relay#0
+  (no out edges)
+)
+
+(es %sink#0
+  (no out edges)
+)
+

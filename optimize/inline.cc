@@ -11,6 +11,43 @@
 
 #define LOOP_FREQUENCY 10.0
 
+// ---------------------------------------------------------------------------
+// Inline-event sidecar
+// ---------------------------------------------------------------------------
+
+static bool inline_events_enabled = false;
+static Vec<InlineEvent *> inline_events_storage;
+
+void inline_events_enable() { inline_events_enabled = true; }
+void inline_events_disable() { inline_events_enabled = false; }
+void inline_events_reset() { inline_events_storage.clear(); }
+const Vec<InlineEvent *> &inline_events_get() { return inline_events_storage; }
+
+// ifa/issues/112: count/hash inlining DECISIONS independently of
+// inline_events_enabled, which is false in production -- so
+// inline_events_storage cannot be used to observe what actually fired.
+static unsigned long dbg_inl_hash = 1469598103934665603UL;
+static int dbg_inl_n = 0;
+static void dbg_note_inline(int k, Fun *caller, PNode *pnode, Fun *callee) {
+  static int on = -1;
+  if (on < 0) on = getenv("IFA_DBG_BODIES") ? 1 : 0;
+  if (!on) return;
+  ++dbg_inl_n;
+#define M(x) (dbg_inl_hash = (dbg_inl_hash ^ (unsigned long)(x)) * 1099511628211UL)
+  M(k); M(caller ? caller->id : 0); M(pnode ? pnode->id : 0); M(callee ? callee->id : 0);
+#undef M
+}
+
+static void record_inline_event(InlineEventKind k, Fun *caller, PNode *pnode, Fun *callee) {
+  if (!inline_events_enabled) return;
+  InlineEvent *e = new InlineEvent;
+  e->kind = k;
+  e->caller = caller;
+  e->pnode = pnode;
+  e->callee = callee;
+  inline_events_storage.add(e);
+}
+
 static void dfs_order(Fun *f, Vec<Fun *> &funs, Vec<Fun *> &fset) {
   if (!fset.set_add(f)) return;
   funs.add(f);
@@ -58,7 +95,15 @@ static void global_frequency_estimation(FA *fa) {
     for (PNode *n : nodes) n->execution_frequency *= freq;
     f->execution_frequency = 0;
     for (CallPoint *c : f->called) {
-      if (c->fun != f && f->loop_node->dfs_ancestor(c->fun->loop_node))
+      // dfs_order walks the CALL GRAPH from top, but loop_node is only
+      // assigned to the funs find_all_loops covers, so a fun reachable
+      // here without one derefs null. Same family as the Dom guard in
+      // optimize/dom.cc, and surfaced the same way -- more contours
+      // reach more funs (ifa/issues/055). Frequency estimation only
+      // feeds inlining heuristics, so skipping an unknown ancestry
+      // relation costs precision in the estimate, never correctness.
+      if (c->fun != f && f->loop_node && c->fun && c->fun->loop_node &&
+          f->loop_node->dfs_ancestor(c->fun->loop_node))
         f->execution_frequency += freq * c->pnode->execution_frequency;
     }
     if (f->execution_frequency < 1.0) f->execution_frequency = 1.0;
@@ -72,7 +117,15 @@ int frequency_estimation(FA *fa) {
   return 0;
 }
 
-static int is_closure_create(PNode *n) { return (n->lvals[0]->type->type_kind == Type_FUN && n->creates); }
+static int is_closure_create(PNode *n) {
+  // n->lvals can be empty for 0-result primitive sends and the Var's
+  // type can be unset for vars no analysis path touched — both happen
+  // legitimately for synthetic test-harness primitives. Treat either
+  // as "not a closure create".
+  if (n->lvals.n == 0) return 0;
+  if (!n->lvals[0]->type) return 0;
+  return (n->lvals[0]->type->type_kind == Type_FUN && n->creates);
+}
 
 static int is_period_prim(PNode *n) { return (n->prim && n->prim->index == P_prim_period); }
 
@@ -87,9 +140,18 @@ static int is_simple_closure_create(PNode *n, bool verify_other = true);
 
 static PNode *simple_closure_call(PNode *n, bool verify_other = true) {
   if (!is_closure_call(n)) return 0;
+  // issues/002: a closure passed in as a formal argument (rather than
+  // created earlier in this same function's body) can be the very
+  // first PNode of the function -- cfg_pred is legitimately empty at
+  // function entry. Walking backward through a MOVE chain looking for
+  // the closure's local creation site doesn't apply here; there's no
+  // local creation site to find, so bail (not a "simple" closure call
+  // eligible for this inlining, just an ordinary escaped one).
+  if (!n->cfg_pred.n) return 0;
   PNode *p = n->cfg_pred[0];
   Var *v = n->rvals[0];
   while (p->code->kind == Code_MOVE && v == p->lvals[0]) {
+    if (!p->cfg_pred.n) return 0;
     v = p->rvals[0];
     p = p->cfg_pred[0];
   }
@@ -124,6 +186,23 @@ static Var *new_live_Var(Sym *s) {
 }
 
 static void sub_constants(PNode *p) {
+  // issues/022: an `await`'s operand must keep its REAL Var identity
+  // -- the one whose `.def` still points back at the call that
+  // constructed the awaited coroutine -- even when its abstract
+  // value is provably constant. Every other send is safe to
+  // substitute here because "the value" and "the effect" are the
+  // same thing for a pure operation; for `await`, running the
+  // awaited coroutine's body IS the effect, and swapping in a bare
+  // constant Var (no `.def`, never touched by FA's own avars/backward
+  // graph -- see codegen_common.cc's virtual_cg_is_const_folded_send)
+  // orphans the real call from the only thing that would ever drive
+  // it, silently skipping the coroutine's body -- including any of
+  // its own side effects -- entirely.
+  if (p->code && p->code->kind == Code_SEND && p->prim && p->prim->index == P_prim_await) {
+    for (PNode *n : p->phi) sub_constants(n);
+    for (PNode *n : p->phy) sub_constants(n);
+    return;
+  }
   Vec<Var *> rvals;
   rvals.move(p->rvals);
   for (Var *v : rvals) {
@@ -164,8 +243,34 @@ static int reaching_var(Var *v, Var *vv) {
   return 0;
 }
 
+// check_invariants walks the whole function, and it ran before and after
+// every splice. A function with n inlined sites paid O(n) for each, and each
+// walk allocates its two node sets, so most of the time was collections:
+// 67 s of othello3's compile. So the splices mark the function, and it is
+// checked once when its sites are done (inline_check_flush). The check
+// still fails on a broken CFG; IFA_DBG_INLINE_CHECK=1 restores the per-splice
+// check, which says WHICH splice broke it.
+static Fun *inline_check_pending = nullptr;
+static void inline_check_flush() {
+  if (inline_check_pending) check_invariants(inline_check_pending);
+  inline_check_pending = nullptr;
+}
+static void inline_check(Fun *f) {
+  static int eager = -1;
+  if (eager < 0) eager = getenv("IFA_DBG_INLINE_CHECK") ? atoi(getenv("IFA_DBG_INLINE_CHECK")) : 0;
+  if (eager) return check_invariants(f);
+  if (inline_check_pending != f) inline_check_flush();
+  inline_check_pending = f;
+}
+
 static void insert_move_before(Fun *f, PNode *p, Var *rhs, Var *lhs) {
-  check_invariants(f);
+  inline_check(f);
+  // ifa/204 row 2: the splice below rewires every pred of `p` to the new
+  // MOVE and leaves `p` with exactly one. At a join that would leave `p`'s
+  // phi rvals sized to the old pred count. The callers insert before a SEND,
+  // never before a LABEL join, so state that instead of relying on it.
+  assert(p->cfg_pred.n == 1 || p == f->entry);
+  assert(!p->phi.n);
   PNode *n = new PNode(new Code(Code_MOVE));
   for (PNode *x : p->cfg_pred) x->cfg_succ[x->cfg_succ.index(p)] = n;
   n->cfg_pred.copy(p->cfg_pred);
@@ -181,10 +286,38 @@ static void insert_move_before(Fun *f, PNode *p, Var *rhs, Var *lhs) {
   n->rvals.add(rhs);
   n->live = 1;
   n->fa_live = 1;
-  check_invariants(f);
+  inline_check(f);
 }
 
 static void inline_single_pnode(Fun *f, PNode *p, Fun *fn, PNode *s) {
+  // Pre-check: bail if any (callsite arg, formal) pair both
+  // have Type_SUM.  The substitution loop below needs ONE
+  // side to be concrete to pick the new var's type — when
+  // both are SUM, neither has a unique projection.  An
+  // earlier `assert(v->type->type_kind != Type_SUM)` here
+  // crashed pyc on the fib-heap consolidate pattern (step 5
+  // of issue 028) where a method passes a union-typed
+  // receiver through a call into another union-returning
+  // method.  Skipping the inline keeps the call as a real
+  // dispatch — slightly slower but correct.
+  for (Var *v : s->rvals) {
+    if (v->constant) continue;
+    Sym *fs = first_var(v)->sym;
+    int i = fn->sym->has.index(fs);
+    if (i < 0) continue;
+    // issues/002: `i` is a formal-position index into fn's declared
+    // has[] list, but the call site `p`'s own rvals aren't guaranteed
+    // to align 1:1 with it -- an escaped-closure call site can have a
+    // different rval count/shape than a plain direct call. When `i`
+    // runs past p->rvals, this substitution's alignment assumption
+    // doesn't hold for this call site; bail, mirroring the Type_SUM
+    // bail-out below (leaves the call as a real, uninlined dispatch).
+    if (i >= p->rvals.n) return;
+    if (p->rvals[i]->constant) continue;
+    if (p->rvals[i]->type == v->type) continue;
+    if (p->rvals[i]->type->type_kind == Type_SUM &&
+        v->type->type_kind == Type_SUM) return;
+  }
   Vec<Var *> rvals;
   rvals.move(p->rvals);
   p->prim = s->prim;
@@ -209,7 +342,8 @@ static void inline_single_pnode(Fun *f, PNode *p, Fun *fn, PNode *s) {
         vv->type = rvals[i]->type;
         vv->avars = rvals[i]->avars;
       } else {
-        assert(v->type->type_kind != Type_SUM);
+        // The pre-check above guarantees v->type is NOT SUM
+        // here (if both were SUM, we returned early).
         vv->type = v->type;
         vv->avars = v->avars;
       }
@@ -217,21 +351,235 @@ static void inline_single_pnode(Fun *f, PNode *p, Fun *fn, PNode *s) {
       p->rvals.add(vv);
     }
   }
-  check_invariants(f);
+  inline_check(f);
 }
 
-static void convert_to_move(PNode *p, int i) {
+// ifa/121: the send is gone, so is its call. Its `f->calls` entry used to
+// survive, and mark_live_funs (which follows `calls` at every live node)
+// kept the identity callee live: every backend emitted it, named nowhere
+// (`str.__str__`, every `__iter__` returning self). inline_single_pnode and
+// inline_prim_chain already replace the entry with the inlined node's own.
+static void convert_to_move(Fun *f, PNode *p, int i) {
+  f->calls.put(p, nullptr);
   p->code = new Code(*p->code);
   p->code->kind = Code_MOVE;
   p->rvals[0] = p->rvals[i];
   p->rvals.n = 1;
 }
 
+// ---------------------------------------------------------------------------
+// Chain-aware matcher (issue 006 / Gap B): match a straight-line
+// sequence of >=2 primitive SENDs feeding a single reply. Each chain
+// element reads only formals, constants, or earlier chain lvals.
+// Returns the chain Vec on match, nullptr otherwise.
+// ---------------------------------------------------------------------------
+static Vec<PNode *> *match_prim_chain(Fun *f) {
+  Vec<PNode *> chain;
+  PNode *reply = nullptr;
+  for (PNode *n : f->fa_all_PNodes) {
+    if (!n->code || !n->live) continue;
+    if (n->code->kind == Code_MOVE || n->code->kind == Code_NOP) continue;
+    if (n->prim == prim_reply) {
+      if (reply) return nullptr;  // multiple replies
+      reply = n;
+      continue;
+    }
+    if (n->code->kind == Code_SEND && is_closure_create(n)) continue;
+    if (n->code->kind != Code_SEND) return nullptr;  // label / if / goto / etc.
+    if (!n->prim || f->calls.get(n)) return nullptr;  // closure-call (Gap C)
+    chain.add(n);
+  }
+  if (chain.n < 2) return nullptr;  // single SEND is handled by the existing matcher
+
+  // Each chain SEND's rvals must reach: a formal of fn, a constant, or
+  // an earlier chain element's lval. No reads from later sends or globals.
+  for (int i = 0; i < chain.n; i++) {
+    PNode *n = chain[i];
+    for (Var *v : n->rvals) {
+      Sym *fs = first_var(v)->sym;
+      if (fs && f->sym->has.index(fs) >= 0) continue;  // formal
+      if (v->sym->is_constant || v->sym->is_symbol) continue;
+      // Otherwise must reach an earlier chain element's lval.
+      bool ok = false;
+      for (int j = 0; j < i && !ok; j++) {
+        for (Var *lv : chain[j]->lvals) {
+          if (reaching_var(v, lv->sym->var)) { ok = true; break; }
+        }
+      }
+      if (!ok) return nullptr;
+    }
+  }
+  // ifa/issues/049: a function that can only raise is not a chain whose
+  // last value is the result; inlining it would drop the raise. Same rule
+  // as the single_send matcher.
+  if (!fun_can_return(f)) return nullptr;
+  // If a reply is present, it must read the last chain element's lval.
+  // (Bodies without an explicit reply are accepted; matches the
+  // single_send matcher convention — the call site's lval determines
+  // where the result goes.)
+  if (reply) {
+    if (reply->rvals.n < 1) return nullptr;
+    Var *retv = reply->rvals[reply->rvals.n - 1];
+    PNode *last = chain[chain.n - 1];
+    bool reply_ok = false;
+    for (Var *lv : last->lvals) {
+      if (reaching_var(retv, lv->sym->var)) { reply_ok = true; break; }
+    }
+    if (!reply_ok) return nullptr;
+  }
+
+  Vec<PNode *> *result = new Vec<PNode *>;
+  result->move(chain);
+  return result;
+}
+
+// ifa/issues/046: can inline_prim_chain's formal substitution retype
+// every mismatched actual? The coercion MOVE needs at least one side
+// CONCRETE -- when both the actual's and the formal's types are
+// Type_SUM there is no retype target, and the old code ASSERTED mid-
+// mutation (compiler abort on any Optional[list-of-self] field chain,
+// e.g. `node.args` unions reaching a chained prim body). Checked
+// BEFORE splicing so the call site is simply left as a plain call
+// (codegen handles those fine) instead of half-rewritten.
+static bool prim_chain_substitution_safe(Fun *fn, PNode *p, Vec<PNode *> *chain) {
+  for (int i = 0; i < chain->n; i++) {
+    for (Var *v : chain->v[i]->rvals) {
+      if (v->constant) continue;
+      Sym *fs = first_var(v)->sym;
+      int formal_idx = (fs ? fn->sym->has.index(fs) : -1);
+      if (formal_idx < 0 || formal_idx >= p->rvals.n) continue;
+      Var *actual = p->rvals[formal_idx];
+      if (!actual || actual->constant) continue;
+      if (actual->type == v->type) continue;
+      if (actual->type && v->type && actual->type->type_kind == Type_SUM && v->type->type_kind == Type_SUM)
+        return false;
+    }
+  }
+  return true;
+}
+
+// Splice a chain wrapper at the call site `p` (in caller `f`, callee
+// `fn`). chain[0] re-uses `p`; chain[1..N-1] are inserted as new PNodes
+// linked into `p->cfg_succ`. Intermediate lvals get fresh Vars in the
+// caller's namespace; the final chain element writes to `p`'s original
+// lval. Formal references substitute caller-supplied actuals (with
+// type-coercion MOVEs as needed, same as inline_single_pnode).
+static void inline_prim_chain(Fun *f, PNode *p, Fun *fn, Vec<PNode *> *chain) {
+  // Save call-site state.
+  Vec<Var *> actuals;
+  actuals.move(p->rvals);
+  Var *call_site_lval = p->lvals.n ? p->lvals[0] : nullptr;
+
+  // Allocate fresh intermediate Vars for chain[0..N-2]; chain[N-1]
+  // writes to the call site's original lval.
+  Vec<Var *> intermediates;
+  for (int i = 0; i < chain->n; i++) {
+    if (i == chain->n - 1) {
+      intermediates.add(call_site_lval);
+    } else {
+      Var *body_lval = chain->v[i]->lvals[0];
+      Var *fresh = new_live_Var(body_lval->sym);
+      fresh->type = body_lval->type;
+      fresh->avars = body_lval->avars;
+      intermediates.add(fresh);
+    }
+  }
+
+  // Substitute one chain element's rvals into the destination PNode.
+  auto subst_rvals = [&](PNode *dst, PNode *src, int src_index) {
+    dst->rvals.clear();
+    for (Var *v : src->rvals) {
+      if (v->constant) { dst->rvals.add(new_live_Var(v->constant)); continue; }
+      Sym *fs = first_var(v)->sym;
+      int formal_idx = (fs ? fn->sym->has.index(fs) : -1);
+      if (formal_idx >= 0) {
+        Var *actual = actuals[formal_idx];
+        if (actual->constant) {
+          dst->rvals.add(new_live_Var(actual->constant));
+        } else if (actual->type == v->type) {
+          dst->rvals.add(actual);
+        } else {
+          // Type coercion: insert a MOVE that retypes the actual.
+          Var *vv = new_live_Var(actual->sym);
+          if (actual->type->type_kind != Type_SUM) {
+            vv->type = actual->type;
+            vv->avars = actual->avars;
+          } else {
+            assert(v->type->type_kind != Type_SUM);
+            vv->type = v->type;
+            vv->avars = v->avars;
+          }
+          insert_move_before(f, dst, actual, vv);
+          dst->rvals.add(vv);
+        }
+        continue;
+      }
+      // Otherwise must reach an earlier chain element's lval.
+      bool resolved = false;
+      for (int j = 0; j < src_index && !resolved; j++) {
+        for (Var *lv : chain->v[j]->lvals) {
+          if (reaching_var(v, lv->sym->var)) {
+            dst->rvals.add(intermediates[j]);
+            resolved = true;
+            break;
+          }
+        }
+      }
+      assert(resolved);
+    }
+  };
+
+  // chain[0]: reuse `p`.
+  p->prim = chain->v[0]->prim;
+  f->calls.put(p, fn->calls.get(chain->v[0]));
+  p->lvals.clear();
+  if (intermediates[0]) p->lvals.add(intermediates[0]);
+  subst_rvals(p, chain->v[0], 0);
+
+  // chain[1..N-1]: insert new PNodes between p and p's original succ.
+  PNode *prev = p;
+  for (int i = 1; i < chain->n; i++) {
+    PNode *n = new PNode(new Code(Code_SEND));
+    n->prim = chain->v[i]->prim;
+    f->calls.put(n, fn->calls.get(chain->v[i]));
+    if (intermediates[i]) n->lvals.add(intermediates[i]);
+    // CFG insertion: n takes prev's successors; prev now points only at n.
+    Vec<PNode *> old_succ;
+    old_succ.copy(prev->cfg_succ);
+    for (PNode *s : old_succ) {
+      s->cfg_pred[s->cfg_pred.index(prev)] = n;
+      n->cfg_succ.add(s);
+    }
+    prev->cfg_succ.clear();
+    prev->cfg_succ.add(n);
+    n->cfg_pred.add(prev);
+    n->live = 1;
+    n->fa_live = 1;
+    subst_rvals(n, chain->v[i], i);
+    prev = n;
+  }
+  inline_check(f);
+}
+
 static int inline_single_sends(FA *fa) {
   Map<Fun *, PNode *> single_send;
   Map<Fun *, int> identity_send;
+  Map<Fun *, Vec<PNode *> *> chain_send;  // chain of >=2 prim sends (issue 006)
+  for (Fun *f : fa->funs) {  // find chain-eligible functions first
+    assert(f->live);
+    // issues/014: a coroutine (is_generator, and is_async for the
+    // same reason) must stay a real function -- inlining it merges
+    // its co_yield/co_await-bearing body into a caller that cg.cc
+    // never marks as a coroutine, producing invalid/incoherent C++
+    // (e.g. co_yield inside a plain-void function). Confirmed by
+    // repro: without this guard, a trivial single-call-site generator
+    // wrapper got inlined into its caller here.
+    if (f->sym->is_generator || f->sym->is_async) continue;
+    if (Vec<PNode *> *chain = match_prim_chain(f)) chain_send.put(f, chain);
+  }
   for (Fun *f : fa->funs) {  // find single prim send functions
     assert(f->live);
+    if (f->sym->is_generator || f->sym->is_async) continue;
     PNode *p = 0, *reply = 0;
     for (PNode *n : f->fa_all_PNodes) {
       if (!n->code || n->code->kind == Code_MOVE || !n->live) continue;
@@ -272,9 +620,54 @@ static int inline_single_sends(FA *fa) {
       Sym *fs = first_var(v)->sym;
       if (!((fs && (f->sym->has.index(fs) >= 0)) || v->sym->is_constant || v->sym->is_symbol)) goto Lskip;
     }
+    // ifa/issues/049: a function that can only raise is not "a function
+    // returning its one send"; inlining that send would drop the raise.
+    // Asked of FA, not of the reply: DCE also kills the reply of a function
+    // whose result is merely unused.
+    if (!fun_can_return(f)) continue;
     if (reply && !reaching_def(reply->rvals[reply->rvals.n - 1], p)) continue;
     single_send.put(f, p);
   Lskip:;
+  }
+  // ifa/issues/112: which INPUT to the inlining decision varies? Hash
+  // the three, each in a canonical (id-sorted) walk so the probe cannot
+  // itself be the thing that moves.
+  static int dbg_inl = -1;
+  if (dbg_inl < 0) dbg_inl = getenv("IFA_DBG_BODIES") ? 1 : 0;
+  if (dbg_inl) {
+    Vec<Fun *> fs2;
+    for (Fun *f : fa->funs) if (f) fs2.add(f);
+    qsort_by_id(fs2);
+    unsigned long hc = 1469598103934665603UL, hss = 1469598103934665603UL, hid = 1469598103934665603UL;
+#define MIX(h, x) (h = (h ^ (unsigned long)(x)) * 1099511628211UL)
+    for (Fun *f : fs2) {
+      for (PNode *p : f->fa_all_PNodes) {
+        Vec<Fun *> *c = f->calls.get(p);
+        MIX(hc, p->id);
+        if (c) {
+          Vec<Fun *> t;
+          for (Fun *x : *c) if (x) t.add(x);
+          qsort_by_id(t);
+          for (Fun *x : t) MIX(hc, x->id);
+        }
+        MIX(hc, 0x9e3779b9UL);
+      }
+      PNode *ss = single_send.get(f);
+      MIX(hss, f->id);
+      MIX(hss, ss ? ss->id : 0);
+      MIX(hid, f->id);
+      MIX(hid, identity_send.get(f));
+    }
+#undef MIX
+    // chain_send too -- it gates the OTHER inlining arm.
+    unsigned long hch = 1469598103934665603UL;
+    for (Fun *f : fs2) {
+      Vec<PNode *> *ch = chain_send.get(f);
+      hch = (hch ^ (unsigned long)f->id) * 1099511628211UL;
+      if (ch) for (PNode *q : *ch) hch = (hch ^ (unsigned long)(q ? q->id : 0)) * 1099511628211UL;
+      hch = (hch ^ 0x9e3779b9UL) * 1099511628211UL;
+    }
+    fprintf(stderr, "INL calls=%lx single=%lx ident=%lx chain=%lx\n", hc, hss, hid, hch);
   }
   for (Fun *f : fa->funs) {
     assert(f->live);
@@ -286,10 +679,28 @@ static int inline_single_sends(FA *fa) {
         // inline single send functions
         if (calls && calls->n == 1) {
           Fun *fn = calls->v[0];
-          PNode *s = single_send.get(fn);
-          if (s) inline_single_pnode(f, p, fn, s);
-          int i = identity_send.get(fn);
-          if (i) convert_to_move(p, i - 1);
+          // ifa/issues/165: a receiver that may be None, where the callee's
+          // `self` cannot be, needs codegen's None check at THIS call site.
+          // Inlining would erase the site (and let the callee's folded
+          // `self` stand in for the runtime value).
+          if (nil_receiver_rval(p, fn) >= 0) continue;
+          Vec<PNode *> *chain = chain_send.get(fn);
+          if (chain && !prim_chain_substitution_safe(fn, p, chain)) chain = nullptr;  // ifa/issues/046
+          if (chain) {
+            inline_prim_chain(f, p, fn, chain);
+            record_inline_event(INLINE_PRIM_CHAIN, f, p, fn); dbg_note_inline(INLINE_PRIM_CHAIN, f, p, fn);
+          } else {
+            PNode *s = single_send.get(fn);
+            if (s) {
+              inline_single_pnode(f, p, fn, s);
+              record_inline_event(INLINE_SINGLE_SEND, f, p, fn); dbg_note_inline(INLINE_SINGLE_SEND, f, p, fn);
+            }
+            int i = identity_send.get(fn);
+            if (i) {
+              convert_to_move(f, p, i - 1);
+              record_inline_event(INLINE_IDENTITY, f, p, fn); dbg_note_inline(INLINE_IDENTITY, f, p, fn);
+            }
+          }
         }
       } else {
         PNode *c = simple_closure_call(p);
@@ -305,16 +716,32 @@ static int inline_single_sends(FA *fa) {
             for (Var *v : c->rvals) p->rvals.add(v);
           }
           for (int i = 1; i < rvals.n; i++) p->rvals.add(rvals[i]);
+          record_inline_event(INLINE_CLOSURE, f, p, 0); dbg_note_inline(INLINE_CLOSURE, f, p, 0);
           if (calls && calls->n == 1) {
             Fun *fn = calls->v[0];
-            PNode *s = single_send.get(fn);
-            if (s) inline_single_pnode(f, p, fn, s);
-            int i = identity_send.get(fn);
-            if (i) convert_to_move(p, i - 1);
+            if (nil_receiver_rval(p, fn) >= 0) continue;  // ifa/issues/165, as above
+            Vec<PNode *> *chain = chain_send.get(fn);
+            if (chain && !prim_chain_substitution_safe(fn, p, chain)) chain = nullptr;  // ifa/issues/046
+            if (chain) {
+              inline_prim_chain(f, p, fn, chain);
+              record_inline_event(INLINE_PRIM_CHAIN, f, p, fn); dbg_note_inline(INLINE_PRIM_CHAIN, f, p, fn);
+            } else {
+              PNode *s = single_send.get(fn);
+              if (s) {
+                inline_single_pnode(f, p, fn, s);
+                record_inline_event(INLINE_SINGLE_SEND, f, p, fn); dbg_note_inline(INLINE_SINGLE_SEND, f, p, fn);
+              }
+              int i = identity_send.get(fn);
+              if (i) {
+                convert_to_move(f, p, i - 1);
+                record_inline_event(INLINE_IDENTITY, f, p, fn); dbg_note_inline(INLINE_IDENTITY, f, p, fn);
+              }
+            }
           }
         }
       }
     }
+    inline_check_flush();
     f->collect_Vars(f->fa_all_Vars, &f->fa_all_PNodes);
   }
   for (Fun *f : fa->funs) {
@@ -325,6 +752,38 @@ static int inline_single_sends(FA *fa) {
 }
 
 int simple_inlining(FA *fa) {
-  inline_single_sends(fa);
+  // Issue 022: iterate `inline_single_sends` until a pass
+  // produces no new INLINE events.  The first pass collapses
+  // first-order single-SEND wrappers; the chain-matcher
+  // infrastructure from issue 006 then has a shot at any
+  // straight-line chains those collapses exposed, on the
+  // second pass.  `inline_single_sends` calls
+  // `f->collect_Vars(&f->fa_all_PNodes)` per fun (above), so
+  // the per-fun PNode index is rebuilt between passes — no
+  // staleness.
+  //
+  // The cap is defensive: real codebases shouldn't produce
+  // deep wrapper chains, and the chain matcher absorbs
+  // straight-line chains in one pass anyway.  Iteration count
+  // is reported via inline_events_storage.n deltas.
+  const int max_passes = 4;
+  for (int pass = 0; pass < max_passes; pass++) {
+    int before = inline_events_storage.n;
+    inline_single_sends(fa);
+    if (inline_events_storage.n == before) break;
+  }
+  // ifa/issues/112: the DECISIONS themselves, in the order taken.
+  static int dbg_ev = -1;
+  if (dbg_ev < 0) dbg_ev = getenv("IFA_DBG_BODIES") ? 1 : 0;
+  if (dbg_ev) {
+    unsigned long he = 1469598103934665603UL;
+    for (InlineEvent *e : inline_events_storage) {
+      he = (he ^ (unsigned long)e->kind) * 1099511628211UL;
+      he = (he ^ (unsigned long)(e->caller ? e->caller->id : 0)) * 1099511628211UL;
+      he = (he ^ (unsigned long)(e->pnode ? e->pnode->id : 0)) * 1099511628211UL;
+      he = (he ^ (unsigned long)(e->callee ? e->callee->id : 0)) * 1099511628211UL;
+    }
+    fprintf(stderr, "INLEVENTS n=%d h=%lx | decisions n=%d h=%lx\n", inline_events_storage.n, he, dbg_inl_n, dbg_inl_hash);
+  }
   return 0;
 }

@@ -9,6 +9,52 @@
 
 // Simple Vector class, also supports open hashed sets
 
+// Hash trait used by `Vec<C>::set_add_internal` / `set_in_internal`
+// to compute bucket indices. The primary template casts to
+// uintptr_t — for pointer element types this gives pointer-bucket
+// hashing, which is the historical behavior. Headers that define
+// id-bearing pointer types (e.g. fa.h for AVar, sym.h for Sym)
+// specialize `PointerHash<T*>` to hash on the stable `c->id`
+// field, so iteration order over `set_add`-populated Vec<T*>
+// becomes deterministic across runs and table-capacity
+// oscillation goes away.
+//
+// Specializations MUST be visible at every translation unit that
+// instantiates `Vec<T*>::set_add_internal` / `set_in_internal`
+// for a given T — otherwise the set's storage layout would be
+// inconsistent across TUs. In practice this means: place the
+// specialization in the same header that defines T.
+template <class C>
+struct PointerHash {
+  static uintptr_t hash(C c) { return (uintptr_t)c; }
+};
+
+// issues/010 follow-up: opt-in cardinality-distribution instrumentation
+// for the "how big do Vec-as-array/Vec-as-set instances actually get"
+// question raised alongside the vec/set container-choice discussion.
+// Off by default (`ifa_vec_stats_enabled` is a plain bool checked once
+// per call, initialized from the IFA_VEC_STATS env var at startup in
+// vec.cc) -- a single well-predicted not-taken branch when disabled, no
+// behavior/perf change otherwise. When enabled, each process appends a
+// compact histogram line to IFA_VEC_STATS_FILE (default
+// /tmp/ifa_vec_stats.log) at exit via a single write() call (safe to
+// share across the many concurrent pyc processes the test harness
+// spawns, since O_APPEND writes below PIPE_BUF are atomic). Two
+// separate histograms, deliberately: `record_append` fires on every
+// successful Vec::add (any Vec, array-mode OR set's own linear-mode
+// bootstrap below SET_LINEAR_SIZE -- both physically the same
+// contiguous-storage append), so it answers "how big do Vec growth
+// events get, storage-wise, in general"; `record_set_member` fires
+// only from Vec::set_add on a genuinely new (deduplicated) member,
+// answering the set-cardinality question specifically. The two
+// necessarily overlap at cardinalities 1..SET_LINEAR_SIZE-1 (a small
+// set's own bootstrap growth is counted in both) -- that overlap is
+// expected, not a bug: at that size a set-mode Vec's storage really is
+// indistinguishable from a plain array's.
+extern bool ifa_vec_stats_enabled;
+void ifa_vec_stats_record_append(int n);
+void ifa_vec_stats_record_set_member(int n);
+
 #define VEC_INTEGRAL_SHIFT_DEFAULT 2 /* power of 2 (1 << VEC_INTEGRAL_SHIFT)*/
 #define VEC_INTEGRAL_SIZE (1 << (S))
 #define VEC_INITIAL_SHIFT ((S) + 1)
@@ -27,9 +73,9 @@ class Vec : public gc {
   C e[VEC_INTEGRAL_SIZE];
 
   Vec();
-  Vec<C, A, S>(const Vec<C, A, S> &vv);
-  Vec<C, A, S>(Vec<C, A, S> &vv, InitType init_type);
-  Vec<C, A, S>(const C c);
+  Vec(const Vec<C, A, S> &vv);
+  Vec(Vec<C, A, S> &vv, InitType init_type);
+  Vec(const C c);
   ~Vec();
 
   C &operator[](int i) const { return v[i]; }
@@ -209,6 +255,7 @@ inline void Vec<C, A, S>::add(C a) {
     (v = e)[n++] = a;
   else
     add_internal(a);
+  if (ifa_vec_stats_enabled) ifa_vec_stats_record_append(n);
 }
 
 template <class C, class A, int S>
@@ -243,6 +290,9 @@ inline C *Vec<C, A, S>::set_add(C a) {
     for (C *c = v; c < v + n; c++)
       if (*c == a) return 0;
     add(a);
+    // linear mode has no holes, so n (just incremented by add()) is
+    // already the live member count -- no set_count() scan needed.
+    if (ifa_vec_stats_enabled) ifa_vec_stats_record_set_member(n);
     return &v[n - 1];
   }
   if (n == SET_LINEAR_SIZE) {
@@ -250,7 +300,12 @@ inline C *Vec<C, A, S>::set_add(C a) {
     vv.move(*this);
     for (C *c = vv.v; c < vv.v + vv.n; c++) set_add_internal(*c);
   }
-  return set_add_internal(a);
+  C *r = set_add_internal(a);
+  // Hash mode: n is table capacity, not count, and set_add_internal
+  // returns null for a duplicate -- only pay set_count()'s O(current
+  // size) scan on a genuine new insertion.
+  if (r && ifa_vec_stats_enabled) ifa_vec_stats_record_set_member(set_count());
+  return r;
 }
 
 template <class C, class A, int S>
@@ -380,7 +435,7 @@ template <class C, class A, int S>
 C *Vec<C, A, S>::set_add_internal(C c) {
   int j, k;
   if (n) {
-    uintptr_t h = (uintptr_t)c;
+    uintptr_t h = PointerHash<C>::hash(c);
     h = h % n;
     for (k = h, j = 0; j < i + 3; j++) {
       if (!v[k]) {
@@ -402,7 +457,7 @@ template <class C, class A, int S>
 C *Vec<C, A, S>::set_in_internal(C c) {
   int j, k;
   if (n) {
-    uintptr_t h = (uintptr_t)c;
+    uintptr_t h = PointerHash<C>::hash(c);
     h = h % n;
     for (k = h, j = 0; j < i + 3; j++) {
       if (!v[k])

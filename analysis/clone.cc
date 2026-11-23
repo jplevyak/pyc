@@ -1,3 +1,10 @@
+#include <map>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <unordered_map>
+#include <vector>
+
 #include "ast.h"
 #include "builtin.h"
 #include "fa.h"
@@ -24,6 +31,9 @@ static void initialize() {
                                                                   v->avars.v[i].value->contour == GLOBAL_CONTOUR)
       fa->global_avars.set_add(v->avars[i].value);
   fa->global_avars.set_to_vec();
+  // Issue 035: v->avars is keyed by contour POINTER, so the set
+  // above accumulates in heap-layout order; canonicalize.
+  qsort_by_id(fa->global_avars);
   for (CreationSet *cs : fa->css) {
     cs->equiv = new Vec<CreationSet *>();
     cs->equiv->add(cs);
@@ -58,8 +68,13 @@ static void initialize() {
   for (Fun *f : pdb->funs) {
     if (!funs_set.set_in(f)) f->ess.clear();
   }
+  // Issue 035: fa->ess_set is an open-hash set — appending it
+  // verbatim rebuilt fa->ess in heap-layout order (with holes),
+  // undoing the canonical id order collect_results establishes
+  // (issue 033 D7). Rebuild compact and id-sorted.
   fa->ess.clear();
-  fa->ess.append(fa->ess_set);
+  for (EntrySet *es : fa->ess_set) if (es) fa->ess.add(es);
+  qsort_by_id(fa->ess);
   for (Sym *s : fa->pdb->if1->allsyms) {
     if (s->creators.n) {
       Vec<CreationSet *> creators;
@@ -70,7 +85,7 @@ static void initialize() {
 }
 
 static AType *element_type(CreationSet *cs) {
-  if (!cs->sym->element) return bottom_type;
+  if (!cs->sym->element) return fa->type_world.bottom_type;
   AType *t = get_element_avar(cs)->out;
   for (AVar *av : cs->vars) t = type_union(t, av->out);
   return t;
@@ -96,7 +111,8 @@ Sym *to_basic_type(Sym *t) {
 }
 
 static Sym *to_concrete_type(Sym *t) {
-  t = t->type;
+  if (!t) return nullptr;
+  if (t->type) t = t->type;
   if (t->is_symbol) return sym_symbol;
   if (t->type_kind == Type_TAGGED && t->specializes.n) return t->specializes[0];
   return t;
@@ -104,12 +120,12 @@ static Sym *to_concrete_type(Sym *t) {
 
 // return the Sym of some basic type, fail if basics are mixed or with non
 // basics
-// and NULL if basic
+// and nullptr if basic
 Sym *basic_type(FA *fa, AType *t, Sym *fail) {
   Sym non_basic;
-  Sym *res = 0;
+  Sym *res = nullptr;
   for (CreationSet *cs : *t) if (cs) {
-    Sym *t = 0;
+    Sym *t = nullptr;
     if ((t = to_basic_type(cs->sym))) {
       if (!res)
         res = t;
@@ -122,15 +138,170 @@ Sym *basic_type(FA *fa, AType *t, Sym *fail) {
         res = fail;
     }
   }
-  if (res == &non_basic) res = NULL;
+  if (res == &non_basic) res = nullptr;
   return res;
 }
 
 // clone for unboxing of basic types
+// ifa/issues/121: NOT a type-equality test, despite being the only
+// per-Var check in the clone equivalence predicate. `basic_type` maps
+// EVERY non-basic type to nullptr (its `&non_basic` sentinel is
+// normalized away at the end), so this distinguishes int from float and
+// nothing else: `Edge` vs `Site`, `Halfedge` vs `tuple`, `SiteList` vs
+// `list`, and record-vs-None all compare EQUAL here. Measured with
+// IFA_DBG_VAREQ below: pygmy asks `self: everythingshader vs
+// spotshader` 531 times on the DEFAULT path and this says yes every
+// time. Correctness of merging therefore rests on the predicate's OTHER
+// clauses -- above all the unconditional `return 0` in the
+// creation-point block, which covers any function that constructs
+// anything. Strengthening this to compare concrete type sets was tried
+// and does not work on its own (see the note at that `return 0`).
+// ifa/issues/126: ON BY DEFAULT since 2026-09-03, at level 2
+// (layout-incompatible only). Corpus `-m check` A/B against
+// check__default__2d89043e: compile_fail 3 -> 2 (bh compiles),
+// run_fail 43 -> 43 (bh enters as richards LEAVES -- richards went
+// run_rc 139 -> 0), stdout_differs 24 -> 24. Strictly better; nothing
+// regressed. `PYC_CLASSEQ=0` disables, `=1` is the blunt
+// identical-class-sets form.
+static int classeq_enabled() {
+  static int e = -1;
+  if (e < 0) e = getenv("PYC_CLASSEQ") ? atoi(getenv("PYC_CLASSEQ")) : 2;
+  return e;
+}
+
+// ifa/153: PYC_CSCLASSEQ -- the CreationSet half of ifa/126's class-aware
+// equivalence. `determine_basic_clones` compares two CreationSets' members
+// with `basic_type`, which maps EVERY non-basic type to nullptr, so `Vector`
+// and `Vertex` compare EQUAL and the two CreationSets are merged into one
+// layout class. `compute_member_types` then has to give that member ONE type
+// and cannot: `concrete_type_set_to_type({Vector, Vertex})` builds a nameless
+// Type_SUM (`make_LUB_type` is a default no-op), codegen renders it
+// `_CG_void`, and the STORE INTO IT IS SILENTLY DROPPED.
+//
+// That is `chull`'s segfault. `enumerate` is called once over Vectors and
+// once over Vertices; its `(i, x)` tuple gets one CreationSet per contour,
+// correctly typed by FA --
+//
+//   cs=1177 vars[0]=i:int64 vars[1]=x:Vector#1805   (enumerate es=292)
+//   cs=1887 vars[0]=i:int64 vars[1]=x:Vertex#1191   (enumerate es=86)
+//
+// -- and clone merges them, so the emitted tuple is
+// `{_CG_int64 e0; _CG_void e1;}` and `enumerate` emits `t17->e0 = t9;` with
+// NO store for the element. Every Vertex in `Hull.vertices` is then built
+// from a null `v`, and `Collinear` dereferences it.
+//
+// The rule: a merge must not ENLARGE any member's concrete type set. Split
+// when the two members' class sets differ and their union holds more than
+// one class -- exactly the case where neither CreationSet had a union and
+// the merge manufactures one. A member that was ALREADY a union is not made
+// worse by the merge and is not this rule's business.
+static int csclasseq_enabled() {
+  static int e = -1;
+  if (e < 0) e = getenv("PYC_CSCLASSEQ") ? atoi(getenv("PYC_CSCLASSEQ")) : 1;
+  return e;
+}
+
+// ifa/issues/123: prefix layout, ON BY DEFAULT since 2026-09-03, same
+// A/B. `PYC_PREFIX_LAYOUT=0` disables.
+static int prefix_layout_enabled() {
+  static int e = -1;
+  if (e < 0) e = getenv("PYC_PREFIX_LAYOUT") ? atoi(getenv("PYC_PREFIX_LAYOUT")) : 1;
+  return e;
+}
+
 static int equivalent_es_vars(Var *v, EntrySet *a, EntrySet *b) {
   AVar *va = make_AVar(v, a), *vb = make_AVar(v, b);
   if (va != vb) {
     if (basic_type(fa, va->out, (Sym *)-1) != basic_type(fa, vb->out, (Sym *)-2)) return 0;
+    // ifa/issues/126: CLASS-AWARE. `basic_type` maps every non-basic type
+    // to nullptr, so the check above distinguishes int from float and
+    // nothing else -- `Basic_block` vs `Union_find_node` compares EQUAL
+    // (measured: 151 such pairings on tests/list_index_type_mismatch_-
+    // salvage, plus set-vs-Union_find_node and even dict-vs-list).
+    //
+    // The creation-point block's unconditional `return 0` compensates
+    // for a function that CONSTRUCTS something, but `object.__eq__`
+    // constructs nothing, has no cs_map, and so merges: FA splits it
+    // into twelve monomorphic contours and codegen emits clones with
+    // `_CG_any` formals. That manufactured union is what forces classtag
+    // dispatch and blocks ifa/123's slot elision.
+    //
+    // Compare the concrete CLASS SETS. Plain vectors with linear dedup:
+    // plib's set-mode Vec carries NULL holes and mixing the two modes has
+    // bitten this work repeatedly.
+    if (classeq_enabled()) {
+      Vec<Sym *> ca, cb;
+      for (CreationSet *cs : *va->out) if (cs && cs->sym) {
+        bool dup = false;
+        for (Sym *x : ca) if (x == cs->sym) { dup = true; break; }
+        if (!dup) ca.add(cs->sym);
+      }
+      for (CreationSet *cs : *vb->out) if (cs && cs->sym) {
+        bool dup = false;
+        for (Sym *x : cb) if (x == cs->sym) { dup = true; break; }
+        if (!dup) cb.add(cs->sym);
+      }
+      bool differ = ca.n != cb.n;
+      if (!differ)
+        for (Sym *x : ca) {
+          bool found = false;
+          for (Sym *y : cb) if (x == y) { found = true; break; }
+          if (!found) { differ = true; break; }
+        }
+      // TIGHTEN (PYC_CLASSEQ=2): differing class sets are only a reason
+      // to split when the classes are not LAYOUT-COMPATIBLE. Merging two
+      // classes into one contour costs precision only where codegen has
+      // to pick a representation or a slot; if every member sits at the
+      // same offset with the same size in both, the blind cast is exact
+      // and any classtag dispatch finds its method at the same index.
+      //
+      // Measured on pygmy: 406 of the splits are
+      // everythingshader/spotshader, siblings whose member sets are
+      // equal (collect_prefix_groups reports no conflict for them), so
+      // splitting them buys nothing. Basic_block/Union_find_node, the
+      // case this whole change is for, have different fields and still
+      // split.
+      //
+      // Compared on offsets and sizes -- determine_layouts has already
+      // run at this point -- never on names.
+      if (differ && classeq_enabled() >= 2) {
+        bool all_compat = true;
+        for (CreationSet *x : *va->out) if (x && all_compat)
+          for (CreationSet *y : *vb->out) if (y) {
+            if (x->sym == y->sym) continue;
+            if (x->vars.n != y->vars.n) { all_compat = false; break; }
+            for (int i = 0; i < x->vars.n; i++) {
+              AVar *xi = x->vars[i], *yi = y->vars[i];
+              if (!xi || !yi || xi->ivar_offset != yi->ivar_offset) { all_compat = false; break; }
+            }
+            if (!all_compat) break;
+          }
+        if (all_compat) differ = false;
+      }
+      if (differ) {
+        if (getenv("IFA_DBG_CLASSEQ")) {
+          fprintf(stderr, "CLASSEQ-SPLIT %s:", v->sym->name ? v->sym->name : "?");
+          for (Sym *x : ca) fprintf(stderr, " %s", x->name ? x->name : "?");
+          fprintf(stderr, " |");
+          for (Sym *y : cb) fprintf(stderr, " %s", y->name ? y->name : "?");
+          fprintf(stderr, "\n");
+        }
+        return 0;
+      }
+    }
+    // How often does the blindness above let a pair through? Hot path,
+    // so the getenv is cached.
+    static int dbg = -1;
+    if (dbg < 0) dbg = getenv("IFA_DBG_VAREQ") ? 1 : 0;
+    if (dbg) {
+      Sym *sa = nullptr, *sb = nullptr;
+      int na = 0, nb = 0;
+      for (CreationSet *cs : *va->out) if (cs) { sa = cs->sym; na++; }
+      for (CreationSet *cs : *vb->out) if (cs) { sb = cs->sym; nb++; }
+      if (na == 1 && nb == 1 && sa != sb && !to_basic_type(sa) && !to_basic_type(sb))
+        fprintf(stderr, "VAREQ-BLIND %s: %s vs %s\n", v->sym->name ? v->sym->name : "?",
+                sa->name ? sa->name : "?", sb->name ? sb->name : "?");
+    }
   }
   return 1;
 }
@@ -141,11 +312,38 @@ static int equivalent_es_pnode(PNode *n, EntrySet *a, EntrySet *b) {
   Vec<AEdge *> *vb = b->out_edge_map.get(n);
   if (!va || !vb) return 1;
   Vec<Vec<EntrySet *> *> ca, cb;
-  for (AEdge *ee : *va) ca.set_add(ee->to->equiv);
-  for (AEdge *ee : *vb) cb.set_add(ee->to->equiv);
+  // Issue 033: out_edge_map's Vecs are set-mode (built via set_add,
+  // see initialize() above) -- `.n` is table capacity, not live
+  // element count, so iterating [0,n) can hit unused (null) slots
+  // by design, same as every other set-mode Vec consumer in this
+  // codebase (e.g. `for (AEdge *e : es->out_edges) if (e) {...}`).
+  // This loop was missing that guard -- independently found twice,
+  // both times on fysphun: once here (stage-C's own earlier
+  // validation) and once via AddressSanitizer root-causing the
+  // fysphun crash the M2 stage-2-batching attempt exposed. An edge
+  // whose `->to` was nulled (mid-split, see split_entry_set) and
+  // never re-routed is dead and must be skipped -- but a LIVE
+  // target whose `->equiv` is itself null (that ES simply wasn't
+  // reached this pass) still belongs in the set: it distinguishes
+  // "has an unreached target" from "has no target", and dropping it
+  // would merge clones that must stay separate. Hence `ee && ee->to`
+  // (skip only the dead/unrouted edges) rather than also requiring
+  // `ee->to->equiv`.
+  for (AEdge *ee : *va) if (ee && ee->to) ca.set_add(ee->to->equiv);
+  for (AEdge *ee : *vb) if (ee && ee->to) cb.set_add(ee->to->equiv);
   if (ca.some_disjunction(cb)) return 0;
   return 1;
 }
+
+// ifa/issues/121: the receiver's CreationSets disagree about where this
+// field lives, so there is no single offset to report. That is an
+// ordinary situation -- a union receiver over two subclasses whose
+// dead-field elision produced different layouts (`plane#1398@8` vs
+// `sphere#1437@0` on pygmy's `renderobject.intersect`) -- and codegen
+// handles it, resolving the slot per concrete class in
+// cg_build_new_to_val_map. Only ES_FN::equivalent asks this question,
+// and the answer it needs is "not equivalent", not a dead compiler.
+static const int kOffsetAmbiguous = -2;
 
 static int prim_period_offset(PNode *p, EntrySet *es) {
   AVar *obj = make_AVar(p->rvals[1], es);
@@ -157,9 +355,36 @@ static int prim_period_offset(PNode *p, EntrySet *es) {
     if (!symbol) symbol = sel->sym->imm.v_string;
     assert(symbol);
     for (CreationSet *cs : *obj->out) if (cs) {
+      // Skip nil_type: in an `Optional[T]` (`T | None`) union receiver,
+      // None carries no real fields -- a phantom field-ivar can be
+      // attributed to its CreationSet (offset 0) through the union, and
+      // it does not match T's real field offset, spuriously tripping
+      // the "missmatched offsets" check below. Codegen already resolves
+      // a union receiver the same way (cg.cc's resolve_union_receiver
+      // skips sym_nil_type and casts to the non-None member's layout),
+      // so aligning the FA-side offset check keeps them consistent. At
+      // runtime `None.field` would fault, but that is the caller's
+      // Optional-without-narrowing bug, not a codegen layout question.
+      if (cs->sym->type == sym_nil_type) continue;
       AVar *iv = cs->var_map.get(symbol);
       if (iv) {
-        if (offset >= 0 && offset != iv->ivar_offset) fail("missmatched offsets");
+        if (offset >= 0 && offset != iv->ivar_offset) {
+          // Name what actually disagrees. Offsets are computed PER
+          // CreationSet (determine_layouts), so two CSs of the SAME
+          // class can diverge whenever a field's type differs in size
+          // between them -- and the more contours split, the more
+          // same-class CSs there are to disagree. Bare "missmatched
+          // offsets" said none of that.
+          if (getenv("IFA_DBG_OFFSETS")) {
+            fprintf(stderr, "mismatched offsets for field '%s': ", symbol);
+            for (CreationSet *y : *obj->out) if (y) {
+              AVar *yv = y->var_map.get(symbol);
+              if (yv) fprintf(stderr, " %s#%d@%d", y->sym->name ? y->sym->name : "?", y->id, yv->ivar_offset);
+            }
+            fprintf(stderr, "\n");
+          }
+          return kOffsetAmbiguous;
+        }
         offset = iv->ivar_offset;
       }
     }
@@ -192,11 +417,30 @@ inline int ES_FN::equivalent(EntrySet *a, EntrySet *b) {
         bparents.add(b->display[nesting_depth - 1]->equiv);
     if (aparents.some_disjunction(bparents)) return 0;
   }
-  if (a->fun->clone_for_constants) {
+  // ifa/151: a formal kept apart by constants -- annotated, or demanded on
+  // either contour -- must not be re-merged here.
+  if (es_wants_any_constants(a) || es_wants_any_constants(b)) {
+    for (MPosition *p : a->fun->positional_arg_positions) {
+      AVar *av = a->args.get(p), *bv = b->args.get(p);
+      if (!av || !bv) continue;
+      if (es_wants_constants(a, p) || es_wants_constants(b, p))
+        if (av->out->constants() != bv->out->constants()) return 0;
+    }
+  }
+  // ESCAPE_PLAN.md Phase 4: escape divergence trigger.
+  // When `ifa_escape_in_fa` is on, refuse to merge two
+  // EntrySets whose per-formal escape signatures differ.
+  // This causes the cloning phase to split the Fun into
+  // separate specializations — one per (type, escape)
+  // signature.  Gated to the formal positions only; locals'
+  // escape can vary freely within a clone because it's
+  // analyzed per-EntrySet anyway.
+  if (ifa_escape_in_fa) {
     for (MPosition *p : a->fun->positional_arg_positions) {
       AVar *av = a->args.get(p);
-      if (av->var->sym->clone_for_constants)
-        if (av->out->constants() != b->args.get(p)->out->constants()) return 0;
+      AVar *bv = b->args.get(p);
+      if (!av || !bv) continue;
+      if (av->escape != bv->escape) return 0;
     }
   }
   if (!equivalent_es_ivars(a, b)) return 0;
@@ -217,6 +461,25 @@ inline int ES_FN::equivalent(EntrySet *a, EntrySet *b) {
           if (!acs || !bcs) return 0;
           if (acs->equiv != bcs->equiv) return 0;
         }
+        // This `return 0` is UNCONDITIONAL, which makes the loop above
+        // dead code: any pnode whose lval has a cs_map splits the two
+        // contours whatever the loop just proved. That reads like a bug
+        // and is not -- it is load-bearing, and ifa/issues/121 root-caused
+        // WHY: `equivalent_es_vars` (above) cannot tell one record type
+        // from another, so for any function that constructs something,
+        // THIS is the clause keeping contours with different record
+        // types apart. Letting the loop decide merges a None-receiving
+        // `__new__` contour with an Edge-receiving one. With the offset question made
+        // answerable (kOffsetAmbiguous, above) the merge no longer
+        // aborts, and pygmy drops 244 -> 183 clones with a
+        // byte-identical image; but the corpus says `voronoi2`, which
+        // compiled AND ran, stops compiling with `no matching function
+        // for call to '_CG_f_16022_133'` -- issue 097's signature, a
+        // call site whose argument type diverges from the merged
+        // callee's formal. So CreationSet equivalence plus the offset
+        // check is still not sufficient evidence to merge, and the
+        // blanket split stays until something establishes formal-type
+        // compatibility at every in-edge too.
         return 0;
       }
     }
@@ -228,7 +491,12 @@ inline int ES_FN::equivalent(EntrySet *a, EntrySet *b) {
           AVar *av = make_AVar(n->rvals[3], a);
           AVar *bv = make_AVar(n->rvals[3], b);
           if (av->out != bv->out) return 0;
-          if (prim_period_offset(n, a) != prim_period_offset(n, b)) return 0;
+          int ao = prim_period_offset(n, a), bo = prim_period_offset(n, b);
+          // Ambiguous on either side: no single offset exists, so these
+          // contours cannot be shown equivalent. Conservative, and it
+          // used to `fail` the compile instead of answering.
+          if (ao == kOffsetAmbiguous || bo == kOffsetAmbiguous) return 0;
+          if (ao != bo) return 0;
           break;
         }
         case P_prim_cast: {
@@ -260,8 +528,35 @@ class CS_EQ_FN {
 };
 
 // C++'s answer to higher order functions: YUCK
+//
+// Issue 035: greedy equivalence partitioning is seed-order
+// sensitive — the first element of each class anchors the pairwise
+// checks (Lskip), so which classes form depends on iteration
+// order — and callers hand these functions hash-set Vecs whose
+// order follows heap layout (e.g. f->ess after set_intersection).
+// That made clone partitions, and everything numbered/bound from
+// them, vary between identical runs (and some layouts bound
+// callers to the WRONG type specialization). Canonicalize the
+// input to id order locally so partitions are reproducible.
+// ifa/issues/112: a Vec used as a SET stores members at POINTER-hashed
+// slots, so `first_in_set()` returns a different member between runs of
+// the same compile. Every member of an equivalence class is
+// interchangeable by construction, so any is a correct answer -- but the
+// CHOICE has to be stable, or downstream Sym ids are minted in a
+// different order and the same source emits two different .c files.
+// `id` is assigned in analysis order, which is stable.
+template <class C>
+static C *canonical_in_set(Vec<C *> &s) {
+  C *best = nullptr;
+  for (C *x : s) if (x && (!best || x->id < best->id)) best = x;
+  return best ? best : s.first_in_set();
+}
+
 template <class C, class FN>
-static void sets_by_f(Vec<C *> &aset, Vec<Vec<C *> *> &asetset) {
+static void sets_by_f(Vec<C *> &aset0, Vec<Vec<C *> *> &asetset) {
+  Vec<C *> aset;
+  for (C *x : aset0) if (x) aset.add(x);
+  qsort_by_id(aset);
   asetset.clear();
   Vec<C *> done;
   for (C *x : aset) if (x) {
@@ -282,12 +577,15 @@ static void sets_by_f(Vec<C *> &aset, Vec<Vec<C *> *> &asetset) {
 }
 
 template <class C, class FN>
-static void sets_by_f_transitive(Vec<C *> &aset, Vec<Vec<C *> *> &asetset) {
+static void sets_by_f_transitive(Vec<C *> &aset0, Vec<Vec<C *> *> &asetset) {
+  Vec<C *> aset;
+  for (C *x : aset0) if (x) aset.add(x);
+  qsort_by_id(aset);
   asetset.clear();
   for (C *x : aset) if (x) {
     typedef Vec<C *> VecC;
     for (VecC *s : asetset) {
-      if (FN::equivalent(x, s->first_in_set())) {
+      if (FN::equivalent(x, canonical_in_set(*s))) {
         s->set_add(x);
         goto Lnext;
       }
@@ -321,7 +619,92 @@ static inline void make_not_equiv(CreationSet *a, CreationSet *b) {
   b->not_equiv.set_add(a);
 }
 
+// ifa/132 PROBE (IFA_DBG_SLOTREP): which AVars must hold two CreationSets of
+// ONE sym that `determine_basic_clones` has put in DIFFERENT layout
+// equivalence classes because their `vars.n` disagrees? One is then a RECORD
+// and the other a LIST, and a single slot cannot be both -- so `c_type()`
+// names the slot `_CG_void` and every access on it resolves from the FA type
+// instead of the C type.
+//
+// `get_sym_tup`'s `tup = false` path is designed for exactly this
+// disagreement, but it only sees WITHIN one class; the `vars.n` split at
+// clone.cc puts these in separate classes before it ever runs.
+//
+// quameon's `coulomb_pot.charges` is the case: `self.charges = charges`
+// stores an arity-1 record (`[atom[1][0]]`) while `self.charges = []` plus
+// `append` stores an element-channel list.
+static void report_slot_representation_conflicts() {
+  if (!getenv("IFA_DBG_SLOTREP")) return;
+  int nconf = 0;
+  for (CreationSet *cs : fa->css) {
+    if (!cs || !cs->sym) continue;
+    for (AVar *v : cs->vars) {
+      if (!v || !v->out || !v->out->type) continue;
+      // Group this slot's contents by sym and look for a vars.n disagreement.
+      for (CreationSet *a : v->out->type->sorted) {
+        if (!a || !a->sym) continue;
+        for (CreationSet *b : v->out->type->sorted) {
+          if (!b || b == a || b->sym != a->sym) continue;
+          if (a->vars.n == b->vars.n) continue;
+          if (a->id > b->id) continue;  // report each pair once
+          ++nconf;
+          fprintf(stderr,
+                  "SLOTREP %s.%s holds %s#%d(vars=%d arity=%d noar=%d) + "
+                  "#%d(vars=%d arity=%d noar=%d) equiv_same=%d\n",
+                  cs->sym->name ? cs->sym->name : "?",
+                  (v->var && v->var->sym && v->var->sym->name) ? v->var->sym->name : "?",
+                  a->sym->name ? a->sym->name : "?", a->id, a->vars.n, a->static_arity,
+                  a->no_static_arity ? 1 : 0, b->id, b->vars.n, b->static_arity, b->no_static_arity ? 1 : 0,
+                  a->equiv == b->equiv ? 1 : 0);
+        }
+      }
+    }
+  }
+  fprintf(stderr, "SLOTREP-TOTAL conflicts=%d\n", nconf);
+}
+
+// ifa/153: would merging these two members force either one to hold classes
+// it does not hold today? Uses the same concrete type as
+// `compute_member_types` (`to_concrete_type(cs->type ? cs->type : cs->sym)`;
+// `cs->type` is null this early, so it is the sym) so that the question asked
+// here is the question answered there.
+//
+// The answer depends only on the two `out` ATypes, so each one's concrete
+// class set is computed once, sorted and deduplicated, and equal ATypes
+// answer without looking. Rebuilding both sets with linear dedup at every
+// (pair, member) was quadratic in the union: othello3's members hold ~2,000
+// classes, and this took 300 s of clone (ifa/186).
+static std::unordered_map<AType *, std::vector<Sym *>> cs_member_classes;
+
+static const std::vector<Sym *> &cs_member_class_set(AType *t) {
+  auto it = cs_member_classes.find(t);
+  if (it != cs_member_classes.end()) return it->second;
+  std::vector<Sym *> out;
+  for (CreationSet *cs : *t)
+    if (cs && cs->sym) out.push_back(to_concrete_type(cs->type ? cs->type : cs->sym));
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return cs_member_classes.emplace(t, std::move(out)).first->second;
+}
+
+static bool cs_member_merge_enlarges(AVar *av1, AVar *av2) {
+  if (!av1 || !av2 || !av1->out || !av2->out) return false;
+  if (av1->out == av2->out) return false;
+  const std::vector<Sym *> &ca = cs_member_class_set(av1->out), &cb = cs_member_class_set(av2->out);
+  // Both members already hold exactly the union: the merge adds nothing.
+  if (ca == cb) return false;
+  // The union holds one class (or none): nothing is manufactured.
+  size_t un = ca.size() + cb.size();
+  for (size_t i = 0, j = 0; i < ca.size() && j < cb.size();) {
+    if (ca[i] == cb[j]) { --un; ++i; ++j; }
+    else if (ca[i] < cb[j]) ++i;
+    else ++j;
+  }
+  return un >= 2;
+}
+
 static void determine_basic_clones(Vec<Vec<CreationSet *> *> &css_sets_by_sym) {
+  cs_member_classes.clear();
   Vec<Vec<CreationSet *> *> xx;
   sets_by_f_transitive<CreationSet, CS_SYM_FN>(fa->css, css_sets_by_sym);
   // clone for unboxing of basic types
@@ -344,7 +727,7 @@ static void determine_basic_clones(Vec<Vec<CreationSet *> *> &css_sets_by_sym) {
         // for each variable
         int start = cs1->sym->element ? -1 : 0;
         for (int v = start; v < cs1->vars.n; v++) {
-          AVar *av1 = 0, *av2 = 0;
+          AVar *av1 = nullptr, *av2 = nullptr;
           if (v < 0) {
             av1 = get_element_avar(cs1);
             av2 = get_element_avar(cs2);
@@ -356,6 +739,15 @@ static void determine_basic_clones(Vec<Vec<CreationSet *> *> &css_sets_by_sym) {
           if (MERGE_UNIONS && cs1->sym->is_union_type && (av1->out->n == 0 || av2->out->n == 0)) continue;
           // if the boxing or basic type is different
           if (basic_type(fa, av1->out, (Sym *)-1) != basic_type(fa, av2->out, (Sym *)-2)) {
+            make_not_equiv(cs1, cs2);
+            continue;
+          }
+          // ifa/153: and if merging would ENLARGE this member's concrete
+          // type set. See `csclasseq_enabled`.
+          if (csclasseq_enabled() && cs_member_merge_enlarges(av1, av2)) {
+            if (getenv("IFA_DBG_CSCLASSEQ"))
+              fprintf(stderr, "CSCLASSEQ-SPLIT %s#%d vs #%d at member %d\n",
+                      cs1->sym->name ? cs1->sym->name : "?", cs1->id, cs2->id, v);
             make_not_equiv(cs1, cs2);
             continue;
           }
@@ -376,16 +768,405 @@ static void determine_basic_clones(Vec<Vec<CreationSet *> *> &css_sets_by_sym) {
   }
 }
 
+// ifa/issues/123: WHICH class hierarchies actually need a common
+// base-field prefix?
+//
+// Only those where a field access has a receiver spanning two or more
+// classes. bh is the motivating case: `Cell.hack_cofm` reads `r.pos` on
+// `self.subp[i]`, which genuinely holds both `Cell` and `Body` (both
+// `Node` subclasses), and `pos` is a `Node` field they share. Per-class
+// name-sorted member assignment puts it at e23 in Cell and e28 in Body,
+// so the single emitted `->eN` cannot serve both.
+//
+// The point of measuring rather than always applying a base-prefix
+// layout is blast radius: reordering `Sym::has` changes the emitted `eN`
+// of every member of every class it touches. Almost no class needs it,
+// so find the ones that do and leave the rest alone.
+//
+// Reports groups, not a flat set: two classes only have to agree with
+// EACH OTHER, and unrelated hierarchies stay independent.
+// ifa/issues/123: published so codegen's slot elision can use the SAME
+// grouping. Rebuilding it there from receivers was tried three times and
+// was wrong every time; this is the analysis that already gets it right.
+Vec<Vec<Sym *> *> ifa_prefix_groups;
+
+static void collect_prefix_groups(Vec<Vec<Sym *> *> &groups) {
+  Vec<Sym *> seen_pairs;  // flattened (a,b) pairs already recorded
+  // NOT filtered on Fun::live / PNode::live: liveness is computed after
+  // this point in the pipeline (measured: 1 of 178 funs marked live
+  // here), so filtering on it silently finds nothing. `f->ess` is
+  // already restricted to used entry sets by prep_for_clones.
+  for (Fun *f : fa->funs) {
+    for (PNode *n : f->fa_all_PNodes) {
+      if (!n || !n->prim || n->prim->index != P_prim_period) continue;
+      if (n->rvals.n < 2) continue;
+      for (EntrySet *es : f->ess) {
+        if (!es) continue;
+        AVar *obj = make_AVar(n->rvals[1], es);
+        if (!obj || !obj->out) continue;
+        Vec<Sym *> classes;
+        for (CreationSet *cs : *obj->out) if (cs && cs->sym) {
+          if (cs->sym->type == sym_nil_type) continue;  // same skip prim_period_offset makes
+          if (!cs->sym->has.n) continue;                // not a record-shaped receiver
+          classes.set_add(cs->sym);
+        }
+        if (classes.n < 2) continue;
+        // Merge into an existing group sharing any member, else start one.
+        Vec<Sym *> *g = nullptr;
+        for (Vec<Sym *> *x : groups) if (x) {
+          for (Sym *c : classes) if (x->set_in(c)) { g = x; break; }
+          if (g) break;
+        }
+        if (!g) { g = new Vec<Sym *>; groups.add(g); }
+        for (Sym *c : classes) g->set_add(c);
+      }
+    }
+  }
+  // Compact: plib Vecs built with set_add are HASH SETS with NULL
+  // holes, and every loop below walks them densely. (Skipping this
+  // segfaulted the compiler inside the name qsort on a NULL entry.)
+  //
+  // Deliberately NOT closed over the inheritance hierarchy. That was
+  // tried: it pulls in `object`, and since every class descends from it
+  // the group becomes the whole program -- which is exactly the blast
+  // radius this analysis exists to avoid. The cross-class assumption
+  // that made closure look necessary lived in codegen's slot lookup and
+  // is fixed there instead (codegen_common.cc, same issue).
+  for (Vec<Sym *> *g : groups) if (g) { g->set_to_vec(); qsort_by_id(*g); }
+
+  // Being in a group is NOT sufficient reason to reorder. Two classes
+  // that declare the same member set already agree, because promotion
+  // and the offset walk are both name-sorted (issues/121) -- measured on
+  // pygmy, whose plane/sphere, spotshader/everythingshader and
+  // pointlight/parallellight pairs are all genuine sibling unions with
+  // EQUAL member counts, and which compiles today. The requirement bites
+  // only when a shared member name lands at a DIFFERENT index in two
+  // classes of the group, which is what bh's Cell(27)/Body(30) does.
+  // Drop the groups that have no such conflict.
+  Vec<Vec<Sym *> *> conflicted;
+  for (Vec<Sym *> *g : groups) if (g && g->n > 1) {
+    bool conflict = false;
+    for (Sym *a : *g) {
+      for (int i = 0; i < a->has.n && !conflict; i++) {
+        Sym *m = a->has[i];
+        if (!m || !m->name) continue;
+        for (Sym *b : *g) {
+          if (b == a) continue;
+          for (int j = 0; j < b->has.n; j++) {
+            Sym *o = b->has[j];
+            if (o && o->name == m->name && i != j) {
+              if (getenv("IFA_DBG_PREFIX"))
+                fprintf(stderr, "PREFIX conflict: '%s' at %s[%d] vs %s[%d]\n", m->name,
+                        a->name ? a->name : "?", i, b->name ? b->name : "?", j);
+              conflict = true;
+              break;
+            }
+          }
+          if (conflict) break;
+        }
+      }
+      if (conflict) break;
+    }
+    if (conflict) conflicted.add(g);
+  }
+  groups.move(conflicted);
+  if (getenv("IFA_DBG_PREFIX")) {
+    long nf=0, nlive=0, ness=0, nper=0, nrecv=0, nmulti=0;
+    for (Fun *f : fa->funs) { nf++; if (f->live) nlive++; ness += f->ess.n;
+      for (PNode *n : f->fa_all_PNodes)
+        if (n && n->prim && n->prim->index == P_prim_period) { nper++;
+          for (EntrySet *es : f->ess) if (es && n->rvals.n>1) {
+            AVar *o = make_AVar(n->rvals[1], es);
+            if (o && o->out) { nrecv++; int k=0;
+              for (CreationSet *c : *o->out) if (c && c->sym && c->sym->type != sym_nil_type && c->sym->has.n) k++;
+              if (k>1) nmulti++; } } } }
+    fprintf(stderr, "PREFIX scan: funs=%ld live=%ld ess=%ld period_nodes=%ld recv=%ld multi=%ld\n",
+            nf, nlive, ness, nper, nrecv, nmulti);
+    fprintf(stderr, "PREFIX groups=%d\n", groups.n);
+    for (Vec<Sym *> *g : groups) if (g) {
+      fprintf(stderr, "  {");
+      for (Sym *c : *g) fprintf(stderr, " %s(has=%d)", c->name ? c->name : "?", c->has.n);
+      fprintf(stderr, " }");
+      // Which of them share a base, and what does the base contribute?
+      for (Sym *c : *g) if (c->specializes.n)
+        fprintf(stderr, "  %s<:%s", c->name ? c->name : "?",
+                c->specializes[0] && c->specializes[0]->name ? c->specializes[0]->name : "?");
+      fprintf(stderr, "\n");
+    }
+  }
+}
+
+// ifa/issues/123: give a conflicted group a COMMON PREFIX.
+//
+// The array that decides the emitted layout is `cs->vars`, NOT
+// `cs->sym->has`. compute_member_types rebuilds the clone's `has` from
+// `cs->vars` POSITIONALLY (`AVar *av = cs->vars[i]` -> `has[i]->type`),
+// so `has` is an output. Reordering it directly was tried and produced
+// members with the wrong C types -- `__str__` emitted as `_CG_string`
+// and then assigned a function pointer, a raw clang error.
+// determine_layouts' own note says as much: "cs->vars itself is left
+// untouched (other code indexes it positionally)".
+//
+// Order each CS's vars as [names present in EVERY class of the group,
+// name-sorted] ++ [the rest, name-sorted]. The prefix is by construction
+// the same sequence in every class, so a shared member lands at the same
+// index -- which is the emitted `eN` -- and one `->eN` serves the whole
+// union.
+//
+// This generalises C++ single-inheritance layout rather than copying it.
+// Aligning only BASE-declared members would not fix bh: the conflict it
+// reports is `load_tree`, which Cell and Body each declare themselves
+// (Node's is commented out) and which is still reached through the
+// union. Intersecting on NAME covers the inherited and the
+// coincidentally-shared case alike.
+static void apply_prefix_layout(Vec<Vec<Sym *> *> &groups) {
+  for (Vec<Sym *> *g : groups) {
+    if (!g || g->n < 2) continue;
+    bool ok = true;
+    for (Sym *c : *g) if (!c || c->type_kind != Type_RECORD) ok = false;
+    if (!ok) continue;
+    // The UNION of ivar names over every CreationSet of every class in
+    // the group -- not the intersection. Sorting a shared prefix is not
+    // enough: CSs of the SAME class have different member sets
+    // (measured on bh: Body#1170 has 24 vars, Body#1406 has 30), so a CS
+    // missing one shared name shifts every later slot. Every CS in the
+    // group is given the same full sequence, padding what it lacks.
+    Vec<cchar *> all;
+    for (CreationSet *cs : fa->css) if (cs && g->in(cs->sym))
+      for (AVar *iv : cs->vars) if (iv && iv->var && iv->var->sym && iv->var->sym->name)
+        all.set_add(iv->var->sym->name);
+    all.set_to_vec();
+    if (all.n < 2) continue;
+    qsort(all.v, all.n, sizeof(all[0]), [](const void *a, const void *b) {
+      return strcmp(*(cchar *const *)a, *(cchar *const *)b);
+    });
+    // A donor field Sym per name, taken from whichever class in the
+    // group declares it. `cs->sym->has` is still the ORIGINAL class's
+    // member list here (compute_member_types has not run), so this is
+    // the right source, and reusing the donor gives the pad ivar the
+    // correct name for the emitted struct.
+    Vec<Sym *> donor;
+    donor.fill(all.n);
+    for (int i = 0; i < all.n; i++)
+      for (Sym *c : *g) {
+        for (Sym *h : c->has)
+          if (h && h->name == all[i] && h->var) { donor.v[i] = h; break; }
+        if (donor.v[i]) break;
+      }
+    // A TYPE donor too: the ivar of some CS in the group that really has
+    // this field. A pad left at bottom becomes `sym_void`
+    // (concrete_type_set_to_type of the empty set), and a store that
+    // codegen previously SKIPPED -- because the CS had no such slot --
+    // then lands on a void* member and trips the "field type mismatch"
+    // guard. bh: `Node.EPS = 0.05` written into a padded Body clone.
+    // Giving the pad the type the field has elsewhere keeps the slot
+    // consistent with every other class in the group.
+    Vec<AVar *> donor_av;
+    donor_av.fill(all.n);
+    for (int i = 0; i < all.n; i++)
+      for (CreationSet *cs : fa->css) if (cs && g->in(cs->sym)) {
+        AVar *iv = cs->var_map.get(all[i]);
+        if (iv && iv->out && iv->out->type && iv->out->type->n) { donor_av.v[i] = iv; break; }
+      }
+    // `Sym::has` must be permuted with `cs->vars`, not instead of it.
+    // compute_member_types takes each member's NAME from `sym->has[i]`
+    // (it clones that entry) and its TYPE from `cs->vars[i]`. Moving
+    // only vars mismatches the two -- bh emitted `_CG_void e11 /* EPS */`
+    // where the baseline had `_CG_float64`, because slot 11 was named
+    // from the old order and typed from the new one. Moving only `has`
+    // was the first attempt and fails the other way round.
+    // ATOMIC per group: compute every class's new `has` first, and apply
+    // nothing unless all of them are complete. Skipping one class's
+    // `has` while still reordering its `vars` desynchronises the two,
+    // which is precisely the failure this reorder exists to fix -- it
+    // emitted `Boom`'s slot 12 named `__str__` but typed `_CG_string`,
+    // then stored a method pointer into it.
+    Vec<Vec<Sym *> *> new_has;
+    bool group_ok = true;
+    for (Sym *c : *g) {
+      Vec<Sym *> *nh = new Vec<Sym *>;
+      for (int i = 0; i < all.n; i++) {
+        Sym *m = nullptr;
+        for (Sym *h : c->has) if (h && h->name == all[i]) { m = h; break; }
+        if (!m) m = donor.v[i];  // donor names the slot when this class lacks it
+        if (!m) group_ok = false;
+        nh->add(m);
+      }
+      new_has.add(nh);
+    }
+    if (!group_ok) {
+      if (getenv("IFA_DBG_PREFIX")) fprintf(stderr, "PREFIX skipped: no donor for some slot\n");
+      continue;
+    }
+    // Same atomicity for the CS side: build every CreationSet's new
+    // vars order first, and apply nothing unless all of them succeed.
+    // A CS skipped by its own guards while `has` was reordered
+    // desynchronises the pair exactly as the reverse does.
+    Vec<CreationSet *> csl;
+    Vec<Vec<AVar *> *> new_vars;
+    int npad = 0;
+    for (CreationSet *cs : fa->css) {
+      if (!cs || !g->in(cs->sym)) continue;
+      Vec<AVar *> *ord = new Vec<AVar *>;
+      for (int i = 0; i < all.n; i++) {
+        // Member names are interned (if1_cannonicalize_string, at Sym
+        // creation) and unique per class (ifa/130 A1), so the pointer-keyed
+        // map is exact. Measured 2026-10-15: no member name is stored or
+        // queried un-interned on any suite test, bh, chull, richards or
+        // pygmy, and bh's `EPS` stays `_CG_float64` (the case that once
+        // lost its type to a pad and motivated a strcmp scan here).
+        if (AVar *found = cs->var_map.get(all[i])) { ord->add(found); continue; }
+        if (!donor.v[i] || !donor.v[i]->var) { group_ok = false; break; }
+        // Pad. FA has converged (this runs inside clone(), after
+        // fa->analyze() returned), so no constraint is added and no
+        // EntrySet enqueued -- unlike promote_field, which does both
+        // because it runs DURING analysis.
+        AVar *pad = unique_AVar(donor.v[i]->var, cs);
+        if (donor_av.v[i] && donor_av.v[i]->out) pad->out = donor_av.v[i]->out;
+        ord->add(pad);
+        npad++;
+      }
+      if (!group_ok) break;
+      for (AVar *iv : cs->vars) if (iv && !ord->in(iv)) { group_ok = false; break; }
+      if (!group_ok) break;
+      csl.add(cs);
+      new_vars.add(ord);
+    }
+    if (!group_ok) {
+      if (getenv("IFA_DBG_PREFIX")) fprintf(stderr, "PREFIX skipped: group not fully alignable\n");
+      continue;
+    }
+    for (int ci = 0; ci < g->n; ci++) {
+      Sym *c = (*g)[ci];
+      c->has.clear();
+      for (Sym *m : *new_has[ci]) c->has.add(m);
+    }
+    for (int k = 0; k < csl.n; k++) {
+      CreationSet *cs = csl[k];
+      cs->vars.clear();
+      for (AVar *iv : *new_vars[k]) { cs->vars.add(iv); cs->var_map.put(iv->var->sym->name, iv); }
+    }
+    int nre = csl.n;
+    if (getenv("IFA_DBG_PREFIX")) {
+      fprintf(stderr, "PREFIX applied: names=%d css=%d pads=%d {", all.n, nre, npad);
+      for (Sym *c : *g) if (c) fprintf(stderr, " %s", c->name ? c->name : "?");
+      fprintf(stderr, " }\n");
+    }
+  }
+}
+
 static void determine_layouts() {
+  // ifa/issues/123: measure which hierarchies need a common base prefix
+  // (probe-only for now -- nothing consumes `prefix_groups` yet).
+  // ifa/issues/055: a field's size is resolved from THIS CreationSet's
+  // own field type, so a field that is bottom in one contour contributed
+  // 0 bytes there and shifted every later field up -- giving two CSs of
+  // the SAME class different layouts. Measured on pylife: 13 LifeNode
+  // CSs, field `id` at offset 32 in eleven of them and 24 in two.
+  // prim_period_offset then rejects any union receiver mixing them
+  // ("missmatched offsets"), which is not a layout question at all --
+  // the class has one layout, one contour just failed to observe a
+  // field.
+  //
+  // A field's AVar is unique_AVar(h->var, cs) over the class's own
+  // `has`, so `iv->var->sym` is the SAME Sym for that field in every CS
+  // of the class. That makes it a sound key for resolving the size once,
+  // program-wide, and using it as the fallback wherever a contour has
+  // nothing to say. Only the zero case consults it; every CS that does
+  // observe the field keeps its own answer and its own consistency
+  // checks below.
+  Map<Sym *, unsigned int> field_size, field_align;
+  for (CreationSet *cs : fa->css) if (cs)
+    for (AVar *iv : cs->vars) if (iv && iv->var && iv->var->sym && iv->out && iv->out->type)
+      for (CreationSet *x : *iv->out->type) if (x && x->sym->size) {
+        field_size.put(iv->var->sym, x->sym->size);
+        field_align.put(iv->var->sym, x->sym->alignment);
+        break;
+      }
   for (CreationSet *cs : fa->css) {
     unsigned int offset = 0;
-    for (AVar *iv : cs->vars) {
+    // Canonical (name-sorted) field order, NOT cs->vars insertion
+    // order: two CSs of the same class can acquire their ivars in
+    // different orders (the instance CS in __init__'s write order,
+    // a P_prim_copy CS in the copying code's access order -- e.g.
+    // the synthesized __deepcopy__'s field loop, issues/029), and
+    // order-dependent offsets made prim_period_offset's equivalence
+    // gate fail ("missmatched offsets") on layouts that agree in
+    // every real sense. cs->vars itself is left untouched (other
+    // code indexes it positionally); only the offset walk is
+    // reordered.
+    Vec<AVar *> ordered;
+    for (AVar *iv : cs->vars) if (iv) ordered.add(iv);
+    if (ordered.n > 1)
+      qsort(ordered.v, ordered.n, sizeof(ordered[0]), [](const void *a, const void *b) {
+        AVar *x = *(AVar **)a, *y = *(AVar **)b;
+        cchar *xn = x->var && x->var->sym && x->var->sym->name ? x->var->sym->name : "";
+        cchar *yn = y->var && y->var->sym && y->var->sym->name ? y->var->sym->name : "";
+        int c = strcmp(xn, yn);
+        if (c) return c;
+        return (x->id > y->id) - (x->id < y->id);
+      });
+    for (AVar *iv : ordered) {
       unsigned int size = 0, alignment = 0;
+      // issues/118 (PYC_WIDEN_UNION_FIELD, default OFF -- MEASURED
+      // INSUFFICIENT, kept to record where the wall actually is).
+      //
+      // The theory: a slot mixing a NARROW INTEGER with a pointer-sized
+      // member ought to be representable, since an integer and a pointer
+      // round-trip bit-for-bit -- which is exactly how {None, int64}
+      // already works (see float_ct's note in codegen/cg.cc). {None,
+      // bool} refuses only on WIDTH, so widening the slot to its largest
+      // member should make it work the same way.
+      //
+      // It does get past THIS check. It does not compile: chess then
+      // produces 18 C errors -- `sizeof` applied to an incomplete `void`,
+      // illegal indirection, and casts from pointer to smaller type --
+      // because the C member's declared TYPE is chosen elsewhere and
+      // comes out `void` for such a union. Widening the FA-side layout
+      // is therefore necessary but nowhere near sufficient; the real
+      // work is teaching codegen to pick a common pointer-width integer
+      // representation for the slot and coerce at every access.
+      // A FLOAT member stays a genuine representation failure either way.
+      static int widen = -1;
+      if (widen < 0) widen = getenv("PYC_WIDEN_UNION_FIELD") ? atoi(getenv("PYC_WIDEN_UNION_FIELD")) : 0;
+      bool any_float = false;
+      if (widen)
+        for (CreationSet *x : *iv->out->type) if (x && x->sym) {
+          Sym *t = x->sym->is_constant && x->sym->type ? x->sym->type : x->sym;
+          if (t->num_kind == IF1_NUM_KIND_FLOAT) any_float = true;
+        }
       for (CreationSet *x : *iv->out->type) if (x) {
-        if (size && x->sym->size != size) fail("mismatched field sizes");
+        if (widen && !any_float && size && x->sym->size != size) {
+          if (x->sym->size > size) { size = x->sym->size; alignment = x->sym->alignment; }
+          continue;  // keep the widest member; skip the refusal below
+        }
+        if (size && x->sym->size != size) {
+          fprintf(stderr, "mismatched field members:");
+          for (CreationSet *y : *iv->out->type) if (y)
+            fprintf(stderr, " %s(%d)", y->sym->type && y->sym->type->name ? y->sym->type->name : "?", y->sym->size);
+          fprintf(stderr, "\n");
+          for (AVar *d : cs->defs) if (d && d->var && d->var->sym)
+            fprintf(stderr, "  def: %s %s:%d\n", d->var->sym->name ? d->var->sym->name : "<anon>",
+                    d->var->sym->filename() ? d->var->sym->filename() : "?", d->var->sym->source_line());
+          fail("mismatched field sizes: class '%s' field '%s' mixes %d- and %d-byte members ('%s')",
+               cs->sym && cs->sym->name ? cs->sym->name : "<anon>",
+               iv->var && iv->var->sym && iv->var->sym->name ? iv->var->sym->name : "<anon>", size, x->sym->size,
+               x->sym->type && x->sym->type->name ? x->sym->type->name : "?");
+        }
         size = x->sym->size;
-        if (alignment && x->sym->alignment != alignment) fail("mismatched field alignments");
+        if (alignment && x->sym->alignment != alignment)
+          fail("mismatched field alignments: class '%s' field '%s' mixes %d- and %d-byte alignment ('%s')",
+               cs->sym && cs->sym->name ? cs->sym->name : "<anon>",
+               iv->var && iv->var->sym && iv->var->sym->name ? iv->var->sym->name : "<anon>", alignment,
+               x->sym->alignment, x->sym->type && x->sym->type->name ? x->sym->type->name : "?");
         alignment = x->sym->alignment;
+      }
+      // Bottom in THIS contour: fall back to the size the field has
+      // wherever it was observed, so every CS of the class lays out
+      // identically.
+      if (!size && iv->var && iv->var->sym) {
+        size = field_size.get(iv->var->sym);
+        alignment = field_align.get(iv->var->sym);
       }
       if (alignment) offset = (offset + alignment - 1) & ~(alignment - 1);
       iv->ivar_offset = offset;
@@ -398,11 +1179,19 @@ static void determine_layouts() {
 static void determine_clones() {
   Vec<CreationSet *> changed_css, last_changed_css;
   Vec<EntrySet *> changed_ess, last_changed_ess;
-  changed_ess.copy(fa->ess);
-  changed_css.copy(fa->css);
+  // Issue 035: build these as explicit hash SETS. They are consumed
+  // through some_intersection -> set_in, which probes hash buckets;
+  // the old copy() of fa->ess happened to work only because fa->ess
+  // was itself a raw hash-table image back then (holes and all) —
+  // once fa->ess became a compact sorted vector, probing it as a
+  // table returned garbage and the equivalence gates went dark
+  // (no clones formed; polymorphic_formal_3types_2each fixture).
+  for (EntrySet *es : fa->ess) if (es) changed_ess.set_add(es);
+  for (CreationSet *cs : fa->css) if (cs) changed_css.set_add(cs);
 
   Vec<Vec<CreationSet *> *> css_sets_by_sym;
   determine_basic_clones(css_sets_by_sym);
+  report_slot_representation_conflicts();
 
   // find fixed point
   while (changed_css.n) {
@@ -412,7 +1201,10 @@ static void determine_clones() {
 
     // recompute entry set equivalence
     while (changed_ess.n || last_changed_css.n) {
-      changed_ess.set_to_vec();
+      // Issue 035: keep set mode — last_changed_ess is probed via
+      // some_intersection/set_in; set_to_vec'ing it first made
+      // those probes walk a compacted vector as if it were a hash
+      // table (membership answers depended on layout).
       last_changed_ess.move(changed_ess);
       for (Fun *f : fa->funs) {
         if (f->ess.some_intersection(last_changed_ess) || f->called_ess.some_intersection(last_changed_ess) ||
@@ -420,7 +1212,7 @@ static void determine_clones() {
             f->ess.some_intersection(last_changed_css_ess) || f->called_ess.some_intersection(last_changed_css_ess)) {
           sets_by_f<EntrySet, ES_FN>(f->ess, f->equiv_sets);
           for (EntrySet *es : f->ess) if (es) {
-            Vec<EntrySet *> *myset = NULL;
+            Vec<EntrySet *> *myset = nullptr;
             for (int i = 0; i < f->equiv_sets.n; i++)
               if (f->equiv_sets[i]->in(es)) {
                 myset = f->equiv_sets[i];
@@ -476,6 +1268,168 @@ static void determine_clones() {
       }
     }
   }
+  // ifa/issues/112 probe: dump the settled clone partition -- per Fun,
+  // each EntrySet equivalence class as a sorted id list. Two runs that
+  // agree here have a deterministic partition, and any remaining
+  // emitted-C difference is downstream (var attribution / naming).
+  if (getenv("IFA_DBG_PARTITION")) {
+    Vec<Fun *> funs;
+    for (Fun *f : fa->funs) if (f) funs.add(f);
+    qsort_by_id(funs);
+    for (Fun *f : funs) {
+      Vec<Vec<EntrySet *> *> sets;
+      for (Vec<EntrySet *> *es : f->equiv_sets) if (es) sets.add(es);
+      Vec<cchar *> lines;
+      for (Vec<EntrySet *> *es : sets) {
+        Vec<EntrySet *> ids;
+        for (EntrySet *e : *es) if (e) ids.add(e);
+        qsort_by_id(ids);
+        char buf[4096];
+        int off = 0;
+        for (EntrySet *e : ids) {
+          if (off >= (int)sizeof(buf) - 16) { off += snprintf(buf + off, sizeof(buf) - off, "..."); break; }
+          off += snprintf(buf + off, sizeof(buf) - off, "%d,", e->id);
+        }
+        if (off > (int)sizeof(buf) - 1) off = sizeof(buf) - 1;
+        buf[off] = 0;
+        lines.add(dupstr(buf));
+      }
+      // NOT sorted: equiv_sets ORDER decides clone numbering
+      // (clone_functions reuses the original Fun for the LAST set), so
+      // the order is exactly what this probe has to observe.
+      int k = 0;
+      for (cchar *l : lines) fprintf(stderr, "PART fun=%d #%d [%s]\n", f->id, k++, l);
+    }
+  }
+}
+
+// ifa/issues/182: a union TYPE minted here must be self-typed (`t->type ==
+// t`), as every front-end type is (set_type_and_meta_type, ast.cc). These
+// were not, so c_type(Sym*), which reads `->type`, rendered every
+// clone-made union as `_CG_void` -- even `None | int`, whose C type is
+// int64 everywhere else. A `{None, int}` list element then had pointer
+// storage holding ints: `mods = [3]` did not compile, and pisang aborted
+// with "list element type mismatch".
+// ifa/120: THE OWNERSHIP AUDIT. Interning union Syms segfaults because they
+// are mutated after they are handed out, so sharing one corrupts another
+// owner. To find every such write without an accessor on each field, each
+// construction site registers its Sym when it hands it out (the
+// make_LUB_type call), with a fingerprint of every field a type user can
+// observe; sum_audit_check, called at pipeline phase boundaries, reports
+// each field whose fingerprint moved, and which site made the Sym.
+// IFA_DBG_SUMAUDIT=1 prints the per-(phase, site, field) counts,
+// IFA_DBG_SUMAUDIT=2 every change.
+struct SumAuditRec {
+  Sym *s;
+  cchar *site;
+  std::vector<std::string> fp;
+};
+static std::vector<SumAuditRec> sum_audit_recs;
+static int sum_audit_mode() {
+  static int m = -1;
+  if (m < 0) { cchar *e = getenv("IFA_DBG_SUMAUDIT"); m = e ? atoi(e) : 0; }
+  return m;
+}
+static cchar *sum_audit_fields[] = {"has",  "element",     "name",         "creators",  "type",     "type_kind",
+                                     "isa",  "specializes", "specializers", "implementors", "dispatch_types",
+                                     "size", "meta_type",   "temp",         "cg_string", "abstract_type",
+                                     "alias", "llvm_type",  "flags"};
+static std::string sum_ids(Vec<Sym *> &v) {
+  std::string r;
+  for (Sym *x : v) r += std::to_string(x ? x->id : -1) + ",";
+  return r;
+}
+static std::vector<std::string> sum_fingerprint(Sym *s) {
+  char b[64];
+  auto ptr = [&](const void *p) { snprintf(b, sizeof(b), "%p", p); return std::string(b); };
+  std::string cr;
+  for (CreationSet *c : s->creators) cr += std::to_string(c ? c->id : -1) + ",";
+  std::string flags = std::to_string(s->is_constant) + std::to_string(s->is_fun) + std::to_string(s->is_vector) +
+                      std::to_string(s->is_system_type) + std::to_string(s->is_value_type);
+  return {sum_ids(s->has),
+          s->element ? std::to_string(s->element->id) + ":" + ptr(s->element->type) : "-",
+          s->name ? s->name : "-",
+          cr,
+          s->type ? std::to_string(s->type->id) : "-",
+          std::to_string((int)s->type_kind),
+          sum_ids(s->isa),
+          sum_ids(s->specializes),
+          sum_ids(s->specializers),
+          sum_ids(s->implementors),
+          sum_ids(s->dispatch_types),
+          std::to_string(s->size) + "/" + std::to_string(s->alignment),
+          s->meta_type ? std::to_string(s->meta_type->id) : "-",
+          ptr(s->temp),
+          s->cg_string ? s->cg_string : "-",
+          ptr(s->abstract_type),
+          s->alias ? std::to_string(s->alias->id) : "-",
+          ptr(s->llvm_type),
+          flags};
+}
+static void sum_audit_register(Sym *s, cchar *site) {
+  if (!sum_audit_mode() || !s || s->type_kind != Type_SUM) return;
+  for (SumAuditRec &r : sum_audit_recs)
+    if (r.s == s) {  // registered again: re-snapshot, keep the first site
+      r.fp = sum_fingerprint(s);
+      return;
+    }
+  sum_audit_recs.push_back({s, site, sum_fingerprint(s)});
+}
+void sum_audit_check(cchar *phase) {
+  int mode = sum_audit_mode();
+  if (!mode) return;
+  std::map<std::string, int> counts;
+  int changed_syms = 0;
+  for (SumAuditRec &r : sum_audit_recs) {
+    std::vector<std::string> now = sum_fingerprint(r.s);
+    bool any = false;
+    for (size_t i = 0; i < now.size(); i++)
+      if (now[i] != r.fp[i]) {
+        any = true;
+        counts[std::string(r.site) + " " + sum_audit_fields[i]]++;
+        if (mode >= 2)
+          fprintf(stderr, "SUMAUDIT phase=%s site=%s sym=%d field=%s [%s] -> [%s]\n", phase, r.site, r.s->id,
+                  sum_audit_fields[i], r.fp[i].c_str(), now[i].c_str());
+      }
+    if (any) changed_syms++;
+    r.fp = now;
+  }
+  fprintf(stderr, "SUMAUDIT phase=%s syms=%zu changed=%d", phase, sum_audit_recs.size(), changed_syms);
+  for (auto &kv : counts) fprintf(stderr, " [%s]=%d", kv.first.c_str(), kv.second);
+  fprintf(stderr, "\n");
+}
+
+// ifa/120: INTERN a value union. The four sites that build an anonymous
+// union of value types (concrete_type_set_to_type, concretize_avar,
+// concretize_var, the list element) each minted a fresh Sym, so one union
+// had dozens of identities, and type equality by pointer
+// (inline_single_sends, codegen's casts) depended on construction history.
+// The ownership audit above found nothing written to such a Sym after it is
+// handed out except codegen's C name, which is a function of the
+// components. The key is the sorted component ids. A CreationSet group's
+// union (define_concrete_types / resolve_concrete_types) is NOT a value
+// union: it carries `creators` and is the type of those CreationSets, so it
+// is never interned, and never returned for a value union.
+// PYC_INTERN_SUMS=0 turns it off.
+static std::map<std::string, Sym *> sum_intern_table;
+static Sym *intern_sum(Sym *t) {
+  static int on = -1;
+  if (on < 0) { cchar *e = getenv("PYC_INTERN_SUMS"); on = e ? atoi(e) : 1; }
+  if (!on || !t || t->type_kind != Type_SUM || t->creators.n) return t;
+  if (t->has.n > 1) qsort(t->has.v, t->has.n, sizeof(t->has[0]), compar_syms);
+  std::string key;
+  for (Sym *m : t->has) key += std::to_string(m ? m->id : -1) + ",";
+  auto it = sum_intern_table.find(key);
+  if (it != sum_intern_table.end()) return it->second;
+  sum_intern_table[key] = t;
+  return t;
+}
+
+static Sym *new_sum_type() {
+  Sym *t = new_Sym();
+  t->type_kind = Type_SUM;
+  t->type = t;
+  return t;
 }
 
 Sym *concrete_type_set_to_type(Vec<Sym *> &t) {
@@ -485,17 +1439,33 @@ Sym *concrete_type_set_to_type(Vec<Sym *> &t) {
   else if (t.n == 1)
     return t[0];
   else {
-    Sym *tt = new_Sym();
-    tt->type_kind = Type_SUM;
+    Sym *tt = new_sum_type();
     tt->has.append(t);
     if (!(tt = if1->callback->make_LUB_type(tt))) return 0;
+    tt = intern_sum(tt);
+    sum_audit_register(tt, "type_set");
     return tt;
   }
 }
 
+// ifa/issues/112: pick an equivalence class's representative CANONICALLY.
+//
+// `eqcss` is a Vec used as a SET, so `first_in_set()` returns whichever
+// member landed in the lowest slot -- a POINTER hash, which moves with
+// the heap and therefore between runs of the same compile. Every member
+// is equivalent by construction, so any of them is a correct answer;
+// only the CHOICE has to be stable, or the emitted struct ids swap and
+// the same source produces two different .c files.
+//
+// Surfaced by issues/121's canonical field promotion: once two sibling
+// subclasses stop getting different field ORDERS they become genuinely
+// equivalent, and this tiebreak starts deciding between them.
+// CreationSet::id is assigned in analysis order, so it is stable.
+static CreationSet *canonical_cs(Vec<CreationSet *> *eqcss) { return canonical_in_set(*eqcss); }
+
 static int compute_member_types(Vec<CreationSet *> *eqcss) {
-  Sym *sym = eqcss->first_in_set()->type;
-  Sym *orig_sym = eqcss->first_in_set()->sym;
+  Sym *sym = canonical_cs(eqcss)->type;
+  Sym *orig_sym = canonical_cs(eqcss)->sym;
   if (sym->is_fun) return 0;
   int n = 0;
   for (CreationSet *cs : *eqcss) if (cs) {
@@ -506,7 +1476,48 @@ static int compute_member_types(Vec<CreationSet *> *eqcss) {
   int start = orig_sym->element ? -1 : 0;
   for (int i = start; i < n; i++) {
     Sym *&ss = (i < 0 ? sym->element : sym->has[i]);
-    ss = ss ? ss->clone() : new_Sym();
+    // ifa/153: the inherited member Sym must actually DESCRIBE slot i.
+    //
+    // For a CLASS it does: measured on `chull`, `Vertex`'s `has[k]->var` is
+    // the same Var as `cs->vars[k]->var` at every one of its 24 slots. For a
+    // POSITIONAL record it need not, because `sym_tuple->has` carries
+    // whatever cross-class field promotion (issues/128) put on `tuple` --
+    // here `[mark, delete, duplicate, newface, onhull, visible]` from
+    // Vertex/Edge/Face -- while `cs->vars` is `[i, x, mark, delete, ...]`.
+    // The two are then misaligned by two, and cloning `sym->has[i]` gives
+    // slot 1 the name AND THE VAR of `Edge.delete`.
+    //
+    // That var is dead, so `cg_field_live` reports slot 1 dead and cg.cc's
+    // record-construction loop SKIPS THE STORE -- for every 2-tuple in the
+    // program, silently. `enumerate` emitted `t17->e0 = t9;` and no store
+    // for the element, so `[Vertex(vc,i) for i,vc in enumerate(v)]` built
+    // every Vertex from a null `v` and `chull` segfaulted in `Collinear`.
+    // The member TYPE was right throughout (it comes from `cs->vars[i]`);
+    // only the identity was borrowed.
+    //
+    // Structural test, on Var pointer identity -- never on names.
+    Var *slot_var = nullptr;
+    bool slot_agree = true;
+    if (i >= 0) {
+      bool first = true;
+      for (CreationSet *cs : *eqcss) if (cs) {
+        AVar *av = (i < cs->vars.n) ? cs->vars[i] : nullptr;
+        Var *v = (av && av->var) ? av->var : nullptr;
+        if (first) {
+          slot_var = v;
+          first = false;
+        } else if (slot_var != v)
+          slot_agree = false;
+      }
+    }
+    const bool foreign = i >= 0 && ss && (!slot_agree || ss->var != slot_var);
+    ss = (ss && !foreign) ? ss->clone() : new_Sym();
+    if (foreign && slot_agree && slot_var) {
+      // Adopt the slot's own identity, so liveness is asked of the variable
+      // this member actually holds.
+      ss->var = slot_var;
+      if (slot_var->sym && slot_var->sym->name) ss->name = slot_var->sym->name;
+    }
     Vec<Sym *> t;
     for (CreationSet *cs : *eqcss) if (cs) {
       AVar *av = i < 0 ? get_element_avar(cs) : cs->vars[i];
@@ -514,20 +1525,72 @@ static int compute_member_types(Vec<CreationSet *> *eqcss) {
     }
     if (!(ss->type = concrete_type_set_to_type(t))) return -1;
   }
+  if (getenv("IFA_DBG_MEMBERTYPES")) {
+    fprintf(stderr, "MEMBERTYPES sym=%s#%d orig=%s n=%d has.n=%d eqcss=%d cs:", sym->name ? sym->name : "?",
+            sym->id, orig_sym->name ? orig_sym->name : "?", n, sym->has.n, eqcss->n);
+    for (CreationSet *cs : *eqcss)
+      if (cs) fprintf(stderr, " #%d(vars=%d)", cs->id, cs->vars.n);
+    fprintf(stderr, "\n");
+    CreationSet *c0 = canonical_cs(eqcss);
+    for (int i = 0; i < sym->has.n; i++)
+      fprintf(stderr, "   has[%d] sym=%p name=%s type=%s hasvar=%p csvar=%p csname=%s\n", i, (void *)sym->has[i],
+              (sym->has[i] && sym->has[i]->name) ? sym->has[i]->name : "(anon)",
+              (sym->has[i] && sym->has[i]->type && sym->has[i]->type->name) ? sym->has[i]->type->name : "(none)",
+              (void *)(sym->has[i] ? sym->has[i]->var : nullptr),
+              (void *)((i < c0->vars.n && c0->vars[i]) ? c0->vars[i]->var : nullptr),
+              (i < c0->vars.n && c0->vars[i] && c0->vars[i]->var && c0->vars[i]->var->sym &&
+               c0->vars[i]->var->sym->name)
+                  ? c0->vars[i]->var->sym->name
+                  : "(anon)");
+  }
   return 0;
+}
+
+// ifa/issues/104: let `tuple` use the SAME representation rule as `list`.
+// get_sym_tup already computes it: a group whose members differ in arity,
+// or any of whose members has a populated generic element, is NOT a
+// record and takes list layout; all-same-arity with a bottom element is a
+// record. That is exactly "heterogeneous fixed arity -> record, single
+// type mixed arity -> list", and lists have had it all along. Tuples were
+// excluded only by the hardcoded `sym == sym_tuple` in the two branch
+// conditions below. Requires PYC_TUPELEM so a tuple HAS a generic element
+// for tuple_able() to test.
+static int tuple_as_list_enabled() {
+  static int e = -1;
+  if (e < 0) {
+    // Default ON since issues/119. With it OFF, a tuple equivalence class
+    // that is NOT record-able -- mixed arity, or a populated generic
+    // element -- was forced into RECORD layout anyway, and when its
+    // per-index vars never materialised that record had ZERO members:
+    // c_type() names it _CG_void and every getter on it becomes
+    // "runtime error: bad getter". A tuple SLICE lands there exactly
+    // (runtime arity, built by _CG_list_getslice). Enabling this does not
+    // make tuples lists -- line 793's `!tup` still keeps every
+    // record-able tuple a record -- it only supplies a valid layout where
+    // the bogus empty record used to go. Surfaced by unrolling
+    // __str__/__hash__ (python_ifa_main.cc): the old looped bodies
+    // indexed with a RUNTIME k, which never took the record getter path.
+    const char *v = getenv("PYC_TUPLE_AS_LIST");
+    e = v ? atoi(v) : 1;
+  }
+  return e;
 }
 
 static bool tuple_able(CreationSet *cs) {
 #ifdef CONVERT_LISTS_TO_TUPLES
+  // issues/110: a make_seq container has no per-index vars, so RECORD
+  // layout would give it zero members -- the empty record behind both
+  // "incomplete type 'void'" and "runtime error: bad getter".
+  if (cs->no_static_arity) return false;
   AVar *elem = get_element_avar(cs);
-  return elem && elem->out == bottom_type;
+  return elem && elem->out == fa->type_world.bottom_type;
 #else
   return false;
 #endif
 }
 
 static void get_sym_tup(Vec<CreationSet *> *eqcss, Sym **psym, bool *ptup) {
-  Sym *sym = 0;
+  Sym *sym = nullptr;
   bool tup = true;
   int n = -1;
   for (CreationSet *cs : *eqcss) if (cs) {
@@ -549,7 +1612,7 @@ static void get_sym_tup(Vec<CreationSet *> *eqcss, Sym **psym, bool *ptup) {
 static void set_tuple_able(CSSS &css_sets) {
   for (int i = 0; i < css_sets.n; i++) {
     Vec<CreationSet *> *eqcss = css_sets[i];
-    Sym *sym = 0;
+    Sym *sym = nullptr;
     bool tup = true;
     for (CreationSet *cs : *eqcss) if (cs) {
       Sym *ct = to_concrete_type(cs->sym);
@@ -570,13 +1633,13 @@ static int define_concrete_types(CSSS &css_sets) {
   // for those only used in one way, do not clone
   for (int i = 0; i < css_sets.n; i++) {
     Vec<CreationSet *> *eqcss = css_sets[i];
-    Sym *sym = 0;
+    Sym *sym = nullptr;
     bool tup = true;
     get_sym_tup(eqcss, &sym, &tup);
     for (CreationSet *cs : *eqcss) if (cs) cs->tuple_able = tup;
     // same sym
     if (sym != (Sym *)-1) {
-      if (sym != sym_tuple && sym != sym_closure && !tup) {
+      if ((sym != sym_tuple || tuple_as_list_enabled()) && sym != sym_closure && !tup) {
         Vec<CreationSet *> creators;
         if (sym->abstract_type)
           eqcss->set_difference(*sym->abstract_type, creators);
@@ -593,12 +1656,12 @@ static int define_concrete_types(CSSS &css_sets) {
   // clone those used in more than one way
   for (int i = 0; i < css_sets_local.n; i++) {
     Vec<CreationSet *> *eqcss = css_sets_local[i];
-    Sym *sym = 0;
+    Sym *sym = nullptr;
     bool tup = true;
     get_sym_tup(eqcss, &sym, &tup);
     // same sym
     if (sym != (Sym *)-1) {
-      AVar *def = 0;
+      AVar *def = nullptr;
       for (CreationSet *cs : *eqcss) if (cs) {
         for (AVar *av : cs->defs) if (av) {
           if (!def)
@@ -607,10 +1670,19 @@ static int define_concrete_types(CSSS &css_sets) {
             def = (AVar *)-1;
         }
       }
-      if (sym == sym_tuple || sym == sym_closure || tup) {
+      // ifa/issues/104: a monomorphic tuple group is EXCLUDED from the
+      // record branch so it falls through to the ordinary paths below,
+      // which are arity-independent. Note this must be part of the
+      // record CONDITION, not a branch of its own -- an empty branch
+      // exits the else-if chain and leaves cs->type null, which
+      // segfaults later in resolve_concrete_types.
+      bool tuple_is_record = sym == sym_tuple && !tuple_as_list_enabled();
+      if (sym == sym_tuple && tuple_as_list_enabled() && !tup && getenv("IFA_DBG_TUPLIST"))
+        fprintf(stderr, "[tuplist] tuple group of %d CS -> list layout (arity or element)\n", eqcss->n);
+      if (tuple_is_record || sym == sym_closure || tup) {
         // tuples use record type
-        cchar *name = 0;
-        IFAAST *ast = 0;
+        cchar *name = nullptr;
+        IFAAST *ast = nullptr;
         int abstract = eqcss->n == 1 && eqcss->v[0]->defs.n == 0;
         Sym *s = abstract ? sym->copy() : sym->clone();
         s->type_kind = (sym == sym_tuple || tup) ? Type_RECORD : Type_FUN;
@@ -638,9 +1710,9 @@ static int define_concrete_types(CSSS &css_sets) {
         if (name && name != BAD_NAME) s->name = name;
         if (ast && ast != BAD_AST) s->ast = ast;
       } else if (sym->type_kind == Type_PRIMITIVE || sym->type_kind == Type_TAGGED || sym->is_fun) {
-        AVar *elem = get_element_avar(eqcss->first_in_set());
+        AVar *elem = get_element_avar(canonical_cs(eqcss));
         Sym *s = sym;
-        if (elem && elem->out != bottom_type) {
+        if (elem && elem->out != fa->type_world.bottom_type) {
           int abstract = eqcss->n == 1 && eqcss->v[0]->defs.n == 0;
           s = abstract ? sym->copy() : sym->clone();
         }
@@ -652,7 +1724,7 @@ static int define_concrete_types(CSSS &css_sets) {
         } else {
           int abstract = eqcss->n == 1 && eqcss->v[0]->defs.n == 0;
           Sym *s = abstract ? sym->copy() : sym->clone();
-          cchar *name = 0;
+          cchar *name = nullptr;
           s->type_kind = sym->type_kind;
           s->creators.copy(*eqcss);
           Vec<CreationSet *> old_creators;
@@ -663,9 +1735,15 @@ static int define_concrete_types(CSSS &css_sets) {
           sym->creators.set_to_vec();
           for (CreationSet *cs : *eqcss) if (cs) {
             cs->type = s;
+            // ifa/issues/104: a tuple CreationSet's `sym` IS sym_tuple,
+            // not an instance sym whose ->type is a class (which is what
+            // every list/class CS has here), so ->type can be null on
+            // this path. Fall back to the sym's own name rather than
+            // dereferencing null.
+            cchar *tn = cs->sym->type ? cs->sym->type->name : cs->sym->name;
             if (!name)
-              name = cs->sym->type->name;
-            else if (cs->sym->type->name != name)
+              name = tn;
+            else if (tn != name)
               name = BAD_NAME;
           }
           if (name && name != BAD_NAME) s->name = name;
@@ -673,8 +1751,7 @@ static int define_concrete_types(CSSS &css_sets) {
       }
     } else {
       // if different sym use sum type
-      sym = new_Sym();
-      sym->type_kind = Type_SUM;
+      sym = new_sum_type();
       for (CreationSet *cs : *eqcss) if (cs) {
         cs->type = sym;
         sym->creators.add(cs);
@@ -685,7 +1762,7 @@ static int define_concrete_types(CSSS &css_sets) {
 }
 
 static int concretize_avar(AVar *av) {
-  Sym *sym = 0, *type = 0;
+  Sym *sym = nullptr, *type = nullptr;
   if (av->type) return 0;
   for (CreationSet *cs : *av->out) if (cs) {
     if (!sym)
@@ -693,8 +1770,7 @@ static int concretize_avar(AVar *av) {
     else {
       if (sym != cs->type) {
         if (!type) {
-          type = new_Sym();
-          type->type_kind = Type_SUM;
+          type = new_sum_type();
           type->has.set_add(sym);
         }
         type->has.set_add(cs->type);
@@ -705,22 +1781,58 @@ static int concretize_avar(AVar *av) {
     av->type = sym;
   else {
     type->has.set_to_vec();
+    // ifa/issues/112: `has` was built with set_add, so its components sit
+    // at POINTER-HASHED slots and come out in an order that moves between
+    // runs. codegen's resolve_union_receiver (cg.cc) returns the FIRST
+    // component carrying the field, so an unsorted union made the emitted
+    // cast name a different struct each run -- the last 12 lines of
+    // timsort's nondeterminism. The sibling site below already sorts with
+    // compar_syms for the same reason.
+    if (type->has.n > 1) qsort(type->has.v, type->has.n, sizeof(type->has[0]), compar_syms);
     if (type->has.n == 1)
       av->type = type->has[0];
     else if (!(av->type = if1->callback->make_LUB_type(type)))
       return -1;
+    else {
+      av->type = intern_sum(av->type);
+      sum_audit_register(av->type, "concretize_avar");
+    }
   }
   return 0;
 }
 
+// ifa/issues/112: walk a Var's AVars in a CANONICAL order.
+//
+// `v->avars` is an AVarMap keyed by EntrySet POINTERS, so a raw
+// `for (i = 0; i < v->avars.n; i++)` walks hash slots in heap-layout
+// order, which moves between runs. Both concretize_var_type and
+// concretize_var_list_type decide a Var's type from that walk -- the
+// FIRST CreationSet seen becomes `sym`, and the union is accumulated in
+// visit order -- and they MINT Syms as they go, so the walk decides
+// which Vars end up sharing a type Sym. Downstream, inline_single_sends
+// compares types by pointer (`p->rvals[i]->type == v->type`) and
+// codegen selects C types from them.
+//
+// Measured: FA is deterministic (IFA_DBG_FATRACE) and every clone stage
+// up to and including build_concrete_types is deterministic
+// (IFA_DBG_CLONE); clone_functions -- which calls these two -- is where
+// the divergence appears.
+static void canonical_avars(Var *v, Vec<AVar *> &out) {
+  out.clear();
+  for (int i = 0; i < v->avars.n; i++)
+    if (v->avars[i].key && v->avars[i].value) out.add(v->avars[i].value);
+  if (out.n > 1) qsort_by_id(out);
+}
+
 static int concretize_var_list_type(Var *v) {
-  Sym *sym = 0;
+  Sym *sym = nullptr;
   // check if we even need to try to convert a list
   bool all_list = false;
-  AType *etype = bottom_type;
-  for (int i = 0; i < v->avars.n; i++) {
-    if (!v->avars[i].key) continue;
-    for (CreationSet *cs : *v->avars[i].value->out) if (cs) {
+  AType *etype = fa->type_world.bottom_type;
+  Vec<AVar *> cavs;
+  canonical_avars(v, cavs);
+  for (AVar *av : cavs) {
+    for (CreationSet *cs : *av->out) if (cs) {
       if (!sym)
         sym = cs->type;
       else if (sym != cs->type)
@@ -746,10 +1858,27 @@ static int concretize_var_list_type(Var *v) {
     if (etype->n == 1)
       v->type->element->type = etype->v[0]->type;
     else {
-      Sym *t = new_Sym();
-      t->type_kind = Type_SUM;
+      // Multi-element-type case: the list's element type
+      // is the SUM of the contributing CS types.  The
+      // original code wrote `v->type = make_LUB_type(t)`
+      // here, which OVERWROTE the freshly-cloned
+      // `sym_list` with the element-type SUM — leaving the
+      // Var typed as the element union (e.g.
+      // `Node | nil_type`) instead of as a list.  cg_string
+      // for that SUM falls back to "_CG_any" when the SUM
+      // has 2+ non-nil components, which triggered the
+      // list-element-cross-contam codegen errors fixed at
+      // the codegen layer in cg.cc:write_send_arg
+      // (issue 028 step 5 follow-up).  Set the element
+      // sym instead of clobbering the list type.
+      Sym *t = new_sum_type();
       for (CreationSet *cs : *etype) if (cs) t->has.set_add(cs->type);
-      if (!(v->type = if1->callback->make_LUB_type(t))) return -1;
+      t->has.set_to_vec();  // built with set_add; intern_sum sorts it
+      Sym *lub = if1->callback->make_LUB_type(t);
+      if (!lub) return -1;
+      lub = intern_sum(lub);
+      sum_audit_register(lub, "list_element");
+      v->type->element->type = lub;
     }
     return 1;
   }
@@ -757,27 +1886,26 @@ static int concretize_var_list_type(Var *v) {
 }
 
 static int concretize_var_type(Var *v) {
-  Sym *sym = 0, *type = 0;
+  Sym *sym = nullptr, *type = nullptr;
   if (v->type) return 0;
-  for (int i = 0; i < v->avars.n; i++) {
-    if (!v->avars[i].key) continue;
-    if (v->avars[i].value->cs_map && v->def) {
+  Vec<AVar *> cavs;
+  canonical_avars(v, cavs);
+  for (AVar *av : cavs) {
+    if (av->cs_map && v->def) {
       if (!v->def->creates) v->def->creates = new Vec<Sym *>;
-      form_Map(CSMapElem, x, *v->avars[i].value->cs_map) v->def->creates->set_add(x->value->type);
+      form_Map(CSMapElem, x, *av->cs_map) v->def->creates->set_add(x->value->type);
     }
   }
   int ret = 0;
   if ((ret = concretize_var_list_type(v)) != 0) return ret;
-  for (int i = 0; i < v->avars.n; i++) {
-    if (!v->avars[i].key) continue;
-    for (CreationSet *cs : *v->avars[i].value->out) if (cs) {
+  for (AVar *av : cavs) {
+    for (CreationSet *cs : *av->out) if (cs) {
       if (!sym)
         sym = cs->type;
       else {
         if (sym != cs->type) {
           if (!type) {
-            type = new_Sym();
-            type->type_kind = Type_SUM;
+            type = new_sum_type();
             type->has.set_add(sym);
           }
           type->has.set_add(cs->type);
@@ -789,10 +1917,22 @@ static int concretize_var_type(Var *v) {
     v->type = sym;
   else {
     type->has.set_to_vec();
+    // ifa/issues/112: `has` was built with set_add, so its components sit
+    // at POINTER-HASHED slots and come out in an order that moves between
+    // runs. codegen's resolve_union_receiver (cg.cc) returns the FIRST
+    // component carrying the field, so an unsorted union made the emitted
+    // cast name a different struct each run -- the last 12 lines of
+    // timsort's nondeterminism. The sibling site below already sorts with
+    // compar_syms for the same reason.
+    if (type->has.n > 1) qsort(type->has.v, type->has.n, sizeof(type->has[0]), compar_syms);
     if (type->has.n == 1)
       v->type = type->has[0];
     else if (!(v->type = if1->callback->make_LUB_type(type)))
       return -1;
+    else {
+      v->type = intern_sum(v->type);
+      sum_audit_register(v->type, "concretize_var");
+    }
   }
   return 0;
 }
@@ -806,7 +1946,7 @@ static int resolve_concrete_types(CSSS &css_sets) {
       if (eav)
         if (concretize_avar(eav) < 0) return -1;
     }
-    Sym *sym = eqcss->first_in_set()->type;
+    Sym *sym = canonical_cs(eqcss)->type;
     switch (sym->type_kind) {
       case Type_NONE:
       case Type_UNKNOWN:
@@ -818,6 +1958,7 @@ static int resolve_concrete_types(CSSS &css_sets) {
         sym->has.set_to_vec();
         qsort(sym->has.v, sym->has.n, sizeof(sym->has[0]), compar_syms);
         if (!(sym = if1->callback->make_LUB_type(sym))) return -1;
+        sum_audit_register(sym, "cs_group");
         for (CreationSet *cs : *eqcss) if (cs) cs->type = sym;
         break;
       }
@@ -833,10 +1974,25 @@ static int resolve_concrete_types(CSSS &css_sets) {
   return 0;
 }
 
+// Issue 035: css_sets is a hash set of equiv-set POINTERS, so its
+// set_to_vec order follows heap layout — and define_concrete_types
+// is order-SENSITIVE, not just order-revealing: eqcss groups
+// sharing a base sym mutate sym->creators as they are processed
+// (old_creators / set_difference), so which group keeps the sym
+// and which gets a clone depends on processing order. Canonicalize
+// by each set's minimum member id.
+static int compar_eqcss_min_id(const void *a, const void *b) {
+  int i = INT_MAX, j = INT_MAX;
+  for (CreationSet *cs : **(Vec<CreationSet *> **)a) if (cs && cs->id < i) i = cs->id;
+  for (CreationSet *cs : **(Vec<CreationSet *> **)b) if (cs && cs->id < j) j = cs->id;
+  return (i > j) ? 1 : ((i < j) ? -1 : 0);
+}
+
 static int build_concrete_types() {
   CSSS css_sets;
   for (CreationSet *cs : fa->css) css_sets.set_add(cs->equiv);
   css_sets.set_to_vec();
+  qsort(css_sets.v, css_sets.n, sizeof(css_sets[0]), compar_eqcss_min_id);
   if (define_concrete_types(css_sets) < 0) return -1;
   if (resolve_concrete_types(css_sets) < 0) return -1;
   return 0;
@@ -860,9 +2016,20 @@ static void fixup_var(Var *v, Fun *f, Vec<EntrySet *> *ess) {
 static void fixup_clone_vars(Fun *f, Vec<EntrySet *> *ess) {
   for (Var *v : f->fa_all_Vars) if (v->sym->nesting_depth == f->sym->nesting_depth + 1) fixup_var(v, f, ess);
   else if (v->sym->nesting_depth) {
-    if (!v->sym->is_fun)  // these aren't fixed up... probably should be, but
-                          // they are constants
-      for (EntrySet *es : f->ess) if (es) {
+    if (!v->sym->is_fun) {  // these aren't fixed up... probably should be, but
+                            // they are constants
+      // ifa/issues/112: `f->ess` is a Vec used as a SET, so this walked
+      // EntrySets in POINTER-HASH order. The body REPLACES v->avars each
+      // iteration (`move`), so each pass re-filters the previous result
+      // and the LAST EntrySet decides what survives -- making the
+      // surviving AVar set depend on heap layout. Measured on msp_ss:
+      // the same Var in the same clone kept 127 AVars in one run and 251
+      // in another, which then feeds concretize_var_type and so decides
+      // the Var's TYPE. Walk in id order instead.
+      Vec<EntrySet *> ordered_ess;
+      for (EntrySet *es : f->ess) if (es) ordered_ess.add(es);
+      if (ordered_ess.n > 1) qsort_by_id(ordered_ess);
+      for (EntrySet *es : ordered_ess) if (es) {
         AVarMap avs;
         for (int i = 0; i < v->avars.n; i++) {
           EntrySet *x = (EntrySet *)v->avars[i].key;
@@ -871,19 +2038,32 @@ static void fixup_clone_vars(Fun *f, Vec<EntrySet *> *ess) {
         }
         v->avars.move(avs);
       }
+    }
   }
 }
 
 static void fixup_clone_ess(Fun *f, Vec<EntrySet *> *ess) {
   f->ess.copy(*ess);
+  // ifa/178: a send gated (gate_send) in EVERY contour of this clone does
+  // not complete, so codegen traps after it. fa_live alone cannot say so:
+  // it is the union over the clone's contours.
+  Vec<PNode *> gated, completes, gated_noraise;
   for (EntrySet *es : f->ess) if (es) {
     for (PNode *p : es->live_pnodes) if (p) {
+      bool g = p->code->kind == Code_SEND && p->lvals.n == 1 && make_AVar(p->lvals[0], es)->gates_flow;
+      bool gr = g && make_AVar(p->lvals[0], es)->gate_raises;
       if (f->nmap) p = f->nmap->get(p);
       p->fa_live = 1;
+      (g ? gated : completes).set_add(p);
+      if (g && !gr) gated_noraise.set_add(p);
     }
     for (AEdge *ee : es->edges) if (ee) ee->fun = f;
     es->fun = f;
   }
+  for (PNode *p : gated) if (p) p->fa_noreturn = !completes.set_in(p);
+  for (PNode *p : completes) if (p) p->fa_noreturn = 0;
+  // ifa/049: it raises in every contour, so codegen returns rather than traps.
+  for (PNode *p : gated) if (p) p->fa_noreturn_raises = p->fa_noreturn && !gated_noraise.set_in(p);
   f->equiv_sets.clear();
   for (EntrySet *es : f->ess) if (es) f->equiv_sets.set_add(es->equiv);
 }
@@ -936,11 +2116,82 @@ void fixup_clone_tree(Fun *f, Vec<EntrySet *> *ess, Vec<Fun *> &fs) {
 static int clone_functions() {
   Vec<Fun *> fs;
   fs.copy(fa->funs);
+  // ifa/issues/112: hash the INPUT order and the post-sort PROCESSING
+  // order. compar_fun_nesting keys on nesting_depth alone -- a coarse
+  // key with many ties -- and qsort is not stable, so if the input
+  // moves, the tie order moves with it. Processing order matters
+  // because concretize_types() below MINTS type Syms, so it decides
+  // which Vars end up sharing a type.
+  static int dbg_cf = -1;
+  if (dbg_cf < 0) dbg_cf = getenv("IFA_DBG_CLONE") ? 1 : 0;
+  unsigned long hin = 1469598103934665603UL;
+  if (dbg_cf) for (Fun *f : fs) hin = (hin ^ (unsigned long)(f ? f->id : 0)) * 1099511628211UL;
   qsort(fs.v, fs.n, sizeof(fs[0]), compar_fun_nesting);
+  if (dbg_cf) {
+    unsigned long hout = 1469598103934665603UL;
+    for (Fun *f : fs) hout = (hout ^ (unsigned long)(f ? f->id : 0)) * 1099511628211UL;
+    fprintf(stderr, "CLONEFUNS n=%d in=%lx sorted=%lx\n", fs.n, hin, hout);
+  }
+  // ifa/issues/112: per-fun record inside clone_functions, so the first
+  // differing line names the Fun whose types first diverge.
+  auto cfun_note = [&](Fun *ff, cchar *what) {
+    if (!dbg_cf || !ff) return;
+    unsigned long h = 1469598103934665603UL;
+    for (Var *v : ff->fa_all_Vars) if (v) {
+      h = (h ^ (unsigned long)v->id) * 1099511628211UL;
+      h = (h ^ (unsigned long)(v->type ? v->type->id : 0)) * 1099511628211UL;
+    }
+    fprintf(stderr, "CFUN %s fun=%d nvars=%d h=%lx\n", what, ff->id, ff->fa_all_Vars.n, h);
+    // IFA_DBG_CLONE_FUN=<id>: dump that Fun's per-Var types, so two runs
+    // can be diffed to the exact Var whose type differs.
+    static const char *want = getenv("IFA_DBG_CLONE_FUN");
+    if (want && atoi(want) == ff->id) {
+      for (Var *v : ff->fa_all_Vars) if (v) {
+        Sym *t = v->type;
+        // nslots is the map's TABLE CAPACITY (Vec::n for a set counts
+        // slots, holes included, and capacity moves with probe chains --
+        // see fa.cc's note on type_violations.n). nlive is the real
+        // element count. Reporting only nslots invents differences.
+        int nlive = 0;
+        for (int q = 0; q < v->avars.n; q++) if (v->avars[q].key) ++nlive;
+        fprintf(stderr, "CVAR fun=%d var=%d nlive=%d nslots=%d type=%s kind=%d", ff->id, v->id, nlive, v->avars.n,
+                t && t->name ? t->name : "?", t ? t->type_kind : -1);
+        // Which AVar(s) survived fixup_var's filter, and what is in
+        // their `out`? Distinguishes "same AVar, type computed
+        // differently" from "a different AVar survived".
+        // SORTED by AVar id, and each `out` printed as a sorted name
+        // list: the map's own slot order is hash order, so an unsorted
+        // dump reports a difference on every line and hides the real
+        // one.
+        Vec<AVar *> sav;
+        canonical_avars(v, sav);
+        fprintf(stderr, " avars=[");
+        for (AVar *av : sav) {
+          fprintf(stderr, "#%d out={", av->id);
+          Vec<cchar *> nms;
+          if (av->out) for (CreationSet *c : *av->out) if (c)
+            nms.add(c->sym && c->sym->name ? c->sym->name : "?");
+          if (nms.n > 1) qsort(nms.v, nms.n, sizeof(nms[0]), [](const void *a, const void *b) {
+            return strcmp(*(cchar *const *)a, *(cchar *const *)b);
+          });
+          for (cchar *nm : nms) fprintf(stderr, "%s,", nm);
+          fprintf(stderr, "} ");
+        }
+        fprintf(stderr, "]");
+        if (t && t->type_kind == Type_SUM) {
+          fprintf(stderr, " sum=[");
+          for (Sym *m : t->has) fprintf(stderr, "%s,", m && m->name ? m->name : "?");
+          fprintf(stderr, "]");
+        }
+        fprintf(stderr, "\n");
+      }
+    }
+  };
   for (Fun *f : fs) {
     if (f->equiv_sets.n == 1) {
       fixup_clone(f, f->equiv_sets[0]);
       if (concretize_types(f) < 0) return -1;
+      cfun_note(f, "single");
     } else {
       Vec<Vec<EntrySet *> *> eqs(f->equiv_sets);
       for (int i = 0; i < eqs.n; i++) {
@@ -948,9 +2199,11 @@ static int clone_functions() {
           Fun *ff = f->copy();
           fixup_clone_tree(ff, eqs[i], fs);
           if (concretize_types(ff) < 0) return -1;
+          cfun_note(ff, "clone");
         } else {
           fixup_clone(f, eqs[i]);
           if (concretize_types(f) < 0) return -1;
+          cfun_note(f, "last");
         }
       }
     }
@@ -971,7 +2224,13 @@ static int clone_functions() {
         if (m) {
           Vec<Fun *> *vf = f->calls.get(pnode);
           if (!vf) f->calls.put(pnode, (vf = new Vec<Fun *>));
-          for (AEdge *ee : *m) if (used_edges.set_in(ee)) vf->set_add(ee->to->fun);
+          // ifa/049: only edges from a send this contour reaches. An edge
+          // walked before a cut (settle_gated_liveness: code after a call
+          // that can only raise) is not a call: kept, it made DCE keep the
+          // dead send live and handed the inliner a function with no
+          // contour.
+          for (AEdge *ee : *m)
+            if (used_edges.set_in(ee) && es->live_pnodes.set_in(old_pnode)) vf->set_add(ee->to->fun);
           // rebuild out_edge_map
           new_out_edge_map.put(pnode, m);
         }
@@ -1021,11 +2280,106 @@ void log_test_fa(FA *fa) {
                          !v->sym->is_fun) log_var_types(v, 0);
 }
 
+// ifa/issues/112: stage trace inside clone. FA is measured deterministic
+// (IFA_DBG_FATRACE: 13 passes, 160k AVars, identical across runs) while
+// the emitted C is not, so the divergence is in here. One record per
+// stage boundary; diff two runs and take the FIRST differing line.
+//
+// Hashes the type ASSIGNMENT: per CreationSet (id order) its cs->type,
+// and per AVar its ->type, both projected through a first-encounter
+// ORDINAL rather than a Sym id -- the relation "which things share a
+// type" is what the downstream `==` guards read, and it survives the
+// renaming that raw ids do not.
+// ifa/issues/112: follow ONE AVar's `out` across pipeline points.
+// IFA_DBG_AVAR=<id>. Answers when a given AVar's contents change, which
+// separates "FA produced it differently" from "clone changed it".
+void dbg_trace_avar(cchar *where) {
+  static int want = -2;
+  if (want == -2) { const char *e = getenv("IFA_DBG_AVAR"); want = e ? atoi(e) : -1; }
+  if (want < 0) return;
+  Vec<AVar *> avs;
+  for (Fun *f : fa->funs) if (f)
+    for (Var *v : f->fa_all_Vars) if (v)
+      form_AVarMapElem(x, v->avars) if (x->value) avs.add(x->value);
+  for (CreationSet *cs : fa->css) if (cs)
+    for (AVar *iv : cs->vars) if (iv) avs.add(iv);
+  for (AVar *av : avs) if (av->id == want) {
+    fprintf(stderr, "AVARTRACE %s #%d var=%d out={", where, av->id, av->var ? av->var->id : -1);
+    Vec<cchar *> nms;
+    if (av->out) for (CreationSet *c : *av->out) if (c) nms.add(c->sym && c->sym->name ? c->sym->name : "?");
+    if (nms.n > 1) qsort(nms.v, nms.n, sizeof(nms[0]), [](const void *a, const void *b) {
+      return strcmp(*(cchar *const *)a, *(cchar *const *)b);
+    });
+    for (cchar *nm : nms) fprintf(stderr, "%s,", nm);
+    fprintf(stderr, "}\n");
+    return;
+  }
+  fprintf(stderr, "AVARTRACE %s #%d NOT-FOUND\n", where, want);
+}
+
+static void dbg_clone_stage(cchar *stage) {
+  static int on = -1;
+  if (on < 0) on = getenv("IFA_DBG_CLONE") ? 1 : 0;
+  if (!on) return;
+  Vec<Sym *> seen;
+  unsigned long h = 1469598103934665603UL;
+#define CMIX(x) (h = (h ^ (unsigned long)(x)) * 1099511628211UL)
+  auto ordinal = [&](Sym *t) {
+    for (int i = 0; i < seen.n; i++) if (seen[i] == t) return i;
+    seen.add(t);
+    return seen.n - 1;
+  };
+  Vec<CreationSet *> css;
+  for (CreationSet *cs : fa->css) if (cs) css.add(cs);
+  if (css.n > 1) qsort_by_id(css);
+  for (CreationSet *cs : css) {
+    CMIX(cs->id);
+    CMIX(ordinal(cs->type));
+    CMIX(cs->sym ? cs->sym->id : 0);
+    for (AVar *iv : cs->vars) if (iv) CMIX(ordinal(iv->type));
+    CMIX(0x9e3779b9UL);
+  }
+  Vec<Fun *> fs;
+  for (Fun *f : fa->funs) if (f) fs.add(f);
+  if (fs.n > 1) qsort_by_id(fs);
+  for (Fun *f : fs) {
+    CMIX(f->id);
+    for (Var *v : f->fa_all_Vars) if (v) { CMIX(v->id); CMIX(ordinal(v->type)); }
+    CMIX(0x9e3779b9UL);
+  }
+#undef CMIX
+  fprintf(stderr, "CLONESTAGE %s ncss=%d ntypes=%d h=%lx\n", stage, css.n, seen.n, h);
+}
+
 int clone(FA *afa) {
+  dbg_trace_avar("clone-entry");
+  { extern void dbg_trace_fa_state(cchar *); dbg_trace_fa_state("clone-entry"); }
   initialize();
+  dbg_clone_stage("00-initialize");
+  dbg_trace_avar("00-initialize");
+  { extern void dbg_trace_fa_state(cchar *); dbg_trace_fa_state("00-initialize"); }
   determine_layouts();
+  dbg_clone_stage("10-layouts");
+  dbg_trace_avar("10-layouts");
   determine_clones();
+  dbg_clone_stage("20-clones");
+  dbg_trace_avar("20-clones");
+  // ifa/issues/123 option 2: align member layout for the hierarchies
+  // MEASURED to need it, AFTER clone equivalence is decided (so padding
+  // cannot change which CSs are equivalent -- determine_basic_clones
+  // keys on vars.n) and BEFORE compute_member_types, which builds each
+  // struct from cs->vars positionally. Off by default.
+  if (prefix_layout_enabled() || getenv("IFA_DBG_PREFIX") || 1 /* elision needs the groups */) {
+    collect_prefix_groups(ifa_prefix_groups);
+    if (prefix_layout_enabled()) apply_prefix_layout(ifa_prefix_groups);
+  }
   if (build_concrete_types() < 0) return -1;
+  sum_audit_check("30-concrete-types");
+  dbg_clone_stage("30-concrete-types");
+  dbg_trace_avar("30-concrete-types");
   if (clone_functions() < 0) return -1;
+  sum_audit_check("40-clone-functions");
+  dbg_clone_stage("40-clone-functions");
+  dbg_trace_avar("40-clone-functions");
   return 0;
 }

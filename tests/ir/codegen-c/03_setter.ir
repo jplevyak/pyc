@@ -1,0 +1,28 @@
+;; 03_setter.ir — the P_prim_setter result. A setter's lvalue receives
+;; the stored value (issue 011's Option A: `flow_vars(val, result)`),
+;; so `observe` sees the int32 42.
+;;
+;; The receiver write itself is dead: nothing reads %px, and DCE keeps a
+;; field store only when the field is read. 04_getter is the store that
+;; survives.
+
+(type %Point :kind RECORD :has (%px))
+(sym %px :in %Point)
+
+(sym %k :is-constant :immediate (int32 42))
+
+(sym %p :is-local)
+(sym %s :is-local)
+(sym %r :is-local)
+(sym %o :is-local)
+(sym %tcont)
+(fun %top
+  :rets (%r)
+  :cont %tcont
+  :body
+    (send @primitive @new %Point => %p)
+    (send @operator %p @setter #px %k => %s)
+    (move %s %r)
+    (send @primitive #observe %r => %o))
+
+(entry %top)

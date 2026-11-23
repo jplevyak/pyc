@@ -1,3 +1,8 @@
+#include <string>
+#include <algorithm>
+#include <cmath>
+#include <unordered_map>
+#include <vector>
 #include "ifadefs.h"
 
 #include "pattern.h"
@@ -29,7 +34,11 @@ class PMatch : public Match {
   Map<MPosition *, MPosition *> actual_to_formal_position;
   Map<MPosition *, AVar *> actuals;
   Map<MPosition *, Sym *> formal_dispatch_types;
-  Map<MPosition *, AType *> actual_filters;  // actual -> type, point-wise and
+  // actual -> the CreationSets this candidate accepts there, point-wise and
+  // including named arguments. A plain set, not an AType: it is a matching
+  // temporary, never canonicalized, and an AType (sorted copy, four memo
+  // maps) is ~7x the allocation; this was the largest allocator in dispatch.
+  Map<MPosition *, VecCreationSet *> actual_filters;  // actual -> type, point-wise and
                                              // includes named arguments
   Map<MPosition *, MPosition *> actual_named_to_positional;
   Map<MPosition *, MPosition *> formal_to_actual_position;
@@ -38,13 +47,53 @@ class PMatch : public Match {
   Map<Sym *, Sym *> generic_substitutions;
   Map<MPosition *, Sym *> coercion_substitutions;   // formal position -> coercion symbol
   Map<MPosition *, Sym *> promotion_substitutions;  // formal position -> coercion symbol
+  // formal -> the CreationSets the matched combinations put there. The
+  // matching-time form of Match::formal_filters, as plain sets: cache_copy
+  // canonicalizes them into the Match it returns. An AType per position here
+  // was garbage the moment cache_copy replaced it.
+  Map<MPosition *, VecCreationSet *> formal_sets;
 
   Match *cache_copy();
 
   PMatch(Fun *afun) : Match(afun) {}
+  void reset(Fun *afun) {
+    fun = afun;
+    is_partial = 0;
+    formal_filters.clear();
+    visibility_points.clear();
+    actual_to_formal_position.clear();
+    actuals.clear();
+    formal_dispatch_types.clear();
+    actual_filters.clear();
+    actual_named_to_positional.clear();
+    formal_to_actual_position.clear();
+    order_substitutions.clear();
+    default_args.clear();
+    generic_substitutions.clear();
+    coercion_substitutions.clear();
+    promotion_substitutions.clear();
+    formal_sets.clear();
+  }
 };
 
+// PMatches are matching temporaries: one per candidate per match, ~650
+// bytes of maps, and nothing keeps one after the match (cache_copy copies
+// what the result needs; the wrapper caches copy their keys; the wrapper
+// callbacks only read). A Matcher returns its PMatches here when it is
+// destroyed, and new_PMatch reuses them, instead of leaving them for the
+// collector.
+static Vec<PMatch *> pmatch_pool;
+static PMatch *new_PMatch(Fun *f) {
+  if (pmatch_pool.n) {
+    PMatch *m = pmatch_pool.pop();
+    m->reset(f);
+    return m;
+  }
+  return new PMatch(f);
+}
+
 typedef Map<Fun *, PMatch *> PMatchMap;
+typedef MapElem<MPosition *, VecCreationSet *> MapElemMPositionVecCS;
 typedef MapElem<Fun *, PMatch *> PMatchElem;
 
 class MatchCacheEntry : public Vec<Match *> {
@@ -53,12 +102,62 @@ class MatchCacheEntry : public Vec<Match *> {
   Partial_kind partial;
   PNode *visibility_point;
   MapMPositionAType all_args;
+  // Issue 033 S4-E: the top-level args' `->out` AType pointers at
+  // record time — a cheap necessary condition checked by pointer
+  // compare before the full (recursive, nested-CS-var) all_args
+  // validation. all_args stores exactly these ATypes at the
+  // top-level positions, so a top_out mismatch implies the full
+  // compare would fail; a top_out MATCH is not sufficient (a nested
+  // CS var's type can change under an unchanged top-level AType),
+  // which is why the full validation stays.
+  Vec<AType *> top_out;
+  // ifa/185: dispatch_arity_epoch when built, or -1 if no candidate had an
+  // arity-constrained formal (then a lost static arity cannot change it).
+  int arity_epoch = -1;
 
   MatchCacheEntry(int ais_closure, Partial_kind apartial, PNode *avp)
       : is_closure(ais_closure), partial(apartial), visibility_point(avp) {}
 };
 
-class MatchCache : public Vec<MatchCacheEntry *> {};
+class StandingDispatch;  // ifa/207 step 2
+// ifa/207: what the last dispatch of one argument tuple at a send saw and
+// returned; see dispatch_unchanged.
+class DispatchMemo : public gc {
+ public:
+  int generation, arity_epoch, is_closure, ret;
+  Partial_kind partial;
+  PNode *visibility_point;
+  Vec<AVar *> args;
+  Vec<AType *> outs;
+  // The witness of a partial-only result; see dispatch_unchanged.
+  CreationSet *witness = nullptr;
+  AType *witness_fun = nullptr;
+  int witness_arity_epoch = 0;
+};
+class MatchCache : public Vec<MatchCacheEntry *> {
+ public:
+  StandingDispatch *standing = nullptr;
+  // ifa/208: how often this send's standing state was built and how often a
+  // firing was answered from it. A send that is recorded and never used
+  // (othello3: 514 648 records, 22 102 uses) stops being recorded.
+  int standing_records = 0, standing_uses = 0;
+  // ifa/207: the entries again, by a hash of what match_cache_hit compares
+  // first (flags, visibility point, top-level argument types). A send
+  // holds one entry per type state it has dispatched on, and a member read
+  // (`obj.f`) dispatches once per receiver member, so othello3's sends
+  // averaged 2 921 entries a lookup, scanned linearly.
+  Map<void *, Vec<MatchCacheEntry *> *> index;
+  Map<void *, DispatchMemo *> memo;
+  void insert(MatchCacheEntry *e);
+};
+static inline uint64_t mc_mix(uint64_t h, uint64_t x) {
+  h ^= x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  return h * 1099511628211ULL;
+}
+static inline void *mc_key(uint64_t h) { return (void *)(uintptr_t)(h | 1); }
+// Set by a dispatch that read a type below the top level of an argument (a
+// pattern formal). Such a dispatch is not a function of the top-level types.
+static bool dispatch_read_nested = false;
 
 class Matcher {
  public:
@@ -70,45 +169,120 @@ class Matcher {
   Partial_kind partial;
   PMatchMap match_map;
   Vec<Fun *> function_values;  // functions passed in directly and varargs functions
+  Vec<cchar *> *top_names = nullptr;  // the top-level actuals' keyword names
   Map<MPosition *, int> mapped_positions;
   MapMPositionAType all_args;
+  bool uses_dispatch_arity = false;  // ifa/185: some candidate formal had an arity constraint
+  struct VerdictKeys *vk = nullptr;  // ifa/207 step 1: IFA_VERDICTKEY's per-dispatch state
 
   // C++'s manditory redundant declarations, tedious++
   int pattern_match_sym(Sym *, MPosition *, Vec<Fun *> *, Vec<Fun *> &, int);
   void pattern_match_sym_internal(Sym *, MPosition *, Vec<Fun *> &, Vec<Sym *> &);
+  Vec<Fun *> *visible_at(Sym *, MPosition *);
   void pattern_match_arg(Sym *, MPosition *, Vec<Fun *> &, Vec<Fun *> &, int);
   void build_positional_map(MPosition &, int, Vec<Fun *> **);
   void update_match_map(AVar *, CreationSet *, MPosition *, MPosition *, Vec<Fun *> &);
   void find_arg_matches(AVar *, MPosition &, MPosition *, MPosition *, Vec<Fun *> **, int, int);
   void find_all_matches(CreationSet *, Vec<AVar *> &, Vec<cchar *> &, Vec<Fun *> **, MPosition &, int);
   void find_single_match(CreationSet *, Vec<AVar *> &, Vec<Fun *> **, MPosition &, int);
-  void find_best_cs_match(Vec<CreationSet *> &, MPosition &p, Vec<Fun *> &, Vec<Fun *> &, int);
+  void find_best_cs_match(Vec<CreationSet *> &, MPosition &p, Vec<Fun *> &, Vec<Fun *> &, int,
+                          Vec<Vec<CreationSet *> *> &cls);
   void find_best_matches(Vec<AVar *> &, Vec<CreationSet *> &, Vec<Fun *> &, MPosition &, Vec<Fun *> &, int,
-                         int iarg = 0);
+                         Vec<Vec<CreationSet *> *> &cls, int iarg = 0);
   int covers_formals(Fun *, Vec<CreationSet *> &, MPosition &, int);
+  void prune_uncoverable(Vec<AVar *> &args, MPosition &app, Vec<Fun *> &matches);
   PMatch *build_PMatch(Fun *, PMatch *);
   void instantiation_wrappers_and_partial_application(Vec<Fun *> &);
   Fun *build(PMatch *m, Vec<Fun *> &matches);
   int subsumes(PMatch *x, PMatch *y, MPosition &app, Vec<CreationSet *> &csargs);
   void generic_arguments(Vec<CreationSet *> &, MPosition &, Vec<Fun *> &, int);
-  void set_filters(Vec<CreationSet *> &, MPosition &, Vec<Fun *> &);
+  void set_filters(Vec<CreationSet *> &, MPosition &, Vec<Fun *> &, Vec<Vec<CreationSet *> *> &cls);
   void reverify_filters(Vec<Fun *> &);
-  void cannonicalize_matches(Vec<Fun *> &, int, Partial_kind, Vec<Match *> &, PNode *);
+  void cannonicalize_matches(Vec<Fun *> &, int, Partial_kind, Vec<Match *> &, PNode *, Vec<AVar *> &args);
 
   Matcher(AVar *send, AVar *arg0, int is_closure, Partial_kind partial);
+  ~Matcher();
 };
 
 static void log_dispatch_cs_match(Matcher &matcher, Vec<CreationSet *> &csargs, MPosition &app,
                                   Vec<Fun *> &local_matches);
 static void log_dispatch_matches(Matcher &matcher, Vec<PMatch *> &matches);
 static void log_dispatch_funs(Matcher &matcher, Vec<Fun *> &funs);
+static void vk_leaf(Matcher &matcher, Vec<CreationSet *> &csargs, Vec<Fun *> &winners);
+static void vk_clear();
+static int vkcollapse_mode();
+static uint64_t vk_collapse_key(AVar *a, CreationSet *cs, uint64_t digest, uint64_t votes, Fun **funs, Sym **formals,
+                                int n);
+static inline uint64_t vk_mix(uint64_t h, uint64_t v);
 
 static ChainHash<MPosition *, MPositionHashFuns> cannonical_mposition;
+// ROADMAP 6.1: every `*args` Fun, collected in build_arg_positions.
+static Vec<Fun *> varargs_funs;
 static Map<Sym *, Map<MPosition *, Vec<Fun *> *> *> sym_match_cache;
+// Per function, its signature wrappers by call shape ("npositional|kw|kw").
+static Map<Fun *, Map<cchar *, Fun *> *> signature_cache;
+// issues/189: per function, its unpack wrappers by call shape and arity.
+static Map<Fun *, Map<cchar *, Fun *> *> unpack_cache;
+static Map<PNode *, cchar *> unpacking_refusals;
+cchar *unpacking_refusal_at(PNode *send_pnode) { return send_pnode ? unpacking_refusals.get(send_pnode) : nullptr; }
+static void refuse_unpacking(AVar *send, cchar *fmt, ...) {
+  if (!send || !send->var || !send->var->def) return;
+  char buf[512];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  unpacking_refusals.put(send->var->def, if1_cannonicalize_string(if1, buf));
+}
+static cchar *fun_display_name(Fun *f) { return f && f->sym && f->sym->name ? f->sym->name : "function"; }
+// issues/189: the 1-based top-level position of the call's `*t` actual
+// while it is being matched (0: none). Matching does not nest, and the
+// free functions below (coercion_uses, ...) see no Matcher, so it is
+// file state, set and cleared by pattern_match_full_.
+static int match_star_at = 0;
+
+// issues/189: the 1-based position of the call's `*t` actual, or 0. The
+// frontend marks both a `*t` and a `**d` actual Sym::is_rest; the tuple is
+// the unnamed one whose members are tuples.
+static int star_actual_at(Vec<AVar *> &args, Vec<cchar *> &names) {
+  for (int i = 0; i < args.n; i++) {
+    AVar *a = args[i];
+    if (!a || !a->var || !a->var->sym || !a->var->sym->is_rest) continue;
+    if (i < names.n && names[i]) continue;
+    if (!a->out) continue;
+    for (CreationSet *cs : a->out->sorted)
+      if (cs && sym_tuple->specializers.set_in(cs->sym->type)) return i + 1;
+  }
+  return 0;
+}
+
+// issues/189: is this actual position the call's `*t` tuple, or inside it?
+// Any candidate admits it: the tuple's elements are bound to the
+// candidate's formals by an unpack wrapper (Matcher::build), which
+// re-dispatches with them, so its type is checked there, element by
+// element, and not against the formal at its position here.
+static bool is_star_actual(MPosition *acpp) {
+  return match_star_at && acpp && acpp->pos.n && is_intPosition(acpp->pos[0]) &&
+         (int)Position2int(acpp->pos[0]) == match_star_at;
+}
+
+// Reset pattern.cc module-level state. Called by ifa_reset().
+void pattern_reset() {
+  cannonical_mposition.clear();
+  varargs_funs.clear();
+  sym_match_cache.clear();
+  signature_cache.clear();
+  unpack_cache.clear();
+  unpacking_refusals.clear();
+  vk_clear();
+  pattern_match_hits = 0;
+  pattern_match_complete = 0;
+  pattern_matches = 0;
+}
 
 Match *PMatch::cache_copy() {
   Match *m = new Match(fun);
-  m->formal_filters.copy(formal_filters);
+  form_Map(MapElemMPositionVecCS, x, formal_sets) m->formal_filters.put(x->key, make_AType(*x->value));
   m->visibility_points.copy(visibility_points);
   m->is_partial = is_partial;
   return m;
@@ -218,19 +392,7 @@ int Matcher::pattern_match_sym(Sym *type, MPosition *acp, Vec<Fun *> *local_matc
     return funs.n;
   }
   pattern_match_arg(type, acp, function_values, funs, 0);
-  Vec<Sym *> done;
-  Vec<Fun *> new_funs;
-  Map<MPosition *, Vec<Fun *> *> *pfm = sym_match_cache.get(type);
-  Vec<Fun *> *vfn = 0;
-  if (pfm) {
-    vfn = pfm->get(acp);
-    if (vfn) goto Ldone;
-  }
-  vfn = new Vec<Fun *>;
-  pattern_match_sym_internal(type, acp, *vfn, done);
-  if (!pfm) sym_match_cache.put(type, (pfm = new Map<MPosition *, Vec<Fun *> *>));
-  pfm->put(acp, vfn);
-Ldone:
+  Vec<Fun *> *vfn = visible_at(type, acp);
   if (local_matches) {
     if (local_matches->n > vfn->n) {
       for (Fun *f : *vfn) if (f) if (local_matches->set_in(f)) funs.set_add(f);
@@ -242,6 +404,28 @@ Ldone:
   return funs.n;
 }
 
+// The functions whose formal at `acp` is `type` or one of its dispatch types.
+Vec<Fun *> *Matcher::visible_at(Sym *type, MPosition *acp) {
+  Map<MPosition *, Vec<Fun *> *> *pfm = sym_match_cache.get(type);
+  Vec<Fun *> *vfn = 0;
+  if (pfm) {
+    vfn = pfm->get(acp);
+    if (vfn) return vfn;
+  }
+  Vec<Sym *> done;
+  vfn = new Vec<Fun *>;
+  pattern_match_sym_internal(type, acp, *vfn, done);
+  // ifa/208: a type created during flow analysis can be asked about before
+  // build_type_hierarchy has given it its dispatch types. That answer holds
+  // only the type's own functions, and caching it froze it: what a later
+  // dispatch saw then depended on whether an earlier one had asked. timsort's
+  // generated C differed by two temporaries on it. Not cached until built.
+  if (!type->dispatch_types_built) return vfn;
+  if (!pfm) sym_match_cache.put(type, (pfm = new Map<MPosition *, Vec<Fun *> *>));
+  pfm->put(acp, vfn);
+  return vfn;
+}
+
 Matcher::Matcher(AVar *asend, AVar *aarg0, int ais_closure, Partial_kind apartial) {
   send = asend;
   arg0 = aarg0;
@@ -251,16 +435,46 @@ Matcher::Matcher(AVar *asend, AVar *aarg0, int ais_closure, Partial_kind apartia
   ast = asend->var->def->code->ast;
 }
 
+Matcher::~Matcher() {
+  form_Map(PMatchElem, x, match_map) if (x->value) pmatch_pool.add(x->value);
+}
+
+// ifa/185: does `formal`'s arity constraint admit `cs`? A constraint N >= 0
+// admits only a CreationSet whose static arity is N. DISPATCH_ARITY_DYNAMIC
+// admits only one with no static arity: lost (no_static_arity, list
+// layout) or never recorded.
+int dispatch_arity_epoch = 0;
+
+static bool arity_admits(Sym *formal, CreationSet *cs) {
+  if (!formal || formal->dispatch_arity == -1) return true;
+  bool dynamic = cs->no_static_arity || cs->static_arity < 0;
+  if (formal->dispatch_arity == DISPATCH_ARITY_DYNAMIC) return dynamic;
+  return !dynamic && cs->static_arity == formal->dispatch_arity;
+}
+
 void Matcher::update_match_map(AVar *a, CreationSet *cs, MPosition *acp, MPosition *acpp, Vec<Fun *> &new_matches) {
   for (Fun *f : new_matches) if (f) {
     PMatch *m = match_map.get(f);
     if (!m) {
-      m = new PMatch(f);
+      m = new_PMatch(f);
       match_map.put(f, m);
     }
-    AType *t = m->actual_filters.get(acp);
+    // ifa/185: the arity constraint is applied to the POSITIONAL filter,
+    // which is the one find_best_cs_match, prune_uncoverable and both
+    // dispatch-equivalence collapsers read -- so a CS of the wrong arity
+    // is simply not handled by this candidate, exactly as a CS of the
+    // wrong class is not. A named actual reaches here twice; on its first
+    // (named) visit the positional map is not built yet, so it is checked
+    // on the second, when to_formal is correct.
+    Sym *formal = acp == acpp ? f->arg_syms.get(to_formal(acpp, m)) : nullptr;
+    if (formal && formal->dispatch_arity != -1) uses_dispatch_arity = true;
+    if (formal && !arity_admits(formal, cs)) {
+      m->actuals.put(acpp, a);
+      continue;
+    }
+    VecCreationSet *t = m->actual_filters.get(acp);
     if (!t) {
-      t = new AType;
+      t = new VecCreationSet;
       m->actual_filters.put(acp, t);
       if (acp != acpp) m->actual_named_to_positional.put(acp, acpp);
     }
@@ -282,6 +496,7 @@ int positional_to_named(PNode *pn, CreationSet *cs, Vec<cchar *> &names, MPositi
 // This is an approximation.  It should really take into account
 // the specific CreationSet which contributed at each MPosition
 static void add_all_args(MapMPositionAType &m, MPosition *cp, AType *t) {
+  if (cp->pos.n != 1) dispatch_read_nested = true;
   AType *tt = m.get(cp);
   if (!tt)
     m.put(cp, t);
@@ -289,12 +504,114 @@ static void add_all_args(MapMPositionAType &m, MPosition *cp, AType *t) {
     m.put(cp, type_union(tt, t));
 }
 
+// ifa/208 item 2: do not walk the members. A candidate admits a member only
+// if the member's Sym is a specializer of the candidate's formal type, and a
+// Sym knows its CreationSets (`creators`). So when the candidates' formal
+// types have few specializers, the members any candidate could admit are
+// found from the candidates, by probing the argument's type, and the walk
+// over the argument is skipped. othello3's member loop dispatches one method
+// against a 950-class receiver union 235 640 times, and about ten members
+// are admitted each time.
+//
+// It finds a SUPERSET of what is admitted. A member with at most one
+// candidate is then confirmed by one probe of its visible-function set; one
+// with several goes to pattern_match_sym as before. The work is bounded by
+// INVERT_BUDGET probes per member, after which the members are walked: a
+// candidate with an untyped formal has every Sym as a specializer.
+// IFA_ARGINVERT=0 turns it off; =2 walks every member as well and compares.
+static int arginvert_mode() {
+  static int m = -1;
+  if (m < 0) { cchar *v = getenv("IFA_ARGINVERT"); m = v ? atoi(v) : 1; }
+  return m;
+}
+static long arginvert_calls = 0, arginvert_used = 0, arginvert_checked = 0, arginvert_mismatch = 0;
+static void arginvert_report() {
+  fprintf(stderr, "ARGINVERT calls=%ld inverted=%ld members_checked=%ld mismatches=%ld\n", arginvert_calls,
+          arginvert_used, arginvert_checked, arginvert_mismatch);
+}
+
 void Matcher::find_arg_matches(AVar *a, MPosition &ap, MPosition *acp, MPosition *acpp, Vec<Fun *> **partial_matches,
                                int recurse, int out_of_position) {
   a->arg_of_send.add(send);
   Vec<Fun *> funs;
   add_all_args(all_args, acpp, a->out);
-  for (CreationSet *cs : a->out->sorted) {
+  if (is_star_actual(acpp) && *partial_matches) {
+    // issues/189: every candidate admits every member of the `*t` tuple,
+    // and nothing recurses into it. No arity constraint either: the
+    // tuple is not the formal's value.
+    for (CreationSet *cs : a->out->sorted) if (cs) {
+      for (Fun *f : **partial_matches) if (f) {
+        PMatch *m = match_map.get(f);
+        if (!m) match_map.put(f, (m = new_PMatch(f)));
+        VecCreationSet *t = m->actual_filters.get(acp);
+        if (!t) {
+          m->actual_filters.put(acp, (t = new VecCreationSet));
+          if (acp != acpp) m->actual_named_to_positional.put(acp, acpp);
+        }
+        t->set_add(cs);
+        m->actuals.put(acpp, a);
+      }
+    }
+    return;
+  }
+  enum { INVERT_MIN_WIDTH = 16, INVERT_BUDGET = 4 };
+  static Fun *const SEVERAL = (Fun *)(uintptr_t)1;
+  Vec<CreationSet *> hit_set, hits;
+  Map<CreationSet *, Fun *> one;  // a hit member's only candidate, or SEVERAL
+  bool inverted = false;
+  const int mode = arginvert_mode();
+  if (mode && !out_of_position && *partial_matches && !a->var->sym->aspect && a->out->sorted.n >= INVERT_MIN_WIDTH) {
+    long budget = (long)INVERT_BUDGET * a->out->sorted.n;
+    inverted = true;
+    int from_candidates = 1;
+    for (Vec<Fun *> *fs : {*partial_matches, &function_values}) {
+      for (Fun *f : *fs) if (f && inverted) {
+        Sym *fa = f->arg_syms.get(acp);
+        if (!fa) {
+          // A candidate with no formal here is never admitted; a function
+          // value with none is admitted for every member if it is varargs.
+          if (!from_candidates && f->is_varargs) inverted = false;
+          continue;
+        }
+        for (Sym *s : dispatch_type(fa)->specializers) if (s && inverted) {
+          if ((budget -= 1 + s->creators.n) < 0) { inverted = false; break; }
+          auto probe = [&](CreationSet *c) {
+            if (!c || !a->out->set_in(c)) return;
+            hit_set.set_add(c);
+            if (from_candidates) {
+              Fun *o = one.get(c);
+              one.put(c, o && o != f ? SEVERAL : f);
+            }
+          };
+          for (CreationSet *c : s->creators) probe(c);
+          // A Sym's abstract CreationSet (make_abstract_type) is not among its creators.
+          if (s->abstract_type && s->abstract_type->sorted.n == 1) probe(s->abstract_type->sorted[0]);
+        }
+      }
+      from_candidates = 0;
+    }
+    if (mode == 2) {
+      static bool registered = false;
+      if (!registered) registered = true, atexit(arginvert_report);
+    }
+    arginvert_calls++;
+    if (inverted) {
+      arginvert_used++;
+      for (CreationSet *c : hit_set) if (c) hits.add(c);
+      std::sort(hits.v, hits.v + hits.n, [](CreationSet *x, CreationSet *y) { return x->id < y->id; });
+    }
+  }
+  // What the inversion gives for one member: exactly what pattern_match_sym
+  // gives, or nothing for a member that is not a hit.
+  auto inverted_match = [&](CreationSet *cs, Vec<Fun *> &out) {
+    Fun *o = one.get(cs);
+    if (o == SEVERAL) return pattern_match_sym(cs->sym, acp, *partial_matches, out, 0);
+    pattern_match_arg(cs->sym, acp, function_values, out, 0);
+    if (o && visible_at(cs->sym, acp)->set_in(o)) out.set_add(o);
+    return out.n;
+  };
+  const bool walk = !inverted || mode == 2;
+  for (CreationSet *cs : (walk ? a->out->sorted : hits)) {
     Sym *sym = cs->sym;
     if (a->var->sym->aspect) {
       if (!a->var->sym->aspect->specializers.set_in(cs->sym) &&
@@ -303,7 +620,22 @@ void Matcher::find_arg_matches(AVar *a, MPosition &ap, MPosition *acp, MPosition
       sym = a->var->sym->aspect;
     }
     Vec<Fun *> new_funs;
-    if (!pattern_match_sym(sym, acp, *partial_matches, new_funs, out_of_position)) continue;
+    if (inverted && !walk) {
+      if (!inverted_match(cs, new_funs)) continue;
+    } else {
+      if (inverted) {  // check mode
+        Vec<Fun *> fast, general;
+        if (hit_set.set_in(cs)) inverted_match(cs, fast);
+        pattern_match_sym(sym, acp, *partial_matches, general, 0);
+        bool same = fast.set_count() == general.set_count();
+        for (Fun *f : general) if (f && !fast.set_in(f)) same = false;
+        arginvert_checked++;
+        if (!same && ++arginvert_mismatch <= 10)
+          fprintf(stderr, "ARGINVERT mismatch: member %s id %d (cs %d): inverted %d, walked %d\n",
+                  sym->name ? sym->name : "?", sym->id, cs->id, fast.set_count(), general.set_count());
+      }
+      if (!pattern_match_sym(sym, acp, *partial_matches, new_funs, out_of_position)) continue;
+    }
     update_match_map(a, cs, acp, acpp, new_funs);
     if (recurse && cs->vars.n) {  // for recursive ap == app
       Vec<Fun *> rec_funs, tfuns, *rec_funs_p = &rec_funs;
@@ -366,6 +698,10 @@ void Matcher::build_positional_map(MPosition &app, int nactuals, Vec<Fun *> **fu
           MPosition *fcnp = cannonicalize_mposition(fnp);
           MPosition *acpp = m->actual_named_to_positional.get(acnp);
           MPosition *fcpp = f->named_to_positional.get(fcnp);
+          // A keyword no formal has, in a call of a `**kw` function: it
+          // takes a place among the positionals, and the signature wrapper
+          // binds it.
+          if (!fcpp && f->kw_pos) continue;
           acpps_for_acnps.set_add(acpp);
           fcpps_for_fcnps.set_add(fcpp);
           m->actual_to_formal_position.put(acpp, fcpp);
@@ -408,6 +744,12 @@ void Matcher::find_all_matches(CreationSet *cs, Vec<AVar *> &args, Vec<cchar *> 
   app.push(1);
   for (AVar *av : args) {
     MPosition anp;
+    if (getenv("PYC_DBG_BADKW")) {
+      int i = Position2int(app.last()) - 1;
+      if (i >= 0 && i < names.n && names[i])
+        fprintf(stderr, "[kwseen] named actual '%s' at pos %d (cs=%s)\n", names[i], i + 1,
+                cs && cs->sym && cs->sym->name ? cs->sym->name : "?");
+    }
     if (positional_to_named(send->var->def, cs, names, app, &anp)) {
       MPosition *acpp = cannonicalize_mposition(app);
       if (acpp) {
@@ -438,9 +780,20 @@ void Matcher::find_all_matches(CreationSet *cs, Vec<AVar *> &args, Vec<cchar *> 
 }
 
 static int subsumes_arg(PMatch *x, PMatch *y, MPosition *acpp, CreationSet *cs, int *identical) {
+  // issues/189: the `*t` tuple is not any candidate's formal value, so it
+  // says nothing about which is more specific (and has no dispatch type).
+  if (is_star_actual(acpp)) return 0;
   MPosition *xp = to_formal(acpp, x), *yp = to_formal(acpp, y);
-  Sym *xtype = dispatch_type(x->fun->arg_syms.get(xp));
-  Sym *ytype = dispatch_type(y->fun->arg_syms.get(yp));
+  // A surplus actual of a varargs candidate has no formal, so it gives no
+  // preference: two overrides that both take `*args` are told apart by the
+  // formals they do have (the receiver).
+  Sym *xformal = x->fun->arg_syms.get(xp), *yformal = y->fun->arg_syms.get(yp);
+  if (!xformal || !yformal) {
+    if (xformal || yformal) *identical = 0;
+    return 0;
+  }
+  Sym *xtype = dispatch_type(xformal);
+  Sym *ytype = dispatch_type(yformal);
   Sym *atype = cs->sym;
   if (xtype != ytype) *identical = 0;
 
@@ -476,6 +829,30 @@ static int subsumes_arg(PMatch *x, PMatch *y, MPosition *acpp, CreationSet *cs, 
       if (!ytype->specializers.set_in(xtype)) return pri;
     } else if (ytype->specializers.set_in(xtype))
       return -pri;
+    // ifa/130 A1: neither specializes the other -- two bases of the
+    // argument's class, `class B(C, D)` reaching both `C.f` and `D.f`. That
+    // is what the class's C3 linearization (`dispatch_types`, the method
+    // resolution order) orders: the one earlier in the ARGUMENT's MRO is
+    // the more specific, as Python resolves `B().f` to `C.f`. It was
+    // reported as an ambiguous call.
+    else {
+      Sym *k = cs->sym;
+      int xi = k ? k->dispatch_types.index(xtype) : -1, yi = k ? k->dispatch_types.index(ytype) : -1;
+      if (xi >= 0 && yi >= 0 && xi != yi) return xi < yi ? -pri : pri;
+    }
+  }
+  // ifa/185: arity. A formal constrained to the CS's arity is more
+  // specific than one that is not, as a subclass is than its base: both
+  // admit the CS (arity_admits), and the constrained one must win.
+  pri = pri / 2;
+  {
+    Sym *xf = x->fun->arg_syms.get(xp), *yf = y->fun->arg_syms.get(yp);
+    int xa = xf ? xf->dispatch_arity : -1, ya = yf ? yf->dispatch_arity : -1;
+    if (xa != ya) {
+      *identical = 0;
+      if (xa != -1 && ya == -1) return -pri;
+      if (xa == -1 && ya != -1) return pri;
+    }
   }
   // coercion
   pri = pri / 2;
@@ -543,18 +920,26 @@ Lreturn:
   return result;
 }
 
-void Matcher::set_filters(Vec<CreationSet *> &csargs, MPosition &app, Vec<Fun *> &matches) {
+void Matcher::set_filters(Vec<CreationSet *> &csargs, MPosition &app, Vec<Fun *> &matches,
+                          Vec<Vec<CreationSet *> *> &cls) {
   for (Fun *f : matches) {
     PMatch *m = match_map.get(f);
     app.push(1);
     for (int i = 0; i < csargs.n; i++) {
       MPosition *fcpp = cannonicalize_to_formal(app, m);
-      AType *t = m->formal_filters.get(fcpp);
+      VecCreationSet *t = m->formal_sets.get(fcpp);
       if (!t) {
-        t = new AType;
-        m->formal_filters.put(fcpp, t);
+        t = new VecCreationSet;
+        m->formal_sets.put(fcpp, t);
       }
-      t->set_add(csargs[i]);
+      // Issue 037: csargs[i] may be the representative of a
+      // dispatch-equivalence class (find_best_matches collapses
+      // CSs the candidate cannot distinguish); the filter must
+      // admit every member, exactly as full enumeration would.
+      if (i < cls.n && cls[i])
+        for (CreationSet *ccs : *cls[i]) t->set_add(ccs);
+      else
+        t->set_add(csargs[i]);
       app.inc();
     }
     app.pop();
@@ -564,7 +949,7 @@ void Matcher::set_filters(Vec<CreationSet *> &csargs, MPosition &app, Vec<Fun *>
 PMatch *Matcher::build_PMatch(Fun *f, PMatch *m) {
   PMatch *mm = match_map.get(f);
   if (!mm) {
-    mm = new PMatch(f);
+    mm = new_PMatch(f);
     match_map.put(f, mm);
   }
   assert(m != mm);
@@ -572,11 +957,11 @@ PMatch *Matcher::build_PMatch(Fun *f, PMatch *m) {
   mm->actuals.copy(m->actuals);
   mm->formal_dispatch_types.copy(m->formal_dispatch_types);
   mm->actual_filters.clear();  // not needed
-  form_MPositionAType(x, m->formal_filters) {
-    if (AType *t = mm->formal_filters.get(x->key))
+  form_Map(MapElemMPositionVecCS, x, m->formal_sets) {
+    if (VecCreationSet *t = mm->formal_sets.get(x->key))
       t->set_union(*x->value);
     else
-      mm->formal_filters.put(x->key, x->value);
+      mm->formal_sets.put(x->key, x->value);
   }
   mm->actual_named_to_positional.clear();  // not needed
   mm->actual_to_formal_position.copy(m->actual_to_formal_position);
@@ -657,10 +1042,10 @@ static void fixup_maps(PMatch *m, Map<MPosition *, MPosition *> &formal_to_forma
   form_MPositionMPosition(x, f2a) {
     if (MPosition *y = formal_to_formal.get(x->key)) m->formal_to_actual_position.put(y, x->value);
   }
-  Map<MPosition *, AType *> formal_filters;
-  formal_filters.move(m->formal_filters);
-  form_MPositionAType(x, formal_filters) {
-    if (MPosition *y = formal_to_formal.get(x->key)) m->formal_filters.put(y, x->value);
+  Map<MPosition *, VecCreationSet *> formal_sets;
+  formal_sets.move(m->formal_sets);
+  form_Map(MapElemMPositionVecCS, x, formal_sets) {
+    if (MPosition *y = formal_to_formal.get(x->key)) m->formal_sets.put(y, x->value);
   }
 }
 
@@ -695,6 +1080,35 @@ static void fixup_maps_for_defaults(PMatch *m, Fun *oldf, Vec<MPosition *> &defa
   fixup_maps(m, formal_to_formal);
 }
 
+static bool is_rest_actual(AVar *a) { return a && a->var && a->var->sym && a->var->sym->is_rest; }
+
+// issues/189: the arity every member of a `*t` tuple agrees on, or -1 when
+// one is not a tuple of an arity known here (a list's `*` makes a tuple of
+// run-time length) or two disagree.
+static int star_tuple_arity(AVar *t) {
+  int arity = -1;
+  if (!t || !t->out || !t->out->sorted.n) return -1;
+  for (CreationSet *cs : t->out->sorted) if (cs) {
+    if (!sym_tuple->specializers.set_in(cs->sym->type) || cs->no_static_arity || cs->static_arity < 0) return -1;
+    if (arity >= 0 && arity != cs->static_arity) return -1;
+    arity = cs->static_arity;
+  }
+  return arity;
+}
+
+// The call's top-level actuals bind the wrapper's formals one for one.
+static void identity_positions(PMatch *m) {
+  m->actual_to_formal_position.clear();
+  m->formal_to_actual_position.clear();
+  form_MPositionAVar(x, m->actuals) {
+    MPosition *p = x->key;
+    if (!p || p->pos.n != 1 || !p->last_is_positional()) continue;
+    m->actual_to_formal_position.put(p, p);
+    m->formal_to_actual_position.put(p, p);
+  }
+  m->default_args.clear();
+}
+
 Fun *Matcher::build(PMatch *m, Vec<Fun *> &done_matches) {
   Fun *f = m->fun, *fnew;
   if (m->generic_substitutions.n) {
@@ -710,7 +1124,176 @@ Fun *Matcher::build(PMatch *m, Vec<Fun *> &done_matches) {
     m->generic_substitutions.clear();
     m = build_PMatch(f, m);
   }
+  // issues/189: `f(..., *t, ...)`. Route the call through a wrapper that
+  // takes the actuals as they are, indexes the tuple, and calls again with
+  // its elements in its place; that call binds them as positionals,
+  // defaults, `*args` and all, by the ordinary rules. The tuple's arity
+  // decides the wrapper, so it must be one arity, known here.
+  //
+  // Except a call already in f's own shape: one actual per formal, the
+  // tuple at `*args` and, if f has `**kw`, a marked dict there. That is
+  // `inner(x, *args, **kw)` forwarding, and it is what a signature
+  // wrapper's own call looks like, so it must not be wrapped again.
+  auto star_direct = [&]() {
+    if (!f->is_varargs || f->rest_pos != match_star_at) return false;
+    int nactuals = 0;
+    AVar *at_kw = nullptr;
+    form_MPositionAVar(x, m->actuals) {
+      MPosition *p = x->key;
+      if (!p || p->pos.n != 1 || !p->last_is_positional()) continue;
+      int i = (int)Position2int(p->pos[0]);
+      if (i > nactuals) nactuals = i;
+      if (i == f->kw_pos) at_kw = x->value;
+    }
+    if (top_names)
+      for (int i = 0; i < top_names->n; i++)
+        if (top_names->v[i]) return false;
+    return nactuals == f->sym->has.n && (!f->kw_pos || is_rest_actual(at_kw));
+  };
+  if (match_star_at && !star_direct()) {
+    MPosition sp;
+    sp.push(match_star_at);
+    AVar *star = m->actuals.get(cannonicalize_mposition(sp));
+    int arity = star_tuple_arity(star);
+    if (arity < 0) {
+      // Not while the tuple is still untyped: that is a pass, not a verdict.
+      if (star && star->out && star->out->sorted.n)
+        refuse_unpacking(send, "'*' unpacking into the named parameters of %s() needs a tuple of one length known "
+                         "at compile time; a list, or tuples of different lengths, are not supported (issues/189)",
+                         fun_display_name(f));
+      return 0;
+    }
+    int nactuals = 0;
+    form_MPositionAVar(x, m->actuals) {
+      MPosition *p = x->key;
+      if (p && p->pos.n == 1 && p->last_is_positional() && (int)Position2int(p->pos[0]) > nactuals)
+        nactuals = (int)Position2int(p->pos[0]);
+    }
+    // CPython's TypeError for too many, as the refusal. (Too few is the
+    // wrapper's own call's, at the callee.) The callee itself is position
+    // 1, so the positionals CPython counts are one fewer, self included.
+    if (!f->rest_pos) {
+      int star_formal = f->star_pos();
+      int nplain = star_formal ? star_formal - 1 : f->sym->has.n;
+      int given = match_star_at - 1 + arity;
+      if (given > nplain) {
+        refuse_unpacking(send, "%s() takes %d positional argument%s but %d %s given", fun_display_name(f), nplain - 1,
+                         nplain - 1 == 1 ? "" : "s", given - 1, given - 1 == 1 ? "was" : "were");
+        return 0;
+      }
+    }
+    Vec<cchar *> names;
+    std::string key = std::to_string(nactuals) + "*" + std::to_string(match_star_at) + "#" + std::to_string(arity);
+    for (int i = 0; i < nactuals; i++) {
+      cchar *name = top_names && i < top_names->n ? top_names->v[i] : nullptr;
+      names.add(name);
+      key += "|";
+      if (name) key += name;
+    }
+    cchar *k = if1_cannonicalize_string(if1, key.c_str());
+    Map<cchar *, Fun *> *c = unpack_cache.get(f);
+    if (!c) unpack_cache.put(f, (c = new Map<cchar *, Fun *>));
+    Fun *w = c->get(k);
+    if (!w) {
+      w = if1->callback->unpack_wrapper(f, match_star_at, arity, names);
+      if (w) c->put(k, w);
+    }
+    if (!w || done_matches.set_in(w)) return 0;
+    done_matches.set_add(w);
+    m = build_PMatch(w, m);
+    identity_positions(m);
+    f = w;
+  } else
+  // ROADMAP 6.1, issues/182: a function with `*args` or `**kw`. Route the
+  // call through a wrapper for its shape -- how many positionals, which
+  // keywords -- unless this IS the wrapper's own call: one positional
+  // actual per formal, the rest and keyword-dict ones marked Sym::is_rest.
+  if (f->is_varargs) {
+    int nactuals = 0, nmarked = 0;
+    AVar *at_rest = nullptr, *at_kw = nullptr;
+    form_MPositionAVar(x, m->actuals) {
+      MPosition *p = x->key;
+      if (!p || p->pos.n != 1 || !p->last_is_positional()) continue;
+      int i = (int)Position2int(p->pos[0]);
+      if (i > nactuals) nactuals = i;
+      if (i == f->rest_pos) at_rest = x->value;
+      if (i == f->kw_pos) at_kw = x->value;
+      if (is_rest_actual(x->value)) nmarked++;
+    }
+    int npositional = 0;
+    Vec<cchar *> keywords;
+    std::string key;
+    for (int i = 0; i < nactuals; i++) {
+      cchar *name = top_names && i < top_names->n ? top_names->v[i] : nullptr;
+      if (name) {
+        keywords.add(name);
+        key += "|";
+        key += name;
+      } else if (keywords.n)
+        return 0;  // a positional after a keyword
+      else
+        npositional++;
+    }
+    bool direct = !keywords.n && nactuals == f->sym->has.n && (!f->rest_pos || is_rest_actual(at_rest)) &&
+                  (!f->kw_pos || is_rest_actual(at_kw));
+    // An already-packed actual (the caller's `*t` or `**d`) is the whole
+    // rest tuple or keyword dict: it binds nothing else, in no other call.
+    if (direct ? nmarked != (f->rest_pos ? 1 : 0) + (f->kw_pos ? 1 : 0) : nmarked != 0) {
+      refuse_unpacking(send, "'**' unpacking into the named parameters of %s() is not supported; it binds only "
+                       "a '**kw' parameter (issues/189)", fun_display_name(f));
+      return 0;
+    }
+    if (!direct) {
+      key = std::to_string(npositional) + key;
+      cchar *k = if1_cannonicalize_string(if1, key.c_str());
+      Map<cchar *, Fun *> *c = signature_cache.get(f);
+      if (!c) signature_cache.put(f, (c = new Map<cchar *, Fun *>));
+      Fun *w = c->get(k);
+      if (!w) {
+        w = if1->callback->signature_wrapper(f, npositional, keywords);
+        if (w) c->put(k, w);
+      }
+      if (!w || done_matches.set_in(w)) return 0;
+      done_matches.set_add(w);
+      m = build_PMatch(w, m);
+      // The wrapper's formals are exactly the actuals, in order.
+      identity_positions(m);
+      f = w;
+    }
+  } else {
+    form_MPositionAVar(x, m->actuals)
+      if (x->key && x->key->pos.n == 1 && is_rest_actual(x->value)) {
+        refuse_unpacking(send, "'**' unpacking into the named parameters of %s() is not supported; it binds only "
+                         "a '**kw' parameter (issues/189)", fun_display_name(f));
+        return 0;
+      }
+  }
+  if (!f->is_varargs && f->kwonly_pos) {
+    // issues/182: a keyword-only formal takes no positional actual.
+    form_MPositionAVar(x, m->actuals) {
+      MPosition *acpp = x->key;
+      if (!acpp || acpp->pos.n != 1 || !acpp->last_is_positional()) continue;
+      int i = (int)Position2int(acpp->pos[0]) - 1;
+      if (top_names && i < top_names->n && top_names->v[i]) continue;
+      MPosition *fcpp = to_formal(acpp, m);
+      if (fcpp->pos.n == 1 && fcpp->last_is_positional() && (int)Position2int(fcpp->last()) >= f->kwonly_pos)
+        return 0;
+    }
+  }
   if (m->default_args.n) {
+    // issues/103: which actual positions ended up mapped to which
+    // formals, and which formals are being defaulted. Probe-only.
+    if (getenv("PYC_DBG_BADKW")) {
+      fprintf(stderr, "[kwmap] fun=%s defaults=%d |", f->sym && f->sym->name ? f->sym->name : "?",
+              m->default_args.n);
+      for (int i = 0; i < m->actual_to_formal_position.n; i++) {
+        MPosition *k = m->actual_to_formal_position[i].key, *v = m->actual_to_formal_position[i].value;
+        if (!k) continue;
+        fprintf(stderr, " a%d->f%d", k->last_is_positional() ? (int)Position2int(k->last()) : -1,
+                (v && v->last_is_positional()) ? (int)Position2int(v->last()) : -1);
+      }
+      fprintf(stderr, " nactuals=%d\n", m->actuals.n);
+    }
     qsort(m->default_args.v, m->default_args.n, sizeof(void *), compar_last_position);
     DefaultCache *c = f->default_cache;
     Fun *oldf = f;
@@ -793,14 +1376,24 @@ void Matcher::instantiation_wrappers_and_partial_application(Vec<Fun *> &matches
   complete.set_to_vec();
   new_matches.set_to_vec();
   if (complete.n > 1) {
-    type_violation(ATypeViolation_DISPATCH_AMBIGUITY, arg0, arg0->out, send, new Vec<Fun *>(complete));
+    type_violation(ATypeViolation_kind::DISPATCH_AMBIGUITY, arg0, arg0->out, send, new Vec<Fun *>(complete));
     is_error = 1;
   }
   matches.move(new_matches);
 }
 
 int Matcher::covers_formals(Fun *f, Vec<CreationSet *> &csargs, MPosition &p, int top_level) {
-  if (f->is_varargs) return 1;
+  // ROADMAP 6.1: a `*args` function (is_varargs) is covered like any other
+  // -- every fixed formal needs an actual -- except that its rest formal
+  // (the last positional) may be absent. Returning 1 outright here made the
+  // bound-method reference `c.show` (callee + self only) a COMPLETE call:
+  // show(self) was invoked on the spot and the later `c.show("b", 1, 2)`
+  // had no closure to apply. It also skipped the `x.y` -> closure rule
+  // below.
+  // issues/182: so is every formal from the first starred one on: a
+  // keyword-only formal and the `**kw` dict are bound by the signature
+  // wrapper, which is what refuses a call that leaves one unbound.
+  int star_pos = f->is_varargs ? f->star_pos() : 0;
   int result = 1;
   PMatch *m = match_map.get(f);
   Vec<MPosition *> formals;
@@ -815,6 +1408,11 @@ int Matcher::covers_formals(Fun *f, Vec<CreationSet *> &csargs, MPosition &p, in
     MPosition *pp = f->arg_positions[i];
     if (pp->prefix_to_last(p) && pp->last_is_positional()) {
       if (formals.set_in(pp)) continue;
+      if (star_pos && pp->pos.n == 1 && (int)Position2int(pp->last()) >= star_pos) continue;
+      // issues/189: a call with a `*t` may bind any positional formal from
+      // the tuple; the unpack wrapper's own call is what refuses one left
+      // unbound, and fills the defaults.
+      if (match_star_at && top_level && pp->pos.n == 1) continue;
       if (f->default_args.get(pp)) {
         m->default_args.add(pp);
         continue;
@@ -939,6 +1537,7 @@ static int generic_substitutions(PMatch **am, MPosition &app, Vec<CreationSet *>
     Sym *concrete_value = actual->var->sym->aspect ? actual->var->sym->aspect : cs->sym;
     Sym *formal = m->fun->arg_syms.get(fcpp);
     if (!formal && m->fun->is_varargs) goto Lnext;
+    if (is_star_actual(acpp)) goto Lnext;
     {
       Sym *generic_type = get_generic_type(formal);
       if (generic_type) {
@@ -966,7 +1565,7 @@ static void coercion_uses(PMatch **am, MPosition &app, Vec<CreationSet *> &args)
     Sym *concrete_type = a->var->sym->aspect ? a->var->sym->aspect : cs->sym;
     concrete_type = concrete_type->type;
     Sym *formal_type = m->formal_dispatch_types.get(fcpp);
-    if (formal_type == concrete_type || (!formal_type && m->fun->is_varargs)) goto LnextArg;
+    if (formal_type == concrete_type || (!formal_type && m->fun->is_varargs) || is_star_actual(acpp)) goto LnextArg;
     {
       Sym *coerced_type = if1->callback->coerce(concrete_type, formal_type);
       if (coerced_type && concrete_type != coerced_type) {
@@ -1019,7 +1618,7 @@ static void promotion_uses(PMatch **am, MPosition &app, Vec<CreationSet *> &args
     Sym *concrete_type = a->var->sym->aspect ? a->var->sym->aspect : cs->sym;
     concrete_type = concrete_type->type;
     Sym *formal_type = m->formal_dispatch_types.get(fcpp);
-    if (formal_type == concrete_type || (!formal_type && m->fun->is_varargs)) goto LnextArg;
+    if (formal_type == concrete_type || (!formal_type && m->fun->is_varargs) || is_star_actual(acpp)) goto LnextArg;
     {
       Sym *formal = m->fun->arg_syms.get(fcpp);
       Sym *promoted_type = if1->callback->promote(m->fun, formal, formal_type, concrete_type);
@@ -1037,14 +1636,17 @@ static void promotion_uses(PMatch **am, MPosition &app, Vec<CreationSet *> &args
 }
 
 // clear out values needed only while considering a particular csargs
-static void clear_matches(PMatchMap &match_map) {
-  form_Map(PMatchElem, x, match_map) {
-    x->value->order_substitutions.clear();
-    x->value->default_args.clear();
-    x->value->generic_substitutions.clear();
-    x->value->coercion_substitutions.clear();
-    x->value->promotion_substitutions.clear();
-  }
+static void clear_match(PMatch *m) {
+  m->order_substitutions.clear();
+  m->default_args.clear();
+  m->generic_substitutions.clear();
+  m->coercion_substitutions.clear();
+  m->promotion_substitutions.clear();
+}
+
+static void clear_matches(PMatchMap &match_map, Vec<Fun *> &funs) {
+  for (Fun *f : funs) if (f)
+    if (PMatch *m = match_map.get(f)) clear_match(m);
 }
 
 void Matcher::reverify_filters(Vec<Fun *> &matches) {
@@ -1054,24 +1656,31 @@ void Matcher::reverify_filters(Vec<Fun *> &matches) {
     PMatch *m = match_map.get(f);
     int ok = 1;
     for (MPosition *p : f->positional_arg_positions) {
-      AType *t = m->formal_filters.get(p);
+      VecCreationSet *t = m->formal_sets.get(p);
       if (t) {
         Sym *m_type = dispatch_type(m->fun->arg_syms.get(p));
         Sym *actual = m->actuals.get(to_actual(p, m))->var->sym;
-        Vec<CreationSet *> newt;
+        auto keeps = [&](CreationSet *cs) -> bool {
+          if (cs->sym == sym_nil_type && actual->aspect && sym_object->specializers.set_in(actual->aspect))
+            return m_type->specializers.set_in(actual->aspect);
+          if (m_type == cs->sym || m_type->specializers.set_in(cs->sym->type)) return true;
+          // promotions can add to the dispatch table but do not specialize
+          for (Sym *s : m_type->dispatch_types) if (s->specializers.set_in(cs->sym->type)) return true;
+          return false;
+        };
+        // Rebuild the set only when something is dropped. It almost never
+        // is, and the rebuild per leaf per position was a major allocator.
+        bool drops = false, any = false;
         for (CreationSet *cs : *t) if (cs) {
-          if (cs->sym == sym_nil_type && actual->aspect && sym_object->specializers.set_in(actual->aspect)) {
-            if (m_type->specializers.set_in(actual->aspect)) newt.set_add(cs);
-          } else {
-            if (m_type == cs->sym || m_type->specializers.set_in(cs->sym->type))
-              newt.set_add(cs);
-            else
-              // promotions can add to the dispatch table but do not specialize
-              for (Sym *s : m_type->dispatch_types) if (s->specializers.set_in(cs->sym->type)) newt.set_add(cs);
-          }
+          if (keeps(cs)) any = true;
+          else drops = true;
         }
-        if (!newt.n) ok = 0;
-        t->move(newt);
+        if (!any) ok = 0;
+        if (drops) {
+          Vec<CreationSet *> newt;
+          for (CreationSet *cs : *t) if (cs && keeps(cs)) newt.set_add(cs);
+          t->move(newt);
+        }
       }
     }
     if (ok) matches.add(f);
@@ -1079,7 +1688,7 @@ void Matcher::reverify_filters(Vec<Fun *> &matches) {
 }
 
 void Matcher::find_best_cs_match(Vec<CreationSet *> &csargs, MPosition &app, Vec<Fun *> &local_matches,
-                                 Vec<Fun *> &result, int top_level) {
+                                 Vec<Fun *> &result, int top_level, Vec<Vec<CreationSet *> *> &cls) {
   log_dispatch_cs_match(*this, csargs, app, local_matches);
   Vec<PMatch *> covered;
   // collect the matches which cover the argument CreationSets
@@ -1089,9 +1698,9 @@ void Matcher::find_best_cs_match(Vec<CreationSet *> &csargs, MPosition &app, Vec
     for (int i = 0; i < csargs.n; i++) {
       MPosition *acpp = cannonicalize_mposition(app);
       MPosition *fcpp = to_formal(acpp, m);
-      AType *t = m->actual_filters.get(acpp);
+      VecCreationSet *t = m->actual_filters.get(acpp);
       Sym *formal = m->fun->arg_syms.get(fcpp);
-      if (!formal && f->is_varargs) goto LnextCoverArg;
+      if ((!formal && f->is_varargs) || is_star_actual(acpp)) goto LnextCoverArg;
       // is each actual handled
       if (!t || !t->set_in(csargs[i])) {
         app.pop();
@@ -1127,7 +1736,13 @@ void Matcher::find_best_cs_match(Vec<CreationSet *> &csargs, MPosition &app, Vec
   covered.set_to_vec();
   log(LOG_DISPATCH, "%d- cover_formals: %d\n", send->var->sym->id, covered.n);
   log_dispatch_matches(*this, covered);
-  if (!covered.n) return;
+  if (!covered.n) {
+    if (top_level && vk) {
+      Vec<Fun *> none;
+      vk_leaf(*this, csargs, none);
+    }
+    return;
+  }
 
   Vec<PMatch *> applicable;
   // record generic substitutions and point-wise applications
@@ -1194,10 +1809,12 @@ void Matcher::find_best_cs_match(Vec<CreationSet *> &csargs, MPosition &app, Vec
     for (int i = 0; i < csargs.n; i++) {
       Sym *arg = similar[0]->arg_syms.get(cannonicalize_to_formal(app, match_map.get(similar.v[0])));
       if (!arg && similar[0]->is_varargs) goto LnextSimilarArg;
+      if (is_star_actual(cannonicalize_mposition(app))) goto LnextSimilarArg;
       if (arg->is_pattern) {
         Vec<CreationSet *> local_csargs;
         Vec<Fun *> local_result;
-        find_best_matches(csargs[i]->vars, local_csargs, similar, app, local_result, 0);
+        Vec<Vec<CreationSet *> *> local_cls;
+        find_best_matches(csargs[i]->vars, local_csargs, similar, app, local_result, 0, local_cls);
         similar.copy(local_result);
       }
     LnextSimilarArg:;
@@ -1206,49 +1823,386 @@ void Matcher::find_best_cs_match(Vec<CreationSet *> &csargs, MPosition &app, Vec
     app.pop();
     matches.append(similar);
   }
+  if (top_level && vk) vk_leaf(*this, csargs, matches);  // before wrappers replace the winners
   if (top_level) instantiation_wrappers_and_partial_application(matches);
-  set_filters(csargs, app, matches);
-  if (top_level) reverify_filters(matches);
+  set_filters(csargs, app, matches, cls);
+  // reverify_filters runs once per dispatch, in pattern_match, after every
+  // leaf: see there.
   log(LOG_DISPATCH, "%d- destructure_level: %d matches: %d\n", send->var->sym->id, app.pos.n, matches.n);
   qsort_by_id(matches);
   log_dispatch_funs(*this, matches);
   result.set_union(matches);
-  clear_matches(match_map);
+  // Only this leaf's candidates were touched (covers_formals sets
+  // default_args on the ones it tests, the *_uses steps substitutions on
+  // the covered ones), so clear those. Sweeping all of match_map made every
+  // leaf O(candidates): with one leaf per receiver class that is O(n^2) a
+  // dispatch, and othello3's 830-way `flip_table[i].go()` spent most of its
+  // pass there.
+  // `matches` too: instantiation_wrappers_and_partial_application may have
+  // replaced a candidate by a wrapper Fun with its own PMatch.
+  clear_matches(match_map, local_matches);
+  clear_matches(match_map, matches);
+}
+
+// Drop every candidate that some argument position can never cover: no
+// CreationSet in that actual passes find_best_cs_match's per-position test
+// (in the actual filter, exact-match, not nil for `this`). Such a candidate
+// is never in `covered` for ANY combination, so removing it before
+// find_best_matches cannot change the result -- but leaving it in can make
+// the enumeration exponential. find_arg_matches re-admits a candidate a
+// position rejected (its trailing set_union), and the ROADMAP 6.1 rule
+// offers EVERY varargs function as a function value, so on
+// shedskin_examples/doom `struct.pack(fmt, *args)` stayed a candidate for
+// `BSPNode(...)` although position 0 rejects it. A varargs candidate bails
+// the class collapse below to full enumeration: 13^6 combinations of six
+// 13-wide arguments, 337 of doom's 346 compile seconds.
+void Matcher::prune_uncoverable(Vec<AVar *> &args, MPosition &app, Vec<Fun *> &matches) {
+  Vec<Fun *> keep;
+  for (Fun *f : matches) if (f) {
+    PMatch *m = match_map.get(f);
+    bool coverable = true;
+    if (m) {
+      app.push(1);
+      for (int i = 0; i < args.n && coverable; i++, app.inc()) {
+        MPosition *acpp = cannonicalize_mposition(app);
+        Sym *formal = m->fun->arg_syms.get(to_formal(acpp, m));
+        if ((!formal && f->is_varargs) || is_star_actual(acpp)) continue;
+        if (formal && formal->is_pattern) continue;  // decided recursively, not by this test
+        VecCreationSet *t = m->actual_filters.get(acpp);
+        Sym *ft = formal && formal->is_exact_match ? dispatch_type(formal) : nullptr;
+        bool any = false;
+        if (t && formal)
+          for (CreationSet *cs : args[i]->out->sorted) {
+            if (!t->set_in(cs)) continue;
+            if (ft && cs->sym != ft && cs->sym->type != ft && cs->sym->type->meta_type != ft) continue;
+            if (formal->is_this && cs->sym == sym_nil_type) continue;
+            any = true;
+            break;
+          }
+        if (!any) coverable = false;
+      }
+      app.pop();
+    }
+    if (coverable) keep.add(f);
+  }
+  matches.move(keep);
 }
 
 void Matcher::find_best_matches(Vec<AVar *> &args, Vec<CreationSet *> &csargs, Vec<Fun *> &matches, MPosition &app,
-                                Vec<Fun *> &result, int top_level, int iarg) {
+                                Vec<Fun *> &result, int top_level, Vec<Vec<CreationSet *> *> &cls, int iarg) {
   if (iarg >= args.n)
-    find_best_cs_match(csargs, app, matches, result, top_level);
+    find_best_cs_match(csargs, app, matches, result, top_level, cls);
   else {
     csargs.fill(iarg + 1);
+    cls.fill(iarg + 1);
+    cls[iarg] = nullptr;
+    // Issue 037: this recursion enumerates the cartesian product of
+    // per-argument CreationSets — exponential in arity x union
+    // width. stereo's 13-argument numeric calls (each argument a
+    // {constant-CS, base-type-CS} union) spent 98%+ of every FA
+    // pass here, and pygasus/bh the same. For a SINGLE non-generic
+    // candidate, dispatch cannot distinguish CSs that agree on the
+    // three per-position tests find_best_cs_match applies
+    // (actual-filter membership, is_exact_match verdict, is_this
+    // verdict) — every downstream consumer (coercion/promotion/
+    // verify) works on cs->sym->type, which the collapsed members
+    // share via the filter test. So group this argument's CSs into
+    // those dispatch-equivalence classes and recurse once per
+    // class; set_filters expands the representative back to the
+    // full class, making the outcome identical to full enumeration.
+    //
+    // Issue 033 S5 M1: extends the same collapsing to MULTIPLE live
+    // candidates (pygasus's remaining pass-1 cost: 3-candidate
+    // `_exec`-shaped sends, product not sum across arity). Two CSs
+    // at this position are interchangeable for every remaining leaf
+    // computation iff, for EVERY live candidate, they get the same
+    // accept/exact/this verdict (find_best_cs_match's three
+    // per-position tests, reused verbatim below) AND share
+    // cs->sym->type (coercion_uses/promotion_uses/verify_args key on
+    // it; a differing type can produce a differing coercion decision
+    // even when accept/exact/this agree). When two live candidates'
+    // formal dispatch types DIFFER at this position, `subsumes_arg`
+    // additionally reads the raw `cs->sym` (not just ->type) for its
+    // priority checks, so the raw symbol must also match within a
+    // class in that case. Any candidate with a pattern/varargs/
+    // missing formal at this position, or any generic candidate,
+    // bails the WHOLE position out to full enumeration — same
+    // conservatism as the single-candidate guard above.
+    Fun *single = nullptr;
+    int nmat = 0;
+    for (Fun *f : matches) if (f) {
+      single = f;
+      if (++nmat > 1) break;
+    }
+    if (nmat == 1 && !single->is_generic && args[iarg]->out->sorted.n > 1) {
+      PMatch *m = match_map.get(single);
+      MPosition lp(app);
+      lp.push(1);
+      for (int k = 0; k < iarg; k++) lp.inc();
+      MPosition *acpp = cannonicalize_mposition(lp);
+      MPosition *fcpp = m ? to_formal(acpp, m) : nullptr;
+      Sym *formal = m ? m->fun->arg_syms.get(fcpp) : nullptr;
+      if (m && formal && !formal->is_pattern) {
+        VecCreationSet *t = m->actual_filters.get(acpp);
+        Sym *ft = formal->is_exact_match ? dispatch_type(formal) : nullptr;
+        // The single viable class: CSs that pass every per-position
+        // coverage test the leaf applies. Any combination containing
+        // a non-viable CS makes `covered` empty in
+        // find_best_cs_match, which returns BEFORE set_filters — a
+        // provably effect-free evaluation — so non-viable classes
+        // are not enumerated at all. (Enumerating them was the
+        // residual blowup on pygasus: with mixed types
+        // mid-convergence each position also carried a rejected
+        // class, and the 2^arity rejected combinations produced
+        // millions of cover_formals:0 leaves per pass.)
+        Vec<CreationSet *> *viable = nullptr;
+        for (CreationSet *cs : args[iarg]->out->sorted) {
+          bool ok = (t && t->set_in(cs)) &&
+                    (!ft || (cs->sym == ft || cs->sym->type == ft || cs->sym->type->meta_type == ft)) &&
+                    !(formal->is_this && cs->sym == sym_nil_type);
+          if (ok) {
+            if (!viable) viable = new Vec<CreationSet *>;
+            viable->add(cs);
+          }
+        }
+        if (viable) {
+          csargs[iarg] = viable->v[0];
+          cls[iarg] = viable->n > 1 ? viable : nullptr;
+          find_best_matches(args, csargs, matches, app, result, top_level, cls, iarg + 1);
+          cls[iarg] = nullptr;
+        }
+        // no viable CS at this position: no combination through
+        // here can match — prune the whole subtree.
+        return;
+      }
+    }
+    // The votes below are a 64-bit mask, one bit per candidate, so this
+    // collapse needs the REAL candidate count. `nmat` stops counting at 2
+    // (all the single-candidate test needs), which let it run with 800
+    // candidates on othello3: `1ull << ci` past 63 is undefined (x86 wraps
+    // the shift), so CreationSets with different candidate sets could share
+    // a class, and the per-CS candidate scan made each dispatch O(n^2).
+    // Above 64, the indexed enumeration below takes over.
+    int ncand = 0;
+    for (Fun *f : matches) if (f) ncand++;
+    if (nmat > 1 && args[iarg]->out->sorted.n > 1 && ncand <= 64) {
+      struct Cand {
+        PMatch *m;
+        Fun *f;
+        Sym *formal;
+        VecCreationSet *t;
+        Sym *ft;
+      };
+      Vec<Cand> cands;
+      bool bail = false;
+      bool dispatch_types_differ = false;
+      bool all_untyped = true;
+      Sym *first_fdt = nullptr;
+      MPosition lp(app);
+      lp.push(1);
+      for (int k = 0; k < iarg; k++) lp.inc();
+      MPosition *acpp = cannonicalize_mposition(lp);
+      for (Fun *f : matches) if (f) {
+        if (f->is_generic) { bail = true; break; }
+        PMatch *m = match_map.get(f);
+        MPosition *fcpp = m ? to_formal(acpp, m) : nullptr;
+        Sym *formal = fcpp ? f->arg_syms.get(fcpp) : nullptr;
+        if (!m || !formal || formal->is_pattern) { bail = true; break; }
+        Sym *fdt = dispatch_type(formal);
+        if (!first_fdt) first_fdt = fdt;
+        else if (fdt != first_fdt) dispatch_types_differ = true;
+        if (fdt != sym_any) all_untyped = false;
+        Cand c;
+        c.m = m;
+        c.f = f;
+        c.formal = formal;
+        c.t = m->actual_filters.get(acpp);
+        c.ft = formal->is_exact_match ? dispatch_type(formal) : nullptr;
+        cands.add(c);
+      }
+      if (!bail) {
+        struct MCClass {
+          uint64_t votes;
+          Sym *type;
+          Sym *raw;
+          uint64_t vkey;
+          Vec<CreationSet *> *members;
+        };
+        Vec<MCClass> classes;
+        // ifa/207: with the verdict key the class is (votes, key), where
+        // the key is computed from what the leaf reads of a member (see
+        // vk_collapse_key). The type and the raw Sym below are the older,
+        // coarser stand-ins for that: they keep apart members the leaf
+        // cannot tell apart, and where the candidates' formal types differ
+        // (`a == b`, with int's, str's and object's `__eq__` live) the raw
+        // Sym made every class its own leaf: othello3's 888 x 888 `__eq__`
+        // ran 701 406 leaves a dispatch, 1 to 4 s each.
+        bool use_vkey = vkcollapse_mode() != 0;
+        uint64_t digest = 29;
+        Fun *vfuns[64];
+        Sym *vformals[64];
+        if (use_vkey)
+          for (int ci = 0; ci < cands.n; ci++) digest = vk_mix(vk_mix(digest, cands[ci].f->id), cands[ci].formal->id);
+        std::unordered_map<uint64_t, int> class_of;
+        for (CreationSet *cs : args[iarg]->out->sorted) {
+          uint64_t votes = 0;
+          bool any_viable = false;
+          for (int ci = 0; ci < cands.n; ci++) {
+            Cand &c = cands[ci];
+            bool ok = (c.t && c.t->set_in(cs)) &&
+                      (!c.ft || (cs->sym == c.ft || cs->sym->type == c.ft || cs->sym->type->meta_type == c.ft)) &&
+                      !(c.formal->is_this && cs->sym == sym_nil_type);
+            if (ok) { votes |= (1ull << ci); any_viable = true; }
+          }
+          // Globally non-viable: no live candidate can cover this CS
+          // at this position, so no combination through it can
+          // match at all (find_best_cs_match's `covered` would be
+          // empty for every candidate) — prune it here rather than
+          // recursing into a provably effect-free subtree.
+          if (!any_viable) continue;
+          // The type is part of the key because the leaf's coercion,
+          // promotion and verify steps read cs->sym->type. When every live
+          // candidate's formal here is untyped (dispatch type sym_any),
+          // none of them can tell this CS's type from another's:
+          // coercion_uses and promotion_uses ask the callbacks about a
+          // coercion TO sym_any, and verify_arg accepts any type that
+          // sym_any's specializers contain. Then two CSs with the same
+          // votes are interchangeable for the leaf, and keying on the type
+          // only multiplies the enumeration: `a == b` over a 48-way union
+          // at both positions was 12 receiver classes x 12 argument types
+          // = 144 leaves for an 11-way single dispatch (plcfrs). A CS whose
+          // type verify_arg could reject keeps its type in the key, and so
+          // does nil, which verify_arg special-cases.
+          Sym *type = cs->sym->type;
+          if (all_untyped && cs->sym != sym_nil_type &&
+              (type == sym_any || sym_any->specializers.set_in(type)))
+            type = nullptr;
+          Sym *raw = dispatch_types_differ ? cs->sym : nullptr;
+          uint64_t vkey = 0;
+          int found = -1;
+          if (use_vkey) {
+            int nv = 0;
+            for (int ci = 0; ci < cands.n; ci++)
+              if (votes & (1ull << ci)) vfuns[nv] = cands[ci].f, vformals[nv++] = cands[ci].formal;
+            vkey = vk_collapse_key(args[iarg], cs, digest, votes, vfuns, vformals, nv);
+            type = raw = nullptr;
+            auto r = class_of.emplace(vk_mix(vkey, votes), classes.n);
+            if (!r.second) {
+              found = r.first->second;
+              if (classes[found].votes != votes || classes[found].vkey != vkey) found = -1;  // a hash collision
+            }
+          }
+          if (found < 0)
+            for (int ki = 0; ki < classes.n; ki++)
+              if (classes[ki].votes == votes && classes[ki].type == type && classes[ki].raw == raw &&
+                  classes[ki].vkey == vkey) { found = ki; break; }
+          if (found >= 0)
+            classes[found].members->add(cs);
+          else {
+            MCClass k;
+            k.votes = votes;
+            k.type = type;
+            k.raw = raw;
+            k.vkey = vkey;
+            k.members = new Vec<CreationSet *>;
+            k.members->add(cs);
+            classes.add(k);
+          }
+        }
+        for (int ki = 0; ki < classes.n; ki++) {
+          csargs[iarg] = classes[ki].members->v[0];
+          cls[iarg] = classes[ki].members->n > 1 ? classes[ki].members : nullptr;
+          find_best_matches(args, csargs, matches, app, result, top_level, cls, iarg + 1);
+          cls[iarg] = nullptr;
+        }
+        return;
+      }
+      // bail: any candidate has a pattern/varargs/missing formal, or
+      // is generic — fall through to full enumeration below.
+    }
+    // othello3 (shedskin_examples): full enumeration hands EVERY live
+    // candidate to every leaf, and find_best_cs_match then walks all of
+    // them to find the few whose actual filter holds this CS. A receiver
+    // that is a union of n classes, each with its own override, is n
+    // leaves of n candidates: O(n^2) per dispatch. The union grows one
+    // CreationSet at a time and each growth re-dispatches (a new AType
+    // misses the match cache), so the pass costs O(n^3) -- 830 Flip
+    // subclasses ran past the 120 s ifa/057 stall guard in pass 1. (Above
+    // 64 candidates the collapse just above does not run: its votes are a
+    // 64-bit mask.)
+    //
+    // So index the candidates by the CreationSets their filters hold at
+    // this position, once, and give each leaf only those that can cover
+    // its CS -- exactly the ones find_best_cs_match's coverage test keeps:
+    // the filter holds the CS, or the candidate is varargs with no formal
+    // here. Indices keep each leaf's candidates in `matches` order.
+    if (ncand > 8 && args[iarg]->out->sorted.n > 1) {
+      MPosition lp(app);
+      lp.push(1);
+      for (int k = 0; k < iarg; k++) lp.inc();
+      MPosition *acpp = cannonicalize_mposition(lp);
+      Map<CreationSet *, Vec<int> *> by_cs;
+      Vec<int> always;
+      for (int fi = 0; fi < matches.n; fi++) {
+        Fun *f = matches.v[fi];
+        if (!f) continue;
+        PMatch *m = match_map.get(f);
+        if (!m) continue;  // find_best_cs_match skips it too (no PMatch)
+        Sym *formal = f->arg_syms.get(to_formal(acpp, m));
+        if ((!formal && f->is_varargs) || is_star_actual(acpp)) {
+          always.add(fi);
+          continue;
+        }
+        VecCreationSet *t = m->actual_filters.get(acpp);
+        if (!t) continue;
+        for (CreationSet *fcs : *t) if (fcs) {
+          Vec<int> *v = by_cs.get(fcs);
+          if (!v) by_cs.put(fcs, (v = new Vec<int>));
+          v->add(fi);
+        }
+      }
+      for (CreationSet *cs : args[iarg]->out->sorted) {
+        Vec<int> *v = by_cs.get(cs);
+        Vec<Fun *> sub;
+        int a = 0, b = 0, na = always.n, nb = v ? v->n : 0;
+        while (a < na || b < nb) {
+          int x = (b >= nb || (a < na && always.v[a] < v->v[b])) ? always.v[a++] : v->v[b++];
+          sub.add(matches.v[x]);
+        }
+        if (!sub.n) continue;  // no candidate covers this CS: an effect-free subtree
+        csargs[iarg] = cs;
+        find_best_matches(args, csargs, sub, app, result, top_level, cls, iarg + 1);
+      }
+      return;
+    }
     for (CreationSet *cs : args[iarg]->out->sorted) {
       csargs[iarg] = cs;
-      find_best_matches(args, csargs, matches, app, result, top_level, iarg + 1);
+      find_best_matches(args, csargs, matches, app, result, top_level, cls, iarg + 1);
     }
   }
 }
 
 void Matcher::cannonicalize_matches(Vec<Fun *> &partial_matches, int is_closure, Partial_kind partial,
-                                    Vec<Match *> &matches, PNode *visibility_point) {
+                                    Vec<Match *> &matches, PNode *visibility_point, Vec<AVar *> &args) {
   partial_matches.set_to_vec();
   qsort_by_id(partial_matches);
   for (Fun *f : partial_matches) {
     PMatch *pm = match_map.get(f);
-    Match *m = pm->cache_copy();
+    Match *m = pm->cache_copy();  // canonicalizes the filters
     assert(m->fun == f);
-    for (int i = 0; i < m->formal_filters.n; i++)
-      if (m->formal_filters[i].key) m->formal_filters[i].value = make_AType(*m->formal_filters.v[i].value);
     m->visibility_points.set_add(visibility_point);
     matches.add(m);
   }
-  if (!is_error) {
+  extern bool incmatch_no_record;
+  if (!is_error && !incmatch_no_record) {
     MatchCache *mc = send->match_cache;
     if (!mc) mc = send->match_cache = new MatchCache;
     MatchCacheEntry *e = new MatchCacheEntry(is_closure, partial, visibility_point);
-    mc->add(e);
     e->all_args.copy(all_args);
+    for (AVar *a : args) e->top_out.add(a->out);
+    mc->insert(e);
     for (Match *m : matches) e->add(new Match(*m));
+    if (uses_dispatch_arity) e->arity_epoch = dispatch_arity_epoch;
   }
 }
 
@@ -1272,14 +2226,19 @@ static void find_visible_functions(Vec<AVar *> &args, PNode *visibility_point, V
     *visible_functions = new Vec<Fun *>;
     return;
   } else {
+    // NULL ast → IFAAST::visible_functions default behavior (return
+    // NULL, meaning "all funs are visible"). The test harness's .ir
+    // fixtures don't construct AST nodes; without this guard, FA
+    // crashes the moment dispatch is attempted from a typed SEND.
+    IFAAST *vp_ast = visibility_point->code ? visibility_point->code->ast : NULL;
     if (aarg0->out->n == 1) {
-      visible = visibility_point->code->ast->visible_functions(aarg0->out->v[0]->sym);
+      visible = vp_ast ? vp_ast->visible_functions(aarg0->out->v[0]->sym) : NULL;
     } else {
       for (CreationSet *cs : aarg0->out->sorted) {
         if (cs->sym->fun)
           function_values.set_add(cs->sym->fun);
         else {
-          Vec<Fun *> *v = visibility_point->code->ast->visible_functions(cs->sym);
+          Vec<Fun *> *v = vp_ast ? vp_ast->visible_functions(cs->sym) : NULL;
           if (v) {
             if (!*visible_functions) *visible_functions = new Vec<Fun *>;
             (*visible_functions)->set_union(*v);
@@ -1300,7 +2259,21 @@ static void find_visible_functions(Vec<AVar *> &args, PNode *visibility_point, V
       else
         (*visible_functions)->set_add(f);
     }
+    // ROADMAP 6.1: when EVERY function is visible (`*visible_functions`
+    // null), candidates come from the per-position dispatch tables, which
+    // have no entry past a function's last formal -- so a `*args` METHOD
+    // (dispatched by selector, not by function value) was never a candidate
+    // for a call with surplus arguments. Offer the variadic functions as
+    // function values too; pattern_match_arg still type-checks every
+    // position they do have, starting with the selector.
+    if (!*visible_functions)
+      for (Fun *f : varargs_funs) if (f) function_values.set_add(f);
   }
+}
+
+static Map<PNode *, UnexpectedKeyword *> unexpected_keywords;
+UnexpectedKeyword *unexpected_keyword_at(PNode *send_pnode) {
+  return send_pnode ? unexpected_keywords.get(send_pnode) : nullptr;
 }
 
 static int incomplete_call(Vec<AVar *> &args, AVar *send) {
@@ -1319,12 +2292,19 @@ static void get_all_args(AVar *a, MapMPositionAType &all_args, MapMPositionAVar 
   if (!ps.set_in(cp)) return;
   all_avars.put(cp, a);
   add_all_args(all_args, cp, a->out);
-  for (CreationSet *cs : a->out->sorted) {
-    for (int i = 0; i < cs->vars.n; i++) {
-      p.push(i + 1);
-      get_all_args(cs->vars[i], all_args, all_avars, ps, p);
-      p.pop();
-    }
+  // ifa/186: the child position depends only on the member index, not on
+  // the CreationSet, so ask once per index whether it is wanted. Walking
+  // every CS of a wide union and canonicalizing each member's position, to
+  // discard almost all of them, was most of a match-cache lookup. Per key,
+  // CreationSets are still visited in `sorted` order.
+  int nvars = 0;
+  for (CreationSet *cs : a->out->sorted) if (cs->vars.n > nvars) nvars = cs->vars.n;
+  for (int i = 0; i < nvars; i++) {
+    p.push(i + 1);
+    if (ps.set_in(cannonicalize_mposition(p)))
+      for (CreationSet *cs : a->out->sorted)
+        if (i < cs->vars.n) get_all_args(cs->vars[i], all_args, all_avars, ps, p);
+    p.pop();
   }
 }
 
@@ -1338,15 +2318,52 @@ static void get_all_args(Vec<AVar *> &args, MapMPositionAType &all_args, MapMPos
   }
 }
 
+static void *mc_entry_key(int is_closure, Partial_kind partial, PNode *visibility_point, AType **outs, int n) {
+  uint64_t h = mc_mix(mc_mix(mc_mix(1469598103934665603ULL, is_closure), partial), (uintptr_t)visibility_point);
+  for (int i = 0; i < n; i++) h = mc_mix(h, (uintptr_t)outs[i]);
+  return mc_key(h);
+}
+
+// Entries are inserted after top_out is filled.
+void MatchCache::insert(MatchCacheEntry *e) {
+  add(e);
+  void *k = mc_entry_key(e->is_closure, e->partial, e->visibility_point, e->top_out.v, e->top_out.n);
+  Vec<MatchCacheEntry *> *b = index.get(k);
+  if (!b) index.put(k, (b = new Vec<MatchCacheEntry *>));
+  b->add(e);
+}
+
 static int match_cache_hit(Vec<AVar *> &args, AVar *send, int is_closure, Partial_kind partial, PNode *visibility_point,
                            Vec<Match *> &matches) {
   MatchCache *m = send->match_cache;
   if (!m) return 0;
+  // Issue 033 S4-E: with the cache surviving across passes, a send
+  // accumulates one entry per distinct type-state, and this lookup is on
+  // the hot path (every send re-fires through the same monotone
+  // type-growth sequence every pass). ifa/207: so the entries are found by
+  // a hash of the top-level types, not by scanning them. The bucket is
+  // still compared field by field, since a hash can collide, and then
+  // validated on the nested positions: a nested CS var's type can change
+  // under an unchanged top-level AType. At most one entry can fully
+  // validate (entries are only added on a miss).
+  AType *outs[args.n ? args.n : 1];
+  for (int i = 0; i < args.n; i++) outs[i] = args.v[i]->out;
+  Vec<MatchCacheEntry *> *bucket = m->index.get(mc_entry_key(is_closure, partial, visibility_point, outs, args.n));
+  if (!bucket) return 0;
   Vec<MatchCacheEntry *> entries;
-  for (MatchCacheEntry *e : *m) {
+  for (MatchCacheEntry *e : *bucket) {
     if (e->is_closure != is_closure) continue;
     if (e->partial != partial) continue;
     if (e->visibility_point != visibility_point) continue;
+    if (e->top_out.n != args.n) continue;
+    if (e->arity_epoch >= 0 && e->arity_epoch != dispatch_arity_epoch) continue;
+    bool top_ok = true;
+    for (int i = 0; i < args.n; i++)
+      if (e->top_out.v[i] != outs[i]) {
+        top_ok = false;
+        break;
+      }
+    if (!top_ok) continue;
     entries.add(e);
   }
   if (!entries.n) return 0;
@@ -1369,6 +2386,877 @@ static int match_cache_hit(Vec<AVar *> &args, AVar *send, int is_closure, Partia
   return 0;
 }
 
+// ifa/207: a dispatch whose inputs are what they were at the last dispatch
+// of the same argument tuple, in the same flow run, decides nothing: the
+// matcher is a function of the argument types, and the edges it would make
+// exist. 74% of othello3's dispatches were these (157 s), most of them from
+// a member read, which dispatches once per receiver member whenever any one
+// member's type moves. Returns 1 and the remembered result in *ret.
+//
+// Not used when the last dispatch read a nested position (a pattern
+// formal), since the top-level types do not then determine it.
+//
+// Returns 2 for the WITNESS rule. A dispatch (function value, receiver)
+// whose matches are all partial makes no edges, so all it decides is whether
+// a match exists, and that is monotone in the receiver: the matcher's result
+// decomposes over combinations of argument members (207, IFA_INCMATCH), so a
+// combination that won keeps winning whatever joins the union. The memo
+// keeps one receiver member W from the match's filter. While the function
+// value is the same type and W is in the receiver, the answer is still "a
+// partial match". Whether a match is partial depends on the function alone,
+// so no later match of that function makes an edge either. This holds
+// across flow runs, since it reads types only. It is what a member read on
+// a wide receiver needs: othello3's `x.go()` has 894 receiver classes, each
+// with its own `go`, and asked the 894 questions again, each over all 894
+// members, every time the receiver gained one.
+static void *dispatch_memo_key(Vec<AVar *> &args) {
+  uint64_t h = 1469598103934665603ULL;
+  for (AVar *a : args) h = mc_mix(h, (uintptr_t)a);
+  return mc_key(h);
+}
+int dispatch_unchanged(Vec<AVar *> &args, AVar *send, int is_closure, Partial_kind partial, PNode *visibility_point,
+                       int *ret) {
+  dispatch_read_nested = false;  // the dispatch that follows a 0 sets it
+  MatchCache *mc = send->match_cache;
+  if (!mc) return 0;
+  DispatchMemo *d = mc->memo.get(dispatch_memo_key(args));
+  if (!d || d->is_closure != is_closure || d->partial != partial || d->visibility_point != visibility_point ||
+      d->args.n != args.n)
+    return 0;
+  for (int i = 0; i < args.n; i++)
+    if (d->args.v[i] != args.v[i]) return 0;
+  if (d->generation == standing_generation && d->arity_epoch == dispatch_arity_epoch) {
+    bool same = true;
+    for (int i = 0; same && i < args.n; i++) same = d->outs.v[i] == args.v[i]->out;
+    if (same) return *ret = d->ret, 1;
+  }
+  if (d->witness && d->witness_arity_epoch == dispatch_arity_epoch && args.n == 2 && args.v[0]->out == d->witness_fun &&
+      args.v[1]->out->in(d->witness))
+    return *ret = 1, 2;
+  return 0;
+}
+void dispatch_remember(Vec<AVar *> &args, AVar *send, int is_closure, Partial_kind partial, PNode *visibility_point,
+                       int ret, Vec<Match *> *matches) {
+  MatchCache *mc = send->match_cache;
+  if (!mc) mc = send->match_cache = new MatchCache;
+  void *k = dispatch_memo_key(args);
+  DispatchMemo *d = mc->memo.get(k);
+  if (dispatch_read_nested) {
+    if (d) d->generation = -1, d->witness = nullptr;
+    return;
+  }
+  if (!d) mc->memo.put(k, (d = new DispatchMemo));
+  d->generation = standing_generation;
+  d->arity_epoch = dispatch_arity_epoch;
+  d->is_closure = is_closure;
+  d->partial = partial;
+  d->visibility_point = visibility_point;
+  d->ret = ret;
+  d->args.copy(args);
+  d->outs.clear();
+  for (AVar *a : args) d->outs.add(a->out);
+  if (!matches) return;  // answered by the witness or the standing path: the witness stands
+  d->witness = nullptr;
+  if (ret != 1 || args.n != 2 || args.v[0]->out->sorted.n != 1) return;
+  for (Match *mm : *matches) if (!mm->is_partial) return;
+  for (Match *mm : *matches) form_MPositionAType(x, mm->formal_filters) {
+    if (!x->value || x->key->pos.n != 1 || !x->key->last_is_positional()) continue;
+    if ((int)Position2int(x->key->last()) - 1 != 1) continue;
+    for (CreationSet *cs : x->value->sorted) if (cs && args.v[1]->out->in(cs)) {
+      d->witness = cs;
+      d->witness_fun = args.v[0]->out;
+      d->witness_arity_epoch = dispatch_arity_epoch;
+      return;
+    }
+  }
+}
+
+// ifa/207 PROTOTYPE, off by default: incremental matching (IFA_INCMATCH=1
+// use, =2 check against the full matcher on every dispatch it answers). It is
+// exact (0 mismatches in 494 249 checked dispatches over the corpus and suite)
+// and buys 11-17% of matching, because the delta runs below still walk the
+// full width of every position they do not restrict. Kept as the reference
+// the redesign is checked against; see 207 for the measurements and plan.
+//
+// A miss whose arguments EXTEND an existing cache entry E -- every argument
+// type a superset of E's, the selector unchanged -- where every new
+// CreationSet c has a TWIN t in E's type at the same position (same Sym,
+// static arity and member count), is answered from E without matching.
+// Every test the matcher applies to a member reads only what twins share:
+// pattern_match_sym keys on the Sym, arity_admits on the static arity, and
+// candidate selection (find_best_matches, subsumes_arg, set_filters) on
+// cs->sym and cs->sym->type. So c lands in exactly the formal filters t
+// did, and the result is E's matches with c added wherever t is. Two guards
+// keep that exact: E has no nested (pattern) positions, so no member was
+// recursed into; and t appears in no other argument, so "the filters t is
+// in" names the formals of this argument only.
+static int incmatch_mode() {
+  static int e = -1;
+  if (e < 0) e = getenv("IFA_INCMATCH") ? atoi(getenv("IFA_INCMATCH")) : 0;
+  return e;
+}
+bool incmatch_no_record = false;
+enum { IM_TRIED, IM_USED, IM_NO_ENTRY, IM_NESTED, IM_SELECTOR, IM_NOT_SUPERSET, IM_NO_TWIN, IM_TWIN_SHARED,
+       IM_CHECKED, IM_MISMATCH, IM_DELTA_USED, IM_DELTA_MULTIPOS, IM_N };
+static int pattern_match_full(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
+                              PNode *visibility_point, Vec<Match *> &matches);
+static long incmatch_stat[IM_N];
+#include <chrono>
+static double incmatch_t[4];  // fast ok, fast failed, full after a failed try, full with no try
+static long incmatch_entries_scanned = 0;
+static int incmatch_last_reason = 0;
+static int incmatch_path = 0;  // 1 twin, 2 delta
+static double incmatch_reason_t[16];
+static long incmatch_reason_w[16];
+static double im_now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+static void incmatch_report() {
+  fprintf(stderr, "INCMATCH-TIME fast_ok=%.2f fast_fail=%.2f full_after_fail=%.2f entries_scanned=%ld\n", incmatch_t[0],
+          incmatch_t[1], incmatch_t[2], incmatch_entries_scanned);
+  static cchar *rn[IM_N] = {"tried", "used", "no_entry", "nested", "selector", "not_superset", "no_twin",
+                            "twin_shared", "checked", "MISMATCH", "delta_used", "delta_multipos"};
+  for (int i = 0; i < IM_N; i++)
+    if (incmatch_reason_t[i] > 0)
+      fprintf(stderr, "INCMATCH-FULL reason=%s time=%.2f n=%ld avg_width=%.1f\n", rn[i], incmatch_reason_t[i],
+              incmatch_stat[i], incmatch_stat[i] ? (double)incmatch_reason_w[i] / incmatch_stat[i] : 0.0);
+  static cchar *names[IM_N] = {"tried", "used", "no_entry", "nested", "selector", "not_superset", "no_twin",
+                               "twin_shared", "checked", "MISMATCH", "delta_used", "delta_multipos"};
+  fprintf(stderr, "INCMATCH");
+  for (int i = 0; i < IM_N; i++) fprintf(stderr, " %s=%ld", names[i], incmatch_stat[i]);
+  fprintf(stderr, "\n");
+}
+static bool cs_twin(CreationSet *a, CreationSet *b) {
+  return a->sym == b->sym && a->static_arity == b->static_arity && a->no_static_arity == b->no_static_arity &&
+         a->vars.n == b->vars.n;
+}
+// Returns 1 and fills `matches` (and a new cache entry when `record`) when
+// the delta applies; 0 otherwise, with the reason counted.
+static int incmatch_try(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
+                        PNode *visibility_point, Vec<Match *> &matches, bool record) {
+  MatchCache *mc = send->match_cache;
+  ++incmatch_stat[IM_TRIED];
+  if (!mc || !mc->n) return incmatch_last_reason = IM_NO_ENTRY, ++incmatch_stat[IM_NO_ENTRY], 0;
+  int reason = IM_NO_ENTRY;
+  MatchCacheEntry *delta_e = nullptr;  // a superset entry whose new members lack twins
+  for (MatchCacheEntry *e : *mc) {
+    ++incmatch_entries_scanned;
+    if (e->is_closure != is_closure || e->partial != partial || e->visibility_point != visibility_point) continue;
+    if (e->top_out.n != args.n) continue;
+    if (e->arity_epoch >= 0 && e->arity_epoch != dispatch_arity_epoch) continue;
+    bool nested = false;
+    form_MPositionAType(x, e->all_args) if (x->key->pos.n != 1) nested = true;
+    if (nested) { reason = IM_NESTED; continue; }
+    if (e->top_out.v[0] != args.v[0]->out) { if (reason < IM_SELECTOR) reason = IM_SELECTOR; continue; }
+    // every argument a superset; collect (new member, twin, position)
+    Vec<CreationSet *> news, twins;
+    Vec<int> at;
+    bool ok = true;
+    for (int i = 0; i < args.n && ok; i++) {
+      AType *o = e->top_out.v[i], *n = args.v[i]->out;
+      if (o == n) continue;
+      for (CreationSet *c : o->sorted) if (c && !n->in(c)) { ok = false; break; }
+      if (!ok) { if (reason < IM_NOT_SUPERSET) reason = IM_NOT_SUPERSET; break; }
+      for (CreationSet *c : n->sorted) {
+        if (!c || o->in(c)) continue;
+        CreationSet *t = nullptr;
+        for (CreationSet *oc : o->sorted) if (oc && cs_twin(oc, c)) { t = oc; break; }
+        if (!t) {
+          ok = false;
+          if (reason < IM_NO_TWIN) reason = IM_NO_TWIN;
+          if (!delta_e) {  // still a superset at every position?
+            bool sup = true;
+            for (int j = 0; j < args.n && sup; j++)
+              for (CreationSet *oc : e->top_out.v[j]->sorted) if (oc && !args.v[j]->out->in(oc)) { sup = false; break; }
+            if (sup) delta_e = e;
+          }
+          break;
+        }
+        news.add(c), twins.add(t), at.add(i);
+      }
+    }
+    if (!ok) continue;
+    for (int k = 0; k < news.n && ok; k++)
+      for (int j = 0; j < args.n; j++) {
+        if (j == at[k]) continue;
+        if (e->top_out.v[j]->in(twins[k]) || args.v[j]->out->in(news[k])) { ok = false; break; }
+      }
+    if (!ok) { if (reason < IM_TWIN_SHARED) reason = IM_TWIN_SHARED; continue; }
+    // the delta applies: E's matches, each new member added where its twin is
+    for (Match *mm : *e) {
+      Match *m = new Match(*mm);
+      Vec<MPosition *> keys;
+      form_Map(MapMPositionATypeElem, x, m->formal_filters) keys.add(x->key);
+      for (MPosition *fp : keys) {
+        AType *f = m->formal_filters.get(fp);
+        if (!f) continue;
+        Vec<CreationSet *> add;
+        for (int k = 0; k < news.n; k++) if (f->in(twins[k])) add.set_add(news[k]);
+        if (add.n) {  // an explicit set, as cache_copy builds it -- not type_union, which subsumes
+          for (CreationSet *c : f->sorted) if (c) add.set_add(c);
+          add.set_to_vec();
+          m->formal_filters.put(fp, make_AType(add));
+        }
+      }
+      m->visibility_points.set_add(visibility_point);
+      matches.add(m);
+    }
+    incmatch_path = 1;
+    for (AVar *a : args) a->arg_of_send.add(send);
+    if (record) {
+      MatchCacheEntry *ne = new MatchCacheEntry(is_closure, partial, visibility_point);
+      ne->arity_epoch = e->arity_epoch;
+      form_MPositionAType(x, e->all_args) {
+        int i = (int)Position2int(x->key->pos[0]) - 1;
+        ne->all_args.put(x->key, i >= 0 && i < args.n ? args.v[i]->out : x->value);
+      }
+      for (AVar *a : args) ne->top_out.add(a->out);
+      for (Match *m : matches) ne->add(new Match(*m));
+      mc->insert(ne);
+    }
+    return 1;
+  }
+  incmatch_last_reason = reason;
+  if (delta_e) {
+    // One grown position: match only (new members there) x (old members
+    // elsewhere), then merge with E. Combinations are independent in the
+    // matcher (find_best_cs_match picks winners per combination and
+    // set_filters adds that combination's members), so the union of the two
+    // results is the full result -- the check mode is what says so.
+    // Grown positions G. Every new combination has a FIRST grown position
+    // holding a new member, so partition by it: run k sets G[<k] to their
+    // old types, G[k] to its delta, G[>k] to their full current types.
+    Vec<int> G;
+    for (int j = 0; j < args.n; j++)
+      if (delta_e->top_out.v[j] != args.v[j]->out) G.add(j);
+    if (G.n && G[0] > 0) {
+      if (G.n > 1) ++incmatch_stat[IM_DELTA_MULTIPOS];
+      Vec<AType *> full;
+      for (AVar *a : args) full.add(a->out);
+      Vec<Match *> dm;
+      bool saved = incmatch_no_record;
+      incmatch_no_record = true;
+      for (int k = 0; k < G.n; k++) {
+        Vec<CreationSet *> delta;
+        for (CreationSet *c : full.v[G[k]]->sorted) if (c && !delta_e->top_out.v[G[k]]->in(c)) delta.add(c);
+        for (int q = 0; q < G.n; q++)
+          args.v[G[q]]->out = q < k ? delta_e->top_out.v[G[q]] : q == k ? make_AType(delta) : full.v[G[q]];
+        Vec<Match *> part;
+        pattern_match_full(args, names, send, is_closure, partial, visibility_point, part);
+        dm.append(part);
+      }
+      for (int q = 0; q < G.n; q++) args.v[G[q]]->out = full.v[G[q]];
+      incmatch_no_record = saved;
+      // merge E's matches and the delta's, in fun-id order as cannonicalize_matches emits
+      Vec<Match *> merged;
+      for (Match *mm : *delta_e) merged.add(new Match(*mm));
+      for (Match *d : dm) {
+        Match *hit = nullptr;
+        for (Match *m : merged) if (m->fun == d->fun) { hit = m; break; }
+        if (hit) {
+          form_Map(MapMPositionATypeElem, x, d->formal_filters) {
+            AType *t = hit->formal_filters.get(x->key);
+            if (!t) { hit->formal_filters.put(x->key, x->value); continue; }
+            Vec<CreationSet *> u;
+            for (CreationSet *c : t->sorted) if (c) u.set_add(c);
+            for (CreationSet *c : x->value->sorted) if (c) u.set_add(c);
+            u.set_to_vec();
+            hit->formal_filters.put(x->key, make_AType(u));
+          }
+          hit->visibility_points.set_union(d->visibility_points);
+        } else
+          merged.add(new Match(*d));
+      }
+      std::sort(merged.v, merged.v + merged.n, [](Match *a, Match *b) { return a->fun->id < b->fun->id; });
+      for (Match *m : merged) {
+        m->visibility_points.set_add(visibility_point);
+        matches.add(m);
+      }
+      for (AVar *a : args) a->arg_of_send.add(send);
+      if (record) {
+        MatchCacheEntry *ne = new MatchCacheEntry(is_closure, partial, visibility_point);
+        ne->arity_epoch = delta_e->arity_epoch;
+        form_MPositionAType(x, delta_e->all_args) {
+          int i = (int)Position2int(x->key->pos[0]) - 1;
+          ne->all_args.put(x->key, i >= 0 && i < args.n ? args.v[i]->out : x->value);
+        }
+        for (AVar *a : args) ne->top_out.add(a->out);
+        for (Match *m : matches) ne->add(new Match(*m));
+        mc->insert(ne);
+      }
+      ++incmatch_stat[IM_DELTA_USED];
+      incmatch_path = 2;
+      return 1;
+    }
+  }
+  ++incmatch_stat[reason];
+  return 0;
+}
+static bool incmatch_same(Vec<Match *> &a, Vec<Match *> &b) {
+  if (a.n != b.n) return false;
+  for (int i = 0; i < a.n; i++) {
+    Match *x = a[i], *y = b[i];
+    if (x->fun != y->fun || x->is_partial != y->is_partial) return false;
+    int nx = 0, ny = 0;
+    form_Map(MapMPositionATypeElem, e, x->formal_filters) {
+      ++nx;
+      if (y->formal_filters.get(e->key) != e->value) return false;
+    }
+    form_Map(MapMPositionATypeElem, e, y->formal_filters) ++ny;
+    if (nx != ny) return false;
+  }
+  return true;
+}
+
+// ifa/207 step 1, CHECK MODE, off by default (IFA_VERDICTKEY=1; =2 also
+// recomputes every key instead of reading the memo, to validate the memo).
+// Changes nothing the analysis sees. It asks whether a member's routing is a
+// function of the member alone, which is what admitting a member through an
+// existing edge (dispatch as a standing constraint) relies on.
+//
+// The key of a member at an actual position, over the candidates the selector
+// admits, is computed from exactly what the matcher's tests read of a member:
+//   - which candidates accept it: the dispatch tables, arity_admits,
+//     is_exact_match and is_this;
+//   - for each of those, its promotion and coercion, verify_arg's verdict and
+//     reverify_filters';
+//   - only where those candidates' formal types differ, what subsumes_arg
+//     reads to order them: isa, and the relative place of the types in the
+//     member's MRO;
+//   - the member's own Sym only when a generic candidate accepts it.
+// It deliberately does not read the Sym otherwise. A Sym key cannot compress
+// a union of subclasses that all route to one method (othello3).
+//
+// Two checks, each of which is the stop condition if it fails:
+//   - partition: two members with one key at a position are in the same
+//     (function, formal) filters of the finished match;
+//   - tuple: the winners at a leaf of find_best_matches are a function of the
+//     tuple of keys, across dispatches, contours and passes of one send site.
+// Sends with named actuals or a pattern formal among their candidates are
+// counted and skipped; 207 leaves pattern formals on the current matcher.
+struct VerdictKeys {
+  std::vector<std::unordered_map<CreationSet *, uint64_t>> keys;
+  uint64_t seed = 0;
+};
+static std::unordered_map<uint64_t, uint64_t> vk_memo;    // (candidates, position, member state) -> key
+static std::unordered_map<uint64_t, uint64_t> vk_tuples;  // (site, candidates, key tuple) -> winners
+static long vk_dispatches, vk_checked, vk_skip_named, vk_skip_pattern, vk_positions, vk_partition_mismatch, vk_leaves,
+    vk_tuple_mismatch, vk_overfine;
+struct VkBand {
+  long n = 0;
+  double width = 0, keys = 0, verdicts = 0, log_keys = 0, log_verdicts = 0;
+};
+static VkBand vk_band[2];  // the widest position of a dispatch: 32-499, 500+
+
+static std::unordered_map<uint64_t, uint64_t> vkc_memo;  // (candidates, votes, member state) -> collapse key
+static void vk_clear() {
+  vkc_memo.clear();
+  vk_memo.clear();
+  vk_tuples.clear();
+}
+static int vk_mode() {
+  static int e = -1;
+  if (e < 0) e = getenv("IFA_VERDICTKEY") ? atoi(getenv("IFA_VERDICTKEY")) : 0;
+  return e;
+}
+static inline uint64_t vk_mix(uint64_t h, uint64_t v) {
+  h ^= (v + 1) * 0x9E3779B97F4A7C15ull;
+  h = (h << 27) | (h >> 37);
+  return h * 0xFF51AFD7ED558CCDull;
+}
+static cchar *vk_name(Sym *s) { return s && s->name ? s->name : "?"; }
+static void vk_report() {
+  fprintf(stderr,
+          "VERDICTKEY dispatches=%ld checked=%ld skip_named=%ld skip_pattern=%ld positions=%ld PARTITION_MISMATCH=%ld "
+          "leaves=%ld tuples=%zu TUPLE_MISMATCH=%ld overfine_positions=%ld\n",
+          vk_dispatches, vk_checked, vk_skip_named, vk_skip_pattern, vk_positions, vk_partition_mismatch, vk_leaves,
+          vk_tuples.size(), vk_tuple_mismatch, vk_overfine);
+  static cchar *bands[2] = {"32-499", "500+"};
+  for (int i = 0; i < 2; i++) {
+    VkBand &b = vk_band[i];
+    if (!b.n) continue;
+    fprintf(stderr, "VERDICTKEY-WIDE band=%s n=%ld width=%.1f keys=%.1f verdicts=%.1f geo_keys=%.1f geo_verdicts=%.1f\n",
+            bands[i], b.n, b.width / b.n, b.keys / b.n, b.verdicts / b.n, pow(2.0, b.log_keys / b.n),
+            pow(2.0, b.log_verdicts / b.n));
+  }
+}
+
+// The candidates at `acpp` that accept `cs`, as find_arg_matches asks.
+static void vk_accepted(Matcher &m, AVar *a, CreationSet *cs, MPosition *acpp, Vec<Fun *> *candidates, Vec<Fun *> &funs) {
+  Sym *sym = cs->sym, *aspect = a->var->sym->aspect;
+  if (aspect) {
+    if (!aspect->specializers.set_in(cs->sym) && (cs->sym != sym_nil_type || !sym_object->specializers.set_in(aspect)))
+      return;
+    sym = aspect;
+  }
+  m.pattern_match_sym(sym, acpp, candidates, funs, 0);
+}
+
+static uint64_t vk_digest(Vec<Fun *> *candidates, Vec<Fun *> &function_values) {
+  uint64_t sum = candidates ? 1 : 2;
+  if (candidates)
+    for (Fun *f : *candidates) if (f) sum += vk_mix(11, f->id);
+  for (Fun *f : function_values) if (f) sum += vk_mix(13, f->id);
+  return sum;
+}
+
+// What the matcher's leaf reads of member `cs` at one actual position, over
+// candidates that accept it there (`formals[k]` is `funs[k]`'s formal at that
+// position, or null for a varargs candidate past its formals).
+static uint64_t vk_core(AVar *a, CreationSet *cs, Fun **funs, Sym **formals, int n) {
+  Sym *aspect = a->var->sym->aspect;
+  uint64_t h = 17;
+  std::vector<Sym *> types;
+  bool generic = false;
+  for (int k = 0; k < n; k++) {
+    Fun *f = funs[k];
+    Sym *formal = formals[k];
+    if (!formal) {  // a varargs candidate past its formals takes every member
+      h = vk_mix(h, f->id);
+      continue;
+    }
+    if (!arity_admits(formal, cs)) continue;
+    Sym *declared = dispatch_type(formal);
+    if (formal->is_exact_match && cs->sym != declared && cs->sym->type != declared &&
+        cs->sym->type->meta_type != declared)
+      continue;
+    if (formal->is_this && cs->sym == sym_nil_type) continue;
+    // promotion_uses, then coercion_uses, then verify_arg
+    Sym *concrete = (aspect ? aspect : cs->sym)->type, *ft = declared, *promoted = nullptr;
+    bool coerced = false;
+    if (ft != concrete) {
+      Sym *p = if1->callback->promote(f, formal, ft, concrete);
+      if (p && p != concrete) promoted = ft = p;
+    }
+    if (ft != concrete) {
+      Sym *c = if1->callback->coerce(concrete, ft);
+      if (c && c != concrete) coerced = true, ft = c;
+    }
+    bool nil_aspect = cs->sym == sym_nil_type && aspect && sym_object->specializers.set_in(aspect);
+    if (!promoted && !coerced) {
+      Sym *actual = nil_aspect ? aspect : cs->sym;
+      if (ft != actual && !ft->specializers.set_in(actual->type)) continue;
+    }
+    // reverify_filters' `keeps`
+    bool keeps = false;
+    if (nil_aspect)
+      keeps = declared->specializers.set_in(aspect);
+    else {
+      keeps = declared == cs->sym || declared->specializers.set_in(cs->sym->type);
+      if (!keeps) for (Sym *s : declared->dispatch_types) if (s->specializers.set_in(cs->sym->type)) { keeps = true; break; }
+    }
+    h = vk_mix(h, f->id);
+    h = vk_mix(h, promoted ? promoted->id : 0);
+    h = vk_mix(h, (coerced ? 2 : 0) | (keeps ? 1 : 0));
+    if (f->is_generic) generic = true;
+    if (std::find(types.begin(), types.end(), ft->type) == types.end()) types.push_back(ft->type);
+  }
+  if (types.size() > 1) {  // subsumes_arg compares these only when they differ
+    std::sort(types.begin(), types.end(), [](Sym *x, Sym *y) { return x->id < y->id; });
+    std::vector<int> places;
+    for (Sym *t : types) {
+      int at = cs->sym->dispatch_types.index(t);
+      if (at >= 0) places.push_back(at);
+    }
+    std::sort(places.begin(), places.end());
+    for (Sym *t : types) {
+      int at = cs->sym->dispatch_types.index(t), rank = -1;
+      if (at >= 0) rank = std::lower_bound(places.begin(), places.end(), at) - places.begin();
+      h = vk_mix(h, t->id);
+      h = vk_mix(h, (t->isa.set_in(cs->sym) ? 1 : 0) | (t->isa.set_in(cs->sym->type) ? 2 : 0));
+      h = vk_mix(h, (uint64_t)(int64_t)rank);
+    }
+  }
+  if (generic) h = vk_mix(h, cs->sym->id);
+  return h;
+}
+
+// IFA_VKCOLLAPSE=0 turns the verdict-key collapse off; =2 runs the matcher
+// again without it on every full match and compares the two results.
+static int vkcollapse_force = -1;
+static int vkcollapse_mode() {
+  static int e = -1;
+  if (e < 0) e = getenv("IFA_VKCOLLAPSE") ? atoi(getenv("IFA_VKCOLLAPSE")) : 1;
+  return vkcollapse_force >= 0 ? vkcollapse_force : e;
+}
+// The key find_best_matches groups an argument's members by. `digest` names
+// the live candidates and their formals at the position, `votes` which of
+// them cover `cs`, and funs/formals are those. The key is a function of
+// (digest, votes) and of what vk_core reads of the member: its Sym, the
+// actual's aspect and its arity.
+static uint64_t vk_collapse_key(AVar *a, CreationSet *cs, uint64_t digest, uint64_t votes, Fun **funs, Sym **formals,
+                                int n) {
+  Sym *aspect = a->var->sym->aspect;
+  uint64_t mk = vk_mix(vk_mix(digest, votes), cs->sym->id);
+  mk = vk_mix(mk, aspect ? aspect->id : 0);
+  mk = vk_mix(mk, cs->no_static_arity);
+  mk = vk_mix(mk, (uint64_t)(int64_t)cs->static_arity);
+  auto it = vkc_memo.find(mk);
+  if (it != vkc_memo.end()) return it->second;
+  uint64_t h = vk_core(a, cs, funs, formals, n);
+  vkc_memo.emplace(mk, h);
+  return h;
+}
+
+static uint64_t vk_member_key(Matcher &m, AVar *a, CreationSet *cs, MPosition *acpp, Vec<Fun *> *candidates,
+                              uint64_t digest) {
+  Sym *aspect = a->var->sym->aspect;
+  uint64_t mk = vk_mix(digest, (uintptr_t)acpp);
+  mk = vk_mix(mk, cs->sym->id);
+  mk = vk_mix(mk, aspect ? aspect->id : 0);
+  mk = vk_mix(mk, cs->no_static_arity);
+  mk = vk_mix(mk, (uint64_t)(int64_t)cs->static_arity);
+  if (vk_mode() != 2) {
+    auto it = vk_memo.find(mk);
+    if (it != vk_memo.end()) return it->second;
+  }
+  Vec<Fun *> funs;
+  vk_accepted(m, a, cs, acpp, candidates, funs);
+  std::vector<Fun *> accepted;
+  for (Fun *f : funs) if (f) accepted.push_back(f);
+  std::sort(accepted.begin(), accepted.end(), [](Fun *x, Fun *y) { return x->id < y->id; });
+  std::vector<Sym *> formals;
+  for (Fun *f : accepted) formals.push_back(f->arg_syms.get(acpp));
+  uint64_t h = vk_core(a, cs, accepted.data(), formals.data(), (int)accepted.size());
+  if (vk_mode() != 2) vk_memo.emplace(mk, h);
+  return h;
+}
+
+// Compute every member's key for this dispatch. Returns false for a send the
+// check does not cover.
+static bool vk_begin(Matcher &m, VerdictKeys &vk, Vec<AVar *> &args, Vec<cchar *> &names, Vec<Fun *> *visible) {
+  static bool registered = false;
+  if (!registered) registered = true, atexit(vk_report);
+  ++vk_dispatches;
+  for (int i = 0; i < names.n; i++)
+    if (names[i]) return ++vk_skip_named, false;
+  std::vector<MPosition *> positions;
+  MPosition app;
+  app.push(1);
+  for (int i = 0; i < args.n; i++, app.inc()) positions.push_back(cannonicalize_mposition(app));
+  // The candidates the selector admits: what find_arg_matches leaves in
+  // partial_matches after position 0.
+  Vec<Fun *> selected;
+  for (CreationSet *cs : args[0]->out->sorted) vk_accepted(m, args[0], cs, positions[0], visible, selected);
+  for (Fun *f : selected) if (f)
+    for (int i = 0; i < args.n; i++) {
+      Sym *formal = f->arg_syms.get(positions[i]);
+      if (formal && formal->is_pattern) return ++vk_skip_pattern, false;
+    }
+  uint64_t d0 = vk_digest(visible, m.function_values), d1 = vk_digest(&selected, m.function_values);
+  vk.keys.resize(args.n);
+  for (int i = 0; i < args.n; i++)
+    for (CreationSet *cs : args[i]->out->sorted)
+      vk.keys[i][cs] = vk_member_key(m, args[i], cs, positions[i], i ? &selected : visible, i ? d1 : d0);
+  vk.seed = vk_mix(vk_mix(vk_mix(d0, d1), m.send->var->id), (m.is_closure ? 8 : 0) | (uint64_t)m.partial);
+  m.vk = &vk;
+  ++vk_checked;
+  return true;
+}
+
+static void vk_leaf(Matcher &m, Vec<CreationSet *> &csargs, Vec<Fun *> &winners) {
+  VerdictKeys &vk = *m.vk;
+  uint64_t tuple = vk.seed, won = 0;
+  for (int i = 0; i < csargs.n; i++) tuple = vk_mix(tuple, vk.keys[i][csargs[i]]);
+  for (Fun *f : winners) if (f) won += vk_mix(19, f->id);
+  ++vk_leaves;
+  auto r = vk_tuples.emplace(tuple, won);
+  if (!r.second && r.first->second != won && ++vk_tuple_mismatch <= 20) {
+    fprintf(stderr, "VERDICTKEY TUPLE send=%d line=%d args:", m.send->id, m.send->var->sym->source_line());
+    for (CreationSet *cs : csargs) fprintf(stderr, " %s#%d", vk_name(cs->sym), cs->id);
+    fprintf(stderr, " winners:");
+    for (Fun *f : winners) if (f) fprintf(stderr, " %s#%d", vk_name(f->sym), f->id);
+    fprintf(stderr, "\n");
+  }
+}
+
+static void vk_check(Matcher &m, VerdictKeys &vk, Vec<AVar *> &args, Vec<Match *> &matches) {
+  std::vector<std::unordered_map<CreationSet *, uint64_t>> verdict(args.n);
+  for (Match *mm : matches) {
+    PMatch *pm = m.match_map.get(mm->fun);
+    form_MPositionAType(x, mm->formal_filters) {
+      if (!x->value || x->key->pos.n != 1) continue;
+      MPosition *acp = pm ? to_actual(x->key, pm) : x->key;
+      if (!acp->last_is_positional()) continue;
+      int i = (int)Position2int(acp->last()) - 1;
+      if (i < 0 || i >= args.n) continue;
+      uint64_t route = vk_mix(vk_mix(23, mm->fun->id), Position2int(x->key->last()));
+      for (CreationSet *cs : x->value->sorted) if (cs) verdict[i][cs] += route;
+    }
+  }
+  int widest_w = -1;
+  size_t widest_k = 0, widest_v = 0;
+  for (int i = 0; i < args.n; i++) {
+    ++vk_positions;
+    std::unordered_map<uint64_t, std::pair<uint64_t, CreationSet *>> by_key;
+    std::unordered_map<uint64_t, int> verdicts;
+    for (CreationSet *cs : args[i]->out->sorted) {
+      auto f = verdict[i].find(cs);
+      uint64_t v = f == verdict[i].end() ? 0 : f->second;
+      verdicts[v] = 1;
+      auto r = by_key.emplace(vk.keys[i][cs], std::make_pair(v, cs));
+      if (!r.second && r.first->second.first != v && ++vk_partition_mismatch <= 20) {
+        CreationSet *o = r.first->second.second;
+        fprintf(stderr, "VERDICTKEY PARTITION send=%d line=%d position=%d: %s#%d and %s#%d share a key; matches:", m.send->id,
+                m.send->var->sym->source_line(), i, vk_name(cs->sym), cs->id, vk_name(o->sym), o->id);
+        for (Match *mm : matches) fprintf(stderr, " %s#%d", vk_name(mm->fun->sym), mm->fun->id);
+        fprintf(stderr, "\n");
+      }
+    }
+    if (by_key.size() > verdicts.size()) ++vk_overfine;
+    if (args[i]->out->sorted.n > widest_w) {
+      widest_w = args[i]->out->sorted.n;
+      widest_k = by_key.size(), widest_v = verdicts.size();
+    }
+  }
+  if (widest_w >= 32) {
+    VkBand &b = vk_band[widest_w < 500 ? 0 : 1];
+    ++b.n;
+    b.width += widest_w;
+    b.keys += widest_k;
+    b.verdicts += widest_v;
+    b.log_keys += log2((double)widest_k);
+    b.log_verdicts += log2((double)widest_v);
+  }
+}
+
+// ifa/207 step 2: dispatch as a standing constraint, off by default.
+// IFA_STANDING=1 uses it; =2 keeps today's dispatch and checks every answer
+// it would have given against the matcher's.
+//
+// After a real dispatch a send remembers, per actual position, the verdict
+// key of every member present and which (function, formal) filters each key
+// reaches. When the send fires again and every new member's key is already
+// known, no new tuple of keys exists (step 1: a leaf's winners are a function
+// of the tuple, and the keys seen are the product enumerated by the last
+// dispatch). So the matcher has nothing to decide: each new member goes into
+// exactly the filters its key already reaches. The result is built as the
+// Match the matcher would have returned and goes to the same make_AEdges.
+//
+// A new key, any growth of the selector position, or a change of the arity
+// epoch falls back to the real dispatch. The state lives for one flow run
+// (standing_generation) because a run re-derives its types from bottom.
+int standing_generation = 0;
+int standing_mode() {
+  static int e = -1;
+  if (e < 0) e = getenv("IFA_STANDING") ? atoi(getenv("IFA_STANDING")) : 1;
+  return e;
+}
+class StandingRoute : public gc {
+ public:
+  Fun *fun;
+  MPosition *formal;
+  AType *filter;
+  Vec<CreationSet *> pending;
+};
+typedef Map<void *, Vec<StandingRoute *> *> StandingRoutes;
+typedef MapElem<Fun *, Vec<StandingRoute *> *> StandingFunElem;
+class StandingDispatch : public gc {
+ public:
+  int generation, arity_epoch, is_closure;
+  Partial_kind partial;
+  PNode *visibility_point;
+  bool all_visible;
+  uint64_t d0, d1;
+  Vec<AVar *> args;
+  Vec<AType *> seen;
+  Vec<MPosition *> positions;
+  Vec<Fun *> visible, selected, function_values;
+  Vec<StandingRoutes *> routes;
+  Map<Fun *, Vec<StandingRoute *> *> by_fun;
+  Vec<StandingRoute *> all_routes;
+};
+static long st_fires, st_used, st_used_empty, st_no_state, st_stale, st_new_key, st_selector, st_shrunk, st_recorded,
+    st_refused, st_unused, st_checked, st_mismatch;
+static void standing_report() {
+  fprintf(stderr,
+          "STANDING fires=%ld used=%ld used_no_delta=%ld no_state=%ld stale=%ld new_key=%ld selector=%ld shrunk=%ld "
+          "recorded=%ld refused=%ld unused=%ld checked=%ld MISMATCH=%ld\n",
+          st_fires, st_used, st_used_empty, st_no_state, st_stale, st_new_key, st_selector, st_shrunk, st_recorded,
+          st_refused, st_unused, st_checked, st_mismatch);
+}
+static void standing_register() {
+  static bool registered = false;
+  // The counters print in check mode, or when asked for (IFA_DBG_STANDING).
+  if (standing_mode() != 2 && !getenv("IFA_DBG_STANDING")) registered = true;
+  if (!registered) registered = true, atexit(standing_report);
+}
+static inline void *st_key(uint64_t k) { return (void *)(uintptr_t)(k | 1); }
+
+static uint64_t st_member_key(Matcher &m, StandingDispatch *st, int i, CreationSet *cs) {
+  return vk_member_key(m, st->args[i], cs, st->positions[i], i ? &st->selected : (st->all_visible ? nullptr : &st->visible),
+                       i ? st->d1 : st->d0);
+}
+
+// Remember what this real dispatch decided, or drop the state if the send
+// is one the standing path does not cover.
+void standing_record(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
+                     PNode *visibility_point, Vec<Match *> &matches) {
+  standing_register();
+  MatchCache *mc = send->match_cache;
+  if (mc) mc->standing = nullptr;
+  bool covered = matches.n && !is_closure && partial != Partial_ALWAYS && args[0]->out->n == 1;
+  for (int i = 0; covered && i < names.n; i++) if (names[i]) covered = false;
+  for (Match *mm : matches) if (mm->is_partial) covered = false;
+  if (!covered) return (void)++st_refused;
+  if (!mc) mc = send->match_cache = new MatchCache;
+  if (mc->standing_records >= 8 && mc->standing_uses * 8 < mc->standing_records) return (void)++st_unused;
+  mc->standing_records++;
+  StandingDispatch *st = new StandingDispatch;
+  st->generation = standing_generation;
+  st->arity_epoch = dispatch_arity_epoch;
+  st->is_closure = is_closure;
+  st->partial = partial;
+  st->visibility_point = visibility_point;
+  st->args.copy(args);
+  Matcher m(send, args[0], is_closure, partial);
+  Vec<Fun *> *visible = nullptr;
+  find_visible_functions(args, visibility_point, &visible, m.function_values);
+  st->all_visible = !visible;
+  if (visible) st->visible.copy(*visible);
+  st->function_values.copy(m.function_values);
+  MPosition app;
+  app.push(1);
+  for (int i = 0; i < args.n; i++, app.inc()) st->positions.add(cannonicalize_mposition(app));
+  for (CreationSet *cs : args[0]->out->sorted)
+    vk_accepted(m, args[0], cs, st->positions[0], visible, st->selected);
+  for (Fun *f : st->selected) if (f)
+    for (int i = 0; i < args.n; i++) {
+      Sym *formal = f->arg_syms.get(st->positions[i]);
+      if (formal && formal->is_pattern) return (void)++st_refused;
+    }
+  st->d0 = vk_digest(visible, m.function_values);
+  st->d1 = vk_digest(&st->selected, m.function_values);
+  for (int i = 0; i < args.n; i++) {
+    st->seen.add(args[i]->out);
+    StandingRoutes *r = new StandingRoutes;
+    st->routes.add(r);
+    for (CreationSet *cs : args[i]->out->sorted) {
+      void *k = st_key(st_member_key(m, st, i, cs));
+      if (!r->get(k)) r->put(k, new Vec<StandingRoute *>);
+    }
+  }
+  for (Match *mm : matches) {
+    Vec<StandingRoute *> *rs = new Vec<StandingRoute *>;
+    st->by_fun.put(mm->fun, rs);
+    form_MPositionAType(x, mm->formal_filters) {
+      if (!x->value || x->key->pos.n != 1 || !x->key->last_is_positional()) continue;
+      int i = (int)Position2int(x->key->last()) - 1;
+      if (i < 0 || i >= args.n) continue;
+      StandingRoute *r = new StandingRoute;
+      r->fun = mm->fun;
+      r->formal = x->key;
+      r->filter = x->value;
+      rs->add(r);
+      st->all_routes.add(r);
+      for (CreationSet *cs : x->value->sorted) if (cs) {
+        Vec<StandingRoute *> *v = st->routes[i]->get(st_key(st_member_key(m, st, i, cs)));
+        if (v && (!v->n || v->v[v->n - 1] != r)) v->add(r);
+      }
+    }
+  }
+  mc->standing = st;
+  ++st_recorded;
+}
+
+// Answer a firing without matching, if no new key arrived. Returns 1 and
+// fills `admitted` with the Match of every function a new member reaches
+// (none, if nothing new arrived). With `check`, the prediction is compared
+// with the matcher's answer instead.
+int standing_try(Vec<AVar *> &args, AVar *send, int is_closure, Partial_kind partial, PNode *visibility_point,
+                 Vec<Match *> &admitted, Vec<Match *> *check) {
+  standing_register();
+  ++st_fires;
+  StandingDispatch *st = send->match_cache ? send->match_cache->standing : nullptr;
+  if (!st) return ++st_no_state, 0;
+  if (st->generation != standing_generation || st->arity_epoch != dispatch_arity_epoch || st->is_closure != is_closure ||
+      st->partial != partial || st->visibility_point != visibility_point || st->args.n != args.n)
+    return ++st_stale, 0;
+  for (int i = 0; i < args.n; i++) if (st->args[i] != args[i]) return ++st_stale, 0;
+  if (args[0]->out != st->seen[0]) return ++st_selector, 0;
+  Matcher m(send, args[0], is_closure, partial);
+  m.function_values.copy(st->function_values);
+  bool any = false, unknown = false;
+  // An argument's type is not monotone in its members: when an abstract type
+  // arrives, type_union subsumes the constants it covers. A member that left
+  // is a change the routes cannot express, so the matcher answers. Only
+  // growth is standing.
+  for (int i = 1; i < args.n; i++) {
+    if (args[i]->out == st->seen[i]) continue;
+    for (CreationSet *cs : st->seen[i]->sorted)
+      if (cs && !args[i]->out->set_in(cs)) return ++st_shrunk, 0;
+  }
+  for (int i = 1; i < args.n && !unknown; i++) {
+    if (args[i]->out == st->seen[i]) continue;
+    for (CreationSet *cs : args[i]->out->sorted) {
+      if (!cs || st->seen[i]->set_in(cs)) continue;
+      Vec<StandingRoute *> *v = st->routes[i]->get(st_key(st_member_key(m, st, i, cs)));
+      if (!v) { unknown = true; break; }
+      any = true;
+      for (StandingRoute *r : *v) r->pending.add(cs);
+    }
+  }
+  if (unknown) {
+    for (StandingRoute *r : st->all_routes) r->pending.clear();
+    return ++st_new_key, 0;
+  }
+  Vec<Fun *> touched;
+  for (StandingRoute *r : st->all_routes) if (r->pending.n) {
+    Vec<CreationSet *> u;
+    for (CreationSet *c : r->filter->sorted) if (c) u.set_add(c);
+    for (CreationSet *c : r->pending) u.set_add(c);
+    u.set_to_vec();
+    r->filter = make_AType(u);  // an explicit set, as cache_copy builds it
+    r->pending.clear();
+    touched.set_add(r->fun);
+  }
+  for (int i = 1; i < args.n; i++) st->seen[i] = args[i]->out;
+  if (check) {
+    ++st_checked;
+    bool same = true;
+    int nfuns = 0;
+    form_Map(StandingFunElem, x, st->by_fun) if (x->key) ++nfuns;
+    if (nfuns != check->n) same = false;
+    for (Match *mm : *check) {
+      Vec<StandingRoute *> *rs = st->by_fun.get(mm->fun);
+      if (!rs) { same = false; break; }
+      for (StandingRoute *r : *rs)
+        if (mm->formal_filters.get(r->formal) != r->filter) same = false;
+    }
+    if (!same && ++st_mismatch <= 20) {
+      fprintf(stderr, "STANDING MISMATCH send=%d line=%d widths:", send->id, send->var->sym->source_line());
+      for (AVar *a : args) fprintf(stderr, " %d", a->out->sorted.n);
+      fprintf(stderr, " matcher:");
+      for (Match *mm : *check) fprintf(stderr, " %s#%d", vk_name(mm->fun->sym), mm->fun->id);
+      fprintf(stderr, "\n");
+      for (Match *mm : *check) {
+        Vec<StandingRoute *> *rs = st->by_fun.get(mm->fun);
+        if (!rs) continue;
+        for (StandingRoute *r : *rs) {
+          AType *real = mm->formal_filters.get(r->formal);
+          if (real == r->filter) continue;
+          fprintf(stderr, "   fun#%d formal=%ld predicted:", mm->fun->id, (long)Position2int(r->formal->last()));
+          for (CreationSet *c : r->filter->sorted) fprintf(stderr, " %s#%d", vk_name(c->sym), c->id);
+          fprintf(stderr, " | matcher:");
+          if (real) for (CreationSet *c : real->sorted) fprintf(stderr, " %s#%d", vk_name(c->sym), c->id);
+          fprintf(stderr, "\n");
+        }
+      }
+    }
+    return 1;
+  }
+  touched.set_to_vec();
+  std::sort(touched.v, touched.v + touched.n, [](Fun *a, Fun *b) { return a->id < b->id; });
+  for (Fun *f : touched) {
+    Match *mm = new Match(f);
+    for (StandingRoute *r : *st->by_fun.get(f)) mm->formal_filters.put(r->formal, r->filter);
+    mm->visibility_points.set_add(visibility_point);
+    admitted.add(mm);
+  }
+  ++st_used;
+  send->match_cache->standing_uses++;
+  if (!any) ++st_used_empty;
+  return 1;
+}
+
 //
 // main dispatch entry point - given a vector of arguments return a vector of
 // matches
@@ -1382,23 +3270,202 @@ int pattern_match(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_clo
     pattern_match_hits++;
     return matches.n;
   }
+  // issues/189: a `*t` call's match depends on the tuple's arity, which a
+  // member's twin need not share; it is always matched in full.
+  int mode = star_actual_at(args, names) ? 0 : incmatch_mode();
+  if (mode) {
+    static bool reg = false;
+    if (!reg) reg = true, atexit(incmatch_report);
+    if (mode == 1) {
+      double t0 = im_now();
+      if (incmatch_try(args, names, send, is_closure, partial, visibility_point, matches, true)) {
+        ++incmatch_stat[IM_USED];
+        incmatch_t[0] += im_now() - t0;
+        return matches.n;
+      }
+      double t1 = im_now();
+      incmatch_t[1] += t1 - t0;
+      int r = pattern_match_full(args, names, send, is_closure, partial, visibility_point, matches);
+      double dt = im_now() - t1;
+      incmatch_t[2] += dt;
+      incmatch_reason_t[incmatch_last_reason] += dt;
+      long w = 0;
+      for (AVar *a : args) w += a->out->sorted.n;
+      incmatch_reason_w[incmatch_last_reason] += w;
+      return r;
+    } else {
+      Vec<Match *> fast;
+      if (incmatch_try(args, names, send, is_closure, partial, visibility_point, fast, false)) {
+        int r = pattern_match_full(args, names, send, is_closure, partial, visibility_point, matches);
+        ++incmatch_stat[IM_CHECKED];
+        if (!incmatch_same(fast, matches)) {
+          if (++incmatch_stat[IM_MISMATCH] <= 10) {
+            fprintf(stderr, "INCMATCH MISMATCH send=%d fast=%d full=%d:", send->id, fast.n, matches.n);
+            for (Match *m : fast) fprintf(stderr, " f:%s", m->fun->sym->name ? m->fun->sym->name : "?");
+            for (Match *m : matches) fprintf(stderr, " F:%s", m->fun->sym->name ? m->fun->sym->name : "?");
+            fprintf(stderr, " path=%d args:", incmatch_path);
+            for (AVar *a : args) fprintf(stderr, " %d", a->out->sorted.n);
+            fprintf(stderr, "\n");
+            for (int i = 0; i < fast.n && i < matches.n; i++) {
+              form_Map(MapMPositionATypeElem, e, matches[i]->formal_filters) {
+                AType *fv = fast[i]->formal_filters.get(e->key);
+                if (fv == e->value) continue;
+                fprintf(stderr, "   formal pos.n=%d last=%ld full:", e->key->pos.n, (long)Position2int(e->key->pos[e->key->pos.n - 1]));
+                for (CreationSet *c : e->value->sorted) fprintf(stderr, " %s#%d", c->sym->name ? c->sym->name : "?", c->id);
+                fprintf(stderr, " | fast:");
+                if (fv) for (CreationSet *c : fv->sorted) fprintf(stderr, " %s#%d", c->sym->name ? c->sym->name : "?", c->id);
+                else fprintf(stderr, " (none)");
+                fprintf(stderr, "\n");
+              }
+              form_Map(MapMPositionATypeElem, e, fast[i]->formal_filters) if (!matches[i]->formal_filters.get(e->key))
+                fprintf(stderr, "   formal only in fast pos.n=%d\n", e->key->pos.n);
+            }
+          }
+        }
+        return r;
+      }
+    }
+  }
+  return pattern_match_full(args, names, send, is_closure, partial, visibility_point, matches);
+}
+
+static int pattern_match_full_(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
+                               PNode *visibility_point, Vec<Match *> &matches);
+static int pattern_match_full(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
+                              PNode *visibility_point, Vec<Match *> &matches) {
+  int r = pattern_match_full_(args, names, send, is_closure, partial, visibility_point, matches);
+  // issues/189: a `**d` that found no callee. A `**kw` formal is the only
+  // thing it binds, so a callee with named parameters filtered it out
+  // before Matcher::build could say why.
+  if (!r && send && send->var && !unpacking_refusal_at(send->var->def))
+    for (int i = 0; i < args.n; i++) {
+      AVar *a = args[i];
+      if (!a || !a->var || !a->var->sym || !a->var->sym->is_rest || (i < names.n && names[i]) || !a->out) continue;
+      bool dict = false;
+      for (CreationSet *cs : a->out->sorted)
+        if (cs && !sym_tuple->specializers.set_in(cs->sym->type)) dict = true;
+      if (dict)
+        refuse_unpacking(send, "'**' unpacking binds only a '**kw' parameter; into named parameters (a "
+                         "forwarding decorator's `fn(*a, **kw)`, or `f(**d)`) it is not supported (issues/189)");
+    }
+  if (vkcollapse_mode() == 2) {
+    static long checked = 0, mismatch = 0;
+    static bool reg = false;
+    if (!reg) reg = true, atexit([] { fprintf(stderr, "VKCOLLAPSE checked=%ld MISMATCH=%ld\n", checked, mismatch); });
+    Vec<Match *> chk;
+    bool saved = incmatch_no_record;
+    incmatch_no_record = true;
+    vkcollapse_force = 0;
+    pattern_match_full_(args, names, send, is_closure, partial, visibility_point, chk);
+    vkcollapse_force = -1;
+    incmatch_no_record = saved;
+    checked++;
+    if (!incmatch_same(matches, chk) && ++mismatch <= 10)
+      fprintf(stderr, "VKCOLLAPSE MISMATCH send=%d line=%d new=%d old=%d\n", send->id, send->var->sym->source_line(),
+              matches.n, chk.n);
+  }
+  return r;
+}
+static int pattern_match_full_(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
+                               PNode *visibility_point, Vec<Match *> &matches) {
   Matcher matcher(send, args[0], is_closure, partial);
+  match_star_at = star_actual_at(args, names);
+  struct ClearStar { ~ClearStar() { match_star_at = 0; } } clear_star;
   Vec<Fun *> *partial_matches = 0;
   find_visible_functions(args, visibility_point, &partial_matches, matcher.function_values);
   log_dispatch_pattern_match(partial_matches, matcher.function_values, send);
+  VerdictKeys verdict_keys;
+  Vec<Fun *> vk_visible;
+  bool vk_all_visible = !partial_matches;
+  if (vk_mode() && partial_matches) vk_visible.copy(*partial_matches);
   MPosition app;
+  matcher.top_names = &names;
   matcher.find_all_matches(0, args, names, &partial_matches, app, 0);
+  // issues/103: a candidate with no formal of a given actual's NAME is
+  // not a match. Without this the named actual keeps its positional slot
+  // and is bound through the identity position map -- so
+  // `f([1,2], nosuchkw=99)` against `def f(A, B=None, C=None)` resolves
+  // with nactuals=3, an empty actual->formal map and one defaulted
+  // formal, and `default_wrapper` duly assigns 99 to B. CPython raises
+  // TypeError instead.
+  //
+  // Done HERE, at the top-level entry point, rather than inside
+  // find_all_matches: the named path there already rejects correctly (by
+  // the time the named actual is processed the candidate list is
+  // measured empty), so the surviving match comes from the positional
+  // route, and this is where both the candidate list and `names` are in
+  // scope.
+  //
+  // ON by default from 2026-08-16. Corpus, 77 programs: ZERO exit-code
+  // changes, and only `life` changes at all (violations 30 -> 35, ess
+  // 135 -> 117, css 708 -> 688) -- so the generated code for the other 76
+  // is identical and their runtime behaviour cannot have moved. Suite
+  // unchanged. PYC_KWSTRICT=0 restores the old silent misbinding.
+  //
+  // Note what this does and does not buy. It replaces a silent wrong
+  // binding with a diagnostic at the call site, which is the important
+  // part. It does NOT yet produce CPython's message ("f() got an
+  // unexpected keyword argument 'nosuchkw'"): the call simply has no
+  // match, so the report is the generic "illegal call argument type",
+  // and cg.cc:2055 still emits a runtime abort stub rather than failing
+  // the build (ifa/issues/102). Improving both is follow-up work in
+  // issues/103.
+  if (getenv("PYC_KWSTRICT") ? atoi(getenv("PYC_KWSTRICT")) : 1) if (partial_matches && partial_matches->n) {
+    Vec<Fun *> keep;
+    Fun *rejected = nullptr;
+    cchar *bad = nullptr;
+    for (Fun *f : *partial_matches) if (f) {
+      bool ok = true;
+      // A `**kw` formal takes the keywords no formal is named for.
+      for (int i = 0; i < names.n && !f->kw_pos; i++) {
+        if (!names[i]) continue;
+        MPosition fnp;
+        fnp.push(names[i]);
+        if (!f->named_to_positional.get(cannonicalize_mposition(fnp))) {
+          if (getenv("PYC_DBG_BADKW"))
+            fprintf(stderr, "[kwstrict] reject %s: no formal named '%s'\n",
+                    f->sym && f->sym->name ? f->sym->name : "?", names[i]);
+          if (!rejected) { rejected = f; bad = names[i]; }
+          ok = false;
+          break;
+        }
+      }
+      if (ok) keep.add(f);
+    }
+    // Every candidate rejected for a keyword: remember it, so the
+    // violation this call becomes can name the keyword (issues/103).
+    if (!keep.n && rejected && send && send->var && send->var->def) {
+      UnexpectedKeyword *u = new UnexpectedKeyword;
+      u->fun_name = rejected->sym && rejected->sym->name ? rejected->sym->name : "?";
+      u->keyword = bad;
+      unexpected_keywords.put(send->var->def, u);
+    }
+    partial_matches->move(keep);
+  }
   if (!partial_matches || !partial_matches->n) return 0;
 
   {
     MPosition app;
     Vec<CreationSet *> csargs;
+    Vec<Vec<CreationSet *> *> csclasses;
     Vec<Fun *> result;
-    matcher.find_best_matches(args, csargs, *partial_matches, app, result, 1);
+    matcher.prune_uncoverable(args, app, *partial_matches);
+    if (vk_mode()) vk_begin(matcher, verdict_keys, args, names, vk_all_visible ? nullptr : &vk_visible);
+    matcher.find_best_matches(args, csargs, *partial_matches, app, result, 1, csclasses);
+    // othello3: this ran at every top-level leaf, and rescanned every
+    // CreationSet a candidate's formal_sets had accumulated over all the
+    // leaves so far -- a candidate covering n receivers was rescanned n
+    // times, O(n^2) a dispatch. Its verdict depends only on the FINAL sets
+    // (whether a CS is kept is a function of the CS and the formal, not of
+    // the leaf that added it), and a candidate kept by some leaf is exactly
+    // one whose final sets keep a CS at every position. So once is the same.
+    result.set_to_vec();
+    matcher.reverify_filters(result);
     partial_matches->move(result);
     if (!partial_matches->n) return 0;
   }
-  matcher.cannonicalize_matches(*partial_matches, is_closure, partial, matches, visibility_point);
+  matcher.cannonicalize_matches(*partial_matches, is_closure, partial, matches, visibility_point, args);
+  if (matcher.vk) vk_check(matcher, verdict_keys, args, matches);
   return matches.n;
 }
 
@@ -1443,7 +3510,7 @@ static void build_patterns(FA *fa, Fun *f, int add) {
   p.push(1);
   insert_fun(fa, f, f->sym, f->sym, p);
   for (Sym *a : f->sym->has) build_arg(fa, f, a, p);
-  if (add) sym_match_cache.clear();
+  if (add) sym_match_cache.clear(), vk_clear();
 }
 
 void add_patterns(FA *fa, Fun *f) { build_patterns(fa, f, 1); }
@@ -1525,7 +3592,12 @@ MPosition *build_arg_positions(Fun *f, MPosition *up) {
   return cp;
 }
 
-void build_arg_positions(FA *fa) { for (Fun *f : fa->pdb->funs) build_arg_positions(f); }
+void build_arg_positions(FA *fa) {
+  for (Fun *f : fa->pdb->funs) {
+    build_arg_positions(f);
+    if (f->is_varargs) varargs_funs.set_add(f);
+  }
+}
 
 void log_dispatch_cs_match(Matcher &matcher, Vec<CreationSet *> &csargs, MPosition &app, Vec<Fun *> &local_matches) {
   if (!logging(LOG_DISPATCH)) return;

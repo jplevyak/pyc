@@ -1,0 +1,606 @@
+// SPDX-License-Identifier: BSD-3-Clause
+//
+// Shared helpers between the C backend (`cg.cc`) and the LLVM
+// backend (`llvm.cc` + `llvm_codegen.cc` + `llvm_primitives.cc`).
+//
+// Per CODEGEN_PLAN §5 (phase 2), the duplication that existed
+// between the two backends — identical `num_string`,
+// `is_closure_var`, `c_type`, and the core of `get_target_fun` —
+// lives here. The backends still own their own primitive
+// emission switches and printing; only the shared bits move.
+
+#ifndef _codegen_common_H_
+#define _codegen_common_H_
+
+#include "fa.h"
+#include "repr.h"
+
+// -------------------------------------------------------------
+// Type-name strings
+// -------------------------------------------------------------
+
+// Map a numeric Sym (IF1_NUM_KIND_INT / UINT / FLOAT) to its
+// `_CG_*` runtime type-name string. Identical mapping is used by
+// both backends. Fails (via `fail()`) on an unknown kind/index.
+cchar *num_string(Sym *s);
+
+// Return v's IF1 type's `cg_string` (the canonical C/LLVM type
+// name), or `"_CG_void"` if no type is associated yet.
+// Both backends consume this; only the C backend writes type
+// names directly, but the LLVM backend uses it for diagnostic
+// purposes and via the shared type-string assignment pass.
+cchar *c_type(Var *v);
+cchar *c_type(Sym *s);
+
+// -------------------------------------------------------------
+// Closure / dispatch helpers
+// -------------------------------------------------------------
+
+// Is `v` typed as a closure (a Type_FUN with subfields and no
+// fully-resolved `fun` pointer)? Used to identify dispatched
+// indirect call sites.
+int is_closure_var(Var *v);
+
+// The effective closure record type of `v`, or nullptr if `v`
+// is not closure-typed. Looks through a nullable SUM
+// (`Type_SUM{nil_type, closure}` — e.g. a global initialized to
+// None and later bound to a closure): the C repr of such a SUM
+// is already the closure struct pointer (NULL for None; see
+// assign_type_cg_strings_pass2), so call sites unpack it the
+// same way as a plain closure. See issues/002 Case B.
+Sym *closure_fun_type(Var *v);
+
+// ifa/130 A3: a class tag's identity is the CLASS, not its name. Clones of
+// one class share a tag (the slot pointer tells them apart); unrelated
+// classes that share a name -- two modules' `Node` -- must not, or
+// isinstance and tag dispatch fuse them. The family is the class a
+// concrete type was cloned from (its CreationSets' `sym`), and the tag is
+// named `_CG_type_<name>_<family id>`.
+Sym *cg_tag_family(Sym *t);
+cchar *cg_tag_name(Sym *t);
+// ifa/206 step 2: a class whose clones must be told apart at run time.
+// Clones share their family's tag until a field READ through a union
+// receiver finds two of them disagreeing in layout or representation at the
+// read (a demand: the read cannot proceed through one layout). Then every
+// concrete type of that family gets its own tag (cg_tag_name), the read
+// tests it (cg_union_read_arms), and every test that means "is this
+// class" -- isinstance, a dispatch arm -- tests the family's tags
+// (cg_tag_family_members). Planned once per compile, after the C type
+// strings exist and before any tag is named.
+void cg_plan_concrete_tags(FA *fa);
+// The concrete types whose tags together mean `t`'s class: `t` alone for
+// a family that is not split.
+void cg_tag_family_members(Sym *t, Vec<Sym *> &out);
+// Does `t` carry its own tag? Then an object made by copying a prototype
+// or another object (P_prim_clone, P_prim_copy), whose tag is the
+// source's, is re-stamped with its own.
+bool cg_tag_is_concrete(Sym *t);
+// ifa/206 step 2: a read of field `symbol` from a union `recv` whose
+// members cannot share one layout for it. Fills `members` (the members that
+// have the field live, one per distinct tag) and `slots` (its index in
+// each) and returns true when the read must be tag-dispatched; false
+// means one member's layout serves (the old path). A member that shares
+// its arm's tag is read through the arm's layout, and that cast is recorded
+// as an obligation of the read in `f`.
+bool cg_union_read_arms(Fun *f, Sym *recv, cchar *symbol, Vec<Sym *> &members, Vec<int> &slots);
+// issues/173 #1: decide `isinstance(x, cls)` for a test the analysis did
+// not fold, from the members of x's type. Returns 1 or 0 when every member
+// gives the same answer, else -1 with `concrete` set to the tagged
+// implementors of `cls` (`cls_type`) to compare x's class tag against. The
+// test reads the word at `x`, so it is only an answer when every member
+// that IS an instance carries a tag; an untagged member's word is not a
+// tag. When such a member exists (`{list, str}` against `list`) no run-time
+// test can answer, and this refuses the program -- as an undispatchable
+// `len(x)` on the same value is refused -- rather than fold it to False.
+int cg_isinstance_tag_targets(PNode *pn, Sym *cls_type, Vec<Sym *> &concrete);
+
+// Is field i of record s live (present in the emitted struct)?
+// Shared by struct emission, field access elision, and the
+// polymorphic-slot discovery in cg_build_new_to_val_map.
+int cg_field_live(Sym *s, int i);
+// ifa/123, shared by both backends since ifa/201: decide which members no
+// emitted code reads and take them out of every clone of the class (the
+// member's type becomes null, so cg_field_live is false and the struct
+// emitter leaves a zero-width placeholder). Run once, before the type
+// names, the slot map and any emission.
+void cg_elide_unread_slots(FA *fa);
+// The member of union `obj` a field access by `symbol` goes through: the
+// one that has the field, else the first that is not None. Not a union:
+// `obj` itself.
+Sym *resolve_union_receiver(Sym *obj, cchar *symbol);
+void cg_note_slot_use(Sym *t, int i, int is_read);
+
+// ifa/200 A3: how a Code_IF is emitted, decided once for both backends.
+// The successor index (0 or 1) a constant condition selects -- the
+// condition is FA's own true_type / false_type Sym, from FA's folding or
+// a pass such as exc_check_fold -- or -1 when it is a run-time value.
+int cg_const_if_successor(FA *fa, PNode *n);
+// issues/085: did this IF's condition never resolve (FA left it NOTYPE,
+// or clone voided it)? Unlike a constant fold, that is not proof either
+// arm is dead.
+bool cg_is_unresolved_condition(FA *fa, Var *cond);
+// Must this IF trap instead of branching? Only when it can run: the IF
+// is live and fa_live, some successor is too, and its condition is
+// unresolved. A dead IF (an `if False:` body, the untaken arms of an
+// `isinstance(..) or ..` chain) carries the same void condition and is
+// dead text; ifa/102 measured 1,164 C emissions there, none surviving
+// -O2, and LLVM still trapped at them until A3.
+bool cg_if_traps_unresolved(FA *fa, PNode *n);
+
+// ifa/122 Phase 0, shared by both backends since ifa/200 A1: the
+// blind-cast layout contract. An emitter that reads or writes a field of
+// `actual` through `cast_to`'s layout records the obligation; the check,
+// run once at the end of emission, fails the build if any recorded cast
+// reads through a layout that disagrees with the object's own.
+void cg_note_blind_cast_1(Sym *cast_to, Sym *actual, int slot);
+void cg_note_blind_cast(Sym *cast_to, Sym *actual, int slot);
+void cg_check_layout_contract();
+// ifa/206: a field READ or WRITE through `cast_to`'s layout, in function
+// `f`, of the object in `recv`. Unlike a whole-layout cast, the accessed
+// slot's bits are then interpreted as `cast_to`'s member, so the check also
+// requires the representation (float vs non-float) to agree there, for
+// every class that can REACH the access -- see cg_note_dispatch_site.
+void cg_note_field_access(Fun *f, Var *recv, Sym *cast_to, int slot);
+// ifa/206: a polymorphic call site `pn` was emitted as class-tag / slot
+// dispatch, calling the candidates in `direct` directly (nil, carrier,
+// plain, default arms) and every other candidate only through the
+// receiver's method slot. Positive evidence: a call site never recorded
+// here counts as reaching its callees with any receiver.
+void cg_note_dispatch_site(PNode *pn, Vec<Fun *> &direct);
+// Record `s`'s emitted member `i`: its width in bytes, 0 for a zero-width
+// placeholder (the member is declared and its type is elided), or -2 when
+// the struct has no such member. `*r` receives its representation when it
+// has one.
+int cg_member_width(Sym *s, int i, CGRepr *r = nullptr);
+// The C type of record `s`'s emitted member `i`, as the struct emitter
+// writes it (nullptr: not emitted). For DIAGNOSTICS and for emitting the
+// declaration; a decision asks cg_member_width.
+cchar *cg_member_ctype(Sym *s, int i);
+// Why reading `b` through `a`'s layout at `slot` is unsound (nullptr if
+// sound); `*at` is the first disagreeing member.
+cchar *cg_layout_mismatch(Sym *a, Sym *b, int slot, int *at);
+
+// ifa/issues/124: `--refuse-imprecise`. Declared here, not in cg.cc, so
+// the LLVM backend can run the same check -- it shares the cg
+// type-string tables (assign_type_cg_strings_pass1/2), which is all the
+// scan needs. Call scan then check.
+void cg_scan_imprecise(FA *fa);
+void cg_report_slot_use(FA *fa);  // ifa/123, post-emission
+void cg_check_imprecise();
+
+// ifa/issues/029/030: registry of method-pointer slot stores.
+// For each creator Fun (a __new__ clone), the (slot, method-clone)
+// pairs its instances must carry so polymorphic call sites can
+// dispatch through the stored pointer. Built once per codegen run
+// by cg_build_new_to_val_map; consumed by both backends' clone
+// emitters.
+struct PolymorphicSlot {
+  int slot;
+  Fun *fun_val;
+  int specificity;  // lower = more specific (fewer CSes in the ES sorted list)
+  Vec<Sym *> *classes;  // ifa/206: the concrete types whose constructor stores into this slot
+};
+extern Map<Fun *, Vec<PolymorphicSlot> *> cg_new_to_val_map;
+void cg_build_new_to_val_map(FA *fa);
+// ifa/121: how each class-tag arm of a dispatch calls its target (see
+// codegen_common.cc). Built after cg_build_new_to_val_map, before emission.
+enum { ARM_SLOT = 0, ARM_DIRECT = 1, ARM_AMBIGUOUS = 2 };
+void cg_build_dispatch_arm_plans(FA *fa);
+int dispatch_arm_plan(PNode *pn, Sym *cls);
+// Rewrite a dispatch's class-tag arms by those plans: an ARM_DIRECT arm
+// becomes a direct call to the site's clone (slot -1, the route a closure
+// carrier already takes); an ARM_AMBIGUOUS one is refused.
+void apply_dispatch_arm_plans(PNode *pn, Vec<Fun *> *fns, Vec<Sym *> &classes, Vec<int> &slots,
+                              Vec<Fun *> &class_funs);
+
+// Resolve a SEND PNode to its single concrete target Fun, or
+// nullptr if the call site has zero or multiple resolutions.
+//
+// The C backend's variant calls `fail(...)` when no resolution
+// is possible (via `fruntime_errors`); the LLVM backend has a
+// "search by sym, then by name" fallback over a global function
+// list. `get_target_fun_core` is the shared core; the LLVM
+// wrapper lives in `llvm_primitives.cc` and adds the fallback.
+bool identical_c_signature(Fun *a, Fun *b);
+// ifa/121: partition the live clones into interchangeable classes; run
+// after optimization, before codegen (IFA_DBG_CLONEEQ reports it).
+void compute_clone_equivalence(FA *fa);
+// Are two clones the same function (same class of that partition)? Every
+// point that collapses several candidates onto one clone requires it as
+// well as an identical C signature.
+bool clones_interchangeable(Fun *a, Fun *b);
+Fun *get_target_fun_core(PNode *n, Fun *f);
+// A nullable receiver (one tagged class or None): the non-None target, or
+// null. See codegen_common.cc.
+Fun *nil_tested_target(PNode *n, Fun *f, Fun **nil_fn);
+// ifa/129: direct-vs-polymorphic call census, under PYC_DBG_CALLS.
+void report_call_resolution(FA *fa);
+
+// -------------------------------------------------------------
+// Polymorphic call-site classtag/nil-receiver resolution
+// (ifa/issues/030 dispatch, ifa/issues/026 override guard)
+// -------------------------------------------------------------
+//
+// A poly call site's candidates resolve to a receiver class + method
+// slot (classtag route), or to the nil-receiver candidate (a
+// None-class method reached through a nil|record union), or to
+// neither -- in which case each backend runs its OWN
+// plain-function/untagged-direct/bare-callable-value fallback and
+// compat filtering (genuinely backend-specific: it depends on target
+// type castability, C type strings for cg.cc vs LLVM types for
+// cg_emit_llvm.cc -- NOT shared). Only the classtag/nil-receiver
+// RESOLUTION algorithm itself was ever identical between backends
+// (independently duplicated, independently re-fixed for issue 026);
+// these three functions are that shared core. Deliberately return
+// call-site rval INDICES, not resolved backend values/strings -- each
+// backend looks up its own representation of `pn->rvals[idx]`.
+// Which resolved classes become a tag-compare arm is
+// poly_dispatch_tag_arm, below; both backends ask it (ifa/200 A3).
+
+// Is `rt`, a class poly_dispatch_classtag_targets found, dispatched by
+// a tag compare? It must carry a class tag and have a type name. (The
+// two backends asked this differently until ifa/200 A3; cg_has_classtag
+// already requires a name and a non-system type, so they agreed.)
+bool poly_dispatch_tag_arm(Sym *rt);
+// ifa/030(a): is `candidate` a closure-carrier body -- its first typed
+// formal is the synthesized closure record -- dispatched by that
+// record's tag and called directly? Returns the carrier type (nullptr if
+// not), with its call-site rval index in *rval_idx.
+Sym *poly_dispatch_closure_carrier(Fun *candidate, int *rval_idx);
+
+// issue 026 pre-pass: which classes are DIRECTLY, singularly owned
+// by one of `candidates`' own (non-Type_SUM) receiver formals. A
+// class found here has its OWN override among `candidates` and must
+// keep using it -- poly_dispatch_classtag_targets's Type_SUM unpack
+// must not let a DIFFERENT candidate's looser (unioned) match steal
+// it. Confirmed empirically (poly_dispatch_low.py): without this
+// guard, a recursive dispatch where every concrete class overrides
+// the method segfaulted -- one class's union-typed self formal
+// silently stole another class's own, distinct override.
+void poly_dispatch_directly_owned(Vec<Fun *> *candidates, Vec<cchar *> &out);
+
+// For ONE poly-dispatch candidate: resolve its receiver formal(s) to
+// concrete (class, method-slot, call-site-rval-index) triples,
+// appending to the parallel classes/slots/rval_idxs Vecs. Unpacks a
+// Type_SUM (inherited-method) receiver into its member classes,
+// skipping any member already `directly_owned` by a sibling
+// candidate's own override. A single candidate can contribute more
+// than one triple -- inheritance can cover several concrete classes
+// through the same Fun. No-op (appends nothing) if `candidate`'s Sym
+// has no name: unnamed/lambda candidates never take the classtag
+// route.
+void poly_dispatch_classtag_targets(Fun *candidate, PNode *pn, Vec<cchar *> &directly_owned, Vec<Sym *> &classes,
+                                     Vec<int> &slots, Vec<int> &rval_idxs);
+
+// For ONE poly-dispatch candidate: is its receiver formal literally
+// sym_nil_type? If so, returns true and sets *rval_idx to that
+// formal's call-site operand index.
+bool poly_dispatch_is_nil_receiver(Fun *candidate, PNode *pn, int *rval_idx);
+// ifa/102 step 3: does a classtag dispatch claim every member of its
+// receiver's union? Each member must be claimed by the None arm
+// (`nil_fn`), a tag compare over `classes` (their tag families), a plain
+// function-identity arm, or the one untagged `direct` candidate, whose
+// receiver formal must accept it. `None` with no None arm is CPython's
+// AttributeError (*nil_unclaimed: the caller emits the None check, as a
+// direct call does, ifa/165); anything else unclaimed is returned in
+// `unclaimed`, and the caller refuses the compile.
+void poly_dispatch_coverage(PNode *pn, Var *recv, Fun *nil_fn, Vec<Sym *> &classes, Vec<Fun *> &plains, Fun *direct,
+                            bool *nil_unclaimed, Vec<Sym *> &unclaimed);
+// The selector the None check reports: the send's selector symbol, or the
+// candidates' method name for a closure-call shape.
+cchar *poly_dispatch_selector(PNode *pn, Vec<Fun *> *candidates);
+// The refusal for an unclaimed member, naming it.
+void poly_dispatch_refuse_unclaimed(PNode *pn, cchar *selector, Vec<Sym *> &unclaimed);
+// ifa/185: a runtime dispatch on tuple ARITY. FA dispatched `pn` per
+// operand arity (Sym::dispatch_arity on the candidates' formals), so
+// several candidates reach a call whose operands are unions of tuples (and
+// None). Tuples carry no classtag but do carry a length header, so each
+// candidate becomes a CASE guarded by tests on the operands:
+//   arity >= 0   operand non-null, fixed arity, exactly that length;
+//   arity == -1  operand non-null;
+//   arity == -2  operand non-null with no fixed arity;
+//   arity == -3  operand null: the candidate is a None method;
+//   arity <= -16 operand non-null, and its header names one of the kinds
+//                in layout_mask(arity) (ifa/102's layout plan).
+// "Fixed arity" is the header bit _CG_tuple_set_fixed writes: a record
+// 2-tuple and tuple([a, b]) have the same length, so the length alone
+// cannot reproduce FA's choice.
+// Cases are ordered most-constrained first, and a case with no tests is
+// the final `else`. Returns false (and the call falls to the classtag
+// machinery) if no candidate has an arity-constrained formal, a tested
+// operand could hold anything other than a tuple or None, or two cases
+// cannot be told apart at run time.
+// With no arity-constrained formal, it tries the LAYOUT plan instead
+// (ifa/102): a receiver whose members are lists and tuples (and None)
+// shares one header, and the fixed-arity bit is set on every fixed-arity
+// tuple and on nothing else, and the dynamic bit on every make_seq tuple
+// and tuple slice, so the header names one of three kinds. Each candidate
+// covers a set of kinds; the sets must be disjoint.
+
+struct ArityDispatchTest {
+  int ridx;   // call-site rval index of the tested operand
+  int arity;  // >= 0: fixed arity, that length; -1: non-null; -2: no fixed arity; -3: null (None);
+              // <= -16: a layout test, see layout_mask
+};
+// ifa/102: the header kinds of the layout plan, as a mask, and its
+// encoding in ArityDispatchTest::arity.
+enum { LAYOUT_FIXED_TUPLE = 1, LAYOUT_DYNAMIC_TUPLE = 2, LAYOUT_LIST = 4 };
+inline int layout_test(int mask) { return -16 - mask; }
+inline int layout_mask(int arity) { return arity <= -16 ? -16 - arity : 0; }
+struct ArityDispatchCase {
+  Fun *fun;
+  Vec<ArityDispatchTest> tests;
+};
+bool poly_dispatch_arity_plan(PNode *pn, Vec<Fun *> *fns, Vec<ArityDispatchCase *> &cases);
+
+// issues/048/171: the scalar member when `pn` dispatches on a {None, scalar}
+// union (no representation), else nullptr. `recv_var` may be null, in
+// which case it is found from `cands`' nil-receiver candidate.
+Sym *poly_dispatch_nil_scalar_receiver(PNode *pn, Vec<Fun *> *cands, Var *recv_var, cchar **sel_out);
+
+// -------------------------------------------------------------
+// Type-string assignment pass (cg_string population)
+// -------------------------------------------------------------
+
+// Walk live Funs and assign each one's `cg_string` and
+// `cg_structural_string`. `annotate=true` adds `/*name*/` or
+// `/*Type::name*/` comment suffixes to the cg_string (the C
+// backend's convention; the LLVM backend uses `false` since
+// LLVM identifiers can't carry comments). `globals` (if
+// non-null) receives each Fun's `sym->var` — the C backend
+// collects these to emit later; the LLVM backend passes
+// nullptr.
+void assign_fun_cg_strings(FA *fa, bool annotate, Vec<Var *> *globals);
+
+// First pass over `allsyms`: assign each Sym a `cg_string`
+// (`_CG_int32`, `_CG_psN`, `_CG_void`, etc.). For Type_RECORD
+// types with fields, when `fp` is non-null, also emit a forward
+// declaration line of the form
+//   `/* name */ struct _CG_sN; typedef struct _CG_sN *_CG_psN;\n`
+// to `fp` — the C backend uses this; the LLVM backend passes
+// nullptr (struct types are built directly via `getLLVMType`).
+void assign_type_cg_strings_pass1(Vec<Sym *> &allsyms, FILE *fp);
+
+// Second pass over `allsyms`: resolve `s->fun`-bearing Syms to
+// their Fun's `cg_structural_string`, resolve `is_symbol` to the
+// builtin `_CG_symbol`, and collapse Type_SUM `T | nil` to `T`.
+// No I/O. Identical between the two backends.
+void assign_type_cg_strings_pass2(Vec<Sym *> &allsyms);
+
+// -------------------------------------------------------------
+// Process invocation
+// -------------------------------------------------------------
+
+// The whitespace-separated words of `flags`, appended to `out` (GC strings).
+void codegen_split_flags(cchar *flags, Vec<cchar *> &out);
+// Spawn a command via `posix_spawnp` (PATH-search) and wait for it.
+// `argv` must be a NULL-terminated array of char* (cast-away const
+// is acceptable since the spawn family takes char *const argv[]).
+// Returns the child's exit code on normal exit; -1 on spawn or wait
+// failure. No shell interpretation — arguments are passed literally.
+//
+// Replaces direct `system()` calls in `c_codegen_compile` /
+// `llvm_codegen_compile`, eliminating shell-quoting concerns for
+// filenames with spaces or special characters. See CODEGEN_PLAN §7.3.
+int codegen_spawn(const char *file, char *const argv[]);
+
+// -------------------------------------------------------------
+// Codegen context — superseded by CG_IR's EmissionContext
+// -------------------------------------------------------------
+//
+// The scaffolding `class Codegen` (CODEGEN_PLAN §5.1) was removed
+// in CG_IR_PLAN Phase 0 §5.5. The wholesale "subclass Codegen,
+// migrate hundreds of file-scope globals" rewrite was never
+// instantiated and never read; the actual state-leak bug was
+// already fixed by the phase-0.1 reset hooks. CG_IR_PLAN Phase 3
+// introduces an `EmissionContext` struct sized for CGFun emission
+// (see CG_IR_PLAN §8 / cg_ir.h) — the natural successor.
+//
+// See CODEGEN_PLAN.md §8 (revised) and CG_IR_PLAN.md §5.5 for the
+// recorded decision.
+
+class PNode;
+
+// -------------------------------------------------------------
+// Failure reporting with PNode context (phase 5.3)
+// -------------------------------------------------------------
+
+// Structured `fail()` variant that includes PNode source-location
+// context when available. Use this in primitive emitters and
+// per-PNode helpers so the user sees `<file>:<line>: ` prefix
+// pointing at the offending IR site, rather than just the
+// emitter's stock error message.
+//
+// Falls back to plain `fail()` when no source info is reachable.
+// Always terminates (no return).
+void codegen_fail(PNode *n, cchar *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));
+
+// Same for Var-level errors (variable's source line if available).
+void codegen_fail(Var *v, cchar *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));
+// ifa/102: a send codegen cannot resolve to code -- no candidate, or
+// candidates it has no run-time way to tell apart. It used to become a
+// run-time stub (`matching function not found`, an LLVM trap) and the
+// compile succeeded, so a condition the compiler had detected became a
+// crash. It is refused, in every mode; PYC_DISPATCH_STUB=1 restores the
+// stub, for debugging only. Returns only in that case.
+void codegen_unresolved_send(PNode *pn, Vec<Fun *> *candidates, cchar *why);
+
+// -------------------------------------------------------------
+// Primitive emission contract (phase 2.3 stub)
+// -------------------------------------------------------------
+
+// PrimEmitter is the polymorphic seam between the per-primitive
+// switches in cg.cc / llvm_primitives.cc. Each backend implements
+// the interface; the per-primitive dispatcher (currently still
+// an inline `switch` block in each backend) walks the switch.
+//
+// Phase 5.2 scaffolding: the interface exists and documents the
+// contract. The dispatchers still inline-switch by `prim->index`
+// for performance and because the switch cases need access to
+// backend-specific state (FILE* in C, IR Builder in LLVM). When
+// the Codegen base class adds the per-backend state machine, the
+// switches can be migrated to virtual methods. See CODEGEN_PLAN
+// §8 and PRIMITIVES.md §15 (the primitive emission contract).
+//
+// Primitive emission contract (recap from PRIMITIVES.md §15):
+//
+//   - rvals[0] is either the dispatched function symbol or the
+//     `__primitive` / `__operator` marker.
+//   - For `__primitive`-marked SENDs, rvals[1] is the primitive
+//     name; arguments start at rvals[2].
+//   - lvals[0], if present, receives the primitive's result. Only
+//     emit the lvalue assignment when `lvals[0]->live` is true.
+//   - Side effects (struct write, printf, etc.) emit
+//     unconditionally; only the lvalue store is gated on live.
+//
+// See PRIMITIVES.md §14 (Backend coverage matrix) for the
+// per-primitive status and pinpoint-fixture map.
+class VirtualCGEmitter {
+ public:
+  virtual ~VirtualCGEmitter() = default;
+
+  // emit_move and emit_send_call handle the two fundamental operations that
+  // every backend must implement.  emit_send_default_prim is the fallthrough
+  // for any primitive not claimed by a more specific hook — silently dropping
+  // it would be wrong, so it stays pure-virtual too.
+  virtual void emit_move(PNode *pn) = 0;
+  virtual bool emit_send_default_prim(PNode *pn) = 0;
+  virtual void emit_send_call(PNode *pn) = 0;
+  // ifa/issues/165, 184: test `recv` for None and, if it is, report
+  // CPython's error for member `sel` and exit. Pure virtual: a backend
+  // that skipped it would print the wrong answer instead of raising.
+  virtual void emit_none_check(Var *recv, cchar *sel) = 0;
+
+  // The primitive hooks. Both backends give each primitive to the SAME
+  // hook (ifa/issues/200 D2), so an operation's C and LLVM emission can be
+  // read side by side:
+  //
+  //   any_prim     await, yield, id  (C also: apply, assign, destruct,
+  //                which only the V frontend emits; LLVM has none)
+  //   unaryop      cg_unaryop_prim: lnot, minus, not
+  //   binop        cg_binop_family, and pow
+  //   period       period            setter       setter
+  //   new          new               clone        copy, clone, clone_vector
+  //   len          len               strcat       strcat
+  //   is           is, isinstance    coerce       coerce
+  //   make         make, make_seq
+  //   index_load   index_object      index_store  set_index_object
+  //   sizeof       sizeof, sizeof_element
+  //   primitive    primitive (a registered primitive, by name)
+  //   default      whatever none of the above claimed
+  //
+  // Each defaults to false (not handled). virtual_cg_emit_send tries them
+  // in this order and stops at the first that returns true, so a hook may
+  // also DECLINE a primitive it owns and leave it to a later one (C's
+  // coerce takes only a string source; the rest reach default).
+  virtual bool emit_send_any_prim(PNode *pn) { return false; }
+  virtual bool emit_send_unaryop(PNode *pn) { return false; }
+  virtual bool emit_send_binop(PNode *pn) { return false; }
+  virtual bool emit_send_period(PNode *pn) { return false; }
+  virtual bool emit_send_setter(PNode *pn) { return false; }
+  virtual bool emit_send_new(PNode *pn) { return false; }
+  virtual bool emit_send_clone(PNode *pn) { return false; }
+  virtual bool emit_send_len(PNode *pn) { return false; }
+  virtual bool emit_send_strcat(PNode *pn) { return false; }
+  virtual bool emit_send_is(PNode *pn) { return false; }
+  virtual bool emit_send_coerce(PNode *pn) { return false; }
+  virtual bool emit_send_make(PNode *pn) { return false; }
+  virtual bool emit_send_index_load(PNode *pn) { return false; }
+  virtual bool emit_send_index_store(PNode *pn) { return false; }
+  virtual bool emit_send_sizeof(PNode *pn) { return false; }
+  virtual bool emit_send_primitive(PNode *pn) { return false; }
+  // ifa/issues/181: called when NO emitter above claimed the prim. Return
+  // true only after deliberately handling it (a runtime trap, or a skip
+  // whose reason is written down). Declining is a compile error: a prim
+  // that silently produced no code is how `**` came out as 0 (ifa/180).
+  virtual bool emit_send_unhandled(PNode *pn) { return false; }
+};
+
+// The primitives emit_send_binop and emit_send_unaryop claim, one set for
+// both backends (ifa/issues/200 D2). `**` is binop's too, but outside the
+// family: LLVM lowers it to a call (emit_send_pow), C to `_CG_prim_pow`.
+bool cg_binop_family(int idx);
+bool cg_unaryop_prim(int idx);
+
+// Returns true if the SEND operation's lvalue was fully constant-folded
+// by the IF1 optimizer, meaning we shouldn't emit the computation at runtime.
+bool virtual_cg_is_const_folded_send(PNode *pn);
+
+// The unified primitive dispatch loop for SEND operations.
+// Maps `pn->prim->index` to the appropriate `emit_send_*` interface hook.
+void virtual_cg_emit_send(VirtualCGEmitter *emitter, PNode *pn);
+
+// -------------------------------------------------------------
+// Side-channel accessors (CG_IR_PLAN Phase 0 §5.4)
+// -------------------------------------------------------------
+//
+// The codegen-time fields on Sym/Var/Fun (`cg_string`,
+// `llvm_value`, `llvm_type`, etc.) are deleted in CG_IR_PLAN
+// Phase 5 in favor of CGFun / CGProgram-owned tables. To make
+// that deletion one mechanical PR, the readers and writers go
+// through these accessors now — there are ~270 of them across
+// cg.cc, llvm.cc, llvm_codegen.cc, llvm_primitives.cc, and
+// codegen_common.cc.
+//
+// Phase 5 then:
+//   1. Replaces each accessor body with a lookup into the
+//      CGProgram-owned side table (or removes the accessor if
+//      the field is no longer needed).
+//   2. Deletes the field declarations on Sym/Var/Fun.
+// No call site outside this header changes.
+
+#include "fun.h"
+#include "sym.h"
+#include "var.h"
+
+static inline cchar *cg_get_string(Sym *s) { return s->cg_string; }
+static inline void   cg_set_string(Sym *s, cchar *v) { s->cg_string = v; }
+static inline cchar *cg_get_string(Var *v) { return v->cg_string; }
+static inline void   cg_set_string(Var *v, cchar *s) { v->cg_string = s; }
+static inline char  *cg_get_string(Fun *f) { return f->cg_string; }
+static inline void   cg_set_string(Fun *f, char *s) { f->cg_string = s; }
+
+static inline char  *cg_get_structural_string(Fun *f) { return f->cg_structural_string; }
+static inline void   cg_set_structural_string(Fun *f, char *s) { f->cg_structural_string = s; }
+
+static inline llvm::Value *cg_get_llvm_value(Sym *s) { return s->llvm_value; }
+static inline void         cg_set_llvm_value(Sym *s, llvm::Value *v) { s->llvm_value = v; }
+static inline llvm::Value *cg_get_llvm_value(Var *v) { return v->llvm_value; }
+static inline void         cg_set_llvm_value(Var *v, llvm::Value *val) { v->llvm_value = val; }
+
+static inline llvm::Type *cg_get_llvm_type(Sym *s) { return s->llvm_type; }
+static inline void        cg_set_llvm_type(Sym *s, llvm::Type *t) { s->llvm_type = t; }
+static inline llvm::Type *cg_get_llvm_type(Var *v) { return v->llvm_type; }
+static inline void        cg_set_llvm_type(Var *v, llvm::Type *t) { v->llvm_type = t; }
+
+static inline llvm::DILocalVariable *cg_get_llvm_debug_var(Var *v) { return v->llvm_debug_var; }
+static inline void                   cg_set_llvm_debug_var(Var *v, llvm::DILocalVariable *d) { v->llvm_debug_var = d; }
+
+static inline llvm::Function *cg_get_llvm(Fun *f) { return f->llvm; }
+static inline void            cg_set_llvm(Fun *f, llvm::Function *fn) { f->llvm = fn; }
+
+// issues/018: one variable holding a {container, scalar} union has no
+// representation -- `+` resolves to the CONTAINER method whose receiver
+// may be the scalar, and a scalar has no element size. pyc does not
+// box, so this is refused rather than miscompiled.
+//
+// Shared by BOTH backends on purpose. The C backend used to fail here
+// while the LLVM backend silently emitted element size 0, which
+// compiled, ran, and printed NOTHING where CPython prints 7.0 -- a
+// silent wrong answer, the worst outcome available. One helper keeps
+// the two emitters from drifting again, and keeps the message
+// identical so a single test .check pins both.
+void cg_fail_unrepresentable_container_union(Sym *outer, Sym *fn_sym, cchar *path, int line);
+
+// ifa/102 census: with IFA_DBG_TRAPS set, report each run-time trap an
+// emitter writes into the program (`TRAP <backend> <kind> <fun>`), so the
+// traps a program reaches can be counted before they become refusals.
+// cg_census_fun is the Fun the C backend is writing; cg_trap_c returns its
+// argument (an emitted literal holding `runtime error: <kind>`) after
+// reporting it.
+extern Fun *cg_census_fun;
+void cg_trap_census(cchar *backend, cchar *kind, Fun *f);
+cchar *cg_trap_c_at(cchar *s, int line);
+#define cg_trap_c(s) cg_trap_c_at(s, __LINE__)
+
+#endif  // _codegen_common_H_

@@ -1,0 +1,24 @@
+;; 02_two_funs.ir — two declared closures. The entry (%f) is spliced
+;; into @__main__; %g is registered with its own Fun in pdb->funs but
+;; never reached from the top, so it doesn't appear as an EntrySet.
+
+(sym %a :is-local)
+(sym %b :is-local)
+(sym %r :is-local)
+(sym %cont)
+
+(fun %f
+  :args (%a)
+  :rets (%r)
+  :cont %cont
+  :body
+    (move %a %r))
+
+(fun %g
+  :args (%b)
+  :rets (%r)
+  :cont %cont
+  :body
+    (move %b %r))
+
+(entry %f)

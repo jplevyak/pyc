@@ -1,41 +1,61 @@
 #include <ctype.h>
+#include <math.h>
+#include <map>
+#include <set>
+#include <string>
+#include <tuple>
 
 #include "ifadefs.h"
 
 #include "cg.h"
 #include "builtin.h"
+#include "codegen_common.h"
 #include "fa.h"
 #include "fail.h"
 #include "fun.h"
 #include "if1.h"
-#include "pattern.h"
 #include "pattern.h"
 #include "pdb.h"
 #include "pnode.h"
 #include "prim.h"
 #include "var.h"
 
-static inline cchar *c_type(Var *v) {
-  if (!v->type || !v->type->cg_string) return "_CG_void";
-  return v->type->cg_string;
-}
+// c_type(Var*), c_type(Sym*) — moved to codegen_common.{h,cc}.
 
-static inline cchar *c_type(Sym *s) {
-  if (!s->type || !s->type->cg_string) return "_CG_void";
-  return s->type->cg_string;
-}
+// Polymorphic method dispatch map: maps each __new__ Fun to a list of
+// (slot_index, target_fun) pairs discovered by tracing FA creation chains
+// at polymorphic call sites.  Built once before codegen; consumed by the
+// P_prim_clone emitter (to populate method pointer fields) and by
+// emit_send_call (to emit indirect calls through those fields).
+// PolymorphicSlot / cg_new_to_val_map / cg_build_new_to_val_map
+// moved to codegen_common.{h,cc} (shared with the LLVM backend).
 
 static void write_c_fun_proto(FILE *fp, Fun *f, int type = 0) {
   assert(f->rets.n == 1);
-  fputs(c_type(f->rets[0]), fp);
+  if (f->sym->is_async)
+    fputs("_CG_Coroutine", fp);
+  else if (f->sym->is_generator)
+    // issues/014: the real coroutine mechanics live in a local lambda
+    // inside this function's body (write_c below); the function itself
+    // is ordinary from here out, returning the raw coroutine handle.
+    //
+    // issues/114: emit FA's INFERRED type rather than a hardcoded
+    // _CG_int64. fn->ret now carries the yielded types (each `yield`
+    // moves its value in), which is how __pyc_generator__ types its
+    // value channel per generator instead of pinning it to int. The
+    // returned value is still the handle -- a machine word -- so the
+    // tail in write_c casts it to whatever this type is.
+    fputs(c_type(f->rets[0]), fp);
+  else
+    fputs(c_type(f->rets[0]), fp);
   if (type)
     fputs(" (*", fp);
   else
     fputs(" ", fp);
   if (type)
-    fputs(f->cg_structural_string, fp);
+    fputs(cg_get_structural_string(f), fp);
   else
-    fputs(f->cg_string, fp);
+    fputs(cg_get_string(f), fp);
   if (type)
     fputs(")(", fp);
   else
@@ -58,6 +78,47 @@ static void write_c_fun_proto(FILE *fp, Fun *f, int type = 0) {
 
 static void write_c_type(FILE *fp, Var *v) { fprintf(fp, "%s", c_type(v)); }
 
+
+// ifa/issues/182: do two TYPES have different C representations, scalar
+// against pointer? The element/field guards below asked this with
+// `num_kind != 0`, which is false for `None | int` even though that union
+// is an int64 in C -- so storing an int into a `{None, int}` list element
+// tripped "list element type mismatch" (pisang). Ask about the emitted C
+// type instead, which is what the cast those guards protect actually sees.
+//
+// ifa/201: "the emitted C type" is the representation oracle's answer for
+// the type, not a parse of its C name.
+static inline bool cg_repr_mismatch(Sym *a, Sym *b) { return cg_value_repr(a).scalar() != cg_value_repr(b).scalar(); }
+
+// issues/048: a FLOATING-POINT representation (CGRepr::is_float). Narrower
+// than scalar() on purpose. An integer and a pointer round-trip through each other
+// bit-for-bit -- `(void*)(int64)x` back to `(int64)(void*)y` is legal C
+// and preserves the value, which is exactly how a `{None, int}` field
+// works today (tests/polymorphic_list.py stores small int tags into a
+// `_CG_void` slot and reads them back correctly). A double does not:
+// `(void*)2.5` is not even legal C. So only the float/pointer crossing is
+// a representation failure at the store or load itself; the int/pointer
+// one only fails later, at a dispatch that has to tell 0 from None.
+// Is a value of type `from` moved into a cell of type `to` across the
+// float/pointer line -- the crossing no C cast expresses?
+static inline bool cg_float_crossing(CGRepr to, CGRepr from) {
+  return to.is_float() != from.is_float() && (!to.scalar() || !from.scalar());
+}
+
+// ifa/issues/055: a container subscript must be integral in C. FA can
+// give an index formal a float type -- softrender's `src.components[
+// srcIndex]`, where srcIndex is (srcX + srcY * width) * 4 and FA cannot
+// prove srcX/srcY integral through `int(...)`. With one shared
+// __getitem__ contour that never showed: the float ACTUAL was cast to
+// the int64 formal at the call boundary like any other argument. Split
+// per contour, the formal itself becomes float64 and the body emits
+// `t0->v[t_float]`, which the C compiler rejects outright.
+//
+// Casting here is not a new policy -- it is the same coercion the call
+// boundary already performs, applied at the one place that reads the
+// index instead of the one that passes it.
+static inline cchar *index_cast(Var *idx) { return cg_repr(idx).is_float() ? "(_CG_int64)" : ""; }
+
 static int application_depth(PNode *n) {
   if (n->rvals[0]->type->fun)
     return 1;
@@ -79,22 +140,22 @@ static int cg_writeln(FILE *fp, Vec<Var *> &vars, int ln) {
     bool doln = i == vars.n - 1 && ln;
     cchar *sln = doln ? "\\n" : "";
     if (vars[i]->type == sym_int8 || vars[i]->type == sym_int16 || vars[i]->type == sym_int32)
-      fprintf(fp, "printf(\"%%d%s\", %s);\n", sln, vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%d%s\", %s);\n", sln, cg_get_string(vars[i]));
     else if (vars[i]->type == sym_bool || vars[i]->type == sym_uint8 || vars[i]->type == sym_uint16 ||
              vars[i]->type == sym_uint32)
-      fprintf(fp, "printf(\"%%u%s\", %s);\n", sln, vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%u%s\", %s);\n", sln, cg_get_string(vars[i]));
     else if (vars[i]->type == sym_int64)
-      fprintf(fp, "printf(\"%%lld%s\", (long long int)%s);\n", sln, vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%lld%s\", (long long int)%s);\n", sln, cg_get_string(vars[i]));
     else if (vars[i]->type == sym_uint64)
-      fprintf(fp, "printf(\"%%llu%s\", (unsigned long long int)%s);\n", sln, vars[i]->cg_string);
+      fprintf(fp, "printf(\"%%llu%s\", (unsigned long long int)%s);\n", sln, cg_get_string(vars[i]));
     else if (vars[i]->type == sym_float32 || vars[i]->type == sym_float64 || vars[i]->type == sym_float128)
-      fprintf(fp, "_CG_float_printf(%s,%d);\n", vars[i]->cg_string, doln);
+      fprintf(fp, "_CG_float_printf(%s,%d);\n", cg_get_string(vars[i]), doln);
     else if (vars[i]->type == sym_string) {
-      if (ln || strcmp("_CG_String(\"\")", vars[i]->cg_string)) {
+      if (ln || strcmp("_CG_String(\"\")", cg_get_string(vars[i]))) {
         if (doln)
-          fprintf(fp, "printf(\"%%s%s\", %s);\n", sln, vars[i]->cg_string);
+          fprintf(fp, "printf(\"%%s%s\", %s);\n", sln, cg_get_string(vars[i]));
         else
-          fprintf(fp, "fputs(%s, stdout);\n", vars[i]->cg_string);
+          fprintf(fp, "fputs(%s, stdout);\n", cg_get_string(vars[i]));
       }
     } else
       fprintf(fp, "printf(\"<unsupported type>%s\");\n", sln);
@@ -103,70 +164,216 @@ static int cg_writeln(FILE *fp, Vec<Var *> &vars, int ln) {
   return 0;
 }
 
-static cchar *num_string(Sym *s) {
-  switch (s->num_kind) {
-    default:
-      assert(!"case");
-    case IF1_NUM_KIND_UINT:
-      switch (s->num_index) {
-        case IF1_INT_TYPE_1:
-          return "_CG_bool";
-        case IF1_INT_TYPE_8:
-          return "_CG_uint8";
-        case IF1_INT_TYPE_16:
-          return "_CG_uint16";
-        case IF1_INT_TYPE_32:
-          return "_CG_uint32";
-        case IF1_INT_TYPE_64:
-          return "_CG_uint64";
-        default:
-          assert(!"case");
-      }
-      break;
-    case IF1_NUM_KIND_INT:
-      switch (s->num_index) {
-        case IF1_INT_TYPE_1:
-          return "_CG_bool";
-        case IF1_INT_TYPE_8:
-          return "_CG_int8";
-        case IF1_INT_TYPE_16:
-          return "_CG_int16";
-        case IF1_INT_TYPE_32:
-          return "_CG_int32";
-        case IF1_INT_TYPE_64:
-          return "_CG_int64";
-        default:
-          assert(!"case");
-      }
-      break;
-    case IF1_NUM_KIND_FLOAT:
-      switch (s->num_index) {
-        case IF1_FLOAT_TYPE_32:
-          return "_CG_float32";
-        case IF1_FLOAT_TYPE_64:
-          return "_CG_float64";
-        case IF1_FLOAT_TYPE_128:
-          return "_CG_float128";
-        default:
-          assert(!"case");
-          break;
-      }
-      break;
+// ifa/issues/083: ifa's own generic print/println primitives
+// (print_symbol/println_symbol, registered with cgfn=0 in
+// ast_to_if1.cc's add_primitive_transfer_functions -- the frontend
+// layer owns *that* they exist and their FA transfer function, not
+// how the C backend implements them) get their actual cgfn supplied
+// here instead, so the P_prim_primitive dispatch below can go through
+// the same generic prim_get(name)->cgfn path every other registered
+// primitive already uses, instead of special-casing these two names
+// ahead of it.
+static void print_codegen(FILE *fp, PNode *n, Fun *f) { cg_writeln(fp, n->rvals, 0); }
+static void println_codegen(FILE *fp, PNode *n, Fun *f) { cg_writeln(fp, n->rvals, 1); }
+
+static void cg_register_print_cgfns() {
+  RegisteredPrim *p;
+  if ((p = prim_get("print"))) p->cgfn = print_codegen;
+  if ((p = prim_get("println"))) p->cgfn = println_codegen;
+}
+
+// num_string(Sym*) — moved to codegen_common.{h,cc}.
+
+// resolve_union_receiver moved to codegen_common.{h,cc} (ifa/201: one copy
+// for both backends).
+
+// ifa/122 / ifa/200 A1: the blind-cast layout contract (cg_note_blind_cast,
+// cg_check_layout_contract) lives in codegen_common.cc, shared with the
+// LLVM backend.
+
+// issues/048: a union CONTAINING nil -- `{None, int64}` -- is represented
+// as its scalar member and round-trips bit-for-bit. Where such a value
+// flows into a VOIDISH slot (a `void*` / `_CG_any` / `_CG_nil_type`
+// formal or struct member) the C source needs an explicit cast; FA has
+// already proved the value is what the destination expects, and codegen
+// already casts it this way at plain assignments (`t1 = (_CG_nil_type)g1`).
+//
+// It did NOT at call arguments or at record-field stores, which is how
+// richards emitted `f(..., g1, ...)` for a `_CG_nil_type` formal and
+// `t4->e0 = g1` for a `_CG_void` member -- both rejected by clang.
+//
+// Deliberately narrow: only a union that ACTUALLY CONTAINS nil. A bare
+// scalar into a pointer slot stays refused by write_c_pnode's
+// arg_mismatch guard, which is a different and genuinely unsound case.
+static bool cg_is_nil_union(Sym *t) {
+  if (!t || t->type_kind != Type_SUM) return false;
+  for (Sym *m : t->has)
+    if (m == sym_nil_type) return true;
+  return false;
+}
+
+// ifa/153: is this C type pointer-shaped? Anything that is a pointer under
+// the hood can be cast to any other such type; a scalar cannot, and a scalar
+// mismatch is a real representation error that must keep surfacing as one
+// rather than being papered over with a cast.
+// ifa/153: a RECORD's elements start after its classtag header, when it has
+// one. `cg_has_classtag` decides that, and the struct emitter writes the tag
+// as exactly one leading `_CG_TypeObject *`, so the elements begin
+// `sizeof(void *)` in. Indexing the record pointer directly therefore makes
+// element 0 the TAG POINTER and shifts every element by one.
+//
+// `chull`: `for i in (0,1)` iterated the tuple `(0,1)` whose struct is
+// `{__pyc_tag, e0, e1}`, so `__tuple_iter__::__next__` returned the tag and
+// then 0 instead of 0 and 1. `MakeConeFace`'s
+// `for i in (0,1): for j in (0,1): ... new_edge[i].adjface[j] = new_face`
+// then only ever touched `new_edge[0].adjface[0]`, every cone edge was left
+// with one adjacent face instead of two, and `AddOne` dereferenced the null
+// `e.adjface[1]`.
+//
+// A record with no tag is unchanged, which is why this went unnoticed: the
+// same expression is correct for every untagged tuple.
+static void cg_emit_record_index_base(FILE *fp, Sym *t, cchar *rec) {
+  if (cg_has_classtag(t))
+    fprintf(fp, ")((char *)(%s) + sizeof(void *)))", rec);
+  else
+    fprintf(fp, ")(%s))", rec);
+}
+
+// ifa/153: a list literal's element store needs the same cast the RECORD path
+// above and the field-store path below already emit. `MakeConeFace`'s
+// `[None, None]`, later filled with Edges, has element type `_CG_ps16972`
+// while `None` is `_CG_any`, and C refuses
+// `((_CG_ps16972*)(_CG_list_ptr(t)))[0] = g1`. This went unnoticed while the
+// element type was `_CG_void` for unrelated reasons -- see
+// `csclasseq_enabled` in clone.cc.
+static bool cg_needs_elem_cast(Sym *dst_type, cchar *dst_t, Var *src) {
+  if (!dst_t || !src) return false;
+  cchar *src_t = c_type(src);
+  if (!src_t || !strcmp(dst_t, src_t)) return false;  // one spelling: nothing to write
+  return cg_repr(dst_type).pointer_like() && cg_repr(src).pointer_like();
+}
+
+// ifa/126 (PYC_CLASSEQ=2) merges two contours whose formals hold
+// LAYOUT-COMPATIBLE sibling classes into one clone, typed by one of them --
+// `pygmy`'s `shader.shade` over `everythingshader` and `spotshader`. A call
+// that passes the other class then hands a `_CG_ps<A>` to a `_CG_ps<B>`
+// formal, which C++ refuses. The merge already proved the layouts agree, so
+// the cast is exact; it is recorded with the blind-cast contract over the
+// WHOLE layout (every member, not one read slot) so a merge that stops
+// being layout-safe fails the build instead of reading the wrong field.
+//
+// Latent until ifa/151: while `int`'s arithmetic was cloned per constant,
+// the two `shade` contours reached different arithmetic callees and
+// `equivalent_es_pnode` kept them apart.
+static bool cg_needs_sibling_record_cast(Var *formal, Var *src) {
+  if (!formal || !src) return false;
+  Sym *ft = formal->type, *at = src->type;
+  if (!ft || !at || ft == at) return false;
+  if (ft->type_kind != Type_RECORD || at->type_kind != Type_RECORD) return false;
+  int last = (ft->has.n > at->has.n ? ft->has.n : at->has.n) - 1;
+  if (last >= 0) cg_note_blind_cast_1(ft, at, last);
+  return true;
+}
+
+static bool cg_needs_nil_union_cast(Sym *dst_type, cchar *dst_t, Var *src) {
+  if (!dst_t || !src || !cg_is_nil_union(src->type)) return false;
+  cchar *src_t = c_type(src);
+  return cg_voidish(dst_type) && src_t && strcmp(dst_t, src_t);
+}
+
+// cg_has_classtag / cg_field_live moved to codegen_common.{h,cc}
+// (shared with the LLVM backend).
+
+// A numeric constant's literal text for C. sprint_imm writes a float with
+// %.17g plus ".0", which turns an infinity into `inf.0` and a NaN into
+// `nan.0`, neither of them C: minilight's `float('inf')` folded to a
+// constant once a subscript carried an exception check, and the generated C
+// did not compile (issues/175). The other users of sprint_imm (graphs,
+// symbol names, FA dumps) want the readable text, so this is C's own.
+static void cg_sprint_imm(char *ss, size_t n, Immediate &imm) {
+  if (imm.const_kind == IF1_NUM_KIND_FLOAT &&
+      (imm.num_index == IF1_FLOAT_TYPE_32 || imm.num_index == IF1_FLOAT_TYPE_64)) {
+    double d = imm.num_index == IF1_FLOAT_TYPE_32 ? (double)imm.v_float32 : imm.v_float64;
+    if (isinf(d)) { snprintf(ss, n, "%s__builtin_inf()", d < 0 ? "-" : ""); return; }
+    if (isnan(d)) { snprintf(ss, n, "__builtin_nan(\"\")"); return; }
   }
-  return 0;
+  // INT64_MIN has no C literal: `-9223372036854775808` is unary minus on a
+  // literal too large for int64, which C reads as unsigned.
+  if (imm.const_kind == IF1_NUM_KIND_INT && imm.num_index == IF1_INT_TYPE_64 && imm.v_int64 == INT64_MIN) {
+    snprintf(ss, n, "(-9223372036854775807LL - 1)");
+    return;
+  }
+  sprint_imm(ss, n, imm);
 }
 
 static cchar *c_rhs(Var *v) {
   if (!v->sym->is_fun) {
-    if (!v->cg_string)
+    if (!cg_get_string(v)) {
+      // A constant-folded Var has no backing C variable -- its
+      // consumers are expected to inline the literal. That
+      // includes `return <result>` in a function called
+      // INDIRECTLY through a stored method pointer
+      // (ifa/issues/030 dispatch): the caller can't inline a
+      // per-clone constant it can't see, so the callee must
+      // return the literal rather than a bare "0". Mirror the
+      // constant formatting used for global initializers.
+      Sym *s = v->constant;
+      if (s && s != sym_nil && v->type != sym_nil_type) {
+        if (s->imm.const_kind != IF1_NUM_KIND_NONE && s->imm.const_kind != IF1_CONST_KIND_STRING &&
+            s->imm.const_kind != IF1_CONST_KIND_BYTES) {
+          char ss[100];
+          cg_sprint_imm(ss, sizeof(ss), s->imm);
+          return dupstr(ss);
+        }
+        if (s->constant && (v->type == sym_string || v->type == sym_bytes)) {
+          char *x = escape_string(s->constant, s->imm.v_len);
+          char *r = (char *)MALLOC(strlen(x) + 40);
+          STRCPYZ(r, "_CG_String_n(");
+          STRCAT(r, x);
+          char lenbuf[24];
+          snprintf(lenbuf, sizeof(lenbuf), ",%d)", s->imm.v_len);
+          STRCAT(r, lenbuf);
+          return r;
+        }
+      }
       return "0";
-    else
-      return v->cg_string;
+    } else
+      return cg_get_string(v);
   } else {
     char s[100];
-    snprintf(s, sizeof(s), "((_CG_function*)%s)", v->cg_string);
+    snprintf(s, sizeof(s), "((_CG_function*)%s)", cg_get_string(v));
     return dupstr(s);
   }
+}
+
+// A type's own ->size is 0 for a Type_SUM (a union has no single
+// compile-time size) even when every member happens to share one --
+// boxed records and other boxed containers (list, str, set, dict,
+// ... -- and tuples: "Tuples are stored as a pointer directly to the
+// structure containing the tuple elements", pyc_c_runtime.h) are all
+// one pointer_size, and same-width scalar unions agree too. A single
+// storage slot of that common size safely holds any member, each
+// access site casting/reinterpreting as needed the same way a
+// single-type value already does. Shared by P_prim_sizeof_element
+// (a list's element-storage stride) and the Type_RECORD-constant-index
+// getter below (a tuple field whose own type is itself a union, e.g.
+// one field of a 2-tuple wrapper around tuples of differing arity --
+// issues/025 plcfrs). Returns 0 if `t` has no resolvable size at all
+// (t itself null, or a non-uniform union) -- callers must still
+// treat that as "nothing to emit", not a valid zero-byte slot.
+static int resolve_uniform_size(Sym *t) {
+  if (!t) return 0;
+  if (t->size) return t->size;
+  if (t->type_kind != Type_SUM || !t->has.n) return 0;
+  int common = 0;
+  for (Sym *m : t->has) {
+    if (!m) continue;
+    Sym *mt = m->type ? m->type : m;
+    if (!mt->size) return 0;
+    if (!common) common = mt->size;
+    else if (common != mt->size) return 0;
+  }
+  return common;
 }
 
 static void destruct_prim(FILE *fp, Var *l, Var *r) {
@@ -175,50 +382,290 @@ static void destruct_prim(FILE *fp, Var *l, Var *r) {
     if (!is_tuple && l->sym->has_name(i)) {
       assert(0);
     } else {
-      fprintf(fp, "  %s->e%d = %s->e%d;\n", l->cg_string, i, r->cg_string, i);
+      fprintf(fp, "  %s->e%d = %s->e%d;\n", cg_get_string(l), i, cg_get_string(r), i);
     }
   }
 }
 
-static int write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
-  int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
-  bool listish_tuple = false;
+// (issue 069: tuple __lt__/__eq__ are now plain-Python constant-index
+// folds in __pyc__/04_sequence.py, so the tuple_lt/eq primitives and their
+// per-field codegen -- cg_is_tuple_record, emit_elem_lt/eq,
+// emit_tuple_lt/eq_expr, and the issue-067 user-class-element clone
+// matching -- were removed.)
+
+// issues/048: one diagnostic for every "this union has no C
+// representation" site. pyc used to print NOTHING at compile time in
+// permissive mode -- the program aborted at run time (or, for a float,
+// died inside clang) with no hint which field or element was at fault.
+// shedskin's equivalent is the model: it names the variable AND the
+// union ("Variable (Class V, 'a') has dynamic (sub)type: {None, int}")
+// at translate time, which is most of why its failures on these programs
+// are easier to act on than pyc's were.
+//
+// `kind` is what is being written ("field", "element"), `name` its
+// source-level name where there is one.
+// -------------------------------------------------------------
+// ifa/issues/124 -- refuse imprecisely-inferred programs
+//
+// shedskin compiles `go.py` to `list<UCTNode *> *` and a plain
+// `node->losses` member access. pyc emits `_CG_prim_list(_CG_void, 1)`
+// and then has to GUESS a layout for the untyped element, which is how
+// ifa/123's crash happens: `node.losses += 1` resolved against
+// `Square`'s layout and incremented `UCTNode`'s `unexplored` POINTER.
+//
+// The difference is not that shedskin handles unions better -- it has no
+// union representation either. It is that where inference does not
+// resolve, shedskin REFUSES and pyc guesses. This is the switch that
+// lets pyc refuse too: report (or reject) every place codegen falls back
+// to an untyped `void *` where a concrete type was wanted.
+//
+//   PYC_DBG_IMPRECISE=1   report every site, with source location
+//   --refuse-imprecise    (PYC_REFUSE_IMPRECISE=1) make it an error
+// -------------------------------------------------------------
+
+static int cg_imprecise_count = 0;
+
+static void cg_note_imprecise(PNode *n, cchar *what, cchar *detail) {
+  cg_imprecise_count++;
+  static int dbg = -1;
+  if (dbg < 0) dbg = getenv("PYC_DBG_IMPRECISE") ? 1 : 0;
+  bool refuse = frefuse_imprecise;
+  if (!dbg && !refuse) return;
+  if (n && n->code && n->code->ast) {
+    if (refuse)
+      show_error("error: inference left %s untyped (%s) -- codegen must guess its layout", n->code->ast, what,
+                 detail ? detail : "?");
+    else
+      show_error("warning: inference left %s untyped (%s) -- codegen must guess its layout", n->code->ast, what,
+                 detail ? detail : "?");
+  } else
+    fprintf(stderr, "%s: inference left %s untyped (%s)\n", refuse ? "error" : "warning", what,
+            detail ? detail : "?");
+}
+
+// ifa/issues/124: both imprecision sites, as a SCAN over the analysis
+// result rather than a hook in C emission.
+//
+// It has to be a scan because `--refuse-imprecise` must mean the same
+// thing on both backends, and the LLVM backend shares none of cg.cc's
+// emission path. What it does share is the cg type-string tables --
+// llvm.cc calls the same assign_type_cg_strings_pass1/2 -- so `c_type()`
+// is meaningful there and this scan is backend-independent. (Before
+// this, the flag was a silent no-op under `-b`: the 124 test "passed"
+// on LLVM purely because its assertion did not exist.)
+//
+// Two sites, and the second is the first one step further on:
+//   - a list constructor WITH elements whose element type is untyped;
+//   - a live FORMAL typed `void *`, which is how go's untyped list
+//     reaches the field access that guesses a layout
+//     (`update_path(..., _CG_any path)`).
+void cg_scan_imprecise(FA *fa) {
+  for (Fun *fn : fa->funs) {
+    if (!fn->live) continue;
+    for (PNode *n : fn->fa_all_PNodes) {
+      if (!n || !n->live || !n->prim || n->prim->index != P_prim_make) continue;
+      if (!n->lvals.n || n->rvals.n < 3) continue;
+      // Only when the constructor HAS elements. A comprehension or an
+      // `xs = []` + `append` builds an empty list first, and an untyped
+      // element type there is expected -- the type arrives with the
+      // appends. `[node]` with an element in hand and still no element
+      // type is the real signal (go.py:330).
+      if (n->rvals.n - 3 <= 0) continue;
+      // The list route only. A true tuple (Type_RECORD) stores its
+      // elements as separate `->eN` fields and has no single element
+      // type, so "untyped element" is not a signal there -- this
+      // mirrors the Ltuple/Llist split in c_prim_make's P_prim_make.
+      Sym *lt = n->lvals.v[0]->type;
+      if (!lt || !lt->element || lt->type_kind == Type_RECORD) continue;
+      if (cg_value_repr(lt->element->type).untyped())
+        cg_note_imprecise(n, "a list's element type", c_type(lt->element->type));
+    }
+    for (MPosition *mp : fn->positional_arg_positions) {
+      Var *av = fn->args.get(mp);
+      if (!av || !av->live || !av->type) continue;
+      if (av->sym && av->sym->is_symbol) continue;  // the method-name selector, never a value
+      if (cg_repr(av).untyped())
+        cg_note_imprecise(fn->entry, "a function parameter", fn->sym && fn->sym->name ? fn->sym->name : "?");
+    }
+  }
+}
+
+void cg_check_imprecise() {
+  if (!cg_imprecise_count) return;
+  if (getenv("PYC_DBG_IMPRECISE")) fprintf(stderr, "IMPRECISE sites=%d\n", cg_imprecise_count);
+  if (frefuse_imprecise)
+    fail("%d imprecisely-inferred site(s) -- see ifa/issues/124", cg_imprecise_count);
+}
+
+static void warn_no_representation_ct(PNode *n, cchar *kind, cchar *name, cchar *dest, cchar *val) {
+  if (!n || !n->code || !n->code->ast) return;
+  char what[256];
+  if (name)
+    snprintf(what, sizeof(what), "%s '%s'", kind, name);
+  else
+    snprintf(what, sizeof(what), "%s", kind);
+  show_error("warning: %s has no single representation: cannot store a '%s' into a '%s' "
+             "-- a None-with-scalar or mixed-basic union (issues/048)",
+             n->code->ast, what, val ? val : "?", dest ? dest : "?");
+}
+
+// The `make` hook (`make`, `make_seq`: a tuple or list display). (ifa/issues/200 D2)
+static int c_prim_make(FILE *fp, FA *fa, Fun *f, PNode *n) {
   switch (n->prim->index) {
     default:
       return 0;
-    case P_prim_reply: {
-      fprintf(fp, "  return %s;\n", c_rhs(n->rvals[3]));
+    case P_prim_make_seq: {
+      // issues/110: copy the source's storage into a fresh container of
+      // the result's type. Both are `_CG_prim_tuple_list` shaped -- cg
+      // builds every tuple with a real list header precisely so the
+      // generic runtime path works -- so the list slicer is the copy.
+      cchar *ety = c_type(n->lvals[0]->type && n->lvals[0]->type->element ? n->lvals[0]->type->element->type
+                                                                          : nullptr);
+      fprintf(fp, "  %s = (_CG_list)_CG_list_getslice(%s, sizeof(%s), 0, _CG_prim_len(0,%s), 1);\n",
+              cg_get_string(n->lvals[0]), cg_get_string(n->rvals[3]), ety ? ety : "void*",
+              cg_get_string(n->rvals[3]));
+      // ifa/102: a make_seq tuple has no static arity, and says so in its
+      // header, for the layout dispatch (poly_dispatch_arity_plan).
+      if (sym_tuple->specializers.set_in(n->rvals[2]->sym))
+        fprintf(fp, "  _CG_tuple_set_dynamic(%s);\n", cg_get_string(n->lvals[0]));
       break;
     }
-    case P_prim_make:
+    case P_prim_make: {
+      // ifa/issues/104: declared before either branch so the tuple branch
+      // may `goto Llist`. That jump is the mirror of the existing
+      // `goto Ltuple` below: that one handles a LIST whose CreationSet
+      // came out record-shaped (tuple_able), this one a TUPLE whose group
+      // was monomorphic and so took the list representation, letting
+      // tuples of different arity share one type. Without it we emit
+      // `->eN` stores into something that is no longer a record.
+      Sym *lt = n->lvals.v[0]->type;
+      Sym *le = lt && lt->element ? lt->element->type : nullptr;
       if (sym_tuple->specializers.set_in(n->rvals[2]->sym)) {
+        if (lt && lt->type_kind != Type_RECORD && lt->element) goto Llist;
       Ltuple:
         fputs("  ", fp);
         cchar *t = c_type(n->lvals[0]);
-        int voidish = n->rvals.n < 4 && n->lvals[0]->type->element->type == sym_void;
-        fprintf(fp, "%s = _CG_prim_tuple%s(%s, %d);\n", n->lvals[0]->cg_string, listish_tuple ? "_list" : "",
-                voidish ? "int*" : t, n->rvals.n - 2);
-        for (int i = 3; i < n->rvals.n; i++)
-          fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, i - 3, n->rvals.v[i]->cg_string);
-      } else if (sym_list->specializers.set_in(n->rvals[2]->sym) || n->rvals[2]->sym->is_vector) {
-        Sym *t = n->lvals.v[0]->type, *e = t->element->type;
-        if (t->type_kind == Type_RECORD) {
-          listish_tuple = true;
-          goto Ltuple;
+        Sym *elem = n->lvals[0]->type->element;
+        // An always-empty tuple (n->rvals.n < 4, i.e. zero elements passed
+        // to this "make" call) may never get its element type resolved by
+        // FA at all -- `element` itself can be null here, not just
+        // `element->type`. Treat "no element type" the same as "void
+        // element type" rather than dereferencing a null Sym*.
+        int voidish = n->rvals.n < 4 && (!elem || elem->type == sym_void);
+        // Element count: rvals = [primitive, make, list/tuple, e0..].
+        // Always the "_list" route now (issues/025 plcfrs): a real,
+        // fixed-arity tuple literal (`(a, b)`, not a list literal
+        // promoted to record shape) used to get a bare
+        // GC_malloc(sizeof(struct)) with no list-header at all (the
+        // "true-tuple macro", `_CG_prim_tuple`) -- fine as long as
+        // every consumer resolves its arity at compile time (the
+        // `->eN` constant-field-getter path always does), but tuples
+        // of *differing* arity flowing into one union (grammar rules
+        // with a variable RHS length, e.g. shedskin's plcfrs.py) push
+        // len()/non-constant indexing onto the generic runtime
+        // fallback (_CG_prim_len et al.), which unconditionally reads
+        // a list-header that a true tuple never had -- garbage memory,
+        // silently wrong output (an all-empty-tuple union) or a hard
+        // FA violation depending on how badly the garbage confuses
+        // downstream inference. `_CG_prim_tuple_list_internal` sets a
+        // real header (`len = n`, matching t->has.n) unconditionally;
+        // field access (`->eN`) is offset-based from the pointer
+        // forward and doesn't care whether a header sits behind it,
+        // so this is additive, not a semantic change, for every tuple
+        // that was already working. The count is n->rvals.n - 3
+        // either way now (previously the true-tuple case couldn't
+        // matter since _CG_prim_tuple ignored it, so it had been left
+        // at the listish route's old, unrelated `- 2`, per
+        // issues/044's own note on that literal).
+        // ifa/issues/055: the macro casts its RESULT to its first
+        // argument, so the `int*` substitution also changed the result
+        // type -- `t1 = _CG_prim_tuple_list(int*, 0)` assigned an `int*`
+        // to a `_CG_psNNNN` (doom). The substitution itself has to stay:
+        // a zero-field record gets no struct body (build_type_strings
+        // emits one only `if (s->has.n)`), so it is an INCOMPLETE type
+        // and `sizeof(*((_CG_psNNNN)0))` will not compile. Keep `int*`
+        // for the sizeof and cast the result back to the destination's
+        // own type.
+        // ifa/issues/118: the DESTINATION's own type can be voidish too
+        // (`_CG_prim_tuple_list(_CG_void, 0)` in chess), and the macro
+        // takes `sizeof(*((_c)0))` of whatever it is given -- illegal
+        // indirection on `void *`. Same remedy as the element-side case
+        // below it: size with `int*`, cast the result to the
+        // destination.
+        bool t_voidish = cg_voidish(n->lvals[0]->type);
+        if (voidish || t_voidish)
+          fprintf(fp, "%s = (%s)_CG_prim_tuple_list(int*, %d);\n", cg_get_string(n->lvals[0]), t, n->rvals.n - 3);
+        else
+          fprintf(fp, "%s = _CG_prim_tuple_list(%s, %d);\n", cg_get_string(n->lvals[0]), t, n->rvals.n - 3);
+        // ifa/issues/055: the struct definition emits only LIVE fields
+        // (build_type_strings: `if (!cg_field_live(s, i)) continue`,
+        // keeping the has-index as the eN suffix so dead fields leave
+        // gaps). This construction site wrote every element regardless,
+        // so a record with a dead leading field got `t->e0 = ...`
+        // against a struct that starts at e3 -- "no member named 'e0'",
+        // measured on bh/block/chull/doom/rubik/softrender. Use the same
+        // test the struct used. Guarded on Type_RECORD with fields: a
+        // vector's has.n is 0, and cg_field_live would then report every
+        // index dead and elide the whole initialisation.
+        Sym *rec = n->lvals[0]->type;
+        bool rec_fields = rec && rec->type_kind == Type_RECORD && rec->has.n;
+        for (int i = 3; i < n->rvals.n; i++) {
+          if (getenv("IFA_DBG_MAKEELIDE") && rec_fields && !cg_field_live(rec, i - 3)) {
+            Sym *m = (i - 3) < rec->has.n ? rec->has[i - 3] : nullptr;
+            fprintf(stderr, "MAKEELIDE rec=%s#%d slot=%d has.n=%d sym=%p name=%s type=%s var=%p live=%d\n",
+                    rec->name ? rec->name : "?", rec->id, i - 3, rec->has.n, (void *)m,
+                    (m && m->name) ? m->name : "(anon)", (m && m->type && m->type->name) ? m->type->name : "(none)",
+                    (void *)(m ? m->var : nullptr), (m && m->var) ? (int)m->var->live : -1);
+          }
+          if (rec_fields && !cg_field_live(rec, i - 3)) continue;
+          cg_note_slot_use(rec, i - 3, 0);
+          cchar *mt = rec_fields ? cg_member_ctype(rec, i - 3) : nullptr;
+          if (cg_needs_nil_union_cast(rec_fields ? rec->has[i - 3]->type : nullptr, mt, n->rvals.v[i]))
+            fprintf(fp, "  %s->e%d = (%s)%s;\n", cg_get_string(n->lvals[0]), i - 3, mt,
+                    cg_get_string(n->rvals.v[i]));
+          else
+            fprintf(fp, "  %s->e%d = %s;\n", cg_get_string(n->lvals[0]), i - 3, cg_get_string(n->rvals.v[i]));
         }
+        // ifa/185: a fixed-arity tuple says so in its header, for the arity
+        // dispatch. Not a list that came out record-shaped (`goto Ltuple`).
+        if (sym_tuple->specializers.set_in(n->rvals[2]->sym) && cg_tuple_type_fixed_arity(n->lvals[0]->type))
+          fprintf(fp, "  _CG_tuple_set_fixed(%s);\n", cg_get_string(n->lvals[0]));
+      } else if (sym_list->specializers.set_in(n->rvals[2]->sym) || n->rvals[2]->sym->is_vector) {
+        if (lt && lt->type_kind == Type_RECORD) goto Ltuple;
+        goto Llist;
+      } else
+        break;
+      break;
+      {
+      Llist:;
         fputs("  ", fp);
         assert(n->lvals.n == 1);
-        e = e ? e : sym_void_type;
-        assert(n->lvals[0]->cg_string);
-        fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-        fprintf(fp, "(_CG_list)_CG_prim_list(%s,%d);\n", e->cg_string, n->rvals.n - 3);
+        cchar *ety = c_type(le);
+        assert(cg_get_string(n->lvals[0]));
+        fprintf(fp, "%s = ", cg_get_string(n->lvals[0]));
+        fprintf(fp, "(_CG_list)_CG_prim_list(%s,%d);\n", ety, n->rvals.n - 3);
+        (void)lt;
         for (int i = 3; i < n->rvals.n; i++) {
-          fprintf(fp, "  ((%s*)(_CG_list_ptr(%s)))[%d] = ", e->cg_string, n->lvals[0]->cg_string, i - 3);
-          fputs(n->rvals[i]->cg_string, fp);
+          fprintf(fp, "  ((%s*)(_CG_list_ptr(%s)))[%d] = ", ety, cg_get_string(n->lvals[0]), i - 3);
+          if (cg_needs_elem_cast(le ? le->type : nullptr, ety, n->rvals.v[i])) fprintf(fp, "(%s)", ety);
+          fputs(cg_get_string(n->rvals[i]), fp);
           fprintf(fp, ";\n");
         }
+        // ifa/185: a list-layout tuple can still have a static arity.
+        if (sym_tuple->specializers.set_in(n->rvals[2]->sym) && cg_tuple_type_fixed_arity(n->lvals[0]->type))
+          fprintf(fp, "  _CG_tuple_set_fixed(%s);\n", cg_get_string(n->lvals[0]));
       }
       break;
+    }
+  }
+  return 1;
+}
+
+// The `period` hook (an attribute read). (ifa/issues/200 D2)
+static int c_prim_period(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_period: {
       cchar *t = c_type(n->lvals[0]);
       cchar *symbol = 0;
@@ -232,33 +679,118 @@ static int write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         assert(!"selector");
       }
       Sym *obj = n->rvals[1]->type;
-      if (obj->type_kind == Type_SUM) obj = obj->has[0];
-      if (n->lvals[0]->type->type_kind == Type_FUN && n->creates) {  // creates a closure
-        fprintf(fp, "  %s = _CG_prim_closure(%s);\n", n->lvals[0]->cg_string, t);
+      obj = resolve_union_receiver(obj, symbol);
+      // An untyped result (a NOTYPE Var reaches codegen with no type)
+      // falls through to the field
+      // walk and its "not a field" refusal, not a null deref.
+      Vec<Sym *> arms;  // ifa/206 step 2, below
+      Vec<int> arm_slots;
+      if (n->lvals[0]->type && n->lvals[0]->type->type_kind == Type_FUN && n->creates) {  // creates a closure
+        // ifa/issues/184: a read kept live only for its None check (the
+        // closure itself unused -- `f = x.m; f(1)` where f(1) resolved to
+        // a direct call) has no destination; the check was already
+        // emitted, and building the closure would assign to "(null)".
+        if (!cg_get_string(n->lvals[0])) break;
+        fprintf(fp, "  %s = _CG_prim_closure(%s);\n", cg_get_string(n->lvals[0]), t);
         if (n->prim && n->prim->index == P_prim_period) {
-          fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, 0, n->rvals.v[3]->cg_string);
-          fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, 1, n->rvals.v[1]->cg_string);
+          fprintf(fp, "  %s->e%d = %s;\n", cg_get_string(n->lvals[0]), 0, cg_get_string(n->rvals.v[3]));
+          fprintf(fp, "  %s->e%d = %s;\n", cg_get_string(n->lvals[0]), 1, cg_get_string(n->rvals.v[1]));
         } else {
           for (int i = 0; i < n->rvals.n; i++)
-            fprintf(fp, "  %s->e%d = %s;\n", n->lvals[0]->cg_string, i, n->rvals.v[i]->cg_string);
+            fprintf(fp, "  %s->e%d = %s;\n", cg_get_string(n->lvals[0]), i, cg_get_string(n->rvals.v[i]));
+        }
+      } else if (cg_get_string(n->lvals[0]) && cg_union_read_arms(f, n->rvals[1]->type, symbol, arms, arm_slots)) {
+        // ifa/206 step 2: the union's members disagree about this field's
+        // layout or representation, so no one member's layout reads it.
+        // Each arm reads through the object's own layout, chosen by its tag
+        // (cg_plan_concrete_tags gave the clones that disagree their own),
+        // and converts to the destination's type.
+        cchar *rv = cg_get_string(n->rvals[1]);
+        for (int k = 0; k < arms.n; k++) {
+          cchar *fct = c_type(arms[k]->has[arm_slots[k]]);
+          if (cg_float_crossing(cg_repr(n->lvals[0]), cg_value_repr(arms[k]->has[arm_slots[k]]))) {
+            warn_no_representation_ct(n, "field", symbol, t, fct);
+            codegen_fail(n, "field type mismatch reading a '%s' field into a '%s' (ifa/102)", fct, t);
+          }
+          cg_note_slot_use(arms[k], arm_slots[k], 1);
+          if (k == arms.n - 1)
+            fputs(k ? "  else\n  " : "  ", fp);
+          else
+            fprintf(fp, "  %sif ((*(_CG_TypeObject**)(void*)%s) == &%s)\n  ", k ? "else " : "", rv, cg_tag_name(arms[k]));
+          fprintf(fp, "  %s = (%s)((%s)%s)->e%d; /* %s, ifa/206 */\n", cg_get_string(n->lvals[0]), t,
+                  cg_get_string(arms[k]), rv, arm_slots[k], symbol);
         }
       } else {
         for (int i = 0; i < obj->has.n; i++) {
-          if (symbol == obj->has[i]->name) {
-            assert(n->lvals[0]->cg_string);
-            fprintf(fp, "  %s = (%s)((%s)%s)->e%d; /* %s */\n", n->lvals[0]->cg_string, t, obj->cg_string,
-                    n->rvals[1]->cg_string, i, symbol);
+          // ifa/185 (doom): a read kept live only for its None check
+          // (dead.cc's nil_period_receiver) has a dead result, and the
+          // field may then be dead too -- nothing reads it. The check was
+          // emitted above; there is nothing to load. doom's draw_wall_col
+          // reads `wallTexture.data` on a {None, Texture} receiver, and
+          // render()'s frame buffer is discarded, so the whole read chain
+          // is dead.
+          if (symbol == obj->has[i]->name && !cg_field_live(obj, i) && !n->lvals[0]->live) goto Lgetter_found;
+          if (symbol == obj->has[i]->name && cg_field_live(obj, i)) {
+            // issues/047: a DEAD destination has no name, and this
+            // asserted rather than diagnosing -- pyc aborted (SIGABRT)
+            // on ordinary Python. The read itself is pure (a struct
+            // field access), so with nothing to assign it to there is
+            // simply nothing to emit; P_prim_index_object's record
+            // branch already skips on the same `cg_get_string(lvals[0])`
+            // condition. Reached when FA leaves the destination contour
+            // untyped -- two setter METHODS writing sibling fields of
+            // one record, tests/method_setter_field_pair_compiler_abort.
+            if (!cg_get_string(n->lvals[0])) goto Lgetter_found;
+            // issues/048: mirror of the setter guard below. The field is
+            // read at its DECLARED type and cast to the destination's, so
+            // a `_CG_void` field feeding a `_CG_float64` destination is
+            // an illegal C cast -- which reached clang raw. (The int case
+            // casts silently, so only float exposed this.) Same num_kind
+            // test as every other representation guard here.
+            // Compare the C types the cast actually spans: the field is
+            // read at its DECLARED type and cast to `t`. Using the Syms'
+            // num_kind instead is wrong here -- both the field and
+            // lvals[0] carry the UNION Sym (`_CG_void`), while `t` is the
+            // narrowed destination the cast targets, which is exactly
+            // where the illegality is.
+            cchar *fct = c_type(obj->has[i]);
+            if (cg_float_crossing(cg_repr(n->lvals[0]), cg_value_repr(obj->has[i]))) {
+              warn_no_representation_ct(n, "field", symbol, t, fct);
+              codegen_fail(n, "field type mismatch reading a '%s' field into a '%s' (ifa/102)", fct, t);
+            } else
+              cg_note_field_access(f, n->rvals[1], obj, i), cg_note_slot_use(obj, i, 1),
+              fprintf(fp, "  %s = (%s)((%s)%s)->e%d; /* %s */\n", cg_get_string(n->lvals[0]), t, cg_get_string(obj),
+                      cg_get_string(n->rvals[1]), i, symbol);
             goto Lgetter_found;
           }
         }
-        if (!fruntime_errors)
-          fail("getter not resolved");
-        else
-          fputs("  assert(!\"runtime error: getter not resolved\");\n", fp);
+        // ifa/102: a live read on a receiver that can only be None is
+        // CPython's AttributeError, reported as every None check reports it
+        // (ifa/165). Asked here, where the read is emitted, and not in
+        // nil_period_receiver: that also decides what DCE keeps, and a dead
+        // None-only read is a protocol leftover (`if x:` on a None-only `x`
+        // reads `__pyc_to_bool__`, whose call folds to False).
+        if (n->rvals[1]->type == sym_nil_type) {  // always None: always raises
+          fprintf(fp, "  _CG_none_receiver(\"%s\");\n", symbol);
+          goto Lgetter_found;
+        }
+        // Anything else is a field FA never found on the receiver: refused
+        // in every mode (the 2026-11-07 census reached it only on None).
+        codegen_fail(n, "the attribute '%s' is not a field of the receiver's type '%s' (ifa/102)", symbol,
+                     obj && obj->name ? obj->name : "?");
       Lgetter_found:;
       }
       break;
     }
+  }
+  return 1;
+}
+
+// The `setter` hook (an attribute write). (ifa/issues/200 D2)
+static int c_prim_setter(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_setter: {
       cchar *symbol = n->rvals[3]->sym->is_symbol ? n->rvals[3]->sym->name : 0;
       if (!symbol) {
@@ -268,13 +800,45 @@ static int write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
         symbol = symbols[0]->name;
       }
       Sym *obj = n->rvals[1]->type;
-      if (obj->type_kind == Type_SUM) obj = obj->has[0];
+      obj = resolve_union_receiver(obj, symbol);
       for (int i = 0; i < obj->has.n; i++) {
         if (symbol == obj->has[i]->name) {
-          fprintf(fp, "  ((%s)%s)->e%d = (%s)%s;\n", obj->cg_string, n->rvals[1]->cg_string, i, c_type(obj->has[i]),
-                  c_rhs(n->rvals.v[4]));
+          // Issue 026: elide setter writes to dead fields.
+          // The struct has no slot for `e<i>` when has[i]
+          // is dead, so emitting `obj->e<i> = ...` would
+          // reference a missing member.  Dead fields are
+          // dead by definition — no downstream code reads
+          // the value — so skipping the write is sound.
+          if (cg_field_live(obj, i)) {
+            // issues/048: the same scalar-vs-pointer representation
+            // guard P_prim_set_index_object already applies to list
+            // elements, now on record FIELDS. A `{None, float}` field is
+            // declared `_CG_void`, and `(_CG_void)2.5` is not a legal C
+            // cast -- that reached clang as a raw error with no pyc
+            // diagnostic at all. `{None, int}` casts silently (int to
+            // pointer is legal) and aborted later at dispatch instead;
+            // both now fail here, in one place, with a message.
+            cchar *fct = c_type(obj->has[i]), *vct = c_type(n->rvals.v[4]);
+            if (cg_float_crossing(cg_value_repr(obj->has[i]), cg_repr(n->rvals.v[4]))) {
+              warn_no_representation_ct(n, "field", obj->has[i]->name, fct, vct);
+              codegen_fail(n, "field type mismatch storing a '%s' into a '%s' field (ifa/102)", vct, fct);
+            } else
+              cg_note_field_access(f, n->rvals[1], obj, i), cg_note_slot_use(obj, i, 0),
+              fprintf(fp, "  ((%s)%s)->e%d = (%s)%s;\n",
+                      cg_get_string(obj), cg_get_string(n->rvals[1]),
+                      i, c_type(obj->has[i]),
+                      c_rhs(n->rvals.v[4]));
+          }
+          // P_prim_setter's analyzer (fa.cc:1781) flows val
+          // (rvals[4]) into the lvalue — the lvalue carries
+          // val's type, matching Python's chained-assignment
+          // semantics where `obj.attr = val` evaluates to val.
+          // Emit the matching assignment when the lvalue is
+          // live; cast through lvals[0]'s declared type so the
+          // C compiler accepts the move. See issue 011.
           if (n->lvals[0]->live)
-            fprintf(fp, "  %s = ((%s)%s);\n", n->lvals[0]->cg_string, obj->cg_string, n->rvals[1]->cg_string);
+            fprintf(fp, "  %s = (%s)%s;\n", cg_get_string(n->lvals[0]), c_type(n->lvals[0]),
+                    c_rhs(n->rvals.v[4]));
           goto Lsetter_found;
         }
       }
@@ -282,197 +846,738 @@ static int write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
     Lsetter_found:
       break;
     }
-    case P_prim_apply: {
-      assert(!"unimplemented");
-      fputs("  ", fp);
-      int incomplete = 0;  // n->lvals.n && n->lvals[0]->type->var &&
-                           // n->lvals.v[0]->type->var->def == n;
-      if (incomplete) {
-        fprintf(fp, "Fmake_apply(%s, ", n->lvals[0]->cg_string);
-        write_c_type(fp, n->lvals[0]);
-        fprintf(fp, ", %s, %s);\n", n->rvals[0]->cg_string, n->rvals.v[2]->cg_string);
-      } else {
-        if (n->lvals.n) {
-          assert(n->lvals.n == 1);
-          fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-        }
-        int depth = application_depth(n);
-        write_c_apply_arg(fp, n->rvals[0]->cg_string, depth, 0);
-        fputs("((T__symbol) 0", fp);
-        for (int i = 1; i < depth; i++) {
-          fputs(", ", fp);
-          write_c_apply_arg(fp, n->rvals[0]->cg_string, depth, i);
-        }
-        fputs(", ", fp);
-        fputs(n->rvals[2]->cg_string, fp);
-        fputs(");\n", fp);
-      }
-      break;
-    }
+  }
+  return 1;
+}
+
+// The `index_load` hook (`index_object`). (ifa/issues/200 D2)
+static int c_prim_index_load(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_index_object: {
       fputs("  ", fp);
       assert(n->lvals.n == 1);
       Sym *t = n->rvals[o]->type;
       Sym *e = n->lvals[0]->type;
       if (t->is_vector) {
-        fprintf(fp, "%s = %s->v[%s];\n", n->lvals[0]->cg_string, n->rvals[o]->cg_string, n->rvals[o + 1]->cg_string);
+        fprintf(fp, "%s = %s->v[%s%s];\n", cg_get_string(n->lvals[0]), cg_get_string(n->rvals[o]),
+                index_cast(n->rvals[o + 1]), cg_get_string(n->rvals[o + 1]));
       } else if (t->type_kind != Type_RECORD || !n->rvals[o + 1]->sym->constant) {
-        if (n->lvals[0]->live) fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-        if (sym_string->specializers.set_in(t))
-          fprintf(fp, "_CG_char_from_string(%s,%s);\n", n->rvals[o]->cg_string, n->rvals[o + 1]->cg_string);
-        else {
-          fprintf(fp, "((%s", e->cg_string);
+        bool single_idx = n->rvals.n - (o + 1) == 1;
+        bool index_mismatch = false;
+        for (int i = o + 1; i < n->rvals.n; i++) {
+          if (!cg_repr(n->rvals[i]).scalar()) { index_mismatch = true; break; }
+        }
+        // NOTE (issue 035, read side): this branch deliberately gets NO
+        // element-vs-destination guard, unlike its writer sibling. The two
+        // cast to different types: the writer casts to the ELEMENT type
+        // (`(ety)value`, so an element/value num_kind mismatch is invalid
+        // C and must be rejected), while this reader casts the storage to
+        // the DESTINATION type (`((dst*)_CG_list_ptr(x))[i]`), which is a
+        // deliberate reinterpretation -- FA narrowed this contour's
+        // element even where the container's declared element type stayed
+        // boxed. Guarding on that mismatch here rejects ordinary code:
+        // measured 39 suite failures, e.g. `__list_iter__::__next__`
+        // emitting a correct `(_CG_int64)((_CG_int64*)(t2))[t3]`. The
+        // constant-index record branch below is the one that needs it,
+        // because there the field IS read at its own declared type.
+        if (index_mismatch) {
+          codegen_fail(n, "list index is not an integer type (ifa/102)");
+        } else {
+          // ifa/issues/055: a DEAD destination drops the `lhs =` prefix
+          // but the read is still emitted, leaving a bare expression
+          // statement -- clang's -Wunused-value. Cast to void instead of
+          // dropping the statement: the index computation can still
+          // trap (_CG_norm_idx bounds-checks), so the expression has to
+          // stay evaluated.
+          if (n->lvals[0]->live)
+            fprintf(fp, "%s = (%s)", cg_get_string(n->lvals[0]), c_type(n->lvals[0]));
+          else
+            fputs("(void)", fp);
+          if (sym_string->specializers.set_in(t)) {
+          if (single_idx)
+            fprintf(fp, "_CG_char_from_string(%s,_CG_norm_idx(%s,(int32)_CG_string_len(%s)));\n",
+                    cg_get_string(n->rvals[o]), cg_get_string(n->rvals[o + 1]), cg_get_string(n->rvals[o]));
+          else
+            fprintf(fp, "_CG_char_from_string(%s,%s);\n", cg_get_string(n->rvals[o]), cg_get_string(n->rvals[o + 1]));
+        } else if (sym_bytes->specializers.set_in(t)) {
+          if (single_idx)
+            fprintf(fp, "_CG_int_from_string(%s,_CG_norm_idx(%s,(int32)_CG_string_len(%s)));\n",
+                    cg_get_string(n->rvals[o]), cg_get_string(n->rvals[o + 1]), cg_get_string(n->rvals[o]));
+          else
+            fprintf(fp, "_CG_int_from_string(%s,%s);\n", cg_get_string(n->rvals[o]), cg_get_string(n->rvals[o + 1]));
+        } else {
+          cchar *ety = c_type(e);
+          fprintf(fp, "((%s", ety);
           for (int i = o + 1; i < n->rvals.n; i++) fprintf(fp, "*");
           if (t->type_kind == Type_RECORD)
-            fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
+            cg_emit_record_index_base(fp, t, cg_get_string(n->rvals[o]));
           else
-            fprintf(fp, ")(_CG_list_ptr(%s)))", n->rvals[o]->cg_string);
+            fprintf(fp, ")(_CG_list_ptr(%s)))", cg_get_string(n->rvals[o]));
           for (int i = o + 1; i < n->rvals.n; i++) {
             if (i != o + 1) fputs(", ", fp);
-            fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+            if (single_idx && t->type_kind != Type_RECORD)
+              fprintf(fp, "[_CG_norm_idx(%s,(int32)_CG_prim_len(0,%s))-%d]", cg_get_string(n->rvals[i]),
+                      cg_get_string(n->rvals[o]), fa->tuple_index_base);
+            else if (single_idx && t->type_kind == Type_RECORD && t->has.n)
+              // A RECORD (tuple) index was emitted RAW -- no negative-index
+              // normalisation -- while the list branch above normalises.
+              // `t[-1]` therefore indexed BACKWARDS off the front of the
+              // object instead of from its end.
+              //
+              // chess: `evals[board[i]]`, where a board square holds a
+              // negative code for a black piece (-1, -4, ...). `evals[-4]`
+              // read 32 bytes below the tuple's data, i.e. 16 bytes before
+              // its allocation -- exactly the address valgrind reported
+              // under PYC_NO_GC. Silent memory corruption under the
+              // collector, which only ever showed up later as a mangled GC
+              // free list.
+              //
+              // A record's arity is STATIC, so this is `_CG_norm_idx` with
+              // a constant length -- the C compiler folds it away for a
+              // constant index, which is the overwhelmingly common case.
+              fprintf(fp, "[_CG_norm_idx(%s,(int32)%d)-%d]", cg_get_string(n->rvals[i]), t->has.n,
+                      fa->tuple_index_base);
+            else
+              fprintf(fp, "[%s-%d]", cg_get_string(n->rvals[i]), fa->tuple_index_base);
           }
           fprintf(fp, ";\n");
         }
+        }
       } else {
-        if (fruntime_errors && t->type_kind == Type_RECORD && !t->has.n)
-          fputs("assert(!\"runtime error: bad getter\");\n", fp);
-        else
-          fprintf(fp, "%s = ((%s)%s)->e%s;\n", n->lvals[0]->cg_string, t->cg_string, n->rvals[o]->cg_string,
-                  n->rvals[o + 1]->sym->constant);
+        if (t->type_kind == Type_RECORD && !t->has.n)
+          codegen_fail(n, "a field read on '%s', a record with no fields (ifa/102)", c_type(t));
+        else {
+          // A record field whose own resolved type has no compile-time
+          // size (FA never gave it a value along any live path for
+          // this specific record contour, so its struct declaration is
+          // a bare _CG_void) can still have the destination Var
+          // resolved to a different, concrete, non-void type from ITS
+          // OWN broader use elsewhere in the function -- emitting the
+          // getter then assigns a genuinely-typeless field read into a
+          // mismatched C pointer type (issues/025 plcfrs: `_CG_void`
+          // into `_CG_ps13834*`). Skip, matching simple_move's
+          // null/void-type guard (issues/025 rubik2, same commit
+          // family) -- the read is dead for this contour either way.
+          // issues/025: a negative *constant* index (`a[-1]` on a
+          // fixed-size tuple-list) needs the same len-relative
+          // normalization as a dynamic one -- `t->has.n` is this
+          // record's field count, i.e. the tuple-list's length.
+          // Before this, the raw constant string ("-1") was used
+          // directly as the field suffix (`->e-1`, invalid C, a
+          // compile error) -- or, after the field-type guard above
+          // was added for the plcfrs fix, atoi("-1") < 0 failed that
+          // guard's bounds check and silently skipped the read
+          // instead (leaving the destination uninitialized -- worse:
+          // silently wrong instead of loudly rejected).
+          // issues/025 plcfrs (2nd pass): the field's own type can
+          // itself be a Type_SUM -- e.g. one field of a uniform
+          // 2-tuple wrapper is bound to tuples of *differing* own
+          // arity (grammar rules with a variable RHS length). That
+          // union's ->size is 0 (unions have no single compile-time
+          // size) even though its members are uniformly pointer-sized,
+          // same shape as sizeof_element's fix above --
+          // resolve_uniform_size() covers both. Without this, the
+          // getter was skipped entirely (matching the guard's original
+          // intent for a genuinely-unresolved field), leaving the
+          // destination Var *declared but never assigned* -- read
+          // as uninitialized stack garbage by whatever consumed it,
+          // not a compile error or a clean rejection.
+          int fidx = atoi(n->rvals[o + 1]->sym->constant);
+          if (fidx < 0) fidx += t->has.n;
+          Sym *field_type = (fidx >= 0 && fidx < t->has.n && t->has[fidx]) ? t->has[fidx]->type : nullptr;
+          if (resolve_uniform_size(field_type) && cg_get_string(n->lvals[0])) {
+            // A dead/nameless destination (cg_get_string == null) would
+            // emit `(null) = ...` -- a raw C error ("expression is not
+            // assignable"). The non-record sibling above already guards
+            // with n->lvals[0]->live; a constant record-index getter into
+            // a salvaged (no-type) contour reaches here without a name,
+            // so skip the dead read (issue 025 "no type" bucket: amaze,
+            // voronoi2).
+            // The struct's own field declaration follows field_type's
+            // *nominal* type, which for a Type_SUM field is whatever
+            // representative the struct-emission pass picked (often
+            // `_CG_void*`, since a union has no single "real" C type
+            // of its own) -- that can differ from the destination
+            // Var's own, independently-resolved type even though both
+            // are the same pointer-sized value underneath. An explicit
+            // cast to the destination's type make this a value-preserving
+            // reinterpretation instead of relying on the two to agree
+            // (a plain-assignment C error, "incompatible type", when
+            // they don't -- confirmed: tests/tuple_arity_union.py's
+            // own repro). A no-op when they already matched.
+            // issue 035, READ side (same guard as the sibling branch
+            // above, needed a second time -- and this is the exact site
+            // tictactoe hit: a fixed-size tuple-list's constant-index
+            // field can be a scalar while the destination Var resolved
+            // to a pointer, or the reverse, which the cast below cannot
+            // express. The pointer-to-pointer reinterpretation the cast
+            // exists for stays unaffected.
+            bool field_mismatch =
+                field_type && n->lvals[0]->type && cg_repr_mismatch(field_type, n->lvals[0]->type);
+            if (field_mismatch) {
+              codegen_fail(n, "tuple-list field type mismatch reading a '%s' field into a '%s' (ifa/102)",
+                           c_type(field_type), c_type(n->lvals[0]));
+            } else {
+              cchar *dst_ty = c_type(n->lvals[0]);
+              fprintf(fp, "%s = (%s)((%s)%s)->e%d;\n", cg_get_string(n->lvals[0]), dst_ty, cg_get_string(t),
+                      cg_get_string(n->rvals[o]), fidx);
+            }
+          }
+        }
       }
       break;
     }
+  }
+  return 1;
+}
+
+// The `index_store` hook (`set_index_object`). (ifa/issues/200 D2)
+static int c_prim_index_store(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_set_index_object: {
       fputs("  ", fp);
       Sym *t = n->rvals[o]->type;
       if (t->is_vector) {
-        fprintf(fp, "%s->v[%s] = %s;\n", n->rvals[o]->cg_string, n->rvals[o + 1]->cg_string,
-                n->rvals[n->rvals.n - 1]->cg_string);
+        fprintf(fp, "%s->v[%s%s] = %s;\n", cg_get_string(n->rvals[o]), index_cast(n->rvals[o + 1]),
+                cg_get_string(n->rvals[o + 1]), cg_get_string(n->rvals[n->rvals.n - 1]));
       } else if (t->type_kind != Type_RECORD || !n->rvals[o + 1]->sym->constant) {
-        fprintf(fp, "((%s", n->lvals[0]->type->cg_string);
-        for (int i = o + 1; i < n->rvals.n - 1; i++) fprintf(fp, "*");
-        if (t->type_kind == Type_RECORD)
-          fprintf(fp, ")(%s))", n->rvals[o]->cg_string);
-        else
-          fprintf(fp, ")(_CG_list_ptr(%s)))", n->rvals[o]->cg_string);
+        // Mirrors P_prim_index_object's negative-index normalization
+        // above (issues/025) -- same single-index-only scope.
+        bool single_idx = (n->rvals.n - 1) - (o + 1) == 1;
+        Sym *e = t && t->element ? t->element->type : nullptr;
+        cchar *ety = c_type(e);
+        // issue 035 (056/077-class guard, this time on the VALUE
+        // rather than the index): a salvage-degraded (or genuinely
+        // heterogeneous) list element type can end up
+        // pointer-representable (_CG_void, this list's real storage
+        // layout) while the value actually being stored resolved to
+        // a scalar, or vice versa. Casting a scalar directly to a
+        // pointer type (or a pointer to a scalar) is invalid C --
+        // unlike two pointer types, or two scalars of different
+        // width/kind, which are always castable (mirrors 034's same
+        // num_kind-based tolerance) -- so emitting it unconditionally
+        // produced a raw compile error instead of the established
+        // runtime-assert convention 056 already set for this same
+        // call site's INDEX argument. Found via
+        // shedskin_examples/tictactoe/tictactoe.py.
+        Var *val_v = n->rvals[n->rvals.n - 1];
+        bool value_mismatch = e && val_v->type && cg_repr_mismatch(e, val_v->type);
+        bool index_mismatch = false;
         for (int i = o + 1; i < n->rvals.n - 1; i++) {
-          if (!fa->tuple_index_base)
-            fprintf(fp, "[%s]", n->rvals[i]->cg_string);
-          else
-            fprintf(fp, "[%s-%d]", n->rvals[i]->cg_string, fa->tuple_index_base);
+          if (!cg_repr(n->rvals[i]).scalar()) { index_mismatch = true; break; }
         }
-        fprintf(fp, " = %s;\n", n->rvals[n->rvals.n - 1]->cg_string);
+        if (value_mismatch) {
+          codegen_fail(n, "list element type mismatch storing a '%s' into a '%s' element (ifa/102)", c_type(val_v),
+                       ety);
+        } else if (index_mismatch) {
+          codegen_fail(n, "list index is not an integer type (ifa/102)");
+        } else {
+          fprintf(fp, "((%s", ety);
+          for (int i = o + 1; i < n->rvals.n - 1; i++) fprintf(fp, "*");
+          if (t->type_kind == Type_RECORD)
+            cg_emit_record_index_base(fp, t, cg_get_string(n->rvals[o]));
+          else
+            fprintf(fp, ")(_CG_list_ptr(%s)))", cg_get_string(n->rvals[o]));
+          for (int i = o + 1; i < n->rvals.n - 1; i++) {
+            if (single_idx && t->type_kind != Type_RECORD)
+              fprintf(fp, "[_CG_norm_idx(%s,(int32)_CG_prim_len(0,%s))-%d]", cg_get_string(n->rvals[i]),
+                      cg_get_string(n->rvals[o]), fa->tuple_index_base);
+            else if (!fa->tuple_index_base)
+              fprintf(fp, "[%s]", cg_get_string(n->rvals[i]));
+            else
+              fprintf(fp, "[%s-%d]", cg_get_string(n->rvals[i]), fa->tuple_index_base);
+          }
+          fprintf(fp, " = (%s)%s;\n", ety, cg_get_string(val_v));
+        }
       } else {
-        fprintf(fp, "((%s)%s)->e%s = %s;\n", t->cg_string, n->rvals[o]->cg_string, n->rvals[o + 1]->sym->constant,
-                n->rvals[n->rvals.n - 1]->cg_string);
+        // issues/025: same negative-constant-index normalization as
+        // P_prim_index_object's Type_RECORD branch above (`a[-1] =
+        // x` on a fixed-size tuple-list otherwise emitted the
+        // invalid C field name `->e-1`).
+        int fidx = atoi(n->rvals[o + 1]->sym->constant);
+        if (fidx < 0) fidx += t->has.n;
+        // issue 035 (same guard as the non-Type_RECORD branch above,
+        // needed a second time -- a fixed-size tuple-list's constant-
+        // index field can independently end up pointer-representable
+        // while the assigned value resolved to a scalar, or vice
+        // versa. Found via tests/list_element_type_mismatch_salvage.py
+        // itself hitting this exact branch, not the one above.
+        Var *val_v2 = n->rvals[n->rvals.n - 1];
+        Sym *field_ty = (fidx >= 0 && fidx < t->has.n && t->has[fidx]) ? t->has[fidx]->type : nullptr;
+        bool field_mismatch = field_ty && val_v2->type && cg_repr_mismatch(field_ty, val_v2->type);
+        if (field_mismatch) {
+          codegen_fail(n, "tuple-list field type mismatch storing a '%s' into a '%s' field (ifa/102)", c_type(val_v2),
+                       c_type(field_ty));
+        } else {
+          fprintf(fp, "((%s)%s)->e%d = %s;\n", cg_get_string(t), cg_get_string(n->rvals[o]), fidx,
+                  cg_get_string(val_v2));
+        }
       }
       break;
     }
+  }
+  return 1;
+}
+
+// The `new` hook. (ifa/issues/200 D2)
+static int c_prim_new(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_new: {
       fputs("  ", fp);
       assert(n->lvals.n == 1);
-      fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-      fprintf(fp, "_CG_prim_new(%s);\n", n->lvals[0]->type->cg_string);
+      fprintf(fp, "%s = ", cg_get_string(n->lvals[0]));
+      fprintf(fp, "_CG_prim_new(%s);\n", cg_get_string(n->lvals[0]->type));
+      // ifa/issues/030: stamp the classtag into the prototype.
+      // Instances are made via _CG_prim_clone_dst(prototype), whose
+      // memcpy copies the tag along -- so this single store per
+      // class prototype tags every instance.
+      {
+        Sym *t = n->lvals[0]->type;
+        if (cg_has_classtag(t) && cg_get_string(n->lvals[0]))
+          fprintf(fp, "  ((%s)%s)->__pyc_tag = &%s;\n", cg_get_string(t), cg_get_string(n->lvals[0]),
+                  cg_tag_name(t));
+      }
       break;
     }
-    case P_prim_assign: {
-      fputs("  ", fp);
-      fprintf(fp, "%s = (%s)", n->lvals[0]->cg_string, num_string(n->lvals.v[0]->type));
-      fprintf(fp, "%s;\n", n->rvals[3]->cg_string);
-      break;
-    }
+  }
+  return 1;
+}
+
+// The `len` hook. (ifa/issues/200 D2)
+static int c_prim_len(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_len: {
       fputs("  ", fp);
-      if (n->lvals.n && n->lvals[0]->cg_string) fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+      if (n->lvals.n && cg_get_string(n->lvals[0])) fprintf(fp, "%s = ", cg_get_string(n->lvals[0]));
       Sym *t = n->rvals[o]->type;
-      if (sym_string->specializers.set_in(t))
-        fprintf(fp, "_CG_string_len(%s);\n", n->rvals[o]->cg_string);
+      if (sym_string->specializers.set_in(t) || sym_bytes->specializers.set_in(t))
+        fprintf(fp, "_CG_string_len(%s);\n", cg_get_string(n->rvals[o]));
       else {
-        assert(n->rvals[o]->cg_string);
-        fprintf(fp, "_CG_prim_len(%s,%s);\n", n->rvals[o - 1]->cg_string, n->rvals[o]->cg_string);
+        assert(cg_get_string(n->rvals[o]));
+        fprintf(fp, "_CG_prim_len(%s,%s);\n", cg_get_string(n->rvals[o - 1]), cg_get_string(n->rvals[o]));
       }
+      break;
+    }
+  }
+  return 1;
+}
+
+// The `clone` hook (`copy`, `clone`, `clone_vector`). (ifa/issues/200 D2)
+static int c_prim_clone(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  switch (n->prim->index) {
+    default:
+      return 0;
+    case P_prim_copy: {
+      fputs("  ", fp);
+      assert(n->lvals.n == 1);
+      Sym *dt = n->lvals[0]->type;
+      // A scalar (or immutable string) copy is identity: the clone
+      // macro's sizeof(*(T)0) only makes sense for records held by
+      // pointer. Reachable now that recursive functions get
+      // monomorphic contours (pyc issues/025 R1 item 5): deepcopy's
+      // int64 leaf contour calls copy(obj:int64), which used to be
+      // buried in a boxed union.
+      if (dt->type_kind != Type_RECORD) {
+        if (cg_get_string(n->lvals[0])) fprintf(fp, "%s = ", cg_get_string(n->lvals[0]));
+        fprintf(fp, "%s;\n", cg_get_string(n->rvals[n->rvals.n - 1]));
+        break;
+      }
+      cchar *dst_t = cg_get_string(dt);
+      cchar *src_t = c_type(n->rvals[n->rvals.n - 1]);
+      // A union of same-class CSs (original + P_prim_copy results,
+      // issues/029) has no single struct type -- its C type is
+      // _CG_any and sizeof is unavailable at compile time. Copy by
+      // the allocation's runtime size instead (GC_size, see
+      // _CG_prim_copy_any in pyc_c_runtime.h).
+      if (!dst_t || !src_t || cg_repr(dt).untyped() || cg_repr(n->rvals[n->rvals.n - 1]).untyped()) {
+        if (cg_get_string(n->lvals[0]))
+          fprintf(fp, "%s = (%s)", cg_get_string(n->lvals[0]), c_type(n->lvals[0]));
+        fprintf(fp, "_CG_prim_copy_any((void*)%s);\n", cg_get_string(n->rvals[n->rvals.n - 1]));
+        break;
+      }
+      if (cg_get_string(n->lvals[0])) fprintf(fp, "%s = ", cg_get_string(n->lvals[0]));
+      fprintf(fp, "(%s)_CG_prim_copy_dst(%s, ", dst_t, dst_t);
+      for (int i = 2; i < n->rvals.n; i++) {
+        if (i > 2) fprintf(fp, ", ");
+        fputs(cg_get_string(n->rvals[i]), fp);
+      }
+      fputs(");\n", fp);
+      if (cg_get_string(n->lvals[0]) && cg_tag_is_concrete(n->lvals[0]->type))
+        fprintf(fp, "  ((%s)%s)->__pyc_tag = &%s;  /* ifa/206 */\n", dst_t, cg_get_string(n->lvals[0]),
+                cg_tag_name(n->lvals[0]->type));
       break;
     }
     case P_prim_clone_vector:
     case P_prim_clone: {
       fputs("  ", fp);
       assert(n->lvals.n == 1);
-      if (n->lvals[0]->cg_string) fprintf(fp, "%s = ", n->lvals[0]->cg_string);
-      if (n->prim->index == P_prim_clone)
-        fprintf(fp, "(%s)_CG_prim_clone(", n->lvals[0]->type->cg_string);
-      else
-        fprintf(fp, "(%s)_CG_prim_clone_vector(", n->lvals[0]->type->cg_string);
+      cchar *dst_t = cg_get_string(n->lvals[0]->type);
+      if (cg_get_string(n->lvals[0])) fprintf(fp, "%s = ", cg_get_string(n->lvals[0]));
+      if (n->prim->index == P_prim_clone) {
+        // Issue 026: use destination-sized clone.  When the
+        // source prototype's per-CS struct is smaller than
+        // the destination instance's (which happens for
+        // classes with >1 self-typed field where the proto
+        // never receives field writes), the destination's
+        // size must drive the GC_MALLOC.
+        fprintf(fp, "(%s)_CG_prim_clone_dst(%s, ", dst_t, dst_t);
+      } else
+        fprintf(fp, "(%s)_CG_prim_clone_vector(", dst_t);
       for (int i = 2; i < n->rvals.n; i++) {
         if (i > 2) fprintf(fp, ", ");
-        fputs(n->rvals[i]->cg_string, fp);
+        fputs(cg_get_string(n->rvals[i]), fp);
       }
       fputs(");\n", fp);
+      if (n->prim->index == P_prim_clone && cg_get_string(n->lvals[0]) && cg_tag_is_concrete(n->lvals[0]->type))
+        fprintf(fp, "  ((%s)%s)->__pyc_tag = &%s;  /* ifa/206 */\n", dst_t, cg_get_string(n->lvals[0]),
+                cg_tag_name(n->lvals[0]->type));
+      // After cloning, populate any method pointer slots for polymorphic dispatch.
+      if (n->prim->index == P_prim_clone && cg_get_string(n->lvals[0])) {
+        Vec<PolymorphicSlot> *pslots = cg_new_to_val_map.get(f);
+        if (pslots) {
+          cchar *dst_t = cg_get_string(n->lvals[0]->type);
+          for (int si = 0; si < pslots->n; si++) {
+            int slot = (*pslots)[si].slot;
+            Fun *fun_val = (*pslots)[si].fun_val;
+            if (!cg_field_live(n->lvals[0]->type, slot)) continue;
+            if (!cg_get_string(fun_val)) continue;
+            cg_note_slot_use(n->lvals[0]->type, slot, 0);
+            fprintf(fp, "  ((%s)%s)->e%d = (void*)%s;\n",
+                    dst_t, cg_get_string(n->lvals[0]), slot, cg_get_string(fun_val));
+          }
+        }
+      }
       break;
     }
+  }
+  return 1;
+}
+
+// The `sizeof` hook (`sizeof`, `sizeof_element`). (ifa/issues/200 D2)
+static int c_prim_sizeof(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_sizeof: {
       if (n->lvals.n) {
         assert(n->lvals.n == 1);
-        if (n->lvals[0]->cg_string)
-          fprintf(fp, "  %s = ", n->lvals[0]->cg_string);
+        if (cg_get_string(n->lvals[0]))
+          fprintf(fp, "  %s = ", cg_get_string(n->lvals[0]));
         else
           fprintf(fp, "  ");
       } else
         fprintf(fp, "  ");
       Sym *t = n->rvals[o]->type;
-      fprintf(fp, "%d;\n", t->size);
+      // ifa/issues/127: `->size` is 0 for a Type_SUM and for anything
+      // unresolved, and emitting that 0 verbatim is the shape that has
+      // now gone wrong three times (issue 025's tuple-list soundness
+      // bug, rubik2, and chess's `[None] * 0x80`). Resolve a uniform
+      // union first, and fall back to a POINTER SLOT for anything
+      // pointer-shaped -- a boxed value still occupies one.
+      int psz = t->size;
+      if (!psz) psz = resolve_uniform_size(t);
+      if (!psz && !t->num_kind) psz = fa->pdb->if1->pointer_size;
+      fprintf(fp, "%d;\n", psz);
       break;
     }
     case P_prim_sizeof_element: {
       if (n->lvals.n) {
         assert(n->lvals.n == 1);
-        if (n->lvals[0]->cg_string)
-          fprintf(fp, "  %s = ", n->lvals[0]->cg_string);
+        if (cg_get_string(n->lvals[0]))
+          fprintf(fp, "  %s = ", cg_get_string(n->lvals[0]));
         else
           fprintf(fp, "  ");
       } else
         fprintf(fp, "  ");
       Sym *t = n->rvals[o]->type;
-      if (!t->element->type->size && t->type_kind == Type_RECORD) {
-        if (t->has.n)
-          fprintf(fp, "%d;\n", t->has[0]->type->size);
-        else
-          fprintf(fp, "0;\n");
-      } else
-        fprintf(fp, "%d;\n", t->element->type->size);
+      // A non-container operand type (no `element`) means FA
+      // specialized a container method against a scalar receiver or
+      // argument -- an upstream precision failure (issues/018's
+      // shared-container-method-not-cloned-per-element-type family;
+      // observed: score4's list.__add__ specialized with an int64
+      // right operand, rdb.py's str.__add__ specialized against a
+      // container clone). The generated code would be wrong
+      // regardless; fail with a location instead of dereferencing
+      // null.
+      if (!t->element && getenv("PYC_DBG_SIZEOF"))
+      {
+        fprintf(stderr, "[sizeof] type='%s' kind=%d has=%d in fun=%s members=",
+                t->name ? t->name : "<anon>", (int)t->type_kind, t->has.n, f->sym->name ? f->sym->name : "?");
+        for (Sym *m : t->has)
+          fprintf(stderr, " %s(kind=%d,elem=%d,esz=%d,eus=%d,has=%d)", m && m->name ? m->name : "<anon>",
+                  m ? (int)m->type_kind : -1, (m && m->element) ? 1 : 0,
+                  (m && m->element && m->element->type) ? m->element->type->size : -1,
+                  (m && m->element) ? resolve_uniform_size(m->element->type) : -1, m ? m->has.n : -1);
+        fprintf(stderr, "\n");
+      }
+      // ifa/issues/109: `t` itself may be a UNION OF CONTAINER TYPES --
+      // sunfish slices a receiver typed `tuple | tuple`, two distinct
+      // record-shaped tuples that differ only in arity. The SUM has no
+      // `element` of its own, but the question sizeof_element asks still
+      // has an answer: the element slot must hold any member's element,
+      // so ONE size works exactly when every member agrees on it. That is
+      // the same reasoning resolve_uniform_size already applies to a
+      // union ELEMENT type, lifted one level to a union CONTAINER type.
+      if (!t->element && t->type_kind == Type_SUM && t->has.n) {
+        int usz = 0;
+        bool uniform = true;
+        for (Sym *m : t->has) {
+          if (!m) continue;
+          int msz = 0;
+          if (m->element) {
+            msz = m->element->type ? m->element->type->size : 0;
+            if (!msz) msz = resolve_uniform_size(m->element->type);
+          }
+          // a record-shaped member (a fixed-arity tuple) stores its
+          // fields directly; they must agree too, which for `tuple<T>`
+          // built from one element type they do.
+          if (!msz && m->type_kind == Type_RECORD && m->has.n) {
+            for (Sym *fld : m->has) {
+              if (!fld || !fld->type) { uniform = false; break; }
+              int fsz = fld->type->size ? fld->type->size : resolve_uniform_size(fld->type);
+              if (!fsz) { uniform = false; break; }
+              if (!msz) msz = fsz;
+              else if (msz != fsz) { uniform = false; break; }
+            }
+          }
+          // An EMPTY container imposes no constraint: sunfish's union is
+          // {tuple(64 fields), tuple(0 fields)} because `sum(gen, ())`
+          // seeds with the empty tuple. `()` has no elements, so it has
+          // no element size to agree about -- skip it rather than
+          // treating it as a conflict.
+          if (!msz && m->type_kind == Type_RECORD && m->has.n == 0) continue;
+          if (!uniform || !msz) { uniform = false; break; }
+          if (!usz) usz = msz;
+          else if (usz != msz) { uniform = false; break; }
+        }
+        if (uniform && usz) {
+          fprintf(fp, "%d;\n", usz);
+          break;
+        }
+      }
+      if (!t->element)
+        cg_fail_unrepresentable_container_union(t, f->sym, n->code->ast ? n->code->ast->pathname() : nullptr,
+                                                n->code->ast ? n->code->ast->line() : 0);
+      int sz = t->element->type->size;
+      if (getenv("IFA_DBG_ELEMSZ"))
+        fprintf(stderr, "[elemsz] container=%s kind=%d elem=%s elem->type=%s size=%d kind=%d\n",
+                t->name ? t->name : "?", (int)t->type_kind,
+                t->element->name ? t->element->name : "?",
+                t->element->type && t->element->type->name ? t->element->type->name : "?",
+                t->element->type ? t->element->type->size : -1,
+                t->element->type ? (int)t->element->type->type_kind : -1);
+      if (!sz && t->type_kind == Type_RECORD && t->has.n) {
+        // `has[0]->type` can be NULL: a member with no type is emitted as
+        // a zero-width `char eN[0]` placeholder (issues/055, issues/121),
+        // and this dereferenced it unguarded -- a latent SIGSEGV on the
+        // default path whenever the placeholder lands at index 0, and a
+        // reliable one under PYC_ELIDE_SLOTS, which creates placeholders
+        // deliberately (measured: it crashed the compiler on chaos,
+        // chess, richards, solitaire and sunfish).
+        //
+        // The intent is "the size of one of this record's members", and a
+        // zero-width placeholder is not one -- take the first member that
+        // actually has a type.
+        for (int i = 0; i < t->has.n; i++)
+          if (t->has[i] && t->has[i]->type) { sz = t->has[i]->type->size; break; }
+      }
+      // A pointer-shaped element type whose `size` is 0 must still take a
+      // POINTER SLOT. `void` (an unresolved element) and a `Type_SUM`
+      // (a unioned one) are both emitted as `void *`, but carry size 0 --
+      // so `_CG_list_mult_internal` computed `size * s1 * l + HEADER` as
+      // just the header and handed back a list with ZERO capacity, into
+      // which the very next `__setitem__` wrote.
+      //
+      // Found with PYC_NO_GC + valgrind on chess: `[None] * 0x80` emitted
+      // `_CG_list_mult(t2, 128, 0)`, a 16-byte block, then an 8-byte
+      // write 0 bytes past it. Under the collector that same overrun only
+      // ever surfaced as a corrupted free list inside GC_clear_fl_marks,
+      // naming nobody.
+      if (!sz && t->element->type && !t->element->type->num_kind)
+        sz = fa->pdb->if1->pointer_size;
+      // A generic list's element type is the program-wide union of
+      // element types. With 2+ distinct element types that is a
+      // Type_SUM with no compile-time size -- but if every member
+      // happens to share the same concrete storage size (boxed
+      // records and other boxed containers -- list, str, set, dict,
+      // ... -- are all one pointer_size; a union of same-width
+      // scalars, e.g. two distinct int64 contours, agrees too), a
+      // single element slot of that size safely holds any of them,
+      // each access site casting/reinterpreting as needed the same
+      // way a single-type element already does. This used to emit 0
+      // for anything but an all-Type_RECORD union, so list::append
+      // resized with element size 0, the storage never grew, and
+      // reads returned null/corrupted at runtime with a clean compile
+      // (issue 025 tuple-list soundness bug: two functions
+      // append-building lists of different tuple types; recurred as
+      // list-of-list vs list-of-record mixing in rubik2, since `list`
+      // itself is Type_PRIMITIVE, not Type_RECORD, so the original
+      // record-only check rejected a perfectly uniform pointer-sized
+      // union). See resolve_uniform_size's own comment -- shared with
+      // the Type_RECORD-constant-index getter below.
+      if (!sz) sz = resolve_uniform_size(t->element->type);
+      fprintf(fp, "%d;\n", sz);
       break;
     }
+  }
+  return 1;
+}
+
+// The `primitive` hook (a registered primitive, by its name operand). (ifa/issues/200 D2)
+static int c_prim_primitive(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  switch (n->prim->index) {
+    default:
+      return 0;
     case P_prim_primitive: {
       if (n->lvals.n) {
         assert(n->lvals.n == 1);
-        if (n->lvals[0]->cg_string)
-          fprintf(fp, "  %s = ", n->lvals[0]->cg_string);
+        if (cg_get_string(n->lvals[0]))
+          fprintf(fp, "  %s = ", cg_get_string(n->lvals[0]));
         else
           fprintf(fp, "  ");
       } else
         fprintf(fp, "  ");
       cchar *name = n->rvals[1]->sym->name;
       if (!name) name = n->rvals[1]->sym->constant;
-      if (!strcmp("print", name))
-        cg_writeln(fp, n->rvals, 0);
-      else if (!strcmp("println", name))
-        cg_writeln(fp, n->rvals, 1);
+      RegisteredPrim *p = prim_get(name);
+      if (p && p->cgfn)
+        p->cgfn(fp, n, f);
       else {
-        RegisteredPrim *p = prim_get(name);
-        if (p && p->cgfn)
-          p->cgfn(fp, n, f);
-        else {
-          fprintf(fp, "_CG_%s_%s(", n->prim->name, name);
-          bool first = true;
-          for (int i = 2; i < n->rvals.n; i++) {
-            if (n->rvals[i]->cg_string) {
-              if (!first) fprintf(fp, ", ");
-              fputs(n->rvals[i]->cg_string, fp);
-              first = false;
-            }
+        fprintf(fp, "_CG_%s_%s(", n->prim->name, name);
+        bool first = true;
+        for (int i = 2; i < n->rvals.n; i++) {
+          if (cg_get_string(n->rvals[i])) {
+            if (!first) fprintf(fp, ", ");
+            fputs(cg_get_string(n->rvals[i]), fp);
+            first = false;
           }
-          fputs(");\n", fp);
         }
+        fputs(");\n", fp);
       }
+      break;
+    }
+  }
+  return 1;
+}
+
+// `emit_send_any_prim`: `await`, `yield` and `id`, as on LLVM; and
+// `apply`, `assign` and `destruct`, which only the V frontend emits and
+// LLVM has no handler for. (ifa/issues/200 D2)
+static int c_prim_any(FILE *fp, FA *fa, Fun *f, PNode *n) {
+  int o = (n->rvals.v[0]->sym == sym_primitive) ? 2 : 1;
+  switch (n->prim->index) {
+    default:
+      return 0;
+    case P_prim_apply: {
+      assert(!"unimplemented");
+      fputs("  ", fp);
+      int incomplete = 0;  // n->lvals.n && n->lvals[0]->type->var &&
+                           // n->lvals.v[0]->type->var->def == n;
+      if (incomplete) {
+        fprintf(fp, "Fmake_apply(%s, ", cg_get_string(n->lvals[0]));
+        write_c_type(fp, n->lvals[0]);
+        fprintf(fp, ", %s, %s);\n", cg_get_string(n->rvals[0]), cg_get_string(n->rvals.v[2]));
+      } else {
+        if (n->lvals.n) {
+          assert(n->lvals.n == 1);
+          fprintf(fp, "%s = ", cg_get_string(n->lvals[0]));
+        }
+        int depth = application_depth(n);
+        write_c_apply_arg(fp, cg_get_string(n->rvals[0]), depth, 0);
+        fputs("((T__symbol) 0", fp);
+        for (int i = 1; i < depth; i++) {
+          fputs(", ", fp);
+          write_c_apply_arg(fp, cg_get_string(n->rvals[0]), depth, i);
+        }
+        fputs(", ", fp);
+        fputs(cg_get_string(n->rvals[2]), fp);
+        fputs(");\n", fp);
+      }
+      break;
+    }
+    case P_prim_await: {
+      // issues/022: co_await's result (_CG_Coroutine::await_resume,
+      // pyc_c_runtime.h) is void*; assigning it into a non-pointer
+      // lval (the common case -- pyc's `int` is _CG_int64) is not an
+      // implicit conversion in C++. Same latent gap P_prim_yield
+      // documented and fixed for itself below -- an explicit
+      // (T)(uintptr_t)(...) cast, identical shape. Never hit by any
+      // existing test: async_simple.py/async_suspend.py's single
+      // `val = await ...` compiles fine standalone (uncalled,
+      // never-driven main() never gets FA-forced through this path
+      // meaningfully), but two or more sequential `x = await ...`
+      // assignments in one function (only exercised by an actually
+      // -driven coroutine, e.g. `_CG_run_coro(main())`) fails outright
+      // with "incompatible pointer to integer conversion".
+      if (virtual_cg_is_const_folded_send(n)) return 1;
+      fputs("  ", fp);
+      if (n->lvals.n && cg_get_string(n->lvals[0]) && strcmp(cg_get_string(n->lvals[0]), "(null)") != 0) {
+        assert(n->lvals.n == 1);
+        fprintf(fp, "%s = (%s)(uintptr_t)(co_await %s);\n", cg_get_string(n->lvals[0]), c_type(n->lvals[0]),
+                cg_get_string(n->rvals[o]));
+      } else {
+        fprintf(fp, "co_await %s;\n", cg_get_string(n->rvals[o]));
+      }
+      return 1;
+    }
+    case P_prim_yield: {
+      // issues/014: `co_yield expr` is itself a C++ expression whose
+      // value is whatever the *next* resume delivers (pyc_c_runtime.h's
+      // _CG_Generator::promise_type::yield_awaiter -- None for a bare
+      // advance, or .send(v)'s v). Mirrors P_prim_await immediately
+      // above: assign into the lval when `x = yield foo` has one
+      // (PY_yield_expr), otherwise emit a bare statement (PY_yield_stmt,
+      // `yield foo` alone -- the delivered value has no consumer).
+      // Unlike P_prim_await, an explicit cast to the lval's own type is
+      // required: `co_yield`'s value is `void*`, and assigning a
+      // void* into an integer-typed local (the common case -- pyc's
+      // `int` is `_CG_int64`) is not an implicit conversion in C++
+      // (confirmed: the analogous uncast `t = co_await ...;` pattern
+      // fails to compile for a non-constant int-typed await result;
+      // P_prim_await has this same latent gap, just never hit by an
+      // existing test). `co_yield` also binds looser than a C-style
+      // cast -- `(T)(uintptr_t)co_yield x` is a syntax error (the
+      // cast operator wants a unary-expression operand, and
+      // `co_yield x` isn't one) -- so the whole `co_yield` expression
+      // must be parenthesized before casting it.
+      if (virtual_cg_is_const_folded_send(n)) return 1;
+      fputs("  ", fp);
+      if (n->lvals.n && cg_get_string(n->lvals[0]) && strcmp(cg_get_string(n->lvals[0]), "(null)") != 0) {
+        assert(n->lvals.n == 1);
+        fprintf(fp, "%s = (%s)(uintptr_t)(co_yield (void*)(uintptr_t)%s);\n", cg_get_string(n->lvals[0]),
+                c_type(n->lvals[0]), cg_get_string(n->rvals[o]));
+      } else {
+        fprintf(fp, "co_yield (void*)(uintptr_t)%s;\n", cg_get_string(n->rvals[o]));
+      }
+      return 1;
+    }
+    case P_prim_id: {
+      // id(x): address (heap objects) or value bits (unboxed
+      // scalars) as int64. uintptr_t round-trip keeps the compiler
+      // quiet for both pointer- and integer-typed operands.
+      if (virtual_cg_is_const_folded_send(n)) return 1;
+      if (n->lvals.n && cg_get_string(n->lvals[0]) && strcmp(cg_get_string(n->lvals[0]), "(null)") != 0) {
+        assert(n->lvals.n == 1);
+        fprintf(fp, "  %s = (_CG_int64)(uintptr_t)%s;\n", cg_get_string(n->lvals[0]), cg_get_string(n->rvals[o]));
+      }
+      return 1;
+    }
+    case P_prim_assign: {
+      fputs("  ", fp);
+      fprintf(fp, "%s = (%s)", cg_get_string(n->lvals[0]), num_string(n->lvals.v[0]->type));
+      fprintf(fp, "%s;\n", cg_get_string(n->rvals[3]));
       break;
     }
     case P_prim_destruct:
@@ -482,30 +1587,99 @@ static int write_c_prim(FILE *fp, FA *fa, Fun *f, PNode *n) {
   return 1;
 }
 
+// C-backend wrapper around get_target_fun_core (codegen_common.{h,cc}).
+// A null result sends the caller to polymorphic dispatch; --strict
+// refuses only if that fails too (emit_send_call). The LLVM backend has
+// its own (search-by-sym, search-by-name) wrapper instead.
 static Fun *get_target_fun(PNode *n, Fun *f) {
-  Vec<Fun *> *fns = f->calls.get(n);
-  if (!fns || fns->n != 1) {
-    if (!fruntime_errors) fail("unable to resolve to a single function at call site");
-    return 0;
+  Fun *target = get_target_fun_core(n, f);
+  if (!target) {
+    // issues/171: name the cause when it is a {None, scalar} receiver --
+    // the same diagnostic the LLVM backend gives -- rather than the
+    // generic dispatch failure.
+    cchar *sel = nullptr;
+    if (Sym *scalar_member = poly_dispatch_nil_scalar_receiver(n, f->calls.get(n), nullptr, &sel))
+      codegen_fail(n, "'%s' on a {None, %s} union has no representation: a null test cannot "
+                      "distinguish None from 0/0.0/False (issues/048)",
+                   sel ? sel : "call", scalar_member->name ? scalar_member->name : "scalar");
   }
-  return fns->v[0];
+  return target;
 }
 
 static void simple_move(FILE *fp, Var *lhs, Var *rhs) {
   if (!lhs->live) return;
   if (lhs->sym->type_kind || rhs->sym->type_kind) return;
-  if (!lhs->cg_string || !rhs->cg_string) return;
-  if (rhs->type == sym_void->type || lhs->type == sym_void->type) return;
+  if (!cg_get_string(lhs) || !cg_get_string(rhs)) return;
+  // A null ->type means FA never resolved a type for this Var at all
+  // (e.g. the value lives only on a branch arm FA proved unreachable
+  // for this contour, so nothing ever defines it) -- c_type() already
+  // falls back to treating that the same as sym_void_type for the
+  // purposes of declaring/printing the Var, so the move must be
+  // skipped here too, or this emits a move from an undeclared-type
+  // temp that was never assigned (segfault/garbage reads downstream).
+  if (!rhs->type || !lhs->type || rhs->type == sym_void->type || lhs->type == sym_void->type) return;
+  // If FA collapsed lhs's type to nil_type (`sym_nil_type`)
+  // the global-var emitter in c_codegen_print_c sets its
+  // cg_string to the literal "NULL" — no storage, no lvalue.
+  // Without this guard, `simple_move` would emit
+  // `NULL = NULL;` which is invalid C.  Mirrors
+  // `is_const_folded_send` for SEND PNodes.  Same logic
+  // covers any other future case where a Var's cg_string
+  // becomes a non-lvalue literal — `get_constant` returns
+  // non-null for Vars folded to a single constant value.
+  //
+  // But a nil-typed LOCAL (a real `_CG_nil_type tN;` lvalue, e.g.
+  // fn->ret of `__pyc_None_type__.__deepcopy__`'s `return self`)
+  // must still be INITIALIZED: fully dropping the move left
+  // `return t0;` reading an uninitialized stack slot -- issues/029's
+  // deepcopied leaves carried stack garbage in their nil-armed
+  // Optional fields (SIGSEGV far away, in whatever walked the copy).
+  // The value of a nil-typed var is statically NULL, so emit that.
+  if (lhs->type == sym_nil_type) {
+    if (cg_get_string(lhs) && strcmp(cg_get_string(lhs), "NULL"))
+      fprintf(fp, "  %s = NULL;\n", cg_get_string(lhs));
+    return;
+  }
+  if (get_constant(lhs)) return;
   if (!rhs->sym->fun) {
-    ASSERT(rhs->cg_string);
-    if (rhs->type != lhs->type)
-      fprintf(fp, "  %s = (%s)%s;\n", lhs->cg_string, c_type(lhs), rhs->cg_string);
-    else
-      fprintf(fp, "  %s = %s;\n", lhs->cg_string, rhs->cg_string);
-  } else if (rhs->cg_string)
-    fprintf(fp, "  %s = (_CG_function)&%s;\n", lhs->cg_string, rhs->cg_string);
+    ASSERT(cg_get_string(rhs));
+    if (rhs->type != lhs->type) {
+      // Issue 073/072/071: FA can keep a fall-off `None` in a union whose
+      // other arm is a floating scalar -- e.g. adatron's `calculate_error`,
+      // whose `return` sits INSIDE a loop, so an empty iterable falls off
+      // the end and the fn is typed `float64 | None` (issue 071 Source A).
+      // The `None` arm is a dead/impossible path, but the emitted coercion
+      // `(_CG_float64)(void *)NULL` is ill-formed C++ (a hard compile
+      // error). Degrade the dead nil->floating move to a runtime-error
+      // trap (the issue-056 salvage convention) instead of emitting
+      // uncompilable code. Keyed on the emitted C types (the union sym
+      // itself has num_kind NONE; `c_type` collapses `None | T` to T's C
+      // type): only `void *` -> floating/complex is a guaranteed
+      // ill-formed C-style cast -- a same-size integer or `bool` target is
+      // well-formed -- so this only turns a currently-uncompilable program
+      // into a compilable one, never changes a compiling one's behavior.
+      // __assert_fail is noreturn, so downstream reads of `lhs` stay
+      // unreachable.
+      cchar *lt = c_type(lhs), *rt = c_type(rhs);
+      (void)rt;
+      if (rhs->type == sym_nil_type && cg_repr(lhs).is_float())
+        codegen_fail(rhs, "None coerced to a floating-point '%s' (ifa/102)", lt);
+      else
+        fprintf(fp, "  %s = (%s)%s;\n", cg_get_string(lhs), lt, cg_get_string(rhs));
+    } else
+      fprintf(fp, "  %s = %s;\n", cg_get_string(lhs), cg_get_string(rhs));
+  } else if (!rhs->sym->fun->live)
+    // ifa/issues/181: a function with no emitted body (used only as a
+    // value, e.g. `hash(f)` with f never called) has no address. This
+    // took `&tN` -- the address of an unused LOCAL -- which is unique only
+    // by accident and differs per call frame. Use a per-Sym token, as the
+    // LLVM backend does; an emitted function's value stays its address,
+    // which is what value-identity dispatch compares against.
+    fprintf(fp, "  %s = (_CG_function)&_CG_fnid<%d>::token;\n", cg_get_string(lhs), rhs->sym->id);
+  else if (cg_get_string(rhs))
+    fprintf(fp, "  %s = (_CG_function)&%s;\n", cg_get_string(lhs), cg_get_string(rhs));
   else
-    fprintf(fp, "  %s = NULL;\n", lhs->cg_string);
+    fprintf(fp, "  %s = NULL;\n", cg_get_string(lhs));
 }
 
 static int write_c_fun_arg(FILE *fp, Fun *f, char *s, char *e, Sym *sym, int i, int &wrote_one) {
@@ -522,7 +1696,7 @@ static int write_c_fun_arg(FILE *fp, Fun *f, char *s, char *e, Sym *sym, int i, 
     wrote_one = 1;
     Fun *f = sym->type->fun;
     if (f)
-      fprintf(fp, "((_CG_function)&%s)", f->cg_string);
+      fprintf(fp, "((_CG_function)&%s)", cg_get_string(f));
     else {
       snprintf(e, 4096 - (e - s), "->e%d", i);
       fputs(s, fp);
@@ -531,10 +1705,7 @@ static int write_c_fun_arg(FILE *fp, Fun *f, char *s, char *e, Sym *sym, int i, 
   return 1;
 }
 
-static int is_closure_var(Var *v) {
-  Sym *t = v->type;
-  return (t && t->type_kind == Type_FUN && !t->fun && t->has.n);
-}
+// is_closure_var(Var*) — moved to codegen_common.{h,cc}.
 
 static void write_arg_position(FILE *fp, MPosition *p) {
   for (int i = 0; i < p->pos.n; i++) {
@@ -550,21 +1721,62 @@ static void write_arg_position(FILE *fp, MPosition *p) {
 static void write_send_arg(FILE *fp, Fun *f, PNode *n, MPosition *p, int &wrote_one) {
   int i = Position2int(p->pos[0]) - 1;
   Var *v0 = n->rvals[0];
-  if (is_closure_var(v0)) {
-    if (i < v0->type->has.n) {
+  Sym *clo = closure_fun_type(v0);
+  if (clo) {
+    if (i < clo->has.n) {
       char ss[4096];
-      snprintf(ss, sizeof(ss), "(%s)%s", c_type(f->args.get(p)), v0->cg_string);
+      snprintf(ss, sizeof(ss), "(%s)%s", c_type(f->args.get(p)), cg_get_string(v0));
       char *ee = ss + strlen(ss);
-      write_c_fun_arg(fp, f, ss, ee, v0->type->has[i], i, wrote_one);
+      write_c_fun_arg(fp, f, ss, ee, clo->has[i], i, wrote_one);
       return;
     } else
-      i -= v0->type->has.n - 1;
+      i -= clo->has.n - 1;
   }
+  if (i < 0 || i >= n->rvals.n)
+    codegen_fail(n, "call argument %d out of range (call site has %d values; callee '%s' expects more)", i, n->rvals.n,
+                 f->sym->name ? f->sym->name : "<anonymous>");
   Var *v = n->rvals[i];
   if (p->pos.n <= 1) {
     if (wrote_one) fprintf(fp, ", ");
     wrote_one = 1;
-    fputs(c_rhs(v), fp);
+    // Voidish-arg cast: if the callsite arg's C type is
+    // `_CG_any` / `_CG_void` / `_CG_nil_type` (because FA
+    // inferred a union receiver that resolves to one of
+    // those at the cg layer) but the formal expects a
+    // typed pointer, emit an explicit cast.  FA's dispatch
+    // already proved the runtime value is of formal's type
+    // — the C source just lost track of the concrete type
+    // through an intermediate move or union-field projection.
+    // See issue 028 step 5 / issue 029.
+    Var *formal = f->args.get(p);
+    cchar *formal_t = formal ? c_type(formal) : nullptr;
+    cchar *arg_cg = c_rhs(v);
+    cchar *arg_t = c_type(v);
+    (void)arg_t;
+    bool arg_is_voidish = v->sym == sym_nil || cg_voidish(v->type);
+    bool formal_is_voidish = formal && cg_voidish(formal->type);
+    // issues/048: a union CONTAINING nil -- `{None, int64}` -- is
+    // represented as its scalar member and round-trips bit-for-bit, and
+    // codegen already casts it that way at non-call sites (`t1 =
+    // (_CG_nil_type)g1`). At call arguments it did not, so the opposite
+    // direction from the cast just above emitted invalid C: richards
+    // passed a `_CG_int64`-spelled `{None, int64}` global to a
+    // `_CG_nil_type` formal and clang refused with "no known conversion".
+    //
+    // Scoped to a union that actually contains nil. A BARE scalar into a
+    // pointer slot stays refused by write_c_pnode's arg_mismatch guard
+    // (`actual->type->num_kind`), which is a different and genuinely
+    // unsound case -- casting a real integer's bit pattern into a pointer
+    // would be silently wrong, and that guard's comment says so.
+    if (arg_is_voidish && !formal_is_voidish) {
+      fprintf(fp, "(%s)%s", formal_t, arg_cg);
+    } else if (cg_needs_nil_union_cast(formal ? formal->type : nullptr, formal_t, v)) {
+      fprintf(fp, "(%s)%s", formal_t, arg_cg);
+    } else if (cg_needs_sibling_record_cast(formal, v)) {
+      fprintf(fp, "(%s)%s", formal_t, arg_cg);
+    } else {
+      fputs(arg_cg, fp);
+    }
   } else {
 #if 0
     // These are inside tuples: potentially we could unwrap the tuple and pass the arguments directly.
@@ -577,47 +1789,1095 @@ static void write_send_arg(FILE *fp, Fun *f, PNode *n, MPosition *p, int &wrote_
   }
 }
 
-static void write_send(FILE *fp, Fun *f, PNode *n) {
-  fputs("  ", fp);
-  if (n->prim) {
-    if (n->lvals.n) {
-      assert(n->lvals.n == 1);
-      if (n->lvals[0]->cg_string) fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+// issue 077: the binary arithmetic/comparison primitive family --
+// every one of these has the (_a, _op, _b) macro shape in
+// pyc_c_runtime.h (_op an unused operator-symbol constant, e.g.
+// __pyc_symbol__("==")) and assumes _a and _b share one C type.
+// Deliberately NOT every prim_data.h index that can reach
+// emit_send_default_prim -- isinstance/issubclass (their own
+// &_CG_type_%s special case just below), merge/merge_in/coerce/is/...
+// have argument shapes this check was never designed to reason
+// about, so they're excluded rather than risk a false-positive
+// assert on a legitimately heterogeneous argument pair.
+static bool prim_is_binary_operator(int idx) {
+  switch (idx) {
+    case P_prim_pow:
+    case P_prim_mult:
+    case P_prim_div:
+    case P_prim_mod:
+    case P_prim_add:
+    case P_prim_subtract:
+    // ifa/issues/096: prim_strcat (str.__add__'s primitive-level "+"
+    // dispatch, prim_data.cc's PRIM_TYPE_STRING/PRIM_TYPE_STRING pair,
+    // the same uniform-two-operand (_a, _op, _b) macro shape as its
+    // siblings above) was missing from this original 077 set --
+    // msp_ss.py's getopt-gated code (issue 041) is the first corpus
+    // program observed to reach it with a salvage-degraded operand
+    // (`_CG_prim_strcat(str, "::", _CG_any)`, a hard C++ overload
+    // error identical in shape to what this whole switch already
+    // guards for its included members).
+    case P_prim_strcat:
+    case P_prim_lsh:
+    case P_prim_rsh:
+    case P_prim_less:
+    case P_prim_lessorequal:
+    case P_prim_greater:
+    case P_prim_greaterorequal:
+    case P_prim_equal:
+    case P_prim_notequal:
+    case P_prim_and:
+    case P_prim_xor:
+    case P_prim_or:
+    case P_prim_land:
+    case P_prim_lor:
+      return true;
+    default:
+      return false;
+  }
+}
+
+class CBackendEmitter : public VirtualCGEmitter {
+  FILE *fp;
+  FA *fa;
+  Fun *f;
+ public:
+  CBackendEmitter(FILE *fp, FA *fa, Fun *f) : fp(fp), fa(fa), f(f) {}
+
+  void emit_move(PNode *pn) override {
+    for (int i = 0; i < pn->lvals.n; i++) simple_move(fp, pn->lvals[i], pn->rvals.v[i]);
+  }
+
+  // ifa/issues/200 D2: each primitive goes to the hook that owns it on
+  // the LLVM backend too, so the two emitters can be read side by side.
+  // The cases are write_c_prim's, which is gone; each c_prim_* holds its
+  // hook's share of them.
+  bool emit_send_any_prim(PNode *pn) override { return c_prim_any(fp, fa, f, pn) != 0; }
+  bool emit_send_unaryop(PNode *pn) override {
+    return cg_unaryop_prim(pn->prim->index) && write_cg_macro_call(pn);
+  }
+  bool emit_send_binop(PNode *pn) override {
+    int idx = pn->prim->index;
+    return (idx == P_prim_pow || cg_binop_family(idx)) && write_cg_macro_call(pn);
+  }
+  bool emit_send_period(PNode *pn) override { return c_prim_period(fp, fa, f, pn) != 0; }
+  bool emit_send_setter(PNode *pn) override { return c_prim_setter(fp, fa, f, pn) != 0; }
+  bool emit_send_new(PNode *pn) override { return c_prim_new(fp, fa, f, pn) != 0; }
+  bool emit_send_clone(PNode *pn) override { return c_prim_clone(fp, fa, f, pn) != 0; }
+  bool emit_send_len(PNode *pn) override { return c_prim_len(fp, fa, f, pn) != 0; }
+  bool emit_send_strcat(PNode *pn) override { return pn->prim->index == P_prim_strcat && write_cg_macro_call(pn); }
+  bool emit_send_make(PNode *pn) override { return c_prim_make(fp, fa, f, pn) != 0; }
+  bool emit_send_index_load(PNode *pn) override { return c_prim_index_load(fp, fa, f, pn) != 0; }
+  bool emit_send_index_store(PNode *pn) override { return c_prim_index_store(fp, fa, f, pn) != 0; }
+  bool emit_send_sizeof(PNode *pn) override { return c_prim_sizeof(fp, fa, f, pn) != 0; }
+  bool emit_send_primitive(PNode *pn) override { return c_prim_primitive(fp, fa, f, pn) != 0; }
+
+  bool emit_send_is(PNode *pn) override {
+    if (pn->prim->index == P_prim_is && pn->rvals.n >= 4) {
+      if (pn->lvals.n && cg_get_string(pn->lvals[0])) {
+        cchar *lhs = cg_get_string(pn->rvals[2]);
+        if (!lhs) lhs = cg_get_string(pn->rvals[2]->sym);
+        cchar *rhs = cg_get_string(pn->rvals[3]);
+        if (!rhs) rhs = cg_get_string(pn->rvals[3]->sym);
+        // A numeric operand (bool/int/float) is a value, not a pointer:
+        // compare it as one. Casting a `_CG_bool` or `_CG_int64` to
+        // `void *` draws -Wint-to-void-pointer-cast, and a double cannot
+        // be cast to a pointer at all. Reached since `x is True` over a
+        // runtime bool stopped folding to False (fa_prims.cc P_prim_is).
+        Sym *t2 = pn->rvals[2]->type, *t3 = pn->rvals[3]->type;
+        if (t2 && t3 && t2->num_kind && t3->num_kind)
+          fprintf(fp, "  %s = (%s == %s);\n", cg_get_string(pn->lvals[0]), lhs ? lhs : "0", rhs ? rhs : "0");
+        else
+          fprintf(fp, "  %s = ((void *)%s == (void *)%s);\n", cg_get_string(pn->lvals[0]), lhs ? lhs : "NULL",
+                  rhs ? rhs : "NULL");
+      } else {
+        fputs("  ;\n", fp);
+      }
+      return true;
     }
-    fprintf(fp, "_CG_%s(", n->prim->name);
+    // issue 011: a nil_type check reached through a MONOMORPHIC
+    // isinstance() CLONE (build_isinstance_call's ordinary-call form,
+    // used by both match-statement None-patterns and try/except's
+    // typed-clause dispatch) sees the CLASS VALUE Sym as its second
+    // arg (named "nil_type"), not sym_nil_type itself (named
+    // "__pyc_None_type__") -- same value-vs-type-Sym split
+    // ifa/analysis/fa.cc's OWN isinstance constant-folding navigates
+    // via ->meta_type (see the disjunction case below): the value
+    // Sym's meta_type IS sym_nil_type. The direct-send form (`x is
+    // None`'s raw prim_isinstance lowering) passes sym_nil_type
+    // itself, so both checks are needed.
+    Sym *cls3 = pn->rvals.n >= 4 ? pn->rvals[3]->sym : nullptr;
+    bool is_nil_check =
+        pn->prim->index == P_prim_isinstance && cls3 && (cls3 == sym_nil_type || cls3->meta_type == sym_nil_type);
+    if (is_nil_check) {
+      if (pn->lvals.n && cg_get_string(pn->lvals[0])) {
+        // issue 011: an exception-propagation check
+        // (emit_exc_check, python_ifa_build_if1.cc) that
+        // ifa/optimize/exc_check_fold.cc proved can never fire has
+        // ALREADY had its condition Var rewritten to FA's own
+        // canonical true_type constant by the time codegen runs --
+        // virtual_cg_is_const_folded_send's check upstream
+        // (virtual_cg_emit_send) skips this whole send for that
+        // case, so this function is never even reached for it; the
+        // downstream branch (write_c_pnode's Code_IF handling) then
+        // elides the dead arm too. No special-casing needed here.
+        cchar *opnd = cg_get_string(pn->rvals[2]);
+        if (!opnd) opnd = cg_get_string(pn->rvals[2]->sym);
+        // issue 011: reached through build_isinstance_call's
+        // monomorphic clone (see is_nil_check above), the operand can
+        // be a SCALAR-typed contour -- pyc's own convention for an
+        // int-or-None formal specialized to its scalar arm represents
+        // None AS 0 in that slot (describe(None) calling the SAME
+        // int64 clone as describe(5), passing (int64)NULL), so `==
+        // NULL` is already semantically correct here, not just for
+        // real pointers -- only clang's type checker objects
+        // (-Wnull-arithmetic on a direct int-vs-NULL compare).
+        // Routing through a pointer-sized cast keeps the identical
+        // comparison (0 either way) silently.
+        fprintf(fp, "  %s = ((void *)(intptr_t)%s == NULL);\n", cg_get_string(pn->lvals[0]), opnd ? opnd : "NULL");
+      } else {
+        fputs("  ;\n", fp);
+      }
+      return true;
+    }
+    // isinstance against a REAL class. There is no runtime
+    // class-hierarchy structure to walk (a record's only runtime
+    // identity is its classtag pointer, compared by equality) -- so
+    // emit a compile-time disjunction over the checked class's
+    // implementors (FA's own subclass set, `s->implementors.set_add(s)`
+    // in ast.cc means self is included -- exactly the set fa.cc's OWN
+    // constant-folding isinstance uses, ifa/analysis/fa.cc's
+    // P_prim_isinstance case, so the runtime fallback agrees with
+    // whatever FA didn't manage to fold at compile time). Needed for
+    // `except X as e:` matching against the pending-exception slot,
+    // whose union type across the whole program defeats per-CS
+    // constant folding.
+    if (pn->prim->index == P_prim_isinstance && pn->rvals.n >= 4) {
+      if (pn->lvals.n && cg_get_string(pn->lvals[0])) {
+        cchar *opnd = cg_get_string(pn->rvals[2]);
+        if (!opnd) opnd = cg_get_string(pn->rvals[2]->sym);
+        // The second isinstance arg is usually ALREADY the concrete
+        // class Sym directly (a raw sym_primitive send built right
+        // at the checking call site, e.g. try/except's typed-clause
+        // dispatch): type_kind Type_RECORD, has.n > 0, implementors
+        // usable as-is. Only fall back to ->meta_type for a value-
+        // vs-type-Sym split (e.g. reached through
+        // build_isinstance_call's shared isinstance() clone, where
+        // the formal itself carries no concrete type_kind but its
+        // meta_type does -- see is_nil_check above, same split).
+        // Empirically these are NOT interchangeable: using
+        // ->meta_type when cls is already concrete walks a DIFFERENT
+        // (meta-level, has.n==0) Sym's implementors and silently
+        // finds nothing.
+        Sym *cls = pn->rvals[3]->sym;
+        Sym *cls_type = (cls->type_kind == Type_RECORD && cls->has.n) ? cls
+                         : cls->meta_type                              ? cls->meta_type
+                                                                        : cls;
+        Vec<Sym *> concrete;
+        int decided = cg_isinstance_tag_targets(pn, cls_type, concrete);
+        fprintf(fp, "  %s = ", cg_get_string(pn->lvals[0]));
+        if (decided >= 0) {
+          fprintf(fp, "%d;\n", decided);
+        } else if (!opnd || !concrete.n) {
+          fputs("0;\n", fp);
+        } else {
+          fputs("(0", fp);
+          std::set<std::string> tested;
+          for (Sym *impl : concrete) {
+            Vec<Sym *> ms;
+            cg_tag_family_members(impl, ms);  // ifa/206: a split family's every tag
+            for (Sym *m : ms) {
+              std::string tn = cg_tag_name(m);
+              if (!tested.insert(tn).second) continue;
+              fprintf(fp, " || (*(_CG_TypeObject**)(void*)%s) == &%s", opnd, tn.c_str());
+            }
+          }
+          fputs(");\n", fp);
+        }
+      } else {
+        fputs("  ;\n", fp);
+      }
+      return true;
+    }
+    return false;
+  }
+  // P_prim_coerce with a STRING source: `float("...")` / `int("...")`.
+  // The synthesized __coerce__ method (build_syms) emits one coerce
+  // primitive for every argument type; the default emission is a raw
+  // `(target_type)value` cast, which is a valid numeric conversion but
+  // an illegal `(double)(char*)` cast when the argument is a string
+  // (issue 025, shedskin path_tracing's `float("inf")`). Route a string
+  // source through the runtime parser instead; every non-string source
+  // returns false and keeps the default cast.
+  bool emit_send_coerce(PNode *pn) override {
+    if (!pn->prim || pn->prim->index != P_prim_coerce) return false;
+    if (pn->rvals.n < 2 || !pn->lvals.n || !cg_get_string(pn->lvals[0])) return false;
+    Var *src = pn->rvals[pn->rvals.n - 1], *tgt = pn->rvals[pn->rvals.n - 2];
+    Sym *st = src->type;
+    bool src_is_string = st && (st == sym_string || sym_string->specializers.set_in(st));
+    if (!src_is_string) return false;
+    Sym *tt = tgt->sym;
+    if (tt && tt->is_meta_type) tt = tt->meta_type;
+    tt = unalias_type(tt);
+    if (!tt || !tt->num_kind) return false;  // string -> non-numeric: leave to default
+    cchar *src_s = cg_get_string(src);
+    if (!src_s) src_s = cg_get_string(src->sym);
+    cchar *conv = (tt->num_kind == IF1_NUM_KIND_FLOAT) ? "_CG_str_to_float64" : "_CG_str_to_int64";
+    fprintf(fp, "  %s = (%s)%s(%s);\n", cg_get_string(pn->lvals[0]), c_type(pn->lvals[0]), conv,
+            src_s ? src_s : "NULL");
+    return true;
+  }
+  // Whatever no other hook claimed (`coerce` from a non-string, a
+  // non-None `isinstance`, `land`/`lor`): the `_CG_<name>(...)` runtime
+  // macro, the same form the operator hooks above write.
+  bool emit_send_default_prim(PNode *pn) override { return write_cg_macro_call(pn); }
+
+  // `_CG_<prim name>(operands...)`, assigned to the result when it has one.
+  bool write_cg_macro_call(PNode *pn) {
+    // issue 077: dispatch that picked a binary arithmetic/comparison
+    // dunder (e.g. numeric __eq__) only checked ONE operand's type
+    // (classtag dispatch on the receiver) -- nothing has verified the
+    // OTHER operand still matches by the time this generic fallback
+    // prints both verbatim. A salvage-degraded operand (issue 076's
+    // mechanism, or similar) can let them diverge, producing C this
+    // macro was never built to accept (e.g. comparing a pointer to an
+    // int64). Degrade to the established runtime-assert convention
+    // (issue 056) instead of emitting it. The operator-symbol operand
+    // itself (e.g. __pyc_symbol__("==")'s value) is excluded from the
+    // comparison the same way P_prim_setter already identifies a
+    // selector argument (->sym->is_symbol, ~line 381) -- it's a
+    // distinct Symbol-typed constant, never expected to match the
+    // real operands' type.
+    if (prim_is_binary_operator(pn->prim->index)) {
+      // issue 077 follow-up: comparing raw c_type() STRINGS (the
+      // original form of this check) false-positived on ordinary,
+      // correct mixed-numeric arithmetic -- e.g. `2 * x` for a float
+      // `x` reaches this fallback as int64/float64, "_CG_int64" !=
+      // "_CG_float64", flagged as a mismatch even though C's own
+      // arithmetic promotion makes int-times-float completely valid
+      // (found via shedskin_examples/yopyra/yopyra.py: int.__mul__'s
+      // `__pyc_operator__` fallback aborted at runtime on a genuine
+      // `2 * <float>`). Two scalar operands of ANY kind/width
+      // (num_kind truthy on both) are always safely C-castable --
+      // mirrors both cg_emit_llvm.cc's emit_send_binop (which
+      // actively coerces int<->float/int-width pairs rather than
+      // erroring) and c_call_codegen's own num_kind-based tolerance
+      // (python_ifa_main.cc, same issue). Only a scalar paired with a
+      // non-numeric (pointer-like) operand -- or two non-numeric
+      // operands with genuinely different C representations -- is a
+      // real mismatch.
+      Var *operand_v = nullptr;
+      bool mismatch = false;
+      int chk_start = (pn->rvals[0]->sym == sym_primitive) ? 2 : 1;
+      for (int i = chk_start; i < pn->rvals.n; i++) {
+        if (pn->rvals[i]->sym && pn->rvals[i]->sym->is_symbol) continue;
+        if (!operand_v) {
+          operand_v = pn->rvals[i];
+          continue;
+        }
+        Sym *ot = operand_v->type, *nt = pn->rvals[i]->type;
+        if (ot == nt) continue;
+        if (ot && nt && ot->num_kind && nt->num_kind) continue;  // both scalar -- any kind/width is C-castable
+        cchar *oc = c_type(operand_v), *nc = c_type(pn->rvals[i]);
+        if (oc && nc && !strcmp(oc, nc)) continue;
+        mismatch = true;
+        break;
+      }
+      if (mismatch) {
+        codegen_fail(pn, "primitive operand type mismatch '_CG_%s' (ifa/102)", pn->prim->name);
+      }
+    }
+    fputs("  ", fp);
+    if (pn->lvals.n && cg_get_string(pn->lvals[0])) {
+      fprintf(fp, "%s = ", cg_get_string(pn->lvals[0]));
+    }
+    fprintf(fp, "_CG_%s(", pn->prim->name);
     int comma = 0;
     int start = 1;
-    if (n->rvals[0]->sym == sym_primitive) start = 2;
-    for (int i = start; i < n->rvals.n; i++) {
-      cchar *s = n->rvals[i]->cg_string;
-      if (!s) s = n->rvals[i]->sym->cg_string;
+    if (pn->rvals[0]->sym == sym_primitive) start = 2;
+    for (int i = start; i < pn->rvals.n; i++) {
+      cchar *s = cg_get_string(pn->rvals[i]);
+      if (!s) s = cg_get_string(pn->rvals[i]->sym);
       assert(s);
       if (comma) fprintf(fp, ", ");
       comma = 1;
-      fputs(s, fp);
+      if (pn->prim->index == P_prim_isinstance && i == 3) {
+        fprintf(fp, "&_CG_type_%s", s);
+      } else {
+        // ifa/issues/055: `_CG_prim_coerce(_t, _v)` expands to
+        // `((_t)_v)`, and a POINTER value narrowed straight to a small
+        // scalar is a hard C error -- "cast from pointer to smaller type
+        // '_CG_bool' loses information" (softrender's
+        // `__coerce__(_CG_any) -> _CG_bool`). Route through uintptr_t,
+        // which is both legal and the right meaning: for a voidish
+        // operand the coercion IS the null test, so `(bool)(uintptr_t)p`
+        // is `p != 0`. Integers and pointers already round-trip
+        // bit-for-bit here (see float_ct's note).
+        if (pn->prim->index == P_prim_coerce && i == pn->rvals.n - 1 && i > start) {
+          cchar *vt = c_type(pn->rvals[i]);
+          cchar *tt = cg_get_string(pn->rvals[i - 1]->sym);
+          // ifa/140: the operand does not have to be one of the three
+          // VOIDISH spellings -- any pointer-like C type narrowed to a
+          // small scalar is the same hard C error. softrender under
+          // PYC_CSDCPA1=2 has `__coerce__(_CG_list) -> _CG_bool`, and the
+          // original three-name test did not fire for `_CG_list`:
+          //
+          //   error: cast from pointer to smaller type '_CG_bool' loses
+          //          information
+          //
+          // "Not a scalar spelling, and 8 bytes wide" is the pointer-like
+          // test, reusing cg_ctype_width's own table rather than a second
+          // list of names to drift from. The meaning is unchanged and still
+          // right: for a pointer operand the coercion IS the null test, so
+          // `(bool)(uintptr_t)p` is `p != 0` -- which is exactly Python's
+          // truthiness for a container.
+          bool v_ptr = cg_repr(pn->rvals[i]).pointer_like();
+          if (v_ptr && cg_repr(pn->rvals[i - 1]->sym).scalar()) fputs("(uintptr_t)", fp);
+          (void)vt;
+          (void)tt;
+        }
+        fputs(s, fp);
+      }
     }
     fputs(");\n", fp);
-  } else {
-    Fun *target = get_target_fun(n, f);
+    return true;
+  }
+
+  void emit_none_check(Var *recv, cchar *sel) override {
+    cchar *rs = cg_get_string(recv);
+    // ifa/issues/184: never skip the check silently. A receiver with no
+    // value here was deleted by DCE, and skipping printed the method's
+    // result where CPython raises.
+    if (!rs) fail("internal error: the None check on the receiver of '%s' has no receiver value (ifa/issues/184)", sel ? sel : "?");
+    fprintf(fp, "  if (!%s) _CG_none_receiver(\"%s\");\n", rs, sel ? sel : "?");
+  }
+
+  void emit_send_call(PNode *pn) override {
+    Fun *target = get_target_fun(pn, f);
     if (target) {
-      if (n->lvals.n) {
-        assert(n->lvals.n == 1);
-        if (n->lvals[0]->cg_string) fprintf(fp, "%s = ", n->lvals[0]->cg_string);
+      // ifa/issues/165: the receiver may be None and None has no such
+      // method. CPython raises here; without the check the callee reads
+      // NULL as the zero value.
+      int nri = nil_receiver_rval(pn, target);
+      if (nri >= 0)
+        emit_none_check(pn->rvals[nri], (pn->rvals.n && pn->rvals[0]->sym->is_symbol) ? pn->rvals[0]->sym->name : nullptr);
+      // ifa/issues/097: the resolved target CLONE's own formal
+      // parameter type can be coarser (_CG_any) than what THIS
+      // specific call edge's actual argument resolves to (a
+      // concrete scalar) -- root cause not traced (suspected the
+      // same "shared clone reused across incompatible edges" family
+      // closed/076 root-caused for container-element flow, now
+      // possibly for call-target/clone selection instead; see 097).
+      // Only the scalar-into-voidish direction is unsafe: a real
+      // pointer type flowing into a voidish (`_CG_any`/void*) formal
+      // always compiles fine as-is (any object pointer implicitly
+      // converts to void*), matching write_send_arg's own opposite-
+      // direction cast just below (voidish arg -> concrete pointer
+      // formal). Casting a scalar's raw bit pattern into a pointer
+      // slot the way that direction casts a pointer INTO a scalar
+      // would just be silently wrong, not a real value -- so this
+      // guards (056/077/096's established assert/fail convention)
+      // rather than emitting either malformed C or a garbage cast.
+      bool arg_mismatch = false;
+      for (MPosition *p : target->positional_arg_positions) {
+        if (p->pos.n != 1) continue;  // closure/tuple-projection arg: not handled by this check
+        Var *formal = target->args.get(p);
+        if (!formal || !formal->live) continue;
+        if (!cg_voidish(formal->type)) continue;
+        int i = Position2int(p->pos[0]) - 1;
+        if (i < 0 || i >= pn->rvals.n) continue;
+        Var *actual = pn->rvals[i];
+        if (!actual || !actual->type || !actual->type->num_kind) continue;
+        arg_mismatch = true;
+        break;
       }
-      fputs(target->cg_string, fp);
+      if (arg_mismatch) {
+        codegen_fail(pn, "call argument type mismatch calling '%s' (ifa/102)",
+                     target->sym->name ? target->sym->name : "?");
+      }
+      fputs("  ", fp);
+      if (pn->lvals.n && cg_get_string(pn->lvals[0])) {
+        fprintf(fp, "%s = ", cg_get_string(pn->lvals[0]));
+        // Cast the result when the callee's contour returns a wider
+        // C type than this call site's lval (e.g. a shared method
+        // contour returning _CG_any assigned into a concrete
+        // struct-pointer temp) -- same discipline as
+        // write_send_arg's argument casts; pointer results detour
+        // through void*.
+        cchar *lt = c_type(pn->lvals[0]);
+        cchar *rt = target->rets.n && target->rets[0] ? c_type(target->rets[0]) : nullptr;
+        if (lt && rt && strcmp(lt, rt)) {
+          bool scalar = cg_repr(pn->lvals[0]).scalar();
+          if (scalar)
+            fprintf(fp, "(%s)", lt);
+          else
+            fprintf(fp, "(%s)(void*)", lt);
+        }
+      }
+      fputs(cg_get_string(target), fp);
       fputs("(", fp);
       int wrote_one = 0;
       for (MPosition *p : target->positional_arg_positions) {
         Var *av = target->args.get(p);
         if (!av->live) continue;
-        write_send_arg(fp, target, n, p, wrote_one);
+        write_send_arg(fp, target, pn, p, wrote_one);
       }
       fputs(");\n", fp);
     } else {
-      fputs("assert(!\"runtime error: matching function not found\");\n", fp);
+      // Polymorphic dispatch through a method pointer slot (vtable).
+      //
+      // Call PNode rvals layout (for a method call like `right.val()`):
+      //   rvals[0] = method symbol (e.g. "val"), sym->name="val", def=nil
+      //   rvals[i] = receiver (self) at index i = Position2int(self_pos) - 1
+      //
+      // Strategy: find the first live positional arg of any callee, derive
+      // the rvals index from its position, get the receiver cg-string, find
+      // the method slot in that arg's concrete type, and emit an indirect call
+      // through `((recv_type)(void*)recv)->eN`.
+      Vec<Fun *> *fns = f->calls.get(pn);
+      Vec<ArityDispatchCase *> arity_cases;
+      if (fns && fns->n > 1 && pn->rvals.n && poly_dispatch_arity_plan(pn, fns, arity_cases)) {
+        // ifa/185: dispatch on the operands' tuple arity
+        // (poly_dispatch_arity_plan). Tuples have no classtag, so each
+        // case tests the length header, after a null test for None.
+        cchar *lhs = (pn->lvals.n && cg_get_string(pn->lvals[0])) ? cg_get_string(pn->lvals[0]) : nullptr;
+        cchar *ret_type_str = (pn->lvals.n && pn->lvals[0]->type) ? c_type(pn->lvals[0]) : "void*";
+        bool ret_scalar = pn->lvals.n && cg_repr(pn->lvals[0]).scalar();
+        for (int ci = 0; ci < arity_cases.n; ci++) {
+          ArityDispatchCase *c = arity_cases[ci];
+          if (c->tests.n) {
+            fprintf(fp, "  %sif (", ci ? "else " : "");
+            for (int ti = 0; ti < c->tests.n; ti++) {
+              cchar *op = cg_get_string(pn->rvals[c->tests[ti].ridx]);
+              if (ti) fputs(" && ", fp);
+              if (c->tests[ti].arity >= 0)
+                fprintf(fp, "((void*)%s && _CG_tuple_is_fixed(%s) && _CG_list_len(%s) == %d)", op, op, op,
+                        c->tests[ti].arity);
+              else if (c->tests[ti].arity == -2)
+                fprintf(fp, "((void*)%s && !_CG_tuple_is_fixed(%s))", op, op);
+              else if (c->tests[ti].arity == -3)
+                fprintf(fp, "!(void*)%s", op);
+              else if (int m = layout_mask(c->tests[ti].arity)) {
+                fprintf(fp, "((void*)%s && (", op);
+                cchar *sep = "";
+                if (m & LAYOUT_FIXED_TUPLE) { fprintf(fp, "%s_CG_tuple_is_fixed(%s)", sep, op); sep = " || "; }
+                if (m & LAYOUT_DYNAMIC_TUPLE) { fprintf(fp, "%s_CG_tuple_is_dynamic(%s)", sep, op); sep = " || "; }
+                if (m & LAYOUT_LIST) fprintf(fp, "%s_CG_is_plain_list(%s)", sep, op);
+                fputs("))", fp);
+              }
+              else
+                fprintf(fp, "(void*)%s", op);
+            }
+            fputs(") {\n", fp);
+          } else
+            fputs(ci ? "  else {\n" : "  {\n", fp);
+          fputs("    ", fp);
+          if (lhs) {
+            if (ret_scalar)
+              fprintf(fp, "%s = (%s)", lhs, ret_type_str);
+            else
+              fprintf(fp, "%s = (%s)(void*)", lhs, ret_type_str);
+          }
+          fprintf(fp, "%s(", cg_get_string(c->fun));
+          int wrote_one = 0;
+          for (MPosition *p : c->fun->positional_arg_positions) {
+            Var *av = c->fun->args.get(p);
+            if (!av->live) continue;
+            int i = (int)Position2int(p->pos[0]) - 1;
+            cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+            if (wrote_one) fputs(", ", fp);
+            wrote_one = 1;
+            if (!strcmp(ft, at))
+              fputs(cg_get_string(pn->rvals[i]), fp);
+            else if (cg_repr(av).scalar())
+              fprintf(fp, "(%s)%s", ft, cg_get_string(pn->rvals[i]));
+            else
+              fprintf(fp, "(%s)(void*)%s", ft, cg_get_string(pn->rvals[i]));
+          }
+          fputs(");\n  }\n", fp);
+        }
+        if (arity_cases.last()->tests.n)
+          fputs(cg_trap_c("  else { assert(!\"runtime error: arity dispatch: no branch matched\"); }\n"), fp);
+        return;
+      } else if (fns && fns->n > 1 && pn->rvals.n) {
+        // ifa/issues/030 dispatch. Candidates are partitioned into
+        // two kinds and dispatched in ONE if/else chain over a
+        // single operand:
+        //  - CLASSTAG candidates (method calls / carrier-class
+        //    __call__ clones): the receiver instance carries
+        //    `__pyc_tag` at offset 0; each class branch casts to
+        //    THAT class's layout and calls through its own stored
+        //    method slot (per-creation-site clone selection rides
+        //    the stored pointer).
+        //  - PLAIN-FUNCTION candidates (bare callable values,
+        //    issue 007's shape): raw function values are function
+        //    addresses; dispatch by value identity with a direct
+        //    call. (Address compares run after tag compares;
+        //    dereferencing a code address for the tag read is
+        //    harmless -- mapped readable, never equal to a tag
+        //    object's address.)
+        cchar *recv_str = nullptr;  // shared dispatch operand
+        if (!pn->rvals[0]->sym->is_symbol && cg_get_string(pn->rvals[0])) recv_str = cg_get_string(pn->rvals[0]);
+        Vec<Sym *> classes;  // classtag partition, grouped by class
+        Vec<int> slots;      //   ... that class's method-slot index
+        Vec<Sym *> recv_types;  // ifa/122: the receiver's STATIC type at that branch
+        Vec<Fun *> class_funs;  // ... and the candidate Fun bound at that slot (issues/025 kanoodle:
+                                 // needed to pass this branch's OWN non-receiver arguments -- see emission below)
+        Vec<Fun *> plains;   // plain-function partition
+        Fun *nil_fn = nullptr;  // nil-receiver candidate (None method on a nil|record union)
+        Vec<Fun *> directs;  // untagged-receiver method candidates (see below)
+        // issue 026: pre-pass -- which classes are DIRECTLY, singularly
+        // owned by one of THIS call's candidates (a candidate whose
+        // self formal is a single concrete Type_RECORD, not a
+        // Type_SUM)? A class that's directly owned here has its OWN
+        // override among `fns` and must keep using it -- the Type_SUM
+        // unpacking below (for a DIFFERENT candidate whose self type
+        // is a union covering that same class, e.g. because FA can't
+        // fully monomorphize a recursive structure) must not steal it.
+        // Confirmed empirically: without this guard, a recursive tree
+        // dispatch where EVERY concrete class overrides the method
+        // (poly_dispatch_low.py's Leaf/Branch, each with its own
+        // val()) segfaulted -- one class's union-typed self formal
+        // caused the OTHER class's OWN override to be silently
+        // replaced by a mismatched one (calling a field the receiver
+        // doesn't have).
+        // issue 026 pre-pass + classtag/nil-receiver resolution:
+        // shared with the LLVM backend (codegen_common.{h,cc}) --
+        // previously independently duplicated here and in
+        // cg_emit_llvm.cc, independently re-fixed for issue 026. Only
+        // this resolution algorithm was ever identical between
+        // backends; the compat filtering and emission below remain
+        // backend-specific (they depend on target type castability).
+        Vec<cchar *> directly_owned;
+        poly_dispatch_directly_owned(fns, directly_owned);
+        bool ok = true;
+        for (int fi = 0; fi < fns->n && ok; fi++) {
+          Fun *fun_val = (*fns)[fi];
+          if (!fun_val || !fun_val->sym) { ok = false; break; }
+          // Classtag route: find the candidate's receiver type --
+          // the first formal whose concrete type carries a live
+          // field named like the method. Deliberately does NOT
+          // require the formal to be live: leaf methods that ignore
+          // self still need a dispatch branch (the CHOICE depends
+          // on the receiver). Unnamed candidates (lambdas) can't
+          // take this route (slot lookup is by method name) -- plain
+          // route only.
+          Vec<Sym *> rts;     // every concrete receiver class found for this candidate
+          Vec<int> rt_slots;  //   ... and its slot index (layouts can differ per class)
+          Vec<int> rt_ridxs;  //   ... and the call-site rval index of its receiver operand
+          poly_dispatch_classtag_targets(fun_val, pn, directly_owned, rts, rt_slots, rt_ridxs);
+          for (int ri = 0; ri < rts.n; ri++) {
+            if (!recv_str && rt_ridxs[ri] >= 0 && rt_ridxs[ri] < pn->rvals.n && pn->rvals[rt_ridxs[ri]] &&
+                cg_get_string(pn->rvals[rt_ridxs[ri]]))
+              recv_str = cg_get_string(pn->rvals[rt_ridxs[ri]]);
+          }
+          if (!rts.n) {
+            // Nil-receiver candidate: a None-class method reached
+            // through a nil|record union (`if not self.field:` where
+            // the field starts as None). None is a NULL pointer at
+            // runtime -- no classtag to read, no value identity to
+            // compare -- so it gets its own partition, dispatched by
+            // a null test emitted BEFORE any tag dereference (which
+            // also makes the tag reads null-safe).
+            int nil_ridx = -1;
+            bool is_nil_recv = poly_dispatch_is_nil_receiver(fun_val, pn, &nil_ridx);
+            if (is_nil_recv && !recv_str && nil_ridx >= 0 && nil_ridx < pn->rvals.n && pn->rvals[nil_ridx] &&
+                cg_get_string(pn->rvals[nil_ridx]))
+              recv_str = cg_get_string(pn->rvals[nil_ridx]);
+            if (is_nil_recv) {
+              // Only one nil-receiver branch is distinguishable, and
+              // its live formals must map to call-site rvals.
+              bool compat = !nil_fn && cg_get_string(fun_val);
+              if (compat)
+                for (MPosition *p : fun_val->positional_arg_positions) {
+                  Var *av = fun_val->args.get(p);
+                  if (!av->live) continue;
+                  int i = (int)Position2int(p->pos[0]) - 1;
+                  if (i < 0 || i >= pn->rvals.n || !cg_get_string(pn->rvals[i])) { compat = false; break; }
+                }
+              if (!compat) { ok = false; break; }
+              nil_fn = fun_val;
+              continue;
+            }
+            // ifa/issues/030(a): a closure-carrier candidate (the
+            // body of a decorator-synthesized wrapper) has no named
+            // method-pointer slot on its own carrier struct --
+            // poly_dispatch_classtag_targets found nothing for it
+            // above (rts.n == 0), so without this check it falls
+            // into the plain-function value-identity route below and
+            // compares the runtime value (a HEAP POINTER to the
+            // carrier instance) against fun_val's own code address,
+            // which a carrier instance can never equal -- the
+            // "mixed plain-function/closure-carrier dispatch"
+            // crash. Detect it directly: does fun_val's own first
+            // live formal resolve to the synthesized closure-carrier
+            // record type (name "__closure__", reserved -- no user
+            // class can be named that)? If so, dispatch by classtag
+            // compare and call fun_val directly: no stored slot is
+            // needed because fun_val IS the statically-known
+            // implementation for this tag (unlike the classes[]
+            // route above, which exists for genuine runtime
+            // polymorphism across several implementations sharing a
+            // slot layout).
+            int carrier_ridx = -1;
+            Sym *carrier_recv = poly_dispatch_closure_carrier(fun_val, &carrier_ridx);
+            if (carrier_recv && cg_get_string(fun_val) && carrier_ridx >= 0 && carrier_ridx < pn->rvals.n &&
+                pn->rvals[carrier_ridx] && cg_get_string(pn->rvals[carrier_ridx])) {
+              bool compat = true;
+              for (MPosition *p : fun_val->positional_arg_positions) {
+                Var *av = fun_val->args.get(p);
+                if (!av->live) continue;
+                int i = (int)Position2int(p->pos[0]) - 1;
+                if (i < 0 || i >= pn->rvals.n || !cg_get_string(pn->rvals[i])) { compat = false; break; }
+                cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+                if (strcmp(ft, at) && cg_repr(av).scalar() != cg_repr(pn->rvals[i]).scalar()) { compat = false; break; }
+              }
+              if (compat) {
+                // All carriers are currently named "__closure__"
+                // (ifa/issues/030's known naming gap): a SECOND,
+                // DISTINCT carrier Sym reaching this same dispatch
+                // site would collide on that name and be
+                // indistinguishable from the first at the tag
+                // compare below. Degrade to the shared "no branch
+                // matched" runtime assert (ok = false) rather than
+                // silently mis-dispatch -- same conservative
+                // convention this function already uses for
+                // `directs.n > 1` below.
+                bool same = false, collide = false;
+                for (int ci = 0; ci < classes.n; ci++) {
+                  if (classes[ci] == carrier_recv) { same = true; break; }
+                  if (cg_tag_family(classes[ci]) == cg_tag_family(carrier_recv)) { collide = true; break; }
+                }
+                if (collide) { ok = false; break; }
+                if (!same) {
+                  if (!recv_str) recv_str = cg_get_string(pn->rvals[carrier_ridx]);
+                  classes.add(carrier_recv);
+                  slots.add(-1);  // sentinel: direct call, no stored-slot indirection
+                  recv_types.add(nullptr);
+                  class_funs.add(fun_val);
+                }
+                continue;
+              }
+            }
+          }
+          if (rts.n) {
+            // Merge each found receiver class into a per-class-name
+            // branch (clones of one class share a tag; the stored
+            // slot pointer disambiguates). A single Fun candidate can
+            // contribute several classes here (see the Type_SUM
+            // comment above) -- add every one that carries a real
+            // classtag. Matches the original single-class code's
+            // fallback behavior: if NONE of the found classes are
+            // classtag-eligible, fall through to the plain-function
+            // route below instead of silently dropping the candidate.
+            bool added_any = false;
+            for (int ri = 0; ri < rts.n; ri++) {
+              Sym *rt = rts[ri];
+              if (!poly_dispatch_tag_arm(rt)) continue;
+              added_any = true;
+              bool found = false;
+              for (int ci = 0; ci < classes.n; ci++)
+                if (cg_tag_family(classes[ci]) == cg_tag_family(rt)) { found = true; break; }
+              if (!found) {
+                classes.add(rt);
+                slots.add(rt_slots[ri]);
+                recv_types.add(rt_ridxs[ri] >= 0 && rt_ridxs[ri] < pn->rvals.n && pn->rvals[rt_ridxs[ri]]
+                                   ? pn->rvals[rt_ridxs[ri]]->type
+                                   : nullptr);
+                class_funs.add(fun_val);
+              }
+            }
+            if (added_any) continue;
+          }
+          // Plain-function route: needs the fun's address and every
+          // live formal mapping to an in-range call-site rval of a
+          // castable C type.
+          if (cg_get_string(fun_val) && !pn->rvals[0]->sym->is_symbol) {
+            bool compat = true;
+            for (MPosition *p : fun_val->positional_arg_positions) {
+              Var *av = fun_val->args.get(p);
+              if (!av->live) continue;
+              int i = (int)Position2int(p->pos[0]) - 1;
+              if (i < 0 || i >= pn->rvals.n || !cg_get_string(pn->rvals[i])) { compat = false; break; }
+              cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+              if (strcmp(ft, at) && cg_repr(av).scalar() != cg_repr(pn->rvals[i]).scalar()) { compat = false; break; }
+            }
+            if (compat) {
+              plains.add(fun_val);
+              continue;
+            }
+          }
+          // Untagged direct route: a METHOD-send candidate (rvals[0]
+          // is the selector symbol, so the plain route above is out)
+          // whose receiver class carries no classtag / method-pointer
+          // slots -- the builtin containers (list, str, ...), whose
+          // instances are raw runtime layouts, not tagged structs.
+          // There is no way to DISCRIMINATE two such candidates at
+          // runtime, so this route is only usable when it ends up
+          // with exactly ONE member (checked at emission below): it
+          // becomes the final `else` arm after the nil test and any
+          // classtag compares. First user: truth-testing an
+          // Optional[list] field (`if node.args:` where args starts
+          // None) -- __pyc_to_bool__ over {nil, list} is nil_fn plus
+          // exactly one untagged candidate, fully decided by the
+          // null test (pyc issues/025, genetic2's crossover).
+          if (cg_get_string(fun_val) && pn->rvals[0]->sym->is_symbol) {
+            bool compat = true;
+            cchar *drecv = nullptr;
+            for (MPosition *p : fun_val->positional_arg_positions) {
+              Var *av = fun_val->args.get(p);
+              if (!av->live) continue;
+              int i = (int)Position2int(p->pos[0]) - 1;
+              if (i < 0 || i >= pn->rvals.n || !cg_get_string(pn->rvals[i])) { compat = false; break; }
+              cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+              if (strcmp(ft, at) && cg_repr(av).scalar() != cg_repr(pn->rvals[i]).scalar()) { compat = false; break; }
+              if (!drecv) drecv = cg_get_string(pn->rvals[i]);
+            }
+            if (compat) {
+              directs.add(fun_val);
+              if (!recv_str && drecv) recv_str = drecv;
+              continue;
+            }
+          }
+          ok = false;
+        }
+        // ifa/121: an arm whose slot may hold a different clone than this
+        // site chose calls the site's clone directly.
+        if (ok) apply_dispatch_arm_plans(pn, fns, classes, slots, class_funs);
+        // Two untagged candidates can't be told apart at runtime unless
+        // they are indistinguishable clones of the same function.
+        if (directs.n > 1) {
+          bool all_same = true;
+          for (int i = 1; i < directs.n; i++) {
+            if (!identical_c_signature(directs[0], directs[i]) || !clones_interchangeable(directs[0], directs[i])) {
+              all_same = false;
+              break;
+            }
+          }
+          if (all_same)
+            directs.n = 1;
+          else
+            ok = false;
+        }
+        // A nil test on a SCALAR-typed operand can't distinguish
+        // None from 0/0.0/False: if the shared dispatch operand's
+        // C type is scalar and a nil branch exists, bail rather
+        // than miscompile (print of a {nil,int64} union would
+        // render 0 as "None"). EXCEPTION: the truthiness selectors,
+        // where None and zero give the SAME answer (both falsy), so
+        // the conflation is semantically invisible -- `if f():` on a
+        // function whose fall-through path implicitly returns None
+        // ({int64, nil} result) is genetic2's TreeNode.execute.
+        if (ok && nil_fn && recv_str && pn->rvals.n) {
+          cchar *sel = pn->rvals[0]->sym->is_symbol ? pn->rvals[0]->sym->name : nullptr;
+          bool truthiness = sel && (!strcmp(sel, "__pyc_to_bool__") || !strcmp(sel, "__bool__") ||
+                                    !strcmp(sel, "__not__"));
+          if (!truthiness) {
+            for (int i = 1; i < pn->rvals.n; i++) {
+              if (pn->rvals[i] && cg_get_string(pn->rvals[i]) && !strcmp(cg_get_string(pn->rvals[i]), recv_str)) {
+                if (cg_repr(pn->rvals[i]).scalar()) ok = false;
+                break;
+              }
+            }
+          }
+        }
+        // A nullable receiver: after the null test every remaining receiver
+        // calls the one non-None candidate, so its arm is a direct call, not a tag compare and a slot
+        // call -- the untagged-direct `else` arm below, which is exactly that.
+        bool nil_tested = ok && nil_fn && classes.n && !plains.n && !directs.n;
+        if (nil_tested) {
+          Fun *t = nil_tested_target(pn, f, nullptr);
+          for (int ci = 0; ci < classes.n && nil_tested; ci++)
+            if (slots[ci] == -1 || class_funs[ci] != t) nil_tested = false;
+        }
+        if (nil_tested) {
+          directs.add(class_funs[0]);
+          classes.clear();
+          slots.clear();
+          recv_types.clear();
+          class_funs.clear();
+        }
+        if (ok && recv_str && (classes.n || plains.n || nil_fn)) {
+          {  // ifa/206: what this site calls directly; the rest go through the slot
+            Vec<Fun *> direct;
+            if (nil_fn) direct.add(nil_fn);
+            for (int ci = 0; ci < classes.n; ci++)
+              if (slots[ci] == -1) direct.add(class_funs[ci]);
+            for (Fun *fv : plains) direct.add(fv);
+            if (directs.n) direct.add(directs[0]);
+            cg_note_dispatch_site(pn, direct);
+          }
+          {  // ifa/102 step 3: every member of the receiver's union has an arm
+            Var *rv = nullptr;
+            for (int i = 0; i < pn->rvals.n && !rv; i++)
+              if (pn->rvals[i] && cg_get_string(pn->rvals[i]) && !strcmp(cg_get_string(pn->rvals[i]), recv_str))
+                rv = pn->rvals[i];
+            bool nil_unclaimed = false;
+            Vec<Sym *> unclaimed;
+            poly_dispatch_coverage(pn, rv, nil_fn, classes, plains, directs.n ? directs[0] : nullptr, &nil_unclaimed,
+                                   unclaimed);
+            if (unclaimed.n) poly_dispatch_refuse_unclaimed(pn, poly_dispatch_selector(pn, fns), unclaimed);
+            // None has no such method: CPython's AttributeError, raised
+            // before the tag read dereferences it (ifa/165).
+            if (nil_unclaimed) emit_none_check(rv, poly_dispatch_selector(pn, fns));
+          }
+          cchar *lhs = (pn->lvals.n && cg_get_string(pn->lvals[0])) ? cg_get_string(pn->lvals[0]) : nullptr;
+          cchar *ret_type_str = (pn->lvals.n && pn->lvals[0]->type) ? c_type(pn->lvals[0]) : "void*";
+        bool ret_scalar = pn->lvals.n && cg_repr(pn->lvals[0]).scalar();
+          // Each branch's callee returns ITS OWN C type (the nil
+          // branch returns _CG_nil_type, an untagged direct returns
+          // e.g. _CG_any) while lhs has the UNION's type -- cast the
+          // result like arguments are cast (pointer results detour
+          // through void*).
+          auto emit_lhs = [&]() {
+            if (!lhs) return;
+            if (ret_scalar)
+              fprintf(fp, "%s = (%s)", lhs, ret_type_str);
+            else
+              fprintf(fp, "%s = (%s)(void*)", lhs, ret_type_str);
+          };
+          int nb = 0;
+          if (nil_fn) {
+            // Null test first: it both selects the None method and
+            // keeps the classtag dereferences below null-safe.
+            fprintf(fp, "  if (!%s) {\n", recv_str);
+            fputs("    ", fp);
+            emit_lhs();
+            fprintf(fp, "%s(", cg_get_string(nil_fn));
+            int wrote_one = 0;
+            for (MPosition *p : nil_fn->positional_arg_positions) {
+              Var *av = nil_fn->args.get(p);
+              if (!av->live) continue;
+              int i = (int)Position2int(p->pos[0]) - 1;
+              cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+              if (wrote_one) fputs(", ", fp);
+              wrote_one = 1;
+              if (!strcmp(ft, at))
+                fputs(cg_get_string(pn->rvals[i]), fp);
+              else if (cg_repr(av).scalar())
+                fprintf(fp, "(%s)%s", ft, cg_get_string(pn->rvals[i]));
+              else
+                fprintf(fp, "(%s)(void*)%s", ft, cg_get_string(pn->rvals[i]));
+            }
+            fputs(");\n  }\n", fp);
+            nb++;
+          }
+          // The function-pointer type and argument list of the slot call in
+          // classtag arm ci, built from that candidate's OWN live formals (see
+          // issues/025 kanoodle at the arm emission below).
+          auto slot_call_args = [&](int ci, std::string &fnptr_args, std::string &call_args) {
+            fnptr_args = "void*";
+            call_args = "(void*)";
+            call_args += recv_str;
+            Fun *cfun = class_funs[ci];
+            for (MPosition *p : cfun->positional_arg_positions) {
+              Var *av = cfun->args.get(p);
+              if (!av->live) continue;
+              int i = (int)Position2int(p->pos[0]) - 1;
+              if (i < 0 || i >= pn->rvals.n || !cg_get_string(pn->rvals[i])) continue;
+              if (!strcmp(cg_get_string(pn->rvals[i]), recv_str)) continue;  // self, already emitted
+              cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+              fnptr_args += ", ";
+              fnptr_args += ft;
+              call_args += ", ";
+              if (!strcmp(ft, at)) {
+                call_args += cg_get_string(pn->rvals[i]);
+              } else if (cg_repr(av).scalar()) {
+                call_args += "(";
+                call_args += ft;
+                call_args += ")";
+                call_args += cg_get_string(pn->rvals[i]);
+              } else {
+                call_args += "(";
+                call_args += ft;
+                call_args += ")(void*)";
+                call_args += cg_get_string(pn->rvals[i]);
+              }
+            }
+          };
+          // ifa/186: when every arm calls the SAME slot with the same
+          // function-pointer type and arguments, the arms differ only in the
+          // struct they cast the receiver to, and the chain is one slot call.
+          // That is sound exactly when every class agrees with the first
+          // class's layout up to the slot: checked here, so a disagreeing
+          // class keeps the chain, and recorded as each class's blind-cast
+          // obligation like any other cast. With othello3's 830 Flip
+          // classes, each `.go()` site was an 830-arm chain, ~10,000 lines
+          // of C per `put_*.go`.
+          bool one_slot_call = classes.n > 1 && !plains.n && !directs.n;
+          std::string fnptr0, call0;
+          for (int ci = 0; ci < classes.n && one_slot_call; ci++) {
+            if (slots[ci] == -1 || slots[ci] != slots[0]) { one_slot_call = false; break; }
+            int at;
+            if (ci && cg_layout_mismatch(classes[0], classes[ci], slots[0], &at)) { one_slot_call = false; break; }
+            std::string fa, ca;
+            slot_call_args(ci, fa, ca);
+            if (!ci) { fnptr0 = fa; call0 = ca; }
+            else if (fa != fnptr0 || ca != call0) one_slot_call = false;
+          }
+          if (one_slot_call) {
+            for (int ci = 0; ci < classes.n; ci++) {
+              cg_note_blind_cast(classes[0], classes[ci], slots[0]);
+              if (ci < recv_types.n) cg_note_blind_cast(classes[0], recv_types[ci], slots[0]);
+              cg_note_slot_use(classes[ci], slots[0], 1);
+            }
+            fputs(nb ? "  else {\n    " : "  {\n    ", fp);
+            if (lhs) fprintf(fp, "%s = ", lhs);
+            fprintf(fp, "((%s(*)(%s))((%s)(void*)%s)->e%d)(%s);\n", ret_type_str, fnptr0.c_str(),
+                    cg_get_string(classes[0]), recv_str, slots[0], call0.c_str());
+            fputs("  }\n", fp);
+            return;
+          }
+          for (int ci = 0; ci < classes.n; ci++, nb++) {
+            {
+              Vec<Sym *> ms;
+              cg_tag_family_members(classes[ci], ms);  // ifa/206: a split family's every tag
+              fprintf(fp, "  %sif (", nb ? "else " : "");
+              for (int mi = 0; mi < ms.n; mi++)
+                fprintf(fp, "%s(*(_CG_TypeObject**)(void*)%s) == &%s", mi ? " || " : "", recv_str, cg_tag_name(ms[mi]));
+              fputs(") {\n", fp);
+            }
+            fputs("    ", fp);
+            if (slots[ci] == -1) {
+              // ifa/issues/030(a): carrier-dispatched candidate --
+              // class_funs[ci] is the statically-known implementation
+              // for this tag (a closure-carrier struct has no named
+              // method-pointer slot to indirect through -- see the
+              // detection above), so call it directly instead of the
+              // slot-indirect emission below. Cast the call
+              // expression itself to lhs's union type (mirroring how
+              // the slot-indirect path below casts through the
+              // function-pointer type) rather than emitting a second
+              // `lhs = ` prefix.
+              Fun *cfun = class_funs[ci];
+              if (lhs) {
+                if (ret_scalar)
+                  fprintf(fp, "%s = (%s)", lhs, ret_type_str);
+                else
+                  fprintf(fp, "%s = (%s)(void*)", lhs, ret_type_str);
+              }
+              fprintf(fp, "%s(", cg_get_string(cfun));
+              int wrote_one = 0;
+              for (MPosition *p : cfun->positional_arg_positions) {
+                Var *av = cfun->args.get(p);
+                if (!av->live) continue;
+                int i = (int)Position2int(p->pos[0]) - 1;
+                cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+                if (wrote_one) fputs(", ", fp);
+                wrote_one = 1;
+                if (!strcmp(ft, at))
+                  fputs(cg_get_string(pn->rvals[i]), fp);
+                else if (cg_repr(av).scalar())
+                  fprintf(fp, "(%s)%s", ft, cg_get_string(pn->rvals[i]));
+                else
+                  fprintf(fp, "(%s)(void*)%s", ft, cg_get_string(pn->rvals[i]));
+              }
+              fputs(");\n  }\n", fp);
+              continue;
+            }
+            if (lhs) fprintf(fp, "%s = ", lhs);
+            // issues/025 kanoodle: this branch used to hardcode the
+            // function pointer type to a single `void*` (self) param
+            // and pass only the receiver, silently dropping every
+            // OTHER live formal (e.g. Omino.translate(self, v) --
+            // `v` was computed at the call site and then never
+            // passed, so the callee read garbage for it). Build the
+            // pointer type and the call's argument list from the
+            // candidate's OWN positional_arg_positions, mirroring the
+            // nil_fn branch above -- self stays a `void*` cast (the
+            // callee's receiver type varies per branch; that's the
+            // whole reason for this cast), every other live formal is
+            // cast like an ordinary call argument.
+            std::string fnptr_args, call_args;
+            slot_call_args(ci, fnptr_args, call_args);
+            if (ci < recv_types.n) cg_note_blind_cast(classes[ci], recv_types[ci], slots[ci]);
+            // The classtag dispatch CALLING through the slot -- the read
+            // side that makes a method slot necessary at all.
+            cg_note_slot_use(classes[ci], slots[ci], 1);
+            fprintf(fp, "((%s(*)(%s))((%s)(void*)%s)->e%d)(%s);\n", ret_type_str, fnptr_args.c_str(),
+                    cg_get_string(classes[ci]), recv_str, slots[ci], call_args.c_str());
+            fputs("  }\n", fp);
+          }
+          for (int fi = 0; fi < plains.n; fi++, nb++) {
+            Fun *fv = plains[fi];
+            fprintf(fp, "  %sif ((void*)%s == (void*)&%s) {\n", nb ? "else " : "", recv_str, cg_get_string(fv));
+            fputs("    ", fp);
+            emit_lhs();
+            fprintf(fp, "%s(", cg_get_string(fv));
+            int wrote_one = 0;
+            for (MPosition *p : fv->positional_arg_positions) {
+              Var *av = fv->args.get(p);
+              if (!av->live) continue;
+              int i = (int)Position2int(p->pos[0]) - 1;
+              cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+              if (wrote_one) fputs(", ", fp);
+              wrote_one = 1;
+              if (!strcmp(ft, at))
+                fputs(cg_get_string(pn->rvals[i]), fp);
+              else if (cg_repr(av).scalar())
+                fprintf(fp, "(%s)%s", ft, cg_get_string(pn->rvals[i]));
+              else
+                fprintf(fp, "(%s)(void*)%s", ft, cg_get_string(pn->rvals[i]));
+            }
+            fputs(");\n  }\n", fp);
+          }
+          if (directs.n == 1) {
+            // The single untagged candidate is everything the nil
+            // test / tag compares above didn't claim -- direct call,
+            // no discrimination needed (or possible).
+            Fun *fv = directs[0];
+            fputs(nb ? "  else {\n" : "  {\n", fp);
+            fputs("    ", fp);
+            emit_lhs();
+            fprintf(fp, "%s(", cg_get_string(fv));
+            int wrote_one = 0;
+            for (MPosition *p : fv->positional_arg_positions) {
+              Var *av = fv->args.get(p);
+              if (!av->live) continue;
+              int i = (int)Position2int(p->pos[0]) - 1;
+              cchar *ft = c_type(av), *at = c_type(pn->rvals[i]);
+              if (wrote_one) fputs(", ", fp);
+              wrote_one = 1;
+              if (!strcmp(ft, at))
+                fputs(cg_get_string(pn->rvals[i]), fp);
+              else if (cg_repr(av).scalar())
+                fprintf(fp, "(%s)%s", ft, cg_get_string(pn->rvals[i]));
+              else
+                fprintf(fp, "(%s)(void*)%s", ft, cg_get_string(pn->rvals[i]));
+            }
+            fputs(");\n  }\n", fp);
+          } else {
+            fputs(cg_trap_c("  else { assert(!\"runtime error: polymorphic dispatch: no branch matched\"); }\n"), fp);
+          }
+          return;
+        }
+      }
+      if (getenv("PYC_DBG_DISPATCH")) {
+        fprintf(stderr, "DISPATCH FAIL pn=%d in %s: fns=%d rvals=%d |", pn->id, f->sym->name ? f->sym->name : "?",
+                fns ? fns->n : -1, pn->rvals.n);
+        if (fns)
+          for (Fun *fv : *fns) {
+            cchar *cls = (fv && fv->sym->has.n > 1 && fv->sym->has[1]->must_specialize) ? fv->sym->has[1]->must_specialize->name : "?";
+            cchar *fstr = fv ? cg_get_string(fv) : "?";
+            fprintf(stderr, " cand=%s::%s(sym=%d, %s)", cls, fv && fv->sym ? fv->sym->name : "?", fv ? fv->sym->id : -1, fstr ? fstr : "?");
+          }
+        for (int i = 0; i < pn->rvals.n; i++)
+          fprintf(stderr, " r%d=%s:%s(kind=%d,id=%d)", i, pn->rvals[i]->sym->name ? pn->rvals[i]->sym->name : "_",
+                  pn->rvals[i]->type && pn->rvals[i]->type->name ? pn->rvals[i]->type->name : "?",
+                  pn->rvals[i]->type ? pn->rvals[i]->type->type_kind : -1,
+                  pn->rvals[i]->type ? pn->rvals[i]->type->id : -1);
+        fprintf(stderr, "\n");
+      }
+      // issues/171: under --strict, refuse HERE -- where neither a single
+      // target nor the dispatch above resolved the call -- not in
+      // get_target_fun. Failing there refused every legitimate
+      // polymorphic call (a generator's `e.__str__()` on the exception
+      // slot) before dispatch was even tried.
+      codegen_unresolved_send(pn, fns, fns && fns->n ? "no dispatch plan can tell the candidates apart at run time"
+                                                     : "the analysis found no target");
+      fputs(cg_trap_c("  assert(!\"runtime error: matching function not found\");\n"), fp);
     }
   }
-}
+};
 
 static void do_phy_nodes(FILE *fp, PNode *n, int isucc) {
   for (PNode *p : n->phy) simple_move(fp, p->lvals[isucc], p->rvals.v[0]);
@@ -633,19 +2893,54 @@ static void do_phi_nodes(FILE *fp, PNode *n, int isucc) {
   }
 }
 
+// is_const_folded_send moved to codegen_common.cc
+
+// A Code_LABEL emits its `L%d:;` only when it is live && fa_live (see
+// below). A jump to a label FA salvaged to not-live would therefore
+// reference an undeclared label -- a raw C compile error (the dominant
+// terminal failure of the "no type" corpus bucket: amaze/doom/mwmatching/
+// rdb/sha/softrender/voronoi2/yopyra). Such a jump is on a dead/salvaged
+// path by construction, so degrade it to a runtime-error trap (the
+// salvage convention, issue 056) instead of emitting the dangling goto.
+static void emit_goto_or_trap(FILE *fp, PNode *from, PNode *target, int label_id) {
+  if (target && target->live && target->fa_live)
+    fprintf(fp, "  goto L%d;\n", label_id);
+  else
+    codegen_fail(from, "a live jump to a block the analysis found unreachable (ifa/102)");
+}
+
+// issues/085: the unresolved-condition test and its gate are
+// cg_is_unresolved_condition / cg_if_traps_unresolved, shared with the
+// LLVM backend since ifa/200 A3.
 static void write_c_pnode(FILE *fp, FA *fa, Fun *f, PNode *n, Vec<PNode *> &done) {
   if (n->live && n->fa_live) switch (n->code->kind) {
       case Code_LABEL:
         fprintf(fp, " L%d:;\n", n->code->label[0]->id);
         break;
-      case Code_MOVE:
-        for (int i = 0; i < n->lvals.n; i++) simple_move(fp, n->lvals[i], n->rvals.v[i]);
+      case Code_MOVE: {
+        CBackendEmitter emitter(fp, fa, f);
+        emitter.emit_move(n);
         break;
-      case Code_SEND:
-        if (n->prim)
-          if (write_c_prim(fp, fa, f, n)) break;
-        write_send(fp, f, n);
+      }
+      case Code_SEND: {
+        if (n->prim && n->prim->index == P_prim_reply) {
+          if (f->sym->is_async || f->sym->is_generator) {
+            // issues/014: is_generator's reply value is real and
+            // observable now (StopIteration.value, pyc_c_runtime.h's
+            // _CG_Generator::promise_type::return_value) -- both the
+            // bare/fall-through placeholder and an explicit `return X`
+            // already flow a genuine value through fn->ret (gen_fun_
+            // pyda / PY_return_stmt), so this is identical to is_async.
+            fprintf(fp, "  co_return %s;\n", c_rhs(n->rvals[3]));
+          } else {
+            fprintf(fp, "  return %s;\n", c_rhs(n->rvals[3]));
+          }
+        } else {
+          CBackendEmitter emitter(fp, fa, f);
+          virtual_cg_emit_send(&emitter, n);
+        }
         break;
+      }
       case Code_IF:
       case Code_GOTO:
         break;
@@ -655,29 +2950,51 @@ static void write_c_pnode(FILE *fp, FA *fa, Fun *f, PNode *n, Vec<PNode *> &done
   switch (n->code->kind) {
     case Code_IF:
       if (n->live && n->fa_live) {
-        if (n->rvals[0]->sym == true_type->v[0]->sym) {
+        int only_succ = cg_const_if_successor(fa, n);
+        if (only_succ == 0) {
           do_phy_nodes(fp, n, 0);
           do_phi_nodes(fp, n, 0);
           if (done.set_add(n->cfg_succ[0])) write_c_pnode(fp, fa, f, n->cfg_succ[0], done);
-        } else if (n->rvals[0]->sym == false_type->v[0]->sym) {
+        } else if (only_succ == 1) {
           do_phy_nodes(fp, n, 1);
           do_phi_nodes(fp, n, 1);
           if (done.set_add(n->cfg_succ[1])) write_c_pnode(fp, fa, f, n->cfg_succ[1], done);
         } else {
-          fprintf(fp, "  if (%s) {\n", n->rvals[0]->cg_string);
+          // ifa/049: after a call that can only raise, FA keeps only the
+          // exception check's pending branch. The other one never runs; emit
+          // a trap there, not its dead body, which would fall off the end of
+          // the function (C++ undefined behaviour, `-Wreturn-type`).
+          bool dead0 = n->code->exc_check && !n->cfg_succ[0]->fa_live;
+          bool dead1 = n->code->exc_check && !n->cfg_succ[1]->fa_live;
+          // issues/085: a live IF whose condition FA salvaged to NOTYPE
+          // was never evaluated, not proven dead, so taking either arm
+          // would run code that assumed it held. Trap first. Only a LIVE
+          // IF can be reached: the dead IFs this walk also visits (an
+          // `if False:` body, the untaken arms of an `isinstance(..) or
+          // ..` chain) carry the same void_type and are dead text, which
+          // is where this check used to sit (ifa/102's census: 1,164
+          // emissions, none surviving -O2). One decision for both
+          // backends (ifa/200 A3).
+          if (cg_if_traps_unresolved(fa, n))
+            fputs(cg_trap_c("  assert(!\"runtime error: unresolved if condition\");\n"), fp);
+          fprintf(fp, "  if (%s) {\n", cg_get_string(n->rvals[0]));
           do_phy_nodes(fp, n, 0);
           do_phi_nodes(fp, n, 0);
-          if (done.set_add(n->cfg_succ[0]))
+          if (dead0)
+            fputs(cg_trap_c("  assert(!\"runtime error: jump to unreachable block\");\n"), fp);
+          else if (done.set_add(n->cfg_succ[0]))
             write_c_pnode(fp, fa, f, n->cfg_succ[0], done);
           else
-            fprintf(fp, "  goto L%d;\n", n->code->label[0]->id);
+            emit_goto_or_trap(fp, n, n->cfg_succ[0], n->code->label[0]->id);
           fprintf(fp, "  } else {\n");
           do_phy_nodes(fp, n, 1);
           do_phi_nodes(fp, n, 1);
-          if (done.set_add(n->cfg_succ[1]))
+          if (dead1)
+            fputs(cg_trap_c("  assert(!\"runtime error: jump to unreachable block\");\n"), fp);
+          else if (done.set_add(n->cfg_succ[1]))
             write_c_pnode(fp, fa, f, n->cfg_succ[1], done);
           else
-            fprintf(fp, "  goto L%d;\n", n->code->label[1]->id);
+            emit_goto_or_trap(fp, n, n->cfg_succ[1], n->code->label[1]->id);
           fputs("  }\n", fp);
         }
       } else {
@@ -687,26 +3004,64 @@ static void write_c_pnode(FILE *fp, FA *fa, Fun *f, PNode *n, Vec<PNode *> &done
       break;
     case Code_GOTO:
       do_phi_nodes(fp, n, 0);
-      if (n->live && n->fa_live) fprintf(fp, "  goto L%d;\n", n->code->label[0]->id);
+      if (n->live && n->fa_live) emit_goto_or_trap(fp, n, n->cfg_succ.n ? n->cfg_succ[0] : nullptr, n->code->label[0]->id);
       break;
     case Code_SEND:
       if ((!n->live || !n->fa_live) && n->prim && n->prim->index == P_prim_reply)
-        fprintf(fp, "  return 0;\n");
+        // A dead reply usually means the result is unused -- but a
+        // constant-folded result also deadens the reply while
+        // callers reached through a stored method pointer
+        // (ifa/issues/030 dispatch) still consume the return value.
+        // c_rhs returns the constant literal in that case ("0" as
+        // before when there is genuinely no value).
+        //
+        // issues/014: an infinite-loop generator body (`while True:
+        // yield i`, no `break`) never falls through to its own
+        // fall-off-the-end reply -- that reply is genuinely dead here.
+        // A plain `return`, even in unreachable code, is a hard C++
+        // syntax error inside a function containing `co_yield`
+        // ("return statement not allowed in coroutine"); this arm was
+        // missing the `is_generator` case the live-reply arm above
+        // already has, so a dead generator reply fell through to the
+        // plain `return` branch and broke compilation. Mirrors
+        // is_async (and the live-reply arm above): the value is real
+        // and observable (StopIteration.value), not discarded.
+        if (f->sym->is_async || f->sym->is_generator)
+          fprintf(fp, "  co_return %s;\n", c_rhs(n->rvals[3]));
+        else
+          fprintf(fp, "  return %s;\n", c_rhs(n->rvals[3]));
       else
         do_phi_nodes(fp, n, 0);
+      // ifa/178: a send that cannot complete in any contour of this clone
+      // (fa.cc's gate_send): a callee that never returns, or a read on
+      // None. Trap rather than fall off the end of the function.
+      // Whether or not DCE kept the send itself: its result is unused once
+      // nothing after it is reached, but the code after it must not run.
+      // ifa/049: a call that raises, with no exception check after it,
+      // returns at once: the caller's own check sees the pending exception.
+      if (n->fa_live && n->fa_noreturn && n->fa_noreturn_raises) {
+        cchar *rv = f->exit && f->exit->rvals.n >= 4 ? c_rhs(f->exit->rvals[3]) : nullptr;
+        if (f->sym->is_async || f->sym->is_generator)
+          fprintf(fp, "  co_return %s;\n", rv ? rv : "0");
+        else if (rv)
+          fprintf(fp, "  return %s;\n", rv);
+        else
+          fputs("  return;\n", fp);
+      } else if (n->fa_live && n->fa_noreturn)
+        fputs(cg_trap_c("  assert(!\"runtime error: send does not complete\");\n"), fp);
       break;
     default:
       do_phi_nodes(fp, n, 0);
       break;
   }
-  int extra_goto = n->cfg_succ.n == 1 && n->code->kind != Code_GOTO && n->code->kind != Code_LABEL;
+  int extra_goto = n->cfg_succ.n == 1 && n->code->kind != Code_GOTO;
   for (PNode *p : n->cfg_succ) if (done.set_add(p)) {
     write_c_pnode(fp, fa, f, p, done);
     extra_goto = 0;
   }
   if (extra_goto && n->cfg_succ[0]->live && n->cfg_succ[0]->fa_live) {
-    assert(n->cfg_succ[0]->code->kind == Code_LABEL);
-    fprintf(fp, "  goto L%d;\n", n->cfg_succ[0]->code->label[0]->id);
+    if (n->cfg_succ[0]->code->kind == Code_LABEL)
+      fprintf(fp, "  goto L%d;\n", n->cfg_succ[0]->code->label[0]->id);
   }
 }
 
@@ -714,8 +3069,8 @@ static void write_c_args(FILE *fp, Fun *f) {
   for (MPosition *p : f->positional_arg_positions) {
     Var *v = f->args.get(p);
     Sym *s = v->sym;
-    if (v->cg_string && !s->is_symbol && !s->is_fun && v->live) {
-      fprintf(fp, "  %s = ", v->cg_string);
+    if (cg_get_string(v) && !s->is_symbol && !s->is_fun && v->live) {
+      fprintf(fp, "  %s = ", cg_get_string(v));
       write_arg_position(fp, p);
       fprintf(fp, ";\n");
     }
@@ -740,36 +3095,142 @@ static void write_c(FILE *fp, FA *fa, Fun *f, Vec<Var *> *globals = 0) {
   int index = 0;
   Vec<Var *> vars, defs;
   f->collect_Vars(vars, 0, FUN_COLLECT_VARS_NO_TVALS);
-  for (Var *v : vars) if (v->sym->is_local || v->sym->is_fake) v->cg_string = 0;
+  // ifa/issues/112 probe: is collect_Vars' ORDER stable? It decides both
+  // t<N> numbering and, via the !cg_get_string(v) first-claimant rule
+  // below, WHICH function declares a Var shared between clones.
+  static int dbg_vars = -1;
+  if (dbg_vars < 0) dbg_vars = getenv("IFA_DBG_BODIES") ? 1 : 0;
+  if (dbg_vars) {
+    unsigned long h = 1469598103934665603UL;
+    for (Var *v : vars) h = (h ^ (unsigned long)v->id) * 1099511628211UL;
+    fprintf(stderr, "VARS fun=%d n=%d h=%lx\n", f->id, vars.n, h);
+  }
+  for (Var *v : vars) if (v->sym->is_local || v->sym->is_fake) cg_set_string(v, 0);
   for (Var *v : vars) if (!v->is_internal && !v->sym->is_fake) {
-    if (!v->cg_string && v->live && !v->sym->is_symbol && v->type != sym_continuation) {
+    if (!cg_get_string(v) && v->live && !v->sym->is_symbol && v->type != sym_continuation) {
       char s[100];
       snprintf(s, sizeof(s), "t%d", index++);
-      v->cg_string = dupstr(s);
+      cg_set_string(v, dupstr(s));
       defs.add(v);
     }
   }
   defs.qsort(lt_type_id);
-  Sym *last_t = (Sym *)-1;
-  for (Var *v : defs) {
-    if (v->type != last_t) {
-      if (last_t != (Sym *)-1) fprintf(fp, ";\n");
-      fputs("  ", fp);
-      write_c_type(fp, v);
-      fprintf(fp, " %s", v->cg_string);
-    } else
-      fprintf(fp, ", %s", v->cg_string);
-    last_t = v->type;
+
+  Vec<Var*> coro_vars;
+  Vec<PNode*> nodes;
+  f->collect_PNodes(nodes);
+  for (PNode *n : nodes) {
+    if (n->code->kind == Code_SEND && n->lvals.n == 1) {
+      if (n->prim && n->prim->index == P_prim_await) continue;
+      Fun *target = get_target_fun_core(n, f);
+      if (target && target->sym->is_async) {
+         coro_vars.set_add(n->lvals[0]);
+      }
+    }
   }
-  if (defs.n) fprintf(fp, ";\n\n");
+
+  // issues/014: is_generator's real coroutine body is wrapped in an
+  // immediately-invoked local lambda -- the ONLY thing in this
+  // function that actually contains co_yield/co_return, so it's the
+  // only thing the C++ compiler treats as a coroutine. This keeps the
+  // outer function itself an ordinary function returning a plain
+  // int64 handle (write_c_fun_proto forces that return type above),
+  // exactly what the synthesized wrapper Fun (build_if1_pyda's
+  // PY_funcdef) expects to call -- no call-site-typing surgery needed
+  // anywhere else.
+  //
+  // CRITICAL: the coroutine's locals (defs below) must be declared
+  // INSIDE the lambda, not captured by reference from the outer
+  // function. initial_suspend() (_CG_Generator's promise_type)
+  // returns std::suspend_always, so the outer function constructs the
+  // suspended coroutine and returns *immediately* -- its stack frame
+  // is gone by the time anything resumes the coroutine from a later,
+  // unrelated call. A `[&]`-captured local declared outside the
+  // lambda would dangle the moment that happens (confirmed:
+  // segfaulted on the first resume, from __pyc_more__, called well
+  // after gen()'s own C stack frame had returned). Locals declared
+  // *inside* the lambda are correctly promoted to the coroutine's own
+  // heap-allocated frame by the C++ compiler, so they survive
+  // suspension like any other local in a real coroutine.
+  //
+  // CRITICAL #2 (found investigating a list-argument corruption bug):
+  // when a lambda's operator() is itself a coroutine, [=]-captured
+  // members live in the CLOSURE OBJECT, not the coroutine frame --
+  // the frame only stores an implicit pointer back to the closure.
+  // A stack-local closure (`auto __coro_1014 = [=]...`) is destroyed
+  // the moment this outer function returns (same "gone by the time
+  // anything resumes" problem as CRITICAL above), so any *captured
+  // parameter* (a0, a1, ...; scalars happened to often "work" by
+  // stack-reuse luck, struct/list pointers reliably didn't) read
+  // garbage after the first resume. Fix: heap-allocate the closure
+  // itself (`new auto(...)`) so the object the frame's implicit
+  // pointer refers to survives indefinitely, exactly like the
+  // coroutine frame does. Confirmed via a minimal pyc-independent
+  // repro (dangling closure reproduced with a plain stack `auto`,
+  // fixed with `new auto`). It is now _CG_gc_new: a closure from plain
+  // `new` is not scanned by the collector, so the GC objects it captures
+  // were freed under it at -O2 (pyc_c_runtime.h, _CG_gc_frame).
+  if (f->sym->is_generator) {
+    fputs("  auto *__coro_1014 = _CG_gc_new([=]() -> _CG_Generator {\n", fp);
+  }
+  for (Var *v : defs) {
+    fputs("  ", fp);
+    if (coro_vars.set_in(v)) {
+      fputs("_CG_Coroutine", fp);
+    } else {
+      write_c_type(fp, v);
+    }
+    // EVERY temporary is value-initialized. The IR legitimately reads a
+    // Var no path assigned: a raising function's return value on the
+    // raise path, which the caller discards after testing the exception
+    // slot. That is "some unspecified value" (LLVM lowers it to an
+    // undefined load, which is fine), but in C++ reading an
+    // uninitialized local is undefined behavior, and clang marks return
+    // values `noundef`: at -O2 it deleted `risky`'s whole raise path,
+    // `ret` included, and fell through into the next function
+    // (tests/exception_basic.py segfaulted). Zero is the one defined
+    // lowering of "unspecified", and the stores are dead wherever the
+    // Var is assigned first, so -O2 removes them.
+    //
+    // `= {}` is value-init and spells "zero" for every representation
+    // the backend emits -- 0 for a scalar, nullptr for a pointer,
+    // all-zero members for a struct. It also subsumes ifa/issues/039's
+    // `safe` environment, which zeroed only the source locals the
+    // definite-assignment analysis flagged (find_maybe_unbound still
+    // runs: DEFINITELY unbound stays a compile error, and strict mode
+    // still warns). Coroutine handles are excluded: _CG_Coroutine has
+    // its own initialization.
+    if (!coro_vars.set_in(v))
+      fprintf(fp, " %s = {};\n", cg_get_string(v));
+    else
+      fprintf(fp, " %s;\n", cg_get_string(v));
+  }
+  if (defs.n) fprintf(fp, "\n");
   if (globals)
-    for (Var *v : *globals) if (!v->sym->is_fun && v->sym->fun && !v->sym->type_kind && v->cg_string)
-        fprintf(fp, "  %s = %s;\n", v->cg_string, v->sym->fun->cg_string);
+    for (Var *v : *globals) if (!v->sym->is_fun && v->sym->fun && !v->sym->type_kind && cg_get_string(v))
+        fprintf(fp, "  %s = %s;\n", cg_get_string(v), cg_get_string(v->sym->fun));
+  // issues/014: for a generator, formal parameters (a0, a1, ...) are
+  // the OUTER function's parameters; [=] above captures them by value
+  // into the lambda, so this assignment (which reads a0/a1 by name)
+  // resolves to the captured copies here, not the outer ones -- safe
+  // for the same reason the locals above are. Positional generator
+  // arguments are forwarded from the synthesized wrapper (see the
+  // PY_funcdef case in python_ifa_build_if1.cc); this ordering (args
+  // assigned inside the lambda, not before it) is what makes that
+  // safe.
   write_c_args(fp, f);
   rebuild_cfg_pred_index(f);
   Vec<PNode *> done;
   done.set_add(f->entry);
+  cg_census_fun = f;
   write_c_pnode(fp, fa, f, f->entry, done);
+  if (f->sym->is_generator) {
+    fputs("  });\n", fp);
+    fputs("  _CG_Generator __g_1014 = (*__coro_1014)();\n", fp);
+    // issues/114: cast to the function's own (FA-inferred) return
+    // type, which is no longer necessarily _CG_int64.
+    fprintf(fp, "  return (%s)(uintptr_t)__g_1014.handle.address();\n", c_type(f->rets[0]));
+  }
   fputs("}\n", fp);
 }
 
@@ -780,79 +3241,24 @@ static inline bool homogeneous_tuple(Sym *s) {
   return true;
 }
 
-static int build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
+// Returns nothing; failure paths inside use fail() directly.
+// (Historically returned int; the caller's `< 0` check was dead.)
+static void build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
 // build builtin map
-#define S(_n) if1_get_builtin(fa->pdb->if1, #_n)->cg_string = "_CG_" #_n;
-#include "builtin_symbols.h"
-#undef S
+  cg_name_builtin_types(fa);
   // assign functions a C type string
-  int f_index = 0;
-  for (Fun *f : fa->funs) {
-    if (!f->live) continue;
-    char s[100];
-    if (f->sym->name) {
-      if (f->sym->has.n > 1 && f->sym->has[1]->must_specialize)
-        snprintf(s, sizeof(s), "_CG_f_%d_%d/*%s::%s*/", f->sym->id, f_index, f->sym->has[1]->must_specialize->name,
-                 f->sym->name);
-      else
-        snprintf(s, sizeof(s), "_CG_f_%d_%d/*%s*/", f->sym->id, f_index, f->sym->name);
-    } else
-      snprintf(s, sizeof(s), "_CG_f_%d_%d", f->sym->id, f_index);
-    f->cg_string = dupstr(s);
-    snprintf(s, sizeof(s), "_CG_pf%d", f_index);
-    f->cg_structural_string = dupstr(s);
-    f->sym->cg_string = f->cg_structural_string;
-    f_index++;
-    if (f->sym->var) globals.set_add(f->sym->var);
-  }
+  // Assign each live Fun a cg_string (with /*name*/ annotation, the
+  // C-backend convention) and collect their sym->var into globals.
+  // See codegen_common.{h,cc}.
+  assign_fun_cg_strings(fa, /*annotate=*/true, &globals);
   Vec<Sym *> allsyms;
   collect_types_and_globals(fa, allsyms, globals);
-  // assign creation sets C type strings
+  // assign creation sets C type strings. Pass1 emits forward decls
+  // for Type_RECORD types alongside the cg_string assignment; pass2
+  // resolves fun/symbol/sum-type aliases.
   if (allsyms.n) fputs("/*\n Type Declarations\n*/\n\n", fp);
-  for (Sym *s : allsyms) {
-    if (s->num_kind)
-      s->cg_string = num_string(s);
-    else if (s->is_symbol) {
-      s->cg_string = "_CG_symbol";
-    } else {
-      if (s->cg_string) {
-        // skip
-      } else {
-        switch (s->type_kind) {
-          default:
-            s->cg_string = dupstr("_CG_any");
-            break;
-          case Type_FUN:
-            if (s->fun) break;
-          // fall through
-          case Type_RECORD: {
-            if (s->has.n) {
-              char ss[100];
-              fprintf(fp, "/* %s */ struct _CG_s%d; ", s->name ? s->name : "", s->id);
-              fprintf(fp, "typedef struct _CG_s%d *_CG_ps%d;\n", s->id, s->id);
-              snprintf(ss, sizeof(ss), "_CG_ps%d", s->id);
-              s->cg_string = dupstr(ss);
-            } else
-              s->cg_string = "_CG_void";
-            break;
-          }
-        }
-      }
-    }
-  }
-  // resolve types
-  for (Sym *s : allsyms) {
-    if (s->fun)
-      s->cg_string = s->fun->cg_structural_string;
-    else if (s->is_symbol)
-      s->cg_string = sym_symbol->cg_string;
-    if (s->type_kind == Type_SUM && s->has.n == 2) {
-      if (s->has[0] == sym_nil_type)
-        s->cg_string = s->has[1]->cg_string;
-      else if (s->has[1] == sym_nil_type)
-        s->cg_string = s->has[0]->cg_string;
-    }
-  }
+  assign_type_cg_strings_pass1(allsyms, fp);
+  assign_type_cg_strings_pass2(allsyms);
   if (allsyms.n) fputs("\n", fp);
   // define function types and prototypes
   Vec<Fun *> live_funs;
@@ -862,8 +3268,8 @@ static int build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
   }
   if (live_funs.n) fputs("/*\n Function Prototypes\n*/\n\n", fp);
   if (live_funs.n) {
-    fprintf(fp, "typedef _CG_function %s", live_funs[0]->cg_structural_string);
-    for (int i = 1; i < live_funs.n; i++) fprintf(fp, ", %s", live_funs[i]->cg_structural_string);
+    fprintf(fp, "typedef _CG_function %s", cg_get_structural_string(live_funs[0]));
+    for (int i = 1; i < live_funs.n; i++) fprintf(fp, ", %s", cg_get_structural_string(live_funs[i]));
     fprintf(fp, ";\n");
   }
   for (Fun *f : live_funs) {
@@ -883,14 +3289,64 @@ static int build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
       case Type_RECORD: {
         if (s->has.n) {
           fprintf(fp, "struct _CG_s%d {\n", s->id);
+          // ifa/issues/030: user-class records carry a classtag
+          // header at offset 0 (a pointer to the class's
+          // _CG_TypeObject, written once into the class prototype
+          // at prim_new and inherited by every instance via
+          // clone_dst's memcpy). Polymorphic dispatch reads it to
+          // select the per-class branch (each class's method slot
+          // index differs), then calls through that class's own
+          // stored method pointer (which is per-creation-site, so
+          // FA clones keep working). All other field accesses are
+          // by eN member NAME, so the extra leading member is
+          // layout-transparent to them.
+          if (cg_has_classtag(s)) fputs("  _CG_TypeObject *__pyc_tag;\n", fp);
+          // Issue 026: emit only live fields, keeping the
+          // has-index `i` as the eN suffix.  Dead fields
+          // leave gaps in the numbering — but the setter,
+          // getter, and other field-access sites use the
+          // SAME has-index `i` for their eN suffix and
+          // elide accesses to dead fields (via
+          // cg_field_live).  The struct definition and
+          // field-access codegen stay consistent.
           for (int i = 0; i < s->has.n; i++) {
-            if (s->has[i]->type && (!s->has[i]->var || s->has[i]->var->live)) {
-              fputs("  ", fp);
-              fputs(c_type(s->has[i]), fp);
-              fprintf(fp, " e%d;", i);
-              if (s->has[i]->name) fprintf(fp, " /* %s */;", s->has[i]->name);
-              fputs("\n", fp);
+            // ifa/issues/055: a dead field gets a PLACEHOLDER member
+            // rather than a gap. Skipping it entirely relies on every
+            // access site eliding the same field by the same test, and
+            // they do not all do so -- the tuple constructor, the
+            // getter's field-mismatch path and the string builder all
+            // emit `->eN` unguarded, so a record with a dead leading
+            // field produced `t->e0 = ...` against a struct starting at
+            // e3 ("no member named 'e0'", measured on bh, block, chull,
+            // doom, rubik and softrender). Keeping the numbering dense
+            // removes the whole class of mismatch instead of requiring
+            // agreement at six sites. The member is unused; C field
+            // access is by name, so this is layout-transparent to
+            // everything that was already working.
+            // A field DCE called dead is still READ by several sites
+            // (measured: `t = (_CG_float64)((_CG_ps13984)x)->e1` in
+            // block/chull), so it must keep its real C type -- a
+            // `_CG_void` placeholder there is a cast error, not a fix.
+            // Only a field with NO type at all gets the placeholder,
+            // and that exists purely to hold the eN numbering.
+            if (!s->has[i]->type) {
+              // ifa/issues/121: ZERO-WIDTH. The placeholder exists only
+              // to hold the eN numbering (see above); it has no type, so
+              // `cg_field_live` is false for it and every guarded access
+              // site already elides it. Giving it storage cost 8 bytes
+              // each (`_CG_void` is `void *`) -- 75 of pygmy's 569
+              // fields, 7 of the 31 on `vec`, a three-double vector.
+              // A zero-length array keeps the name and the numbering,
+              // and any site that DOES touch one now fails to compile
+              // rather than silently reading a dead slot.
+              fprintf(fp, "  char e%d[0]; /* no type */\n", i);
+              continue;
             }
+            fputs("  ", fp);
+            fputs(c_type(s->has[i]), fp);
+            fprintf(fp, " e%d;", i);
+            if (s->has[i]->name) fprintf(fp, " /* %s */;", s->has[i]->name);
+            fputs("\n", fp);
           }
           if (s->is_vector) {
             fputs("  ", fp);
@@ -902,48 +3358,86 @@ static int build_type_strings(FILE *fp, FA *fa, Vec<Var *> &globals) {
       }
     }
   }
+  if (allsyms.n) fputs("\n/*\n Type Objects\n*/\n\n", fp);
+  // ifa/130 A3: one tag per class FAMILY (cg_tag_name), not per name --
+  // or, for a family ifa/206 step 2 splits, one per concrete type.
+  cg_plan_concrete_tags(fa);
+  std::set<std::string> emitted_types;
+  for (Sym *s : allsyms) {
+    if (s->type_kind == Type_RECORD && !s->is_system_type) {
+      Vec<Sym *> ms;
+      cg_tag_family_members(s, ms);
+      for (Sym *m : ms) {
+        std::string tn = cg_tag_name(m);
+        if (emitted_types.find(tn) == emitted_types.end()) {
+          fprintf(fp, "_CG_TypeObject %s = { PYC_TAG_OBJECT, \"%s\" };\n", tn.c_str(), m->name);
+          emitted_types.insert(tn);
+        }
+      }
+    }
+  }
+
   if (allsyms.n) fputs("\n/*\n Builtin Functions\n*/\n\n", fp);
   for (Sym *s : allsyms) {
     if (s->type_kind == Type_RECORD && s->creators.n && s->creators[0]->sym == sym_list && homogeneous_tuple(s) &&
         s->has.n)
       fprintf(fp, "_CG_TUPLE_TO_LIST_FUN(%d, %d);\n", s->id, s->has.n);
   }
-  return 0;
 }
 
 void c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
+  cg_register_print_cgfns();
   Vec<Var *> globals;
   int index = 0;
   if (!if1->callback->c_codegen_pre_file(fp)) fprintf(fp, "#include \"c_runtime.h\"\n\n");
-  if (build_type_strings(fp, fa, globals) < 0) fail("unable to generate C code: no unique typing");
+  // ifa/issues/123: BEFORE build_type_strings -- the elision nulls
+  // has[i]->type so the struct emitter writes a zero-width placeholder,
+  // which only works if the structs have not been written yet. Placed
+  // after it, the members stayed and only their stores disappeared.
+  cg_elide_unread_slots(fa);
+  build_type_strings(fp, fa, globals);
+  cg_build_new_to_val_map(fa);
+  cg_build_dispatch_arm_plans(fa);  // ifa/121
   if (globals.n) {
     fputs("\n/*\n Global Variables\n*/\n\n", fp);
   }
-  for (Var *v : globals) if (v->sym->is_fun) v->cg_string = v->sym->fun->cg_string;
+  for (Var *v : globals) if (v->sym->is_fun) cg_set_string(v, cg_get_string(v->sym->fun));
   for (Var *v : globals) {
     Sym *s = unalias_type(v->sym);
     if (!v->live) continue;
-    if (v->type == sym_nil_type) {
-      v->cg_string = "NULL";
+    if (v->sym == sym_nil || v->type == sym_nil_type) {
+      cg_set_string(v, "NULL");
       continue;
     }
-    if (s->imm.const_kind != IF1_NUM_KIND_NONE && s->imm.const_kind != IF1_CONST_KIND_STRING) {
+    if (s->imm.const_kind != IF1_NUM_KIND_NONE && s->imm.const_kind != IF1_CONST_KIND_STRING &&
+        s->imm.const_kind != IF1_CONST_KIND_BYTES) {
       char ss[100];
-      sprint_imm(ss, sizeof(ss), s->imm);
-      v->cg_string = dupstr(ss);
+      cg_sprint_imm(ss, sizeof(ss), s->imm);
+      cg_set_string(v, dupstr(ss));
     } else if (s->constant) {
-      if (v->type == sym_string) {
-        char *x = escape_string(s->constant);
-        v->cg_string = (char *)MALLOC(strlen(x) + 20);
-        STRCPYZ(v->cg_string, "_CG_String(");
-        STRCAT(v->cg_string, x);
-        STRCAT(v->cg_string, ")");
+      // bytes shares str's exact length-prefixed char* buffer layout
+      // (sym_bytes registration, ifa/if1/ast.cc) -- a literal materializes
+      // the same way via _CG_String regardless of which Python type wraps
+      // it. Without this branch, a `b"..."` constant fell through to the
+      // `else` below (bare s->constant, meant for numeric literals) or --
+      // before IF1_CONST_KIND_BYTES was excluded above -- got formatted
+      // as a number by sprint_imm's unhandled-case fallthrough, both
+      // producing garbage (e.g. a `bytes[i]` constant folding to the
+      // decimal ASCII value of one byte instead of the buffer pointer).
+      if (v->type == sym_string || v->type == sym_bytes) {
+        char *x = escape_string(s->constant, s->imm.v_len);
+        cg_set_string(v, (char *)MALLOC(strlen(x) + 40));
+        STRCPYZ(cg_get_string(v), "_CG_String_n(");
+        STRCAT(cg_get_string(v), x);
+        char lenbuf[24];
+        snprintf(lenbuf, sizeof(lenbuf), ",%d)", s->imm.v_len);
+        STRCAT(cg_get_string(v), lenbuf);
       } else
-        v->cg_string = s->constant;
+        cg_set_string(v, s->constant);
     } else if (s->is_symbol) {
       char ss[100];
       snprintf(ss, sizeof(ss), "_CG_Symbol(%d, \"%s\")", s->id, s->name);
-      v->cg_string = dupstr(ss);
+      cg_set_string(v, dupstr(ss));
     } else if (s->is_fun) {
     } else if (!s->type_kind || s->type_kind == Type_RECORD) {
       char ss[100];
@@ -951,45 +3445,229 @@ void c_codegen_print_c(FILE *fp, FA *fa, Fun *init) {
         snprintf(ss, sizeof(ss), "/* %s %d */ g%d", s->name, s->id, index++);
       else
         snprintf(ss, sizeof(ss), "/* %d */ g%d", s->id, index++);
-      v->cg_string = dupstrs(ss);
+      cg_set_string(v, dupstrs(ss));
       write_c_type(fp, v);
       fputs(" ", fp);
-      fputs(v->cg_string, fp);
+      fputs(cg_get_string(v), fp);
       fputs(";\n", fp);
     } else {
       index++;
-      v->cg_string = dupstr(s->name);
+      cg_set_string(v, dupstr(s->name));
     }
   }
   fputs("\n/*\n Functions\n*/\n", fp);
-  for (Fun *f : fa->funs) if (f != init && !f->is_external) write_c(fp, fa, f);
-  write_c(fp, fa, init, &globals);
+  // ifa/issues/121: drop function bodies that the emitted program never
+  // names. `mark_live_funs` (optimize/dead.cc) computes liveness over
+  // `Fun::calls` -- FA's CANDIDATE set at each call site -- and codegen
+  // then narrows every site to one target: a direct call takes
+  // `get_target_fun_core`'s answer, a polymorphic one goes through a
+  // method-pointer slot that `cg_build_new_to_val_map` fills with a
+  // single winner per (constructor, slot). Nothing recomputed liveness
+  // after that narrowing, so every clone it discarded stayed `live` and
+  // was emitted: 39 of pygmy's 244 functions, named nowhere in the
+  // output.
+  //
+  // The reference relation is read back out of the EMITTED BYTES rather
+  // than re-derived from codegen's decisions. That was not the first
+  // attempt -- hooking `cg_get_string(Fun*)`, the accessor that looks
+  // like the only way a function's name can reach the output, missed
+  // `c_rhs`, which emits a function-valued Var through
+  // `cg_get_string(Var*)` instead, and dropped 101 functions including 9
+  // that were still called. Reading the bytes cannot miss a path,
+  // whatever any future emitter does.
+  //
+  // Prototypes are deliberately left alone: an unreferenced extern
+  // declaration costs nothing, and keeping them all means this can never
+  // produce a call to something undeclared.
+  // The memstream buffers are libc-malloc'd and deliberately not freed:
+  // this runs once, at the end of a compile, and the process exits
+  // immediately after.
+  Vec<Fun *> body_funs;
+  Vec<char *> body_text;
+  Vec<size_t> body_size;
+  for (Fun *f : fa->funs) if (f != init && !f->is_external) {
+    char *buf = nullptr;
+    size_t len = 0;
+    FILE *mf = open_memstream(&buf, &len);
+    if (!mf) fail("c_codegen_print_c: open_memstream failed");
+    write_c(mf, fa, f);
+    fclose(mf);
+    body_funs.add(f);
+    body_text.add(buf);
+    body_size.add(len);
+  }
+  // `init` carries the global initializers, so it is the root and always
+  // emitted; buffering it too makes its references visible to the scan.
+  char *init_buf = nullptr;
+  size_t init_len = 0;
+  {
+    FILE *initf = open_memstream(&init_buf, &init_len);
+    if (!initf) fail("c_codegen_print_c: open_memstream failed");
+    write_c(initf, fa, init, &globals);
+    fclose(initf);
+  }
+
+  // assign_fun_cg_strings names the i'th live Fun `_CG_f_<symid>_<i>`,
+  // so the trailing index identifies the referent exactly -- including
+  // WHICH CLONE, which is the whole point here. (`_CG_pf<i>` is a type
+  // name and does not match this prefix.)
+  Vec<Fun *> by_index;
+  for (Fun *f : fa->funs) if (f->live) by_index.add(f);
+  Vec<int> keep, buf_of;  // index -> reached? / index -> position in body_text
+  Vec<int> work;
+  for (int i = 0; i < by_index.n; i++) { keep.add(0); buf_of.add(-1); }
+  for (int i = 0; i < body_funs.n; i++)
+    for (int k = 0; k < by_index.n; k++)
+      if (by_index.v[k] == body_funs.v[i]) { buf_of.v[k] = i; break; }
+  auto scan = [&](const char *buf, size_t len, int self_idx) {
+    for (const char *q = buf; (q = (const char *)memmem(q, (buf + len) - q, "_CG_f_", 6));) {
+      q += 6;
+      const char *r = q;
+      while (r < buf + len && isdigit((unsigned char)*r)) r++;
+      if (r == q || r >= buf + len || *r != '_') continue;
+      int idx = 0;
+      const char *d = ++r;
+      while (r < buf + len && isdigit((unsigned char)*r)) idx = idx * 10 + (*r++ - '0');
+      if (r == d) continue;
+      if (idx == self_idx || idx < 0 || idx >= by_index.n) continue;
+      if (!keep.v[idx]) { keep.v[idx] = 1; work.add(idx); }
+    }
+  };
+  scan(init_buf, init_len, -1);
+  for (int w = 0; w < work.n; w++) {
+    int b = buf_of.v[work.v[w]];
+    if (b >= 0) scan(body_text.v[b], body_size.v[b], work.v[w]);
+  }
+
+  int dropped = 0;
+  Vec<int> emit_it;
+  for (int i = 0; i < body_funs.n; i++) emit_it.add(1);
+  for (int k = 0; k < by_index.n; k++)
+    if (!keep.v[k] && buf_of.v[k] >= 0) { emit_it.v[buf_of.v[k]] = 0; dropped++; }
+  for (int i = 0; i < body_funs.n; i++)
+    if (emit_it.v[i]) fwrite(body_text.v[i], 1, body_size.v[i], fp);
+  fwrite(init_buf, 1, init_len, fp);
+  if (getenv("PYC_DBG_CGDCE"))
+    fprintf(stderr, "CGDCE emitted=%d dropped=%d (named by no emitted body)\n", body_funs.n + 1 - dropped, dropped);
+  // ifa/121: WHY is each dropped body unnamed? For every call site that
+  // lists it as a candidate, in a function that IS emitted, classify the
+  // site; and note whether it is referenced only as a constructor's
+  // method value (no call site at all).
+  if (getenv("PYC_DBG_CGDCE") && getenv("PYC_DBG_CGDCE")[0] == '2') {
+    std::map<std::string, int> why;
+    for (int k = 0; k < by_index.n; k++) {
+      if (keep.v[k] || buf_of.v[k] < 0) continue;
+      Fun *g = by_index.v[k];
+      int sites = 0, dead_site = 0, live_site_multi = 0, live_site_single = 0, from_dropped = 0;
+      for (Fun *h : fa->funs) if (h && h->live) {
+        int hk = -1;
+        for (int j = 0; j < by_index.n; j++) if (by_index.v[j] == h) { hk = j; break; }
+        bool h_emitted = h == init || (hk >= 0 && keep.v[hk]);
+        for (int ci = 0; ci < h->calls.n; ci++) {
+          PNode *pn = h->calls.v[ci].key;
+          Vec<Fun *> *fs = h->calls.v[ci].value;
+          if (!pn || !fs || !fs->set_in(g)) continue;
+          sites++;
+          if (!h_emitted) from_dropped++;
+          else if (!pn->live || !pn->fa_live) dead_site++;
+          else if (fs->n > 1) live_site_multi++;
+          else live_site_single++;
+        }
+      }
+      cchar *w = !sites ? "no-call-site" : live_site_single ? "LIVE-single-site(unexplained)"
+                 : live_site_multi ? "multi-candidate-site" : dead_site ? "dead-site" : "only-from-dropped";
+      why[w]++;
+      if (getenv("PYC_DBG_CGDCE")[1] == 'v')
+        fprintf(stderr, "CGDCE-drop %s %s sites=%d dead=%d multi=%d single=%d fromdropped=%d\n", cg_get_string(g), w,
+                sites, dead_site, live_site_multi, live_site_single, from_dropped);
+    }
+    fprintf(stderr, "CGDCE-why");
+    for (auto &kv : why) fprintf(stderr, " %s=%d", kv.first.c_str(), kv.second);
+    fprintf(stderr, "\n");
+  }
   fprintf(fp,
-          "\nint main(int argc, char *argv[]) { (void)argc; (void) argv;\n"
+          "\nint main(int argc, char *argv[]) {\n"
           "  MEM_INIT();\n"
+          "  _CG_set_argv(argc, argv);\n"
           "  %s();\n"
           "  return 0;\n"
           "}\n",
-          init->cg_string);
+          cg_get_string(init));
+  // 124 before 122: imprecision is the CAUSE and the layout violation the
+  // consequence -- go's untyped `path` element is why a field access has
+  // a layout to guess at all. Reporting the consequence first buries it.
+  report_call_resolution(fa);  // ifa/129 (backend-independent, see codegen_common.cc)
+  cg_report_slot_use(fa);      // ifa/issues/123 (post-emission)
+  cg_scan_imprecise(fa);       // ifa/issues/124
+  cg_check_imprecise();        // ifa/issues/124
+  cg_check_layout_contract();  // ifa/issues/122 Phase 0
 }
 
 void c_codegen_write_c(FA *fa, Fun *main, cchar *filename) {
-  char fn[512];
-  strcpy(fn, filename);
-  strcat(fn, ".c");
+  char fn[FILENAME_MAX];
+  int n = snprintf(fn, sizeof(fn), "%s.c", filename);
+  if (n < 0 || (size_t)n >= sizeof(fn)) fail("c_codegen_write_c: filename too long: %s", filename);
   FILE *fp = fopen(fn, "w");
+  if (!fp) fail("c_codegen_write_c: unable to open %s for writing", fn);
   c_codegen_print_c(fp, fa, main);
   fclose(fp);
 }
 
 int c_codegen_compile(cchar *filename) {
-  char target[512], s[1024];
-  strcpy(target, filename);
-  *strrchr(target, '.') = 0;
-  snprintf(s, sizeof(s),
-           "make --no-print-directory -f %s/Makefile.cg CG_ROOT=%s CG_TARGET=%s "
-           "CG_FILES=%s.c %s %s",
-           system_dir, system_dir, target, filename, codegen_optimize ? "OPTIMIZE=1" : "",
-           codegen_debug ? "DEBUG=1" : "");
-  return system(s);
+  char target[FILENAME_MAX];
+  if (codegen_output[0]) {
+    // -o / --output: use the requested path verbatim instead of
+    // deriving one from the input filename.
+    int n = snprintf(target, sizeof(target), "%s", codegen_output);
+    if (n < 0 || (size_t)n >= sizeof(target)) fail("c_codegen_compile: -o path too long: %s", codegen_output);
+  } else {
+    int n = snprintf(target, sizeof(target), "%s", filename);
+    if (n < 0 || (size_t)n >= sizeof(target)) fail("c_codegen_compile: filename too long: %s", filename);
+    char *dot = strrchr(target, '.');
+    if (!dot) fail("c_codegen_compile: filename has no extension: %s", filename);
+    *dot = 0;
+  }
+
+  // Build argv for posix_spawn (no shell, no quoting concerns).
+  char makefile_arg[FILENAME_MAX];
+  if (snprintf(makefile_arg, sizeof(makefile_arg), "%s/Makefile.cg", system_dir) >= (int)sizeof(makefile_arg))
+    fail("c_codegen_compile: makefile path too long");
+  char cg_root_arg[FILENAME_MAX];
+  if (snprintf(cg_root_arg, sizeof(cg_root_arg), "CG_ROOT=%s", system_dir) >= (int)sizeof(cg_root_arg))
+    fail("c_codegen_compile: CG_ROOT arg too long");
+  char cg_target_arg[FILENAME_MAX];
+  if (snprintf(cg_target_arg, sizeof(cg_target_arg), "CG_TARGET=%s", target) >= (int)sizeof(cg_target_arg))
+    fail("c_codegen_compile: CG_TARGET arg too long");
+  char cg_files_arg[FILENAME_MAX];
+  if (snprintf(cg_files_arg, sizeof(cg_files_arg), "CG_FILES=%s.c", filename) >= (int)sizeof(cg_files_arg))
+    fail("c_codegen_compile: CG_FILES arg too long");
+
+  // posix_spawn's argv signature is `char *const argv[]`; we pass pointers
+  // to local buffers, which is OK because spawnp dup()s them before exec.
+  // Extra flags are handed to make as two variables. A make variable's
+  // value is one argv word however many spaces it holds, so no quoting.
+  Vec<cchar *> libs;
+  codegen_split_flags(codegen_extra_libs, libs);
+  for (cchar *l : codegen_link_libs) libs.add(l);
+  std::string extra_cflags = std::string("EXTRA_CFLAGS=") + codegen_extra_cflags;
+  std::string extra_libs = "EXTRA_LIBS=";
+  for (cchar *l : libs) extra_libs += std::string(l) + " ";
+  char *argv[20];
+  int ai = 0;
+  argv[ai++] = (char *)"make";
+  argv[ai++] = (char *)"--no-print-directory";
+  argv[ai++] = (char *)"-f";
+  argv[ai++] = makefile_arg;
+  argv[ai++] = cg_root_arg;
+  argv[ai++] = cg_target_arg;
+  argv[ai++] = cg_files_arg;
+  if (codegen_optimize) argv[ai++] = (char *)"OPTIMIZE=1";
+  if (codegen_debug) argv[ai++] = (char *)"DEBUG=1";
+  // PYC_NO_GC: build the program with calloc in place of the collector,
+  // so valgrind can diagnose a heap bug in emitted code. Leaks.
+  if (getenv("PYC_NO_GC")) argv[ai++] = (char *)"NO_GC=1";
+  if (codegen_extra_cflags[0]) argv[ai++] = (char *)extra_cflags.c_str();
+  if (libs.n) argv[ai++] = (char *)extra_libs.c_str();
+  argv[ai] = nullptr;
+  return codegen_spawn("make", argv);
 }

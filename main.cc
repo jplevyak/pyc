@@ -20,22 +20,25 @@ static void help(ArgumentState *arg_state, char *arg_unused);
 static void copyright(ArgumentState *arg_state, char *arg_unused);
 
 static ArgumentDescription arg_desc[] = {
-    {"system_directory", 'D', "System Directory", "S511", system_dir, "IFA_SYSTEM_DIRECTORY", NULL},
+    {"system-directory", 'D', "System Directory", "S511", system_dir, "IFA_SYSTEM_DIRECTORY", NULL},
+    {"debug", 'd', "Debug", "+", &ifa_debug, "IFA_DEBUG", NULL},
+    {"verbose", 'v', "Verbose", "+", &ifa_verbose, "IFA_VERBOSE", NULL},
+    {"copyright", ' ', "Show Copyright", NULL, NULL, NULL, copyright},
+    {"help", 'h', "Help", NULL, NULL, NULL, help},
+
+    {"", ' ', "-- Internal / development options (not a stable CLI contract) --", NULL, NULL, NULL, NULL},
     {"html", 't', "Write Program in HTML", "T", &fhtml, "IFA_HTML", NULL},
     {"code", 'c', "Write Program in Core Code", "T", &fcode, "IFA_CODE", NULL},
     {"graph", 'G', "Write Program Graphs", "T", &fgraph, "IFA_GRAPH", NULL},
     {"graph-format", ' ', "GraphViz = 0, VCG = 1", "I", &fgraph_vcg, "IFA_GRAPH_FORMAT", NULL},
     {"test", ' ', "Unit Test", "F", &do_unit_tests, "IFA_TEST", NULL},
-    {"log-dir", ' ', "Log Directory", "S512", log_dir, "CHPL_LOG_DIR", NULL},
-    {"log", 'l', "Debug Logging Flags", "S512", log_flags, "CHPL_LOG_FLAGS", log_flags_arg},
-    {"debug", 'd', "Debug", "+", &ifa_debug, "IFA_DEBUG", NULL},
-    {"verbose", 'v', "Verbose", "+", &ifa_verbose, "IFA_VERBOSE", NULL},
-    {"ddebug", ' ', "DParser Debug Level", "+", &d_debug_level, "IFA_D_DEBUG_LEVEL", NULL},
-    {"ddverbose", ' ', "DParser Verbose Level (prelude)", "+", &d_verbose_level, "IFA_PARSER_VERBOSE_PRELUDE", NULL},
-    {"dverbose", ' ', "DParser Verbose Level (except prelude)", "+", &parser_verbose_non_prelude,
+    {"log-dir", ' ', "Log Directory", "S512", log_dir, "IFA_LOG_DIR", NULL},
+    {"log", 'l', "Debug Logging Flags", "S512", log_flags, "IFA_LOG_FLAGS", log_flags_arg},
+    {"dparser-debug", ' ', "DParser Debug Level", "+", &d_debug_level, "IFA_D_DEBUG_LEVEL", NULL},
+    {"dparser-verbose-prelude", ' ', "DParser Verbose Level (prelude)", "+", &d_verbose_level,
+     "IFA_PARSER_VERBOSE_PRELUDE", NULL},
+    {"dparser-verbose", ' ', "DParser Verbose Level (except prelude)", "+", &parser_verbose_non_prelude,
      "IFA_PARSER_VERBOSE_NON_PRELUDE", NULL},
-    {"copyright", ' ', "Show Copyright", NULL, NULL, NULL, copyright},
-    {"help", 'h', "Help", NULL, NULL, NULL, help},
     {0}};
 
 static ArgumentState arg_state("ifa", arg_desc);
@@ -71,10 +74,13 @@ int main(int argc, char *argv[]) {
   init_config();
   if (fhtml || log_flags[0]) init_logs();
   if (do_unit_tests) _exit(UnitTest::run_all());
+  int status = 0;
   for (int i = 0; i < arg_state.nfile_arguments; i++) {
-    compile_one_file(arg_state.file_argument[i]);
+    // A failed compile must fail the process: `make test_llvm` used to go
+    // on and run a stale ./test_llvm, which hid a type error for days.
+    if (compile_one_file(arg_state.file_argument[i]) < 0) status = 1;
     if (fhtml) ifa_html(arg_state.file_argument[i], ".");
     if (fcode) ifa_code(arg_state.file_argument[i]);
   }
-  return 0;
+  return status;
 }

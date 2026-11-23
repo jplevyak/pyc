@@ -55,8 +55,26 @@ static void mark_live_avar(AVar *av) {
   av->var->live = 1;
   mark_live_again = 1;
   if (av->var->def) av->var->def->live = 1;
+  // Issue 026 Path B: liveness and constness are
+  // orthogonal.  An AVar with a single-constant value can
+  // still need its backing storage live if any consumer
+  // accesses it via struct (the union-receiver case for
+  // ivs).  The previous `!get_constant(aav)` short-circuit
+  // conflated the two — skipping backward propagation for
+  // constants, on the assumption that consumers inline the
+  // literal.  For function-locals that assumption held
+  // because the producer PNode itself was elided too
+  // (writing `5 = _CG_prim_X(...)` would otherwise be a
+  // C error since the lval's cg_string IS the literal).
+  // For ivs it failed because struct slots are shared
+  // across CSs.
+  //
+  // The right separation: keep liveness independent of
+  // constness here, and let the codegen explicitly elide
+  // PNodes whose result is constant (see
+  // `is_const_folded_send` in cg.cc).
   for (AVar *aav : av->backward) if (aav) {
-    if (!aav->live && !get_constant(aav)) mark_live_avar(aav);
+    if (!aav->live) mark_live_avar(aav);
   }
 }
 
@@ -65,9 +83,85 @@ static void mark_live_avars(FA *fa) {
     for (PNode *p : f->fa_all_PNodes) {
       // if a pnode is live, and it is not a function call, it's inputs (rvals)
       // must be live
-      if (p->live && !f->calls.get(p)) {
-        for (Var *v : p->rvals) if (!v->constant) {
+      Vec<Fun *> *calls = f->calls.get(p);
+      if (p->live && !calls) {
+        // issues/022: a `P_prim_await` operand must stay live even
+        // when FA has proven the awaited RESULT is a compile-time
+        // constant (constant-propagated through the awaited
+        // function's body) -- the operand itself is the coroutine
+        // handle a real call constructed, and awaiting it is what
+        // actually RUNS that coroutine's body (including any side
+        // effects). Every other nonfunctional send's "consumer
+        // inlines the literal instead" assumption (the `!v->constant`
+        // guard below) is sound because evaluating a pure operand and
+        // observing its value are the same thing -- for `await`
+        // they're not: skipping backward liveness here starved the
+        // awaited call's own result Var of a real C variable, so
+        // codegen (cg.cc/cg_emit_llvm.cc) had nothing but a bare,
+        // orphaned coroutine construction to work with and the
+        // suspend/resume never happened at all.
+        bool is_await = p->code && p->code->kind == Code_SEND && p->prim && p->prim->index == P_prim_await;
+        // An OPAQUE primitive (a registered non-functional one, i.e.
+        // __pyc_c_call__) reads its arguments' CONTENTS where FA cannot
+        // see it. A list's element store is live only if something
+        // downstream reads the element (`forward_live` on the store's
+        // tval), so a list whose only reader is a C helper had every
+        // store deleted: bytes.join collected its pieces into a list,
+        // handed it to _CG_string_join, and joined N empty strings
+        // (minpng). Keep the contents of every opaque call's arguments.
+        bool opaque = false;
+        if (p->code && p->code->kind == Code_SEND && p->prim && p->prim->index == P_prim_primitive &&
+            p->code->rvals.n > 1) {
+          RegisteredPrim *rp = prim_get(p->code->rvals[1]->name);
+          opaque = rp && rp->is_visible && !rp->is_functional;
+        }
+        for (Var *v : p->rvals) if (is_await || !v->constant) {
           form_AVarMapElem(x, v->avars) {
+            AVar *av = x->value;
+            if (!av->live) mark_live_avar(av);
+            // Containers only (a sym with an element channel): marking a
+            // CLASS value's or closure's fields live materialized a type
+            // as an expression -- `defaultdict(int)` emitted `f(int64)`
+            // (shedskin_examples/life).
+            if (opaque && av->out)
+              for (CreationSet *cs : av->out->sorted) if (cs && cs->sym && cs->sym->element) {
+                if (cs->added_element_var) {
+                  AVar *e = get_element_avar(cs);
+                  if (e && !e->live) mark_live_avar(e);
+                }
+                for (AVar *iv : cs->vars) if (iv && !iv->live) mark_live_avar(iv);
+              }
+          }
+        }
+      }
+      // ifa/issues/030: a POLYMORPHIC call site (multiple candidate
+      // Funs) must keep its dispatch operand (rvals[0], the
+      // callable/receiver value) live even when no candidate's body
+      // reads its formals -- the *choice* of callee still depends on
+      // the operand's runtime type (e.g. `self.l.val()` where l is
+      // N2|N4 and both leaf val()s ignore self: the results differ,
+      // so codegen must load self.l and dispatch through its method
+      // slot). Without this, the period-load chain goes dead and
+      // codegen has no receiver to dispatch on.
+      if (p->live && calls && calls->n > 1 && p->rvals.n) {
+        Var *v = p->rvals[0];
+        if (!v->constant) {
+          form_AVarMapElem(x, v->avars) {
+            AVar *av = x->value;
+            if (!av->live) mark_live_avar(av);
+          }
+        }
+      }
+      // ifa/issues/165: a receiver that may be None, sent a method None
+      // does not have, is checked by codegen at the call site -- so it must
+      // stay live even when the callee's `self` formal is a constant (the
+      // dispatch filter dropped None, leaving e.g. `"x"`, and the callee
+      // no longer reads its argument).
+      // ifa/issues/184: and through a bound-method closure (`x.m(k)`), the
+      // shape a method call has HERE, before the inliner rewrites it.
+      if (p->live && calls && calls->n == 1) {
+        if (Var *recv = nil_receiver_var(p, calls->v[0])) {
+          form_AVarMapElem(x, recv->avars) {
             AVar *av = x->value;
             if (!av->live) mark_live_avar(av);
           }
@@ -97,16 +191,30 @@ static void mark_live_avars(FA *fa) {
   }
 }
 
+// Is an AVar within `dist` + 1 forward steps of `v` live? AVar liveness is
+// written only by mark_live_avars, so within one mark_live_pnodes the answer
+// is a function of (v, dist) and is remembered (0 unknown, 1 no, 2 yes). The
+// walk fans out by every contour's forward edges at each step, and every
+// dead setter asked again from scratch: 30 s on othello3.
+static Map<Var *, int> forward_live_memo[3];
+
 static bool forward_live(Var *v, int dist = 2) {
   if (dist < 0) return false;
+  if (int r = forward_live_memo[dist].get(v)) return r == 2;
+  bool live = false;
   form_AVarMapElem(x, v->avars) for (AVar *av : x->value->forward) if (av) {
-    if (av->live) return true;
-    if (forward_live(av->var, dist - 1)) return true;
+    if (av->live || forward_live(av->var, dist - 1)) {
+      live = true;
+      goto Ldone;
+    }
   }
-  return false;
+Ldone:
+  forward_live_memo[dist].put(v, live ? 2 : 1);
+  return live;
 }
 
 static void mark_live_pnodes(FA *fa) {
+  for (auto &m : forward_live_memo) m.clear();
   for (Fun *f : fa->funs) {
     for (PNode *p : f->fa_all_PNodes) {
       if (!p->live) {
@@ -131,11 +239,15 @@ static void mark_live_pnodes(FA *fa) {
                     for (Var *v : f->rets) if (v->live) goto Live;
                     break;
                   case P_prim_setter: {
-                    if (forward_live(p->tvals.v[0])) goto Live;
+                    // tvals can be empty when FA never completed this
+                    // send's analysis (programs with type violations
+                    // proceed under fruntime_errors); an unanalyzed
+                    // setter has no target to keep live.
+                    if (p->tvals.n && forward_live(p->tvals.v[0])) goto Live;
                     break;
                   }
                   case P_prim_set_index_object: {
-                    if (forward_live(p->tvals.v[0])) goto Live;
+                    if (p->tvals.n && forward_live(p->tvals.v[0])) goto Live;
                     break;
                   }
                 }
@@ -177,6 +289,19 @@ static void mark_initial_dead_and_alive(FA *fa, int init = 0) {
     }
     for (PNode *p : f->fa_all_PNodes) {
       p->live = init;
+      if (p->code && p->code->kind == Code_SEND && p->prim &&
+          (p->prim->index == P_prim_await || p->prim->index == P_prim_yield)) {
+        // issues/014: `yield`'s result is unused in v1 scope (no
+        // .send()), same shape as an await whose result is discarded
+        // -- but the yield itself is never dead: it's the entire
+        // reason the generator's coroutine body exists.
+        p->live = 1;
+      }
+      // ifa/issues/184: an attribute read that can find None raises there,
+      // so it is never dead even when its result is unused or folded to a
+      // constant (`print(x.f)` with A.f always 3 printed 3). Live, its
+      // receiver stays live too (mark_live_avars), so codegen can test it.
+      if (nil_period_receiver(p)) p->live = 1;
       if (p->code && p->code->kind == Code_SEND && p->prim && p->prim->index == P_prim_primitive) {
         cchar *name = p->code->rvals[1]->name;
         RegisteredPrim *rp = prim_get(name);
@@ -207,26 +332,78 @@ int mark_live_code(FA *fa) {
   return 0;
 }
 
+// ifa/issues/055: the propagation below can mark a callee live that is
+// NOT in fa->funs -- that list holds only the functions the LAST pass
+// reached (collect_results builds it from entry_set_done), while
+// `f->calls` names every callee FA ever resolved at a live PNode. The
+// old rebuild filtered the OLD list, so such a function stayed live and
+// UNLISTED, and every per-function structure keyed on fa->funs then read
+// null for it. Three crashes, one cause:
+//
+//   optimize/dom.cc     only fa->funs get a Dom      -> null succ entry
+//   optimize/inline.cc  only covered funs get a      -> null loop_node
+//                       loop_node
+//   codegen/cg.cc       only fa->funs get a name     -> fputs(NULL) on
+//                                                       a live call
+//
+// Latent: it needs a function that is live but absent from the final
+// pass's reached set, which is why it surfaced only once PYC_CSSPLIT
+// raised the contour count (pystone). Rebuilding from every function
+// seen live -- not from the incoming list -- makes fa->funs agree with
+// the `live` flags it just computed.
 void mark_live_funs(FA *fa) {
   for (Fun *f : fa->funs) f->live = 0;
   if1->top->fun->live = 1;
+  Vec<Fun *> seen;
+  for (Fun *f : fa->funs) if (f) seen.set_add(f);
+  seen.set_add(if1->top->fun);
   int changed = 1;
   while (changed) {
     changed = 0;
-    for (Fun *f : fa->funs) {
-      if (f->live) {
-        for (PNode *p : f->fa_all_PNodes) if (p->live) {
-          Vec<Fun *> *fns = f->calls.get(p);
-          if (fns) for (Fun *x : *fns) if (!x->live) {
-              x->live = 1;
-              changed = 1;
-            }
-        }
+    // Snapshot: `seen` grows inside the loop, and it is a set-mode Vec
+    // (iterating one yields its empty slots as nulls, hence the guards).
+    Vec<Fun *> cur;
+    for (Fun *f : seen) if (f) cur.add(f);
+    for (Fun *f : cur) {
+      if (!f->live) continue;
+      for (PNode *p : f->fa_all_PNodes) if (p->live) {
+        Vec<Fun *> *fns = f->calls.get(p);
+        if (fns) for (Fun *x : *fns) if (x && !x->live) {
+            x->live = 1;
+            seen.set_add(x);
+            changed = 1;
+          }
       }
     }
   }
-  Vec<Fun *> funs(fa->funs, Vec<Fun *>::MOVE);
-  for (Fun *f : funs) if (f->live) fa->funs.add(f);
+  fa->funs.clear();
+  for (Fun *f : seen) if (f && f->live) fa->funs.add(f);
+  qsort_by_id(fa->funs);  // collect_results' order, kept deterministic
+}
+
+// -------------------------------------------------------------
+// Constant-condition dead-branch elimination primitives -- see
+// dead.h's declarations for the full rationale.
+// -------------------------------------------------------------
+
+void mark_var_constant(Var *v, Sym *constant_sym) {
+  if (v) v->sym = constant_sym;
+}
+
+static void reclaim_var_producer(Var *v) {
+  if (!v || !v->def) return;
+  if (v->uses.n > 1) return;  // still needed by another consumer
+  PNode *def = v->def;
+  if (!def->live) return;  // already handled -- avoid redundant work
+  def->live = 0;
+  for (Var *rv : def->rvals) reclaim_var_producer(rv);
+}
+
+void reclaim_dead_producer_chain(Var *v) {
+  if (!v || !v->def) return;
+  PNode *def = v->def;
+  def->live = 0;
+  for (Var *rv : def->rvals) reclaim_var_producer(rv);
 }
 
 /*
@@ -290,6 +467,16 @@ mark_initial_dead_and_alive(FA *fa, int init = 0) {
     }
     for (PNode *p : f->fa_all_PNodes) {
       p->live = init;
+      if (p->code && p->code->kind == Code_SEND && p->prim &&
+          (p->prim->index == P_prim_await || p->prim->index == P_prim_yield)) {
+        // issues/014: see the identical guard above in this file.
+        p->live = 1;
+      }
+      // ifa/issues/184: an attribute read that can find None raises there,
+      // so it is never dead even when its result is unused or folded to a
+      // constant (`print(x.f)` with A.f always 3 printed 3). Live, its
+      // receiver stays live too (mark_live_avars), so codegen can test it.
+      if (nil_period_receiver(p)) p->live = 1;
       if (p->code && p->code->kind == Code_SEND && p->prim && p->prim->index == P_prim_primitive) {
         cchar *name = p->code->rvals[1]->name;
         RegisteredPrim *rp = pdb->fa->primitive_transfer_functions.get(name);

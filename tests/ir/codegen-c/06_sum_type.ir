@@ -1,0 +1,23 @@
+;; 06_sum_type.ir — allocate a %Point and observe it: the @new path
+;; (allocation, class-tag store, the type's prototype global) alone.
+;;
+;; Despite the name there is no sum type here. The fixture once
+;; described a %MaybePoint = %Point | %nil_type whose declaration it
+;; never contained.
+
+(type %Point :kind RECORD :has (%px))
+(sym %px :in %Point)
+
+(sym %p :is-local)
+(sym %r :is-local)
+(sym %o :is-local)
+(sym %tcont)
+(fun %top
+  :rets (%r)
+  :cont %tcont
+  :body
+    (send @primitive @new %Point => %p)
+    (move %p %r)
+    (send @primitive #observe %r => %o))
+
+(entry %top)

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "ifadefs.h"
 
 #include "if1.h"
@@ -7,6 +8,7 @@
 #include "log.h"
 #include "prim.h"
 #include "sym.h"
+#include "testing/write_ir.h"
 
 cchar *builtin_strings[] = {
 #define S(_x) #_x,
@@ -21,6 +23,9 @@ static int mark_sym_live(Sym *s);
 IF1 *if1 = 0;
 bool fdce_if1 = true;
 bool fruntime_errors = false;
+bool frefuse_imprecise = false;
+bool fauto_init_unbound = false;  // ifa/issues/039
+int ifa_reanalyze_phase = 0;      // ifa/issues/055
 
 IF1::IF1() {
   memset((void*)this, 0, sizeof *this);
@@ -38,7 +43,7 @@ Sym *if1_register_sym(IF1 *p, Sym *sy, cchar *name) {
   return sy;
 }
 
-Sym *if1_const(IF1 *p, Sym *type, cchar *constant, Immediate *imm, Sym *asym) {
+Sym *if1_const(IF1 *p, Sym *type, cchar *constant, Immediate *imm, Sym *asym, int len) {
   assert(type);
   Immediate t;
   if (!imm) imm = &t;
@@ -48,16 +53,34 @@ Sym *if1_const(IF1 *p, Sym *type, cchar *constant, Immediate *imm, Sym *asym) {
   if (!imm->const_kind) {
     if (type == sym_string)
       imm->const_kind = IF1_CONST_KIND_STRING;
+    else if (type == sym_bytes)
+      imm->const_kind = IF1_CONST_KIND_BYTES;
     else if (type == sym_symbol)
       imm->const_kind = IF1_CONST_KIND_SYMBOL;
     else
       assert(!"bad const");
   }
-  cchar *c = if1_cannonicalize_string(p, constant);
-  // For strings and symbols, set the v_string field to the cannonicalized string
-  // so that the hash and equality functions work correctly
-  if (imm->const_kind == IF1_CONST_KIND_STRING || imm->const_kind == IF1_CONST_KIND_SYMBOL) {
+  // ifa/issues/070: intern by explicit length when the caller has one
+  // (a str/bytes literal that may contain an embedded NUL from a
+  // \x00/\0 escape) instead of always falling back to the
+  // NUL-terminated single-arg canonicalize -- otherwise two literals
+  // that differ only after an embedded NUL would wrongly intern to the
+  // same truncated pointer.
+  cchar *c = (len >= 0) ? if1_cannonicalize_string(p, constant, constant + len) : if1_cannonicalize_string(p, constant);
+  // For strings, bytes, and symbols, set the v_string field to the
+  // cannonicalized string so that the hash and equality functions work
+  // correctly. IF1_CONST_KIND_BYTES is distinct from IF1_CONST_KIND_STRING
+  // (not merely a str/bytes flag on the same kind) so that a `str` literal
+  // and a `bytes` literal with identical text never collide in the
+  // constants cache below and return the wrong type's Sym.
+  if (imm->const_kind == IF1_CONST_KIND_STRING || imm->const_kind == IF1_CONST_KIND_BYTES ||
+      imm->const_kind == IF1_CONST_KIND_SYMBOL) {
     imm->v_string = c;
+    // True length, not strlen(c) -- c may contain an embedded NUL when
+    // `len` was given explicitly. Falls back to strlen for callers that
+    // didn't pass one (unchanged behavior -- plain symbol names etc.,
+    // never expected to contain a NUL).
+    imm->v_len = (len >= 0) ? len : (int)strlen(c);
   }
   Sym *sym = p->constants.get(imm);
   if (type) type = unalias_type(type);
@@ -476,20 +499,12 @@ static int mark_live(IF1 *p, Code *code) {
   return changed;
 }
 
+// Structural-only dead-code marking. Speculative SEND/MOVE kills were
+// retired (issue 005); FA-level mark_live_code is the authoritative
+// data-flow DCE. This pass only prunes labels with no live incoming
+// edge.
 static void mark_dead(IF1 *p, Code *code) {
-  switch (code->kind) {
-    case Code_LABEL:
-      if (!code->label[0]->live) code->live = 0;
-      break;
-    case Code_MOVE:
-      if (!code->lvals[0]->live) code->live = 0;
-      break;
-    case Code_SEND:
-      if (is_functional(p, code) && !code->lvals[0]->live) code->live = 0;
-      break;
-    default:
-      break;
-  }
+  if (code->kind == Code_LABEL && !code->label[0]->live) code->live = 0;
   for (int i = 0; i < code->sub.n; i++) mark_dead(p, code->sub[i]);
 }
 
@@ -497,166 +512,19 @@ static cchar *SPACES = "                                        ";
 
 #define SP(_fp, _n) fputs(&SPACES[40 - (_n)], _fp)
 
-static cchar *Code_kind_string[] = {"SUB", "MOVE", "SEND", "IF", "LABEL", "GOTO", "SEQ", "CONC", "NOP"};
-
-void print_code(FILE *fp, Code *code, int indent, int lf) {
-  if (indent > 40) indent = 40;
-  switch (code->kind) {
-    case Code_SUB:
-      for (int i = 0; i < code->sub.n; i++) print_code(fp, code->sub[i], indent, i < code->sub.n - 1 ? 1 : lf);
-      break;
-    case Code_MOVE:
-      if (code->live) {
-        SP(fp, indent);
-        fputs("(MOVE ", fp);
-        if1_dump_sym(fp, code->rvals[0]);
-        fputs(" ", fp);
-        if1_dump_sym(fp, code->lvals[0]);
-        fputs(")", fp);
-      }
-      break;
-    case Code_SEND:
-      SP(fp, indent);
-      fputs("(SEND", fp);
-      if (code->lvals.n) {
-        fputs(" (FUTURE ", fp);
-        for (int i = 0; i < code->lvals.n; i++) {
-          if1_dump_sym(fp, code->lvals[i]);
-          if (i < code->lvals.n - 1) fputs(" ", fp);
-        }
-        fputs(")", fp);
-      }
-      for (int i = 0; i < code->rvals.n; i++) {
-        fputs(" ", fp);
-        if1_dump_sym(fp, code->rvals[i]);
-      }
-      fputs(")", fp);
-      break;
-    case Code_IF:
-      SP(fp, indent);
-      fputs("(IF ", fp);
-      if1_dump_sym(fp, code->rvals[0]);
-      fprintf(fp, " %d %d)", code->label[0]->id, code->label[1]->id);
-      break;
-    case Code_LABEL:
-      if (code->live) {
-        SP(fp, indent);
-        fprintf(fp, "(LABEL %d)", code->label[0]->id);
-      }
-      break;
-    case Code_GOTO:
-      SP(fp, indent);
-      fprintf(fp, "(GOTO %d)", code->label[0]->id);
-      break;
-    case Code_SEQ:
-    case Code_CONC:
-      SP(fp, indent);
-      fprintf(fp, "(%s\n", Code_kind_string[code->kind]);
-      for (int i = 0; i < code->sub.n; i++) print_code(fp, code->sub[i], indent + 1, i < code->sub.n - 1 ? 1 : 0);
-      fputs(")", fp);
-      break;
-    case Code_NOP:
-      SP(fp, indent);
-      fputs("(NOP)", fp);
-      break;
+void if1_simple_dead_code_elimination(IF1 *p) {
+  for (int i = 0; i < p->allsyms.n; i++) {
+    p->allsyms[i]->live = 0;
   }
-  if (code->kind != Code_SUB && lf) fputs("\n", fp);
-}
-
-void print_syms(FILE *fp, Vec<Sym *> *syms, int start = 0) {
-  for (int i = start; i < syms->n; i++) {
-    Sym *s = syms->v[i];
-    if (!s->live) continue;
-    fputs("(SYMBOL ", fp);
-    if1_dump_sym(fp, s);
-    if (s->nesting_depth) fprintf(fp, " :NESTING_DEPTH %d", s->nesting_depth);
-    if (s->type_kind) fprintf(fp, " :TYPE_KIND %s", type_kind_string[s->type_kind]);
-    if (s->type) {
-      fputs(" :TYPE ", fp);
-      if1_dump_sym(fp, s->type);
-    }
-    if (s->must_specialize) {
-      fputs(" :MUST_SPECIALIZE ", fp);
-      if1_dump_sym(fp, s->must_specialize);
-    }
-    if (s->must_implement) {
-      fputs(" :MUST_IMPLEMENT ", fp);
-      if1_dump_sym(fp, s->must_implement);
-    }
-    if (s->is_constant) {
-      if (s->type && s->constant)
-        fprintf(fp, " :CONSTANT %s", (char *)s->constant);
-      else {
-        fprintf(fp, " :CONSTANT ");
-        fprint_imm(fp, s->imm);
-      }
-    }
-    if (s->aspect) {
-      fputs(" :ASPECT ", fp);
-      if1_dump_sym(fp, s->aspect);
-    }
-    if (s->in) {
-      fputs(" :IN ", fp);
-      if1_dump_sym(fp, s->in);
-    }
-    if (s->has.n) {
-      fputs(" :HAS (", fp);
-      for (int j = 0; j < s->has.n; j++) {
-        if (j) fprintf(fp, " ");
-        if1_dump_sym(fp, s->has[j]);
-      }
-      fputs(")", fp);
-    }
-    if (s->implements.n) {
-      fputs(" :IMPLEMENTS (", fp);
-      for (int j = 0; j < s->implements.n; j++) {
-        if (j) fprintf(fp, " ");
-        if1_dump_sym(fp, s->implements[j]);
-      }
-      fputs(")", fp);
-    }
-    if (s->specializes.n) {
-      fputs(" :SPECIALZES (", fp);
-      for (int j = 0; j < s->specializes.n; j++) {
-        if (j) fprintf(fp, " ");
-        if1_dump_sym(fp, s->specializes[j]);
-      }
-      fputs(")", fp);
-    }
-    if (s->includes.n) {
-      fputs(" :INCLUDES (", fp);
-      for (int j = 0; j < s->includes.n; j++) {
-        if (j) fprintf(fp, " ");
-        if1_dump_sym(fp, s->includes[j]);
-      }
-      fputs(")", fp);
-    }
-    if (s->ret) {
-      fputs(" :RET ", fp);
-      if1_dump_sym(fp, s->ret);
-    }
-    if (s->cont) {
-      fputs(" :CONT ", fp);
-      if1_dump_sym(fp, s->cont);
-    }
-    if (s->is_local) fputs(" :LOCAL true", fp);
-    if (s->is_constant) fputs(" :IS_CONSTANT true", fp);
-    if (s->is_external) fputs(" :EXTERNAL true", fp);
-    if (s->is_meta_type) fputs(" :META_TYPE true", fp);
-    if (s->is_value_type) fputs(" :VALUE_TYPE true", fp);
-    if (s->is_system_type) fputs(" :SYSTEM_TYPE true", fp);
-    if (s->code) {
-      fputs(" :CODE\n", fp);
-      print_code(fp, s->code, 1, 0);
-    }
-    fputs(")\n", fp);
-  }
-}
-
-static void if1_simple_dead_code_elimination(IF1 *p) {
+  // Seed live roots: globals (nesting_depth == 0). The historical
+  // `|| s->asymbol` clause was a frontend escape hatch that let
+  // pyc's local-temp Syms survive the speculative SEND/MOVE kills;
+  // those kills were retired in issue 005, so the clause is no
+  // longer load-bearing. asymbol stays as a back-pointer for source-
+  // location reporting (sym.cc:pathname/line/source_line/clone).
   for (int i = 0; i < p->allsyms.n; i++) {
     Sym *s = p->allsyms[i];
-    if (!s->nesting_depth || s->asymbol) mark_sym_live(s);
+    if (!s->nesting_depth) mark_sym_live(s);
   }
   for (int i = 0; i < p->allclosures.n; i++) {
     mark_sym_live(p->allclosures[i]);
@@ -746,23 +614,49 @@ static void find_primitives(Primitives *prim, Code *c) {
 }
 
 static void find_primitives(IF1 *p) {
-  for (int i = 0; i < p->allclosures.n; i++) find_primitives(p->primitives, p->allclosures[i]->code);
+  for (int i = 0; i < p->allclosures.n; i++)
+    if (p->allclosures[i]->code) find_primitives(p->primitives, p->allclosures[i]->code);
 }
 
-void if1_finalize(IF1 *p) {
-  p->top = sym___main__;
-  find_primitives(p);
+// Individual finalize steps, exposed so tests can introspect IF1 state
+// between them (e.g., post-prim-binding pre-DCE).
+void if1_finalize_set_top(IF1 *p) { p->top = sym___main__; }
+void if1_finalize_bind_prims(IF1 *p) { find_primitives(p); }
+void if1_finalize_dce(IF1 *p) {
   if (fdce_if1)
     if1_simple_dead_code_elimination(p);
   else
     for (Sym *s : p->allsyms) s->live = 1;
+}
+void if1_finalize_flatten_and_fixup_nesting(IF1 *p) {
   for (int i = 0; i < p->allclosures.n; i++) {
     Sym *f = p->allclosures[i];
-    if (f->code) {
-      if1_flatten_code(f->code, Code_CONC, NULL);
-      if1_fixup_nesting(f->code, f);
-    }
+    if (f->code) if1_flatten_code(f->code, Code_CONC, NULL);
   }
+  // issues/169: a LOCALLY_NESTED Sym takes the depth of the first closure
+  // that uses it, so the OWNER must come first. Closures are registered
+  // innermost first, which is fine while only the owner touches its locals
+  // (a capturing lambda or nested def reads them through a carrier,
+  // issues/001), but a local class's body reads its function's locals
+  // directly: the class-body closure claimed `x` at its own depth, the
+  // function's own formal then resolved through a display slot that does
+  // not exist, and the analysis asserted. A local is used only by its owner
+  // and by closures nested inside it, so outermost first (stable, by
+  // nesting depth) always lets the owner claim it.
+  Vec<Sym *> order;
+  for (int i = 0; i < p->allclosures.n; i++) order.add(p->allclosures[i]);
+  std::stable_sort(order.v, order.v + order.n,
+                   [](Sym *a, Sym *b) { return a->nesting_depth < b->nesting_depth; });
+  for (Sym *f : order)
+    if (f->code) if1_fixup_nesting(f->code, f);
+}
+
+// Default: run every step (matches historical behavior).
+void if1_finalize(IF1 *p) {
+  if1_finalize_set_top(p);
+  if1_finalize_bind_prims(p);
+  if1_finalize_dce(p);
+  if1_finalize_flatten_and_fixup_nesting(p);
 }
 
 void if1_finalize_closure(IF1 *p, Sym *c) {
@@ -781,15 +675,13 @@ void if1_finalize_closure(IF1 *p, Sym *c) {
   if1_fixup_nesting(c->code, c);
 }
 
-void if1_write(FILE *fp, IF1 *p, int start) {
-  print_syms(fp, &p->allsyms, start);
+void if1_write(FILE *fp, IF1 *p) {
+  write_ir(fp, p);
   fflush(fp);
 }
 
 void if1_write_log() {
-  static int start = 0;
-  if (get_int_config("alog.test.if1") > 0) if1_write(alog.fp, if1, start);
-  start = if1->allsyms.n;
+  if (get_int_config("alog.test.if1") > 0) if1_write(alog.fp, if1);
 }
 
 cchar *if1_cannonicalize_string(IF1 *p, cchar *s, cchar *e) {
@@ -839,7 +731,7 @@ void if1_dump_code(FILE *fp, Code *code, int indent) {
     case Code_SUB:
     case Code_SEQ:
     case Code_CONC:
-      fprintf(fp, "(%s\n", Code_kind_string[code->kind]);
+      fprintf(fp, "(%s\n", code_string[code->kind]);
       for (int i = 0; i < code->sub.n; i++) if1_dump_code(fp, code->sub[i], indent + 1);
       SP(fp, indent);
       fputs(")\n", fp);
@@ -914,4 +806,4 @@ void if1_set_primitive_types(IF1 *if1) {
   }
 }
 
-void pp(Code *code) { print_code(stdout, code, 0, 0); }
+void pp(Code *code) { if1_dump_code(stdout, code, 0); }

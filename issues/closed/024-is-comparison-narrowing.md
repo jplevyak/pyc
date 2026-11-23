@@ -1,0 +1,193 @@
+# Issue 024: IFA doesn't narrow union types on `is None` comparisons
+
+**Status:** **fixed June 2026.**  The frontend now rewrites
+`x is None` and `None is x` directly to
+`prim_isinstance(x, sym_nil_type)` (Option B from below).
+Codegen (both C and v2 LLVM) emits a NULL pointer check.
+The recursive-linked-list pattern that originally
+motivated this issue now compiles and runs.  See "Fix
+landed" section below for details.
+**Affects:** `ifa/analysis/fa.cc` (the splitter that decides
+when to refine an EntrySet based on conditional predicates).
+**Related:**
+[`issues/004-is-operator-unimplemented.md`](../../../issues/closed/004-is-operator-unimplemented.md)
+— the partial fix for `is` that exposed this gap.
+
+## Symptom
+
+After [issue 004](../../../issues/closed/004-is-operator-unimplemented.md)'s
+partial fix lands the `is`/`is not` operators, two
+follow-on patterns crash at codegen with a "matching
+function not found" runtime assertion:
+
+### Pattern 1 — polymorphic None-LHS dispatch
+
+```python
+a = None
+b = None
+c = 5
+print(a is b)  # OK
+print(a is c)  # crash
+```
+
+`__pyc_None_type__.__is__(self, x)` is dispatched once with
+`x: None` and once with `x: int`.  IFA tries to specialize
+__is__ over a polymorphic `x` and the inner dispatch on
+`x.__null__()` fails because IFA doesn't decompose the
+union {None, int} into per-branch dispatches.
+
+### Pattern 2 — recursive-type narrowing
+
+```python
+class Node:
+  def __init__(self, v):
+    self.value = v
+    self.next = None
+def sum_list(node):
+  if node is None:
+    return 0
+  return node.value + sum_list(node.next)
+```
+
+Compiles but crashes at runtime.  `node` has union type
+{None, Node}.  IFA needs to narrow `node` to Node-only in
+the False branch of `if node is None`, but it doesn't.
+Then `node.value` (in the False branch) tries to dispatch
+on Node|None and fails on the None side.
+
+## Root cause
+
+IFA's setter-splitting strategy refines EntrySets based on
+predicates' type-correlated outcomes.  Looking at
+`ifa/IFA.md` §6 (splitting), the existing mechanism handles
+splits driven by direct comparison primitives (`==`, `<`,
+etc.) but NOT by user-method dispatches like `__is__`.
+
+When `node is None` lowers to `node.__is__(None)`, IFA sees
+a regular method call returning a bool.  It doesn't know
+the return value type-correlates with the receiver's narrow
+type ("True iff `node`'s runtime type is None").  So no
+narrowing happens.
+
+Pattern 1 is a slightly different variant: the dispatch
+itself fails because IFA's per-EntrySet specialization
+can't handle a polymorphic `x` inside `__is__`'s body when
+`__is__` has only one definition.
+
+## Proposed fix sketches
+
+### Option A — frontend rewrite
+
+In `python_ifa_build_if1.cc:102`'s `PY_CMP_IS` handler,
+detect when one operand is the None constant and emit a
+direct `__null__()` call on the other operand instead of
+going through `__is__`:
+
+```cpp
+case PY_CMP_IS:
+  if (lhs_is_none_constant || rhs_is_none_constant) {
+    // Emit non_None_side.__null__() directly.
+    return make_symbol("__null__");
+  }
+  return make_symbol("__is__");
+```
+
+`__null__()` is type-correlated (only the None singleton
+returns True), so the existing setter-splitter SHOULD be
+able to narrow on its return value — assuming the splitter
+recognizes `__null__` as a discriminator.  May need
+explicit annotation.
+
+### Option B — IFA-level support for `is` as a typed
+primitive
+
+Promote `is` from a user-method dispatch (`__is__`) to a
+proper IF1 primitive (`prim_is_none` or similar) that the
+splitter knows narrows.  Mirrors `prim_isinstance` which
+already has this property (the splitter uses it).
+
+This is cleaner but touches more code: `prim_data.dat`, the
+frontend lowering, FA's splitter logic, and any code that
+dispatches on primitives.
+
+### Option C — generalize the splitter to union dispatch
+
+Pattern 1 (polymorphic `__is__` with union `x`) would be
+unblocked by making IFA's per-EntrySet specialization
+decompose union-typed arguments into per-branch dispatches
+recursively.  This is a broader change.
+
+## Verification plan
+
+When fixing:
+
+1. The `print(a is b); print(a is c)` two-statement test
+   compiles and prints `True\nFalse`.
+2. The recursive linked-list pattern in
+   [`issues/004`](../../../issues/closed/004-is-operator-unimplemented.md)
+   compiles and runs.
+3. `tests/recursive_alloc_basic.py` and the other recursive
+   tests still pass.
+4. Pyc suite stays at ≥ 85/0 on both backends.
+5. A new `tests/recursive_list_is_none.py` exercises the
+   pattern that fails today.
+
+## What this unblocks
+
+- The full linked-list / tree / fib-heap data structure
+  test set that was the original motivation for issue 004.
+- Any pyc program using `is None` for sentinel checks
+  inside method bodies.
+- A broader class of Python ports from CPython that rely on
+  None-narrowing.
+
+## Fix landed (June 2026)
+
+Took **Option B** (frontend rewrite to a primitive IFA
+already handles).  Three pieces:
+
+1. **Frontend** (`python_ifa_build_if1.cc` `PY_compare`):
+   when one operand of `is` / `is not` is the None
+   constant, emit `prim_isinstance(operand, sym_nil_type)`
+   (or its negation) instead of the `__is__` / `__nis__`
+   method dispatch.
+
+2. **C codegen** (`cg.cc:write_send`): special-case
+   `prim_isinstance(x, sym_nil_type)` — emit
+   `dst = (x == NULL);` directly.
+
+3. **v2 LLVM codegen** (`cg_normalize_v2.cc`): added an
+   `idx == P_prim_isinstance` route in `lower_send` that
+   funnels into a new `lower_send_prim` handler emitting
+   `CG2_BINOP EQ src null_const` (an `icmp eq ptr, null`).
+
+The frontend rewrite covers `x is None` AND `None is x` —
+Pattern 1 from the symptom section is unreachable now
+because the rewrite fires before any `__is__` dispatch.
+The IFA splitter narrows `x` per-branch via Code_IF's
+prim_isinstance recognition (the per-branch type-filter
+machinery from issue 025 commit cb6425a).  Both
+infrastructure pieces compose.
+
+Verified:
+- `tests/recursive_list_is_none.py` (new) — the
+  originally-motivating linked-list-with-`is None` pattern
+  compiles and runs on both backends (output: `6\n55\n0`).
+- pyc suite **86/0** on both backends (was 85/0; +1 for
+  the new test).
+- ifa unit tests 105/0; all 16 IR-phase tests pass.
+
+## Related
+
+- `python_ifa_build_if1.cc:PY_compare` — the rewrite
+  location.
+- `ifa/codegen/cg.cc:write_send` — C-backend handler.
+- `ifa/codegen/cg_normalize_v2.cc:lower_send_prim` — v2
+  LLVM handler.
+- `__pyc__/00_runtime.py` — the `__is__` method survives
+  as a fallback (rarely hit since the frontend
+  short-circuits `is None` patterns directly).
+- `ifa/IFA.md` §6 — setter-splitting docs.
+- `ifa/if1/prim_data.h` — `prim_isinstance` (the existing
+  primitive whose narrowing infrastructure this fix
+  reuses).

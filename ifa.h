@@ -10,6 +10,9 @@ class ATypeViolation;
 class ASTCopyContext;
 class PNode;
 class MPosition;
+class AVar;
+class AType;
+class EntrySet;
 
 /*
   Interface object between analysis symbols (Sym) and front end symbols
@@ -60,6 +63,54 @@ class IFACallbacks : public gc {
   virtual void finalize_functions() {}
   virtual Sym *new_Sym(cchar *name) = 0;  // { return (new IFASymbol)->sym; }
   virtual Sym *make_LUB_type(Sym *s) { return s; }
+  // Called once from init_default_builtin_types() (if1/ast.cc), right
+  // after the builtin `anyint`/`anynum` numeric lattice is built.
+  // Returning true makes `bool` a specializer of `anyint` (transitively
+  // `anynum`/`any`), so FA's numeric constant-folding and coercion
+  // (analysis/fa.cc: coerce_num, type_num_fold) treat a bool operand as
+  // a 1-bit-wide int instead of a type disjoint from all numerics.
+  // Default false: ifa's own generic semantics keep `bool` a fully
+  // separate primitive type outside the numeric lattice -- appropriate
+  // for a frontend/language whose boolean is not an int subtype. Python
+  // *is* one (`isinstance(True, int)` is true), so pyc's callbacks
+  // (PycCallbacks, python_ifa.h) override this to true. This only grants
+  // lattice *membership* (bool becomes intersectable with anynum, which
+  // is what int/bool arithmetic needs to avoid folding to an empty,
+  // unindexable AType -- ifa/issues/081); it does not by itself encode
+  // Python's per-operator result-type rule (e.g. `True + True` widens to
+  // `int` but `True & True` stays `bool`) -- see issue 081 for the
+  // current, still-open state of that finer policy.
+  virtual bool bool_is_numeric() { return false; }
+  // issues/171 #8, issues/128: does a write to a field the receiver's class
+  // does not have DECLARE that field? Python's answer is yes (`self.f = v`
+  // anywhere creates `f`), so PycCallbacks returns true and FA records the
+  // name in `cs->unknown_vars` for the frontend to promote. A language whose
+  // classes declare their fields keeps the default: such a write is a MEMBER
+  // violation.
+  virtual bool discovers_fields_by_write() { return false; }
+  // Called by FA's issue-025 per-branch type-narrowing recognizer
+  // (analysis/fa.cc's add_pnode_constraints, the `if cond:` handling)
+  // to identify the callee-Sym *names* this frontend's `if cond:`
+  // lowering can use as an isinstance()-style / `is None` / `is not
+  // None` discriminator wrapper call, so FA can narrow the operand's
+  // type on the True/False branches. Return nullptr (the default) for
+  // any of these a frontend doesn't have -- ifa's own generic default
+  // recognizes none of them, so an ordinary function that some other,
+  // non-Python frontend happens to name "isinstance"/"__is__"/
+  // "__nis__" for an unrelated purpose is never silently (mis)narrowed
+  // by ifa's own core FA. PycCallbacks (python_ifa.h) supplies
+  // Python's actual wrapper names.
+  virtual cchar *narrowing_isinstance_name() { return nullptr; }
+  virtual cchar *narrowing_is_none_name() { return nullptr; }
+  virtual cchar *narrowing_is_not_none_name() { return nullptr; }
+  // How a zero-argument method call on a discriminator passes its truth
+  // through, for the same narrowing: +1 when `x.sel()` is true exactly when
+  // x is (pyc: the truthiness wrappers an `if` adds), -1 when it inverts it
+  // (pyc: `not x`, which is `x.__not__()`), 0 when it is not a wrapper of
+  // x's truth at all. FA peels only through a nonzero one, and swaps the
+  // narrowed branches on an odd number of -1s. The default, 0, peels
+  // nothing.
+  virtual int narrowing_wrapper_polarity(Sym *selector) { return 0; }
   virtual int formal_to_generic(Sym *s, Sym **ret_generic, int *ret_bind_to_value) { return false; }
   virtual Sym *instantiate(Sym *, Map<Sym *, Sym *> &substitutions) { return 0; }
   virtual Fun *order_wrapper(Fun *, Map<MPosition *, MPosition *> &substitutions) { return 0; }
@@ -68,15 +119,94 @@ class IFACallbacks : public gc {
   virtual Sym *coerce(Sym *actual, Sym *formal) { return NULL; }
   virtual Fun *coercion_wrapper(Fun *, Map<MPosition *, Sym *> &substitutions) { return 0; }
   virtual Fun *default_wrapper(Fun *, Vec<MPosition *> &defaults) { return 0; }
+  // A call of a function with a rest formal (`*args`, Fun::rest_pos) or a
+  // keyword-dict formal (`**kw`, Fun::kw_pos), made with `npositional`
+  // top-level positional actuals (the callee is the first) followed by one
+  // keyword actual per name in `keywords`. Returns a wrapper taking exactly
+  // those actuals, in that order, which binds them as the language does --
+  // surplus positionals into a tuple, unmatched keywords into a dict,
+  // defaults for the rest -- and calls the function with one positional
+  // actual per formal. The tuple's and the dict's syms are marked
+  // Sym::is_rest: the matcher binds such a call directly, so the wrapper's
+  // own call does not wrap again. Returns 0 when the call does not bind.
+  virtual Fun *signature_wrapper(Fun *, int npositional, Vec<cchar *> &keywords) { return 0; }
+  // issues/189: a call of `f` whose actual at top-level position `star_at`
+  // (1-based; the callee is position 1) is a tuple of `arity` elements to
+  // be bound like that many positionals. `names` holds each actual's
+  // keyword name, or null. Returns a wrapper taking exactly those actuals
+  // which calls again with the tuple's elements in its place, or 0.
+  virtual Fun *unpack_wrapper(Fun *, int star_at, int arity, Vec<cchar *> &names) { return 0; }
   virtual Fun *instantiate_generic(Fun *, Map<Sym *, Sym *> &substitutions) { return 0; }
   virtual bool reanalyze(Vec<ATypeViolation *> &type_violations) { return false; }
+  // issues/128 step 2: take back frontend decisions that the CONVERGED
+  // types no longer support (pyc: fields a write "discovered" on a
+  // transient union). Called only at a fixed point -- after a pass where
+  // nothing else asked for another one. Returns true to request a pass.
+  virtual bool retract_derived_state() { return false; }
+  // Called by FA's own P_prim_isinstance transfer function
+  // (analysis/fa.cc), before it falls back to its normal
+  // CreationSet-intersection logic, for every isinstance() check FA
+  // analyzes. Lets a frontend fold a check FA itself structurally
+  // cannot -- not because of a type-inference gap, but because the
+  // imprecision comes from language/runtime-specific knowledge FA
+  // has no notion of (e.g. pyc's exception-propagation slot, whose
+  // whole-program-shared-global imprecision is a known, deliberate
+  // FA limitation -- see ifa/issues/031). `operand_av` is the
+  // checked value's AVar (`thing1` in the transfer function),
+  // `es` the current contour, `send_pnode` the isinstance SEND
+  // itself (for callers that need call-site context via
+  // `send_pnode->code->ast` and `es->out_edges`). Return
+  // `fa->type_world.true_type`/`false_type` to force that result, or
+  // nullptr (the default) for "no opinion, use FA's normal logic" --
+  // the overwhelming majority of isinstance() checks in any program,
+  // including nearly all of pyc's own, take this path unchanged.
+  // Must be conservative: an unrecognized pattern or unresolved call
+  // info returns nullptr, never a forced (and possibly wrong) type.
+  virtual AType *provably_constant_isinstance(AVar *operand_av, EntrySet *es, PNode *send_pnode) { return nullptr; }
+  // ifa/issues/050 (3b, stage 1): `move_pnode` is a MOVE whose SOURCE is
+  // a mutable global cell -- a memory slot whose AVar is shared across
+  // the whole program, so FA's own type for it is the flow-insensitive
+  // union of every store anywhere. A frontend that can prove which store
+  // this load sees may return that store's AType; nullptr means "no
+  // opinion" and the load keeps the union.
+  //
+  // Folding HERE rather than in a post-analysis pass is deliberate: FA's
+  // worklist already iterates, so a fold made in a transfer function
+  // reflows for free. The contract that buys that is STABILITY: the
+  // answer must not sharpen across passes, because update_gen() unions
+  // rather than replaces, so an early imprecise answer is permanent.
+  // ifa/146 B: `out_src`, when non-null, receives the AVar the folded value
+  // comes FROM, so the caller can make a durable flow edge instead of a
+  // snapshot. See the MOVE case in add_constraints_pnode.
+  virtual AType *provably_constant_load(AVar *src_av, EntrySet *es, PNode *move_pnode, AVar **out_src = nullptr) {
+    return nullptr;
+  }
+  // ifa/issues/039: what a frontend wants done when a POSSIBLY-unbound
+  // local is actually read at runtime. ifa computes the fact (a
+  // language-neutral definite-assignment dataflow, optimize/ssu.cc) but
+  // has no opinion on what "using an unbound variable" *means* -- Python
+  // raises UnboundLocalError, another language may have no such notion
+  // at all, and nothing in ifa may name either. Return the name of a
+  // runtime function of signature `void f(const char *varname)` for the
+  // backends to call on a failed check; nullptr (the default) means the
+  // frontend declines, and ifa emits its own generic abort instead.
+  virtual cchar *unbound_read_handler() { return nullptr; }
   virtual void report_analysis_errors(Vec<ATypeViolation *> &type_violations) {}
   virtual bool c_codegen_pre_file(FILE *fp) { return false; }
 };
 
 void ifa_init(IFACallbacks *callbacks);
+// Tear down all process-wide IFA state so the next ifa_init() starts
+// fresh. Lets a single process run multiple isolated analyses
+// (primarily for the test harness). Discards the current IF1/PDB/FA,
+// clears canonicalization tables and worklists in fa.cc, resets
+// pattern.cc and ast.cc state, and nulls all sym_* global pointers
+// (`init_ast` will recreate them on the next init).
+void ifa_reset();
 int ifa_analyze(cchar *fn);
 int ifa_optimize();
+void ifa_phase(cchar *tag);  // PYC_DBG_PHASES=1: wall seconds since the last call, per pipeline stage
+void ifa_dbg_bodies(cchar *tag);  // ifa/issues/112: per-Fun body-membership fingerprint
 void ifa_cg(cchar *fn);
 void ifa_compile(cchar *fn);
 
@@ -89,6 +219,24 @@ void ifa_code(cchar *fn);
 extern bool fgraph_pass_contours;
 extern bool fdce_if1;
 extern bool fruntime_errors;
+// ifa/issues/124: refuse a program whose inference left a type untyped,
+// instead of emitting codegen's guess. shedskin's posture, made optional.
+extern bool frefuse_imprecise;
+// ifa/issues/039: the "safe" environment. When set, a local that the
+// definite-assignment analysis reports as POSSIBLY used before
+// assignment is initialized to the zero of its own representation
+// instead of being left to hold garbage. This is the third of the
+// three environments in 039's design (strict / permissive / safe);
+// "definitely unbound" is a compile error in all three and never
+// reaches codegen, so this only ever affects the possibly case.
+extern bool fauto_init_unbound;
+// ifa/issues/055: which half of IFACallbacks::reanalyze() to run.
+// 0 = everything (the historical behaviour), 1 = the frontend's
+// structural repair only (pyc: field promotion), 2 = the rest (pyc:
+// numeric-confluence coercion). Promotion wants to reach a fixed point
+// BEFORE splitting; coercion reads converged types and must stay after
+// it.
+extern int ifa_reanalyze_phase;
 
 #include "ifadefs.h"
 

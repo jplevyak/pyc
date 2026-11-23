@@ -33,6 +33,13 @@ class Var : public gc {
   unsigned int is_internal : 1;
   unsigned int is_filtered : 1;
   unsigned int is_formal : 1;
+  // ifa/issues/039: this Var is a synthetic phi operand standing for
+  // "control reached the merge without ever assigning the variable".
+  // Created by mark_unbound_phi_operands (optimize/ssu.cc) only under
+  // the `safe` environment. FA replaces it with a typed zero constant
+  // once it knows the merged type; until then it carries no value, and
+  // the flag is what lets the repair find it again.
+  unsigned int is_unbound_fill : 1;
   unsigned int live : 1;
   Sym *constant;     // valid after dead code elimination
   cchar *cg_string;  // used by cg.cpp
@@ -48,6 +55,25 @@ class Var : public gc {
   Var *copy();
   Var(Sym *s);
 };
+
+// Content-based hashing for `Vec<Var*>::set_add` / `set_in`. `id` is
+// monotonically assigned at construction (var.cc), so iteration order
+// is deterministic across runs (see ifa/notes/004; this specialization
+// was the one id-bearing pointer type missing from that landing).
+template <> struct PointerHash<Var *> {
+  static uintptr_t hash(Var *c) { return c ? (uintptr_t)c->id : 0; }
+};
+
+// Id-based hash/equal fns for BlockHash/ChainHash-style containers
+// of Var* (issue 035: raw-pointer hashing made iteration order — and
+// through ssu.cc's liveness fixpoint, analysis RESULTS — follow heap
+// layout across runs).
+class VarIdHashFns {
+ public:
+  static uintptr_t hash(Var *v) { return v ? (uintptr_t)v->id : 0; }
+  static int equal(Var *a, Var *b) { return a == b; }
+};
+
 #define form_AVarMapElem(_p, _v) form_Map(AVarMapElem, _p, _v)
 
 void pp(Var *);

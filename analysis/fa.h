@@ -1,6 +1,7 @@
 #ifndef _fa_H_
 #define _fa_H_
 
+#include <algorithm>
 #include <sys/types.h>
 #include "code.h"
 #include "ifadefs.h"
@@ -8,9 +9,62 @@
 #include "sym.h"
 
 #define DEFAULT_NUM_CONSTANTS_PER_VARIABLE 1
+// Default cap on outer convergence iterations. The runtime value lives
+// in `FA::pass_limit` — change that to override per-FA instance. See
+// `ifa/notes/`-style discussion at the cleanup entry in
+// `ifa/analysis/CLEANUP.md` tier-2 item 4 for why the cap is soft
+// (frontends inspect `FA::pass_limit_hit` instead of aborting).
 #define IFA_PASS_LIMIT 100
 
-#define GLOBAL_CONTOUR ((void *)1)
+// Stall guard on the splitting/reanalysis loop. The splitter's
+// decisions are not idempotent across passes (order-dependent split
+// choices, issues 009/021 flavor), so on some inputs the outer loop
+// never reaches a fixed point: EntrySet counts and violations
+// oscillate while per-pass cost grows superlinearly, and
+// IFA_PASS_LIMIT is unreachable in wall time (issue 025 compile
+// timeouts). Splitting exists to RESOLVE violations, so if the
+// violation count hasn't improved on its best in this many
+// consecutive passes, further splitting is treated as divergence and
+// the loop stops (same pass_limit_hit semantics as the hard cap).
+// Passes with zero violations (pure precision splitting) don't count.
+// This is a MITIGATION; the root cause and the real fix (persistent,
+// keyed, order-independent split decisions) are documented in
+// ifa/issues/033-splitter-non-idempotent-divergence.md.
+//
+// DUP-AWARE (043 shape C follow-on): only non-improving passes that
+// RE-DERIVED split decisions (per-pass ledger dup counters > 0 --
+// the oscillation signature issue 033 measured) advance the stall
+// counter. A non-improving pass whose splits are all FIRST-TIME is
+// structural descent, not oscillation: e.g. an iterator/method
+// contour chain (__new__ -> __init__ -> __iter__ -> __pyc_more__ ->
+// __next__) exposes exactly one new confluence per pass (each link's
+// types only separate after the previous pass's re-flow), so a
+// recursive function iterating nested lists legitimately needs
+// 10-15 non-improving passes while its single boxing violation
+// waits on the LAST link -- the old unconditional counter killed
+// splitting at 8 and stranded the violation. Dup-free grinding is
+// still bounded by IFA_NONIMPROVE_LIMIT below (and the hard
+// IFA_PASS_LIMIT above).
+#define IFA_STALL_LIMIT 8
+// Secondary cap: consecutive non-improving passes of ANY kind
+// (dup-free included) before the guard fires. Bounds pathological
+// first-time-forever splitting (statically unbounded polymorphic
+// recursion) in pass count without wall-clock dependence.
+#define IFA_NONIMPROVE_LIMIT 32
+
+// The contour of module-level (global) variables' shared AVars.
+// Historically a raw sentinel (`(void *)1`), which made every
+// `(EntrySet *)av->contour` deref on a global AVar a latent crash
+// (issue pyc/005) and required scattered `!= GLOBAL_CONTOUR`
+// guards. Now a real, distinguished EntrySet (`FA::global_es`,
+// created at `FA::analyze` entry): never registered in `fa->ess`,
+// never given edges or pnodes, and with `in_es_worklist`
+// permanently 1 so the standard `if (!es->in_es_worklist)`
+// enqueue checks naturally skip it. Pointer comparisons against
+// GLOBAL_CONTOUR keep their meaning ("is this the global
+// contour?"); derefs of its EntrySet fields are now safe no-ops.
+// See ifa/issues/031-globals-outside-fa-precision.md step 1.
+#define GLOBAL_CONTOUR ((void *)::fa->global_es)
 
 class Prim;
 class RegisteredPrim;
@@ -21,21 +75,30 @@ class Edge;
 class AVar;
 class AEdge;
 class AType;
-class SettersClasses;
 class SettersHashFns;
 class Setters;
 class CreationSet;
 class ATypeViolation;
-class CDB;
 class Patterns;
 class MatchCache;
 class MPosition;
 class EntrySet;
+struct FAPassEvent;
 
 typedef Map<PNode *, Vec<AEdge *> *> EdgeMap;
-typedef BlockHash<AEdge *, PointerHashFns> EdgeHash;
+// EdgeHash moved below class AEdge
 typedef Vec<CreationSet *> VecCreationSet;
 typedef Vec<Vec<CreationSet *> *> CSSS;
+
+// Mix two pointer-sized values into a 32-bit hash. The bespoke
+// `(13 * a) + (100003 * b)` pattern previously appeared inline in
+// every hash-functions class; centralizing it here keeps the mixer
+// consistent and gives future hashable types one obvious helper to
+// reach for. Callers that need to mix three values do
+// `a + combine_hash(b, c)` (matches the historical shape).
+inline uint combine_hash(uintptr_t a, uintptr_t b) {
+  return (uint)((13 * a) + (100003 * b));
+}
 
 class AType : public Vec<CreationSet *> {
  public:
@@ -45,6 +108,9 @@ class AType : public Vec<CreationSet *> {
   Map<AType *, AType *> union_map;
   Map<AType *, AType *> intersection_map;
   Map<AType *, AType *> diff_map;
+  // Cache for type_coerce_numeric_constants (issue 025 numeric
+  // unification): target numeric type -> coerced AType.
+  Map<Sym *, AType *> coerce_map;
 
   AType(CreationSet *cs);
   AType(AType &a);
@@ -72,11 +138,20 @@ class AEdge : public gc {
   AEdge();
 };
 
+class AEdgeHashFns {
+ public:
+  static uintptr_t hash(AEdge *e) { return e ? e->id : 0; }
+  static int equal(AEdge *a, AEdge *b) { return a == b; }
+};
+
+typedef BlockHash<AEdge *, AEdgeHashFns> EdgeHash;
+
 class PendingMapHash {
  public:
-  static uint hash(AEdge *e) {
-    return (uint)((uintptr_t)e->fun + (13 * (uintptr_t)e->pnode) + (100003 * (uintptr_t)e->from));
-  }
+  // Issue 035: hash the key CONTENT by ids, not raw pointers, so
+  // bucket layout (and any iteration over the pending map) is
+  // deterministic across runs.
+  static uint hash(AEdge *e);
   static int equal(AEdge *a, AEdge *b) { return (a->fun == b->fun) && (a->pnode == b->pnode) && (a->from == b->from); }
 };
 
@@ -91,9 +166,50 @@ class EntrySet : public gc {
   int id;
   uint dfs_color : 2;
   uint in_es_worklist : 1;
+  // ifa/049: this contour RETURNS -- reached its exit along a normal path.
+  // Distinct from `live_pnodes` holding the exit, which the exceptional
+  // exit also makes live (it runs; it produces no value). Reset with
+  // live_pnodes.
+  uint returns : 1;
+  // ifa/049: this contour can leave by its exceptional exit (walked an
+  // `exc_exit` goto). A call to one that raises completes, exceptionally,
+  // so it is never "does not complete". Reset with live_pnodes.
+  uint raises : 1;
+  // Precise, per-contour "can this ES's own body, or anything
+  // transitively reachable from it via out_edges, raise" fact --
+  // seeded from Sym::direct_raise, computed to a fixed point by
+  // compute_es_can_raise() (fa.cc), re-run at the top of every FA
+  // pass so it stays current as the ES/AEdge call graph grows.
+  // Generic (no frontend-specific meaning): consumed today only by
+  // pyc's IFACallbacks::provably_constant_isinstance override
+  // (ifa.h) via P_prim_isinstance's transfer function, but nothing
+  // here is pyc-specific -- any frontend with its own "raises"
+  // concept could seed Sym::direct_raise and get the same fact.
+  uint can_raise : 1;
   Map<MPosition *, AVar *> args;
   Vec<AVar *> rets;
   Map<MPosition *, AType *> filters;
+  // ifa/issues/074: DURABLE per-position type key (PYC_TYPEKEY). Captured
+  // from this contour's converged formal types at the end of each pass
+  // and NOT cleared by clear_es, so compatibility matching can be done
+  // against a stable, whole-pass-invariant value instead of the
+  // momentary mid-pass accumulation `es->args[p]->out->type` -- which is
+  // issue 097's "compatibility scored against a snapshot taken before
+  // the contour's own callers had re-flowed" hazard, and which also
+  // makes reuse decisions depend on *when* in the pass they are asked.
+  // Canonical ATypes are hash-consed for the life of the FA
+  // (`cannonical_atypes` is never cleared), so these pointers stay
+  // comparable by identity across passes.
+  Map<MPosition *, AType *> type_key;
+  int type_key_pass = -1;
+  // ifa/issues/074 (IFA_DBG_KEYDRIFT): last two passes' type_key hashes,
+  // so a period-2 flip-flop (key(N) == key(N-2) != key(N-1)) can be told
+  // from a key that is merely still moving. Probe-only.
+  // [0] this pass, [1] previous, [2] the one before that. Three deep so a
+  // period-2 flip-flop (key(N) == key(N-2) != key(N-1)) can be told from
+  // stability (key(N) == key(N-1)) -- PYC_SELFPROD=6 accepts both, see
+  // ifa/issues/074.
+  unsigned int key_hash[3] = {0, 0, 0};
   EdgeHash edges;
   EdgeMap out_edge_map;
   Vec<CreationSet *> creates;
@@ -104,8 +220,33 @@ class EntrySet : public gc {
   Vec<CreationSet *> cs_backedges;
   Vec<PNode *> live_pnodes;
   EntrySet *split;
+  // ifa/133: the DURABLE split lineage, the exact analogue of
+  // CreationSet::split_origin. `split` above is the transient per-pass
+  // product pointer -- clear_splits() zeroes it at the top of every pass
+  // -- so it cannot answer "which contour was this one split off from?"
+  // across passes, which is what a decision table needs to keep a call
+  // site on the same product when a split is re-derived. Set once, at
+  // mint, and never cleared.
+  EntrySet *split_origin = nullptr;
+  // ifa/151: formal positions at which this contour -- and every product
+  // split from it (found through `split_origin`) -- keeps constants apart.
+  // The per-contour, demand-set counterpart of `Sym::clone_for_constants`:
+  // set only by the CONST_DEMAND stage, when a violation backtracks to a
+  // formal whose in-edges disagree on a constant. Durable across passes;
+  // see es_wants_constants.
+  Vec<MPosition *> const_positions;
   PendingAEdgeEntrySetsMap pending_es_backedge_map;
   Vec<EntrySet *> *equiv;  // clone.cpp
+
+
+  // Escape annotation per positional formal arg.  Populated
+  // by IFA's escape transfer (Phase 2+).  In Phase 1 the
+  // vector stays empty; codegen reads from `Fun::arg_escapes`
+  // / `cg_normalize_v2`'s post-IFA pass instead.  When
+  // populated it parameterises the EntrySet's spec key, so
+  // calls with divergent escape settings clone (Phase 4).
+  Vec<uint8_t> arg_escapes;
+
   LINK(EntrySet, es_worklist_link);
 
   EntrySet(Fun *af);
@@ -120,6 +261,21 @@ class CreationSet : public gc {
   uint added_element_var : 1;
   uint closure_used : 1;
   uint tuple_able : 1;
+  // issues/110: this container was created by make_seq, so its length is
+  // a RUNTIME value and it has no per-index vars at all. Everything that
+  // reads `vars.n` as an arity must consult this first -- P_prim_len was
+  // folding len() to the constant 0, and tuple_able() was electing RECORD
+  // layout with zero members. Unlike the element type, this is a property
+  // of HOW the container was made, so it is known at constraint time and
+  // cannot be lost to a pass-ordering race.
+  uint no_static_arity : 1;
+  // ifa/132: the arity this CreationSet's creation points agree on, or -1
+  // before any has been seen. `vars.n` cannot serve: a zero-arity creation
+  // point calls `vars.fill(0)`, which is a no-op, so an empty container is
+  // indistinguishable from an undecided one. Arity is part of a
+  // record-able container's TYPE -- it fixes the layout -- so it belongs
+  // in CreationSet identity, not in the site the value came from.
+  int static_arity;
   Vec<AVar *> defs;
   AType *atype;  // the type that this creation set belongs to
   Vec<AVar *> vars;
@@ -127,6 +283,17 @@ class CreationSet : public gc {
   Vec<EntrySet *> ess;           // entry sets restricted by this creation set
   Vec<EntrySet *> es_backedges;  // entry sets restricted by this creation set
   CreationSet *split;            // creation set this one was split from
+  // ifa/issues/066: DURABLE lineage, unlike `split` above, which
+  // clear_splits() wipes at the top of every pass -- it is a within-pass
+  // scratch marker, not a record of where this CreationSet came from.
+  // Set once in the clone constructor and never cleared, so a CS minted
+  // by split_css on pass 40 still knows on pass 90 which original it is a
+  // clone of. Already collapsed to the root at construction time, so one
+  // deref suffices; nullptr for an original.
+  CreationSet *split_origin = nullptr;
+  // The Var whose creation_point minted this CS (read by the mold route and
+  // the prototype test in creation_point).
+  Var *creation_var = nullptr;
   Vec<CreationSet *> *equiv;     // used by clone.cpp & fa.cpp
   Vec<CreationSet *> not_equiv;  // used by clone.cpp
   Sym *type;                     // used by clone.cpp & fa.capp
@@ -136,26 +303,50 @@ class CreationSet : public gc {
   CreationSet(CreationSet *cs);
 };
 
-class SettersClasses : public Vec<Setters *> {
- public:
-  uint hash;
-  Vec<Setters *> sorted;
-};
-
 class Setters : public Vec<AVar *> {
  public:
   uint hash;
   Vec<AVar *> sorted;
-  SettersClasses *eq_classes;
   Map<AVar *, Setters *> add_map;
 
-  Setters() : hash(0), eq_classes(0) {}
+  Setters() : hash(0) {}
 };
 
-typedef MapElem<void *, int> MarkElem;
-typedef Map<void *, int> MarkMap;
 typedef Map<Sym *, CreationSet *> CSMap;
 typedef MapElem<Sym *, CreationSet *> CSMapElem;
+
+// Escape integration into IFA — two-point monotonic lattice
+// per AVar.  Bottom = NoEscape (the value provably stays
+// within its function's frame); Top = Escape (default
+// conservative).  See ESCAPE_PLAN.md for the lattice
+// definition, transfer functions, and the cloning policy
+// that consumes this annotation.
+//
+// Phase 1: enum defined; AVar carries the field; everyone
+// is initialized to Escape; analysis is not yet wired.
+enum EscapeStatus {
+  ES_NoEscape = 0,
+  ES_Escape   = 1,
+};
+
+inline EscapeStatus join_escape(EscapeStatus a, EscapeStatus b) {
+  return (a == ES_Escape || b == ES_Escape) ? ES_Escape : ES_NoEscape;
+}
+
+// Predicate-based restrict kinds for AVar narrowing.
+// Issue 026 Bug 5: type-level narrowing predicates that
+// re-evaluate as new CSs arrive at v->in.  Replaces the
+// CS-snapshot-in-restrict pattern that filtered out
+// later-arriving CSs (`is None` narrowing of recursive-
+// receiver types in particular).  See
+// `ifa/issues/026-recursive-self-mutation-struct-collapse.md`.
+enum AVarRestrictPred {
+  RP_None = 0,
+  RP_IsNilType,      // keep cs if cs->sym->type == sym_nil_type
+  RP_IsNotNilType,   // keep cs if cs->sym->type != sym_nil_type
+  RP_IsInstanceOf,   // keep cs if restrict_pred_cls->meta_type->implementors.in(cs->sym->type)
+  RP_NotInstanceOf,  // keep cs if !restrict_pred_cls->meta_type->implementors.in(cs->sym->type)
+};
 
 class AVar : public gc {
  public:
@@ -169,13 +360,27 @@ class AVar : public gc {
   AType *in;
   AType *out;
   AType *restrict;
+  AVarRestrictPred restrict_pred;
+  Sym *restrict_pred_cls;
   AVar *container;
   Setters *setters;
   Setters *setter_class;
-  MarkMap *mark_map;
   CSMap *cs_map;
   MatchCache *match_cache;
   Sym *type;
+  // Numeric-confluence coercion target (issue 025 numeric
+  // unification). Set BETWEEN passes (PycCompiler::reanalyze ->
+  // fa_coerce_numeric_confluences) on an AVar whose converged `out`
+  // mixed a numeric constant with a wider numeric type; during
+  // subsequent passes every out-computation maps numeric-constant
+  // CSs to this type's constants (0 -> 0.0). Per-AVar == per
+  // (Var, contour), so the coercion is flow- and contour-sensitive:
+  // an int-only specialization of the same Var keeps int. Persists
+  // across clear_avar (like cs_map) by design -- it must hold from
+  // the first instant of the next pass so the transform is
+  // element-wise monotone (nothing a consumer saw is ever
+  // retracted mid-pass).
+  Sym *num_coerce;
   int ivar_offset;
   uint in_send_worklist : 1;
   uint contour_is_entry_set : 1;
@@ -183,15 +388,67 @@ class AVar : public gc {
   uint live : 1;
   uint live_arg : 1;
   uint is_if_arg : 1;
+  // ifa/178: this is the result of a send that cannot complete (gate_send
+  // in fa.cc), so the walk did not go past it. Lifted, and the contour
+  // re-walked, when the result gets a type or a callee reaches its reply.
+  uint gates_flow : 1;
+  // ifa/049: the gate is a call that completes by RAISING (its callee raises and
+  // no exception check follows): codegen returns at once, passing the pending
+  // exception to the caller, instead of trapping.
+  uint gate_raises : 1;
+  // issues/114: a GENERATOR's return channel. Every constant that reaches
+  // it also brings its abstract type, so the channel is never a singleton
+  // constant (see P_prim_reply in fa.cc). Applied in update_in, on every
+  // arrival, not once when the reply is walked.
+  uint widen_constants : 1;
+  // Escape status (Phase 1+: see ESCAPE_PLAN.md).  Stored as
+  // uint:1 to fit alongside the existing bit-fields.
+  uint escape : 1;
+  // Issue 033 M4 probe (measurement only): set in propagate_out_change
+  // when this AVar's `out` changes; cleared per pass in initialize_pass.
+  // Answers "how sparse is the dirty set under today's clear-everything
+  // clear_avar" before committing to any collector rewrite.
+  uint dirty : 1;
+  // Issue 029 step 1: marks an AVar that participates in a
+  // polymorphic confluence — i.e. its `out` contains CSs
+  // from multiple distinct non-nil metatypes, OR it
+  // backward-flows into such a confluence.  Set by
+  // `mark_fat_avars()` after FA convergence; consumed by
+  // codegen (in a later step) to choose a fat-pointer
+  // representation `{tag, ptr}` for the corresponding Var.
+  uint needs_fat : 1;
+  // ifa/186: queued to push its `out` to `forward` (see propagate_out_change).
+  uint in_flow_worklist : 1;
   Accum<AVar *> arg_of_send;
   LINK(AVar, send_worklist_link);
+  LINK(AVar, flow_worklist_link);
 
   AVar(Var *v, void *acontour);
+};
+
+// Content-based hashing for `Vec<T*>::set_add` / `set_in` over
+// the four id-bearing FA pointer types. Using `c->id` instead of
+// `(uintptr_t)c` makes set iteration order and table capacity
+// deterministic across runs (see ifa/notes/004).
+template <> struct PointerHash<AVar *> {
+  static uintptr_t hash(AVar *c) { return c ? (uintptr_t)c->id : 0; }
+};
+template <> struct PointerHash<AEdge *> {
+  static uintptr_t hash(AEdge *c) { return c ? (uintptr_t)c->id : 0; }
+};
+template <> struct PointerHash<EntrySet *> {
+  static uintptr_t hash(EntrySet *c) { return c ? (uintptr_t)c->id : 0; }
+};
+template <> struct PointerHash<CreationSet *> {
+  static uintptr_t hash(CreationSet *c) { return c ? (uintptr_t)c->id : 0; }
 };
 
 typedef Map<MPosition *, AVar *> MapMPositionAVar;
 typedef MapElem<MPosition *, AVar *> MapMPositionAVarElem;
 #define form_MPositionAVar(_p, _v) form_Map(MapMPositionAVarElem, _p, _v)
+
+typedef MapElem<MPosition *, AType *> MapMPositionATypeElem;
+#define form_MPositionAType(_p, _v) form_Map(MapMPositionATypeElem, _p, _v)
 
 class ATypeChainHashFns {
  public:
@@ -215,26 +472,24 @@ class SettersHashFns {
   }
 };
 
-class SettersClassesHashFns {
- public:
-  static uint hash(SettersClasses *a) { return a->hash; }
-  static int equal(SettersClasses *a, SettersClasses *b) {
-    if (a->sorted.n != b->sorted.n) return 0;
-    for (int i = 0; i < a->sorted.n; i++)
-      if (a->sorted[i] != b->sorted[i]) return 0;
-    return 1;
-  }
-};
-
-enum ATypeViolation_kind {
-  ATypeViolation_PRIMITIVE_ARGUMENT,
-  ATypeViolation_SEND_ARGUMENT,
-  ATypeViolation_DISPATCH_AMBIGUITY,
-  ATypeViolation_MEMBER,
-  ATypeViolation_MATCH,
-  ATypeViolation_NOTYPE,
-  ATypeViolation_BOXING,
-  ATypeViolation_CLOSURE_RECURSION
+enum class ATypeViolation_kind {
+  PRIMITIVE_ARGUMENT,
+  SEND_ARGUMENT,
+  DISPATCH_AMBIGUITY,
+  MEMBER,
+  MATCH,
+  NOTYPE,
+  BOXING,
+  CLOSURE_RECURSION,
+  // ifa/issues/039. Appended LAST on purpose: inserting it mid-enum
+  // renumbers CLOSURE_RECURSION, and adding builtin symbols for this
+  // renumbered every Sym id in the ir goldens (16 dce fixtures failed).
+  // The fact is a CFG property carried on Var::maybe_unbound, not a
+  // type, so it needs no lattice element at all.
+  MAYBE_UNBOUND,
+  // ifa/issues/039: no path reaching the use assigns it. A compile
+  // error in EVERY environment, unlike MAYBE_UNBOUND.
+  DEFINITELY_UNBOUND
 };
 
 class ATypeViolation : public gc {
@@ -246,13 +501,13 @@ class ATypeViolation : public gc {
   Vec<Fun *> *funs;
 
   ATypeViolation(ATypeViolation_kind akind, AVar *aav, AVar *asend)
-      : kind(akind), av(aav), send(asend), type(0), funs(0) {}
+      : kind(akind), av(aav), send(asend), type(nullptr), funs(nullptr) {}
 };
 
 class ATypeViolationHashFuns {
  public:
   static uint hash(ATypeViolation *x) {
-    return (uint)((uint)x->kind + (13 * (uintptr_t)x->av) + (100003 * (uintptr_t)x->send));
+    return (uint)x->kind + combine_hash((uintptr_t)x->av, (uintptr_t)x->send);
   }
   static int equal(ATypeViolation *x, ATypeViolation *y) {
     return x->kind == y->kind && x->av == y->av && x->send == y->send;
@@ -266,21 +521,110 @@ class ATypeFold : public gc {
   AType *b;
   AType *result;
 
-  ATypeFold(Prim *ap, AType *aa, AType *ab, AType *aresult = 0) : p(ap), a(aa), b(ab), result(aresult) {}
+  ATypeFold(Prim *ap, AType *aa, AType *ab, AType *aresult = nullptr) : p(ap), a(aa), b(ab), result(aresult) {}
 };
 
 class ATypeFoldChainHashFns {
  public:
   static uint hash(ATypeFold *x) {
-    return (uint)((uintptr_t)x->p + (1009 * (uintptr_t)x->a) + (100003 * (uintptr_t)x->b));
+    return (uint)(uintptr_t)x->p + combine_hash((uintptr_t)x->a, (uintptr_t)x->b);
   }
   static int equal(ATypeFold *x, ATypeFold *y) { return x->p == y->p && x->a == y->a && x->b == y->b; }
+};
+
+// Issue 033: persistent record of split decisions, so re-running
+// the splitter over a re-derived flow state can recognize a split
+// it already made in an earlier pass (stage A: record + count
+// duplicates only; enforcement lands in later stages). Key
+// components are all interned/stable across passes (issue 033 D0):
+// the function, the FAPassStage that made the split, the argument
+// position driving it, and the canonical AType partition assigned
+// to the product contour. Never cleared between passes — only a
+// fresh FA starts empty.
+struct SplitDecision : public gc {
+  Fun *fun = nullptr;
+  int stage = 0;                // FAPassStage of the split site
+  MPosition *pos = nullptr;     // confluence/dispatch position (interned)
+  AType *partition = nullptr;   // canonical (cannonical_atypes) filter type
+  // Full-signature hash for group splits: canonical partition
+  // ATypes over ALL positional args and rets, not just `pos` —
+  // type-value grouping is type-equality at every position, so two
+  // groups sharing the partition at `pos` can still be distinct
+  // groups (routing them together mistypes results downstream).
+  // 0 for single-position (filtered-path) keys.
+  uint sig = 0;
+  int pass_made = 0;            // analysis_pass at record time (diagnostics)
+  // ifa/issues/055: the pass on which this decision last ROUTED a group,
+  // and where it sent it. With the full per-pass reset the edges are
+  // rebuilt every pass, so a stable group is re-derived and re-routed to
+  // the same home for ever -- correct behaviour, but it was being
+  // reported as progress, which keeps analyze_again true and starves
+  // every later stage. Repeating last pass's routing is not new
+  // information.
+  int last_route_pass = -1;
+  EntrySet *last_route_product = nullptr;
+  EntrySet *product = nullptr;  // ES created/selected (nullptr for CS splits)
+  // Issue 033 D5: for split_css decisions (fun/pos/partition all
+  // null, identity carried entirely by `sig` — see
+  // cs_group_signature), the CreationSet the compatible group was
+  // moved into. Contours are never freed, so the pointer is stable
+  // across passes; its CONTENTS are per-pass (cleared by
+  // clear_results) and must not be read as state.
+  CreationSet *cs_product = nullptr;
+};
+
+class SplitDecisionHashFns {
+ public:
+  static uintptr_t hash(SplitDecision *d) {
+    return (uintptr_t)d->fun + combine_hash((uintptr_t)d->pos, (uintptr_t)d->partition) +
+           combine_hash((uintptr_t)d->stage, (uintptr_t)d->sig);
+  }
+  static int equal(SplitDecision *a, SplitDecision *b) {
+    return a->fun == b->fun && a->stage == b->stage && a->pos == b->pos && a->partition == b->partition &&
+           a->sig == b->sig;
+  }
+};
+
+// Per-FA hash-cons world (tier-3 reentrancy step 2). Holds the
+// canonical-AType table, the Setters hash-cons, the type-fold cache,
+// and the violation-dedup table. AType identity is meaningful only
+// *within* one TypeWorld: two FAs with separate TypeWorlds will hand
+// out distinct canonical pointers for structurally identical types.
+// Today there's one TypeWorld per FA (embedded as a member); future
+// work can share a TypeWorld across multiple FAs if cross-instance
+// AType identity is wanted.
+class TypeWorld : public gc {
+ public:
+  ChainHash<AType *, ATypeChainHashFns> cannonical_atypes;
+  ChainHash<Setters *, SettersHashFns> cannonical_setters;
+  ChainHash<ATypeFold *, ATypeFoldChainHashFns> type_fold_cache;
+  ChainHash<ATypeViolation *, ATypeViolationHashFuns> type_violation_hash;
+
+  // Canonical AType pointers (tier-3 reentrancy step 3). Populated by
+  // `initialize()` at FA::analyze entry; valid for the lifetime of
+  // their owning FA. Accessed via `fa->type_world.bottom_type` etc.
+  AType *bottom_type = nullptr;
+  AType *nil_type = nullptr;
+  AType *unknown_type = nullptr;
+  AType *void_type = nullptr;
+  AType *top_type = nullptr;
+  AType *any_type = nullptr;
+  AType *bool_type = nullptr;
+  AType *true_type = nullptr;
+  AType *false_type = nullptr;
+  AType *size_type = nullptr;
+  AType *anyint_type = nullptr;
+  AType *anynum_kind = nullptr;
+  AType *symbol_type = nullptr;
+  AType *string_type = nullptr;
+  AType *tuple_type = nullptr;
+  AType *anytype_type = nullptr;
+  AType *function_type = nullptr;
 };
 
 class FA : public gc {
  public:
   PDB *pdb;
-  CDB *cdb;
   cchar *fn;
   Patterns *patterns;
   Vec<Fun *> funs;
@@ -289,30 +633,291 @@ class FA : public gc {
   Vec<EntrySet *> ess_set;  // all used entry sets as set
   Vec<Sym *> basic_types;
   Vec<CreationSet *> css, css_set;
+  // ---- ifa/issues/098: authoritative per-object registries ----
+  // `ess`/`css`/`funs` above are the contours/creation-sets/functions
+  // the LAST COMPLETED PASS reached (collect_results copies them out of
+  // entry_set_done). They are the right answer for consumers asking
+  // "what did the analysis find", and the WRONG answer for
+  // clear_results, whose job is to reset per-pass state on every object
+  // that could still be read this pass. The difference is not small or
+  // theoretical: the splitter (run_split_stages, which runs BEFORE the
+  // reset) re-homes edges into contours minted after `ess` was
+  // snapshotted, and contours that go dead keep their bindings, so
+  // 19-24% of edges per pass were escaping the reset and carrying an
+  // older pass's args/rets/formal_filters -- and a stale
+  // `Match::formal_filters` makes analyze_edge's gate skip a live edge
+  // permanently. These lists are append-only, populated by the
+  // respective constructors, and never pruned: FA already retains every
+  // one of these objects for the whole run (via Fun::ess, out_edge_map,
+  // Sym::creators), so this adds one pointer each, not lifetime.
+  Vec<AEdge *> all_aedges;
+  Vec<EntrySet *> all_entry_sets;
+  Vec<CreationSet *> all_creation_sets;
   Vec<AVar *> global_avars;
+  // The distinguished global contour (see GLOBAL_CONTOUR above).
+  // Created once at FA::analyze entry; fun points at the top-level
+  // Fun so incidental `es->fun` derefs are safe.
+  EntrySet *global_es = nullptr;
 
   int print_call_depth;
   bool permit_boxing;
   bool no_unused_instance_variables;
   int tuple_index_base;
   int num_constants_per_variable;
+  // ---- Per-instance id counters (tier-3 reentrancy step 4) ----
+  // Each new AVar/AEdge/CreationSet/EntrySet gets its id from these.
+  // Constructors do `id = fa->X_id++`, so the global `fa` must be
+  // set (which it is at `FA::analyze` entry) before any of these
+  // objects are constructed.
+  int avar_id = 1;
+  int aedge_id = 1;
+  int creation_set_id = 1;
+  int entry_set_id = 1;
+
+  // Cap on outer convergence iterations. Frontends may raise it for
+  // pathological inputs or lower it for fail-fast tests.
+  int pass_limit;
+  // Set to true when `pass_limit` was reached with `analyze_again`
+  // still set — i.e. the splitter wanted another pass and was cut
+  // off. Frontends inspect this to distinguish a converged
+  // `type_violations` from a snapshot mid-iteration.
+  bool pass_limit_hit;
+  // Divergence guard (see IFA_STALL_LIMIT): consecutive passes the
+  // splitter may run without improving on the best violation count
+  // seen so far before the loop is force-terminated.
+  int stall_limit;
+  // ifa/issues/055 experiment: was the pass just completed requested by
+  // IFACallbacks::reanalyze() rather than by a splitter? Such a pass is
+  // EXPECTED to look worse -- promotion exposes fields, which exposes
+  // type flow -- so counting it as "non-improving" stops the analysis
+  // while the frontend repair is still making progress.
+  bool last_pass_reanalyze = false;
+  // ifa/issues/074: overridable via IFA_NONIMPROVE_LIMIT so the guard can
+  // be taken out of the measurement (see stall_limit).
+  int nonimprove_limit = IFA_NONIMPROVE_LIMIT;
+  int best_violations;  // best (lowest) nonzero-pass violation count seen
+  int stall_passes;     // consecutive RE-DERIVING (dup>0) passes at or
+                        // above best_violations (see IFA_STALL_LIMIT's
+                        // dup-aware note)
+  int nonimprove_passes;  // consecutive passes of ANY kind at or above
+                          // best_violations (IFA_NONIMPROVE_LIMIT cap)
+  // Issue 074 Stage 1: consecutive ZERO-violation passes that RE-DERIVED
+  // a split (dup>0) yet added no new contours (ess/css unchanged) --
+  // pure issue-033 non-idempotent churn (pygmy). The v>0 stall guard
+  // above skips these (its `if (v > 0)`); this bounds them too.
+  int zero_viol_stall_passes = 0;
+  int prev_ess_n = -1, prev_css_n = -1;  // for the ess/css-growth check
+  // Print FA's accumulated type violations to stderr at the end of
+  // `FA::analyze`. Default true (production behavior); the test
+  // harness sets it to false because fixtures are designed to
+  // *trigger* violations and the stderr noise drowns out the test
+  // results. Frontends that want to suppress can also flip this.
+  bool show_violation_output = true;
+
+  // ---- Per-instance hash-cons world (tier-3 reentrancy step 2) ----
+  // See TypeWorld declaration above.
+  TypeWorld type_world;
+
+  // ---- Issue 033 split-decision ledger (stage A: record-only) ----
+  // See SplitDecision above. `dup_split_attempts` counts, per pass,
+  // splits whose key was already in the ledger from an earlier pass
+  // — i.e. work the splitter is redoing on a re-derived flow state.
+  // Reported in the -v PASS line; reset in initialize_pass.
+  ChainHash<SplitDecision *, SplitDecisionHashFns> split_ledger;
+  int dup_split_attempts = 0;
+  // Issue 033 D5 (record-only): same counter for split_css
+  // decisions — CS splits whose cs_group_signature was already
+  // recorded by an EARLIER pass, i.e. the CS-side analog of the
+  // per-pass contour re-manufacturing the ES ledger routes away.
+  // Reported in the -v PASS line; reset with dup_split_attempts.
+  int cs_dup_split_attempts = 0;
+  // ifa/issues/101: last ledger ROUTE target per source contour,
+  // persistent across passes. The ledger can hold a CYCLE -- two
+  // signatures for what is really one group, each recording the other
+  // contour as its home -- and following it moves the group back and
+  // forth for ever with no growth. Measured on linalg's __deepcopy__:
+  // gsig 16821760 (recorded p40) says home=692, gsig 33861632 (p58) says
+  // home=792, and the group alternates 792->692->792 to the pass cap.
+  // A route A->B whose reverse B->A is already recorded here is a cycle.
+  Map<EntrySet *, EntrySet *> route_last;
+  // ifa/issues/055: the GENERAL form of the same fact (PYC_ROUTECYCLE=3).
+  // route_last remembers one step, which detects A<->B and nothing
+  // longer; a ledger holding A->B->C->A is the same disease with three
+  // signatures instead of two. This records the whole route relation so
+  // a candidate route can be refused whenever it would close a cycle of
+  // ANY length -- i.e. the routing relation is kept acyclic by
+  // construction rather than by pattern-matching one shape.
+  Map<EntrySet *, Vec<EntrySet *> *> route_adj;
+  // ifa/issues/074: the divergence guard's actual input. Both counters
+  // above conflate two opposite things -- the ledger ROUTING a group back
+  // into the product it recorded on an earlier pass (the anti-oscillation
+  // machinery WORKING; the graph is reconverging on the same answer) and
+  // the ledger finding its key but minting a fresh contour anyway (real
+  // non-idempotent churn). Measured on the 11-program oscillating set,
+  // routes outnumber mints 85-99% to 1, so a guard fed by the sum fires
+  // on programs that are converging -- which is what stops sudoku5 and
+  // msp_ss mid-flight and turns them into runtime assertion failures.
+  // This counts only the mint-anyway half.
+  int rederive_churn = 0;
+  // Issue 033 M4 probe (measurement only): how many AVars had `dirty`
+  // set (via propagate_out_change) during this pass's flow-to-fixpoint,
+  // vs. how many the existing full-scan collectors visit regardless.
+  // Reset in initialize_pass; reported in the -v PASS line.
+  long dirty_avar_count = 0;
+  long examined_avar_count = 0;
+  SplitDecision *ledger_find(Fun *afun, int stage, MPosition *pos, AType *partition, uint sig = 0);
+  SplitDecision *ledger_add(Fun *afun, int stage, MPosition *pos, AType *partition, EntrySet *product, uint sig = 0);
+  // Issue 033 D5: CS-split keys. fun/pos/partition are all null —
+  // the whole identity is `sig` (cs_group_signature: cs->sym +
+  // sorted def-Var ids + setter Var/value-type content), so these
+  // keys cannot collide with ES keys (which always carry a fun).
+  // Stage is deliberately NOT part of the key: split_css derives
+  // the same setter-equivalence partition whether stage 3 or stage
+  // 4 collected the starters, and a cross-stage re-derivation is
+  // still a re-derivation.
+  SplitDecision *ledger_find_cs(uint sig);
+  SplitDecision *ledger_add_cs(uint sig, CreationSet *product);
+  // Issue 033 D6: per-Var count of stage-5 (split_for_violations)
+  // split attempts. A Var whose violation drove two attempts and
+  // still violates is not refinable by contour splitting; stage 5
+  // excludes it thereafter instead of manufacturing contours
+  // forever. Keyed on Var* (stable across passes), not AVar*.
+  // Persistent across passes, like the ledger.
+  Map<Var *, int> violation_split_attempts;
+
+  // ---- Per-instance worklists / completion set / violation list ----
+  // Sunk into FA from file-static globals June 2026 (tier-3
+  // reentrancy step 1). See AUDIT §2.2 and CLEANUP.md.
+  Que(AEdge, edge_worklist_link) edge_worklist;
+  Que(AVar, send_worklist_link) send_worklist;
+  Que(EntrySet, es_worklist_link) es_worklist;
+  // ifa/186: AVars whose `out` changed and has not yet been pushed to
+  // `forward`. Used only while defer_flow is set (analyze_to_convergence).
+  Que(AVar, flow_worklist_link) flow_worklist;
+  bool defer_flow = false;
+  Vec<EntrySet *> entry_set_done;
+  Vec<ATypeViolation *> type_violations;
+
+  // ---- FAPassEvent sidecar (issue 003) ----
+  // Test-harness sidecar; populated by `record_fa_event()` during a
+  // splitter pass when `fa_events_enabled` is true. Accessed via the
+  // `fa_events_*()` free functions which delegate to `pdb->fa`.
+  bool fa_events_enabled;
+  Vec<FAPassEvent *> fa_events_storage;
+
+  // ---- Issue 033 M0: per-stage measurement (S5 prereq) ----
+  // Cumulative wall-clock time (seconds) spent in each of
+  // extend_analysis's stages (collect_* + split_* combined), and a
+  // count of how many passes that stage was the one to report
+  // progress (first-stage-wins truncation point). Always collected
+  // (cheap: array increments + a timer lap per stage boundary);
+  // printed under -v at convergence. Distinguishes which stage
+  // dominates plateau-pass cost and how much of the plateau is
+  // first-stage-wins truncation -- a stage other than the winning
+  // one may have found work too, on a batched extend (see issue 033
+  // S5 M2). Sized to FAPassStage's cardinality (kept as a plain
+  // constant since FAPassStage is declared after this class).
+  static constexpr int kNumFAPassStages = 12;
+  // TEMP probe: per-splitter-stage attribution of the per-pass churn.
+  long dbg_stage_detach[kNumFAPassStages] = {};   // edges this stage detached (x->to = 0)
+  long dbg_stage_mint[kNumFAPassStages] = {};     // contours this stage minted fresh
+  long dbg_stage_reuse[kNumFAPassStages] = {};    // edges this stage re-bound to an existing contour
+  long dbg_stage_csmint[kNumFAPassStages] = {};   // CreationSets this stage minted (ifa/issues/074)
+  double stage_time[kNumFAPassStages] = {};
+  long stage_progress_count[kNumFAPassStages] = {};
+  // ifa/issues/098 second defect: sends whose out_edge_map entry exists
+  // (a previous pass dispatched) but none of whose edges was analyzed
+  // this pass -- i.e. dispatch failed completely and used to be silent.
+  // _sites counts them; _reported counts the subset that is
+  // Partial_NEVER and therefore now yields SEND_ARGUMENT violations.
+  long dbg_dispatch_fail_sites = 0;
+  long dbg_dispatch_fail_reported = 0;
+  long dbg_dispatch_total_sites = 0;
 
   FA(PDB *apdb)
       : pdb(apdb),
-        cdb(0),
         patterns(0),
         top_edge(0),
         print_call_depth(2),
         permit_boxing(0),
         no_unused_instance_variables(0),
         tuple_index_base(0),
-        num_constants_per_variable(1) {}
+        num_constants_per_variable(1),
+        pass_limit(IFA_PASS_LIMIT),
+        pass_limit_hit(false),
+        stall_limit(IFA_STALL_LIMIT),
+        best_violations(INT_MAX),
+        stall_passes(0),
+        nonimprove_passes(0),
+        fa_events_enabled(false) {}
 
   int analyze(Fun *f);
   int concretize();
 
   RegisteredPrim *register_primitive(cchar *name, PrimitiveTransferFunctionPtr ptr);
 };
+
+// Clear all module-level analysis state. Called by ifa_reset().
+void fa_reset();
+
+// ---------------------------------------------------------------------------
+// FA-pass-event sidecar (issue 003)
+// ---------------------------------------------------------------------------
+// Records which splitter stage fired on which pass, plus before/after
+// counts of ess / css / type_violations. Mirrors the InlineEvent
+// pattern in ifa/optimize/inline.h — events are only recorded when
+// fa_events_enable() has been called; production pays nothing.
+
+enum class FAPassStage {
+  TYPE_CONFLUENCE,        // split_ess_for_type
+  MARK_TYPE,              // split_ess_for_mark_type
+  SETTER,                 // split_for_setters (type-based)
+  SETTER_OF_SETTER,       // split_for_setters_of_setters (type-based)
+  MARK_SETTER,            // split_for_setters with marks
+  MARK_SETTER_OF_SETTER,  // split_for_setters_of_setters with marks
+  VIOLATION,              // split_for_violations
+  PER_CS_RECEIVER,        // split_for_per_cs_method_receivers
+                          // (ifa/issues/045: precision split of
+                          // method contours per receiver CS for
+                          // clone_methods_per_cs classes; runs only
+                          // when no stage above acted this pass)
+  CSM_ELEMENT_CS,         // deleted (ifa/075 PYC_CSM, ifa/146); the slot
+                          // stays so stage numbering and names are stable
+  CARTESIAN_PRODUCT,      // split_ess_cartesian_product (ifa/issues/074,
+                          // PYC_CPA: fan a positional formal whose type
+                          // is a union of >=2 CreationSets into one
+                          // contour per single CS -- shedskin's dcpa
+                          // naming, so a union never becomes a contour
+                          // name in the first place)
+  CS_DEF_PARTITION,       // split_css_by_defs (ifa/issues/133): a type
+                          // confluence that landed on a CreationSet
+                          // contour, which stage 1 can only drop --
+                          // partition that CreationSet's creation points
+                          // (cs->defs) so the conflicting elements stop
+                          // sharing one contour. shedskin's ladder route
+                          // 4 (infer.py:1576), and like it the LAST rung:
+                          // told whether any stage above acted this pass,
+                          // so anything a finer route can separate is
+                          // separated first.
+  CONST_DEMAND,           // split_for_constant_demand (ifa/151): a
+                          // violation backtracks to a contour whose
+                          // in-edges disagree on a constant at a formal;
+                          // that formal starts keeping constants apart.
+};
+
+struct FAPassEvent {
+  int pass;                  // 1-indexed analysis_pass at time of record
+  FAPassStage stage;
+  int splits;                // value returned by the split_* function
+  int ess_before, ess_after;
+  int css_before, css_after;
+  int violations_before, violations_after;
+};
+
+void fa_events_enable();
+void fa_events_disable();
+void fa_events_reset();
+const Vec<FAPassEvent *> &fa_events_get();
 
 AVar *make_AVar(Var *, EntrySet *);
 AVar *get_element_avar(CreationSet *);
@@ -323,6 +928,10 @@ int constant_info(IFAAST *a, Vec<Sym *> &constants, Sym *s);
 int constant_info(Var *v, Vec<Sym *> &constants);
 Sym *get_constant(Var *v);
 Sym *get_constant(AVar *av);
+int nil_receiver_rval(PNode *pn, Fun *fn);  // ifa/issues/165
+Var *nil_receiver_var(PNode *pn, Fun *fn);  // ifa/issues/184: also through a bound-method closure
+Var *nil_period_receiver(PNode *pn, cchar **selector = nullptr);
+bool fun_can_return(Fun *f);  // ifa/issues/049: false for a function that can only raise  // ifa/issues/184: `x.name` that can find None
 int symbol_info(Var *v, Vec<Sym *> &symbols);
 AType *make_AType(CreationSet *cs);
 AType *make_AType(Vec<CreationSet *> &css);
@@ -332,11 +941,36 @@ void update_gen(AVar *v, AType *t);
 void update_in(AVar *v, AType *t);
 void flow_vars(AVar *v, AVar *vv);
 void flow_var_type_permit(AVar *v, AType *t);
-CreationSet *creation_point(AVar *v, Sym *s, int nvars = -1);
+// Issue 025 numeric unification: annotate AVars whose converged
+// type mixes a numeric constant with a wider numeric (BOXING
+// violations) so the next pass coerces the constant (0 -> 0.0)
+// at that flow point. Returns the number of newly annotated AVars
+// and, when nonzero, resets per-pass analysis state
+// (clear_results) so the re-run re-derives flow with the
+// annotations in force. Call from IFACallbacks::reanalyze.
+int fa_coerce_numeric_confluences(Vec<ATypeViolation *> &violations);
+int fa_split_numeric_confluences();  // ifa/issues/156
+// Set / install a predicate restrict on `v`.  cls is only
+// used for RP_IsInstanceOf / RP_NotInstanceOf.  Idempotent:
+// re-installing the same predicate is a no-op; installing a
+// different one is currently treated as a no-op (composing
+// predicates isn't needed by today's narrowing sites).
+void flow_var_permit_pred(AVar *v, AVarRestrictPred pred, Sym *cls = nullptr);
+CreationSet *creation_point(AVar *v, Sym *s, int arity = -1);
 void prim_make_constraints(PNode *p, EntrySet *es);
-void type_violation(ATypeViolation_kind akind, AVar *av, AType *type, AVar *send, Vec<Fun *> *funs = NULL);
+void type_violation(ATypeViolation_kind akind, AVar *av, AType *type, AVar *send, Vec<Fun *> *funs = nullptr);
+// Live count of unique (kind, av, send) violation triples currently
+// recorded. Use this — not `type_violations.n`, which is the
+// underlying open-addressed table capacity (see issue 009).
+int type_violations_count();
+// ifa/issues/112: type_violations iterates in pointer-hash order; this
+// returns it in a stable, total order (compar_tv). Use it wherever the
+// ORDER affects the result, not just the display.
+void fa_sorted_type_violations(Vec<ATypeViolation *> &src, Vec<ATypeViolation *> &out);
 AType *type_cannonicalize(AType *t);
+AType *type_cannonical_find(Vec<CreationSet *> &css);  // never inserts or GC-allocates; see make_AType
 AType *type_diff(AType *, AType *);
+AType *type_diff_all(AType *, Vec<AType *> &);
 AType *type_intersection(AType *, AType *);
 AType *type_union(AType *a, AType *b);
 void log_var_types(Var *, Fun *);
@@ -355,41 +989,14 @@ AType *make_size_constant_type(int n);
 void collect_types_and_globals(FA *fa, Vec<Sym *> &typesyms, Vec<Var *> &globalsyms);
 void fa_dump_types(FA *fa, FILE *fp);
 
+// std::sort, not the quicksort that was here: that one took the first
+// element as its pivot, so sorting an already sorted vector was quadratic,
+// and fa->css (11 500 CreationSets on othello3, in id order from the pass
+// before) cost 0.2 s a pass (ifa/186). Ids are unique, so the order is the
+// same.
 template <class C>
 void qsort_by_id(C **left, C **right) {
-Lagain:
-  if (right - left < 5) {
-    for (C **y = right - 1; y > left; y--) {
-      for (C **x = left; x < y; x++) {
-        if (x[0]->id > x[1]->id) {
-          C *t = x[0];
-          x[0] = x[1];
-          x[1] = t;
-        }
-      }
-    }
-  } else {
-    C **i = left + 1, **j = right - 1;
-    C *x = *left;
-    for (;;) {
-      while (x->id < (*j)->id) j--;
-      while (i < j && (*i)->id < x->id) i++;
-      if (i >= j) break;
-      C *t = *i;
-      *i = *j;
-      *j = t;
-      i++;
-      j--;
-    }
-    if (j == right - 1) {
-      *left = *(right - 1);
-      *(right - 1) = x;
-      right--;
-      goto Lagain;
-    }
-    if (left < j) qsort_by_id(left, j + 1);
-    if (j + 2 < right) qsort_by_id(j + 1, right);
-  }
+  std::sort(left, right, [](C *a, C *b) { return a->id < b->id; });
 }
 
 template <class C>
@@ -397,26 +1004,34 @@ void qsort_by_id(Vec<C *> &v) {
   if (v.n > 1) qsort_by_id(&v[0], v.end());
 }
 
+// Return a sorted-by-id snapshot of `v` (live entries only,
+// skipping null hash-table holes). Leaves `v` untouched. Use
+// when iterating a `set_add`-populated `Vec<C*>` and the loop
+// body would observe order — preferred over the in-place
+// `qsort_by_id(v); for(...) ...` pattern when `v` should not be
+// mutated. See ifa/notes/004.
+template <class C>
+Vec<C *> sorted_view(const Vec<C *> &v) {
+  Vec<C *> out;
+  for (int i = 0; i < v.n; i++)
+    if (v.v[i]) out.add(v.v[i]);
+  if (out.n > 1) qsort_by_id(out);
+  return out;
+}
+
 extern FA *fa;
 
-extern AType *bottom_type;
-extern AType *void_type;
-extern AType *unknown_type;
-extern AType *top_type;
-extern AType *any_type;
-extern AType *bool_type;
-extern AType *true_type;
-extern AType *false_type;
-extern AType *size_type;
-extern AType *anyint_type;
-extern AType *anynum_kind;
-extern AType *fun_type;
-extern AType *symbol_type;
-extern AType *fun_symbol_type;
-extern AType *anytype_type;
+// Canonical AType pointers (bottom_type, void_type, etc.) are now
+// members of TypeWorld owned by FA. Access via
+// `fa->type_world.bottom_type` (the global `fa` is set at
+// `FA::analyze` entry). Tier-3 reentrancy step 3.
 
 extern int analysis_pass;
 
+// ifa/151: does `es` (or a contour it was split from) keep constants apart
+// at formal `p`, either by the frontend annotation or by demand?
+bool es_wants_constants(EntrySet *es, MPosition *p);
+bool es_wants_any_constants(EntrySet *es);
 void pp(AVar *);
 void pp(AType *);
 void pp(CreationSet *);

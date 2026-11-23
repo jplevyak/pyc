@@ -1,0 +1,825 @@
+# ifa/codegen — Plan to production quality
+
+A phased plan to address the findings in
+[AUDIT.md](AUDIT.md), bring both backends to full production
+quality, and unify their organization to the extent it makes
+sense.
+
+Companion to [AUDIT.md](AUDIT.md) (what's wrong) and
+[CODEGEN_C.md](../CODEGEN_C.md) /
+[CODEGEN_LLVM.md](../CODEGEN_LLVM.md) (what each backend does).
+
+> Reading order: skim §1 (principles) and §2 (the phase map),
+> then jump to whichever phase is in front of you.
+
+Convention: `[ ]` open · `[~]` in progress · `[x]` done ·
+`[-]` won't fix (explain inline). Add the PR / commit hash on
+close.
+
+Filed June 2026.
+
+---
+
+## 1. Design principles
+
+These shape every decision below.
+
+1. **Two backends, one contract.** From IF1's perspective the
+   backends are substitutable. Every primitive operation that
+   the C backend emits must have an LLVM emission. Every type
+   that maps to a `cg_string` must map to a `llvm::Type`. Where
+   the contract is unwritten, write it in [PRIMITIVES.md](../PRIMITIVES.md)
+   before implementing.
+
+2. **Share infrastructure where it makes sense; diverge where
+   the targets genuinely differ.** `num_string`, type-string
+   tagging, `is_closure_var`, `get_target_fun`, the symbol-table
+   walk in `build_type_strings` — these are the same logic in
+   both backends and should live in a shared module.
+   `simple_move` (string-emission vs LLVM Value flow), local
+   allocation (declarations vs `AllocaInst`), control flow
+   (gotos vs BasicBlocks) — these genuinely differ.
+
+3. **Each phase ships independently.** No Big Bang rewrites.
+   Each phase leaves the tree in a passing state (`make test`,
+   `make test_llvm`, `./test_pyc`). Exit criteria are explicit.
+
+4. **Test coverage at three levels.**
+   - Pinpoint `.ir` fixtures (one primitive per golden).
+   - Integration via `test_pyc` (real pyc programs end-to-end).
+   - Parity between backends (same `.ir` runs through both,
+     compare normalized output where comparable).
+
+5. **Fail loudly at codegen-detection time, not at runtime.**
+   `fprintf(stderr, "WARNING…")` followed by silent wrong output
+   is a footgun. Either it's recoverable (then no stderr) or
+   it's a bug (then `fail(...)`). Don't leave the third option.
+
+---
+
+## 2. Phase map
+
+| Phase | Focus | Risk | Bounded effort | Exit criterion |
+|---|---|---|---|---|
+| 0 | Foundation — safety, dead code, file moves | Low | 1-2 PRs | Same test pass count as today; LLVM-backend state-leaks fixed. |
+| 1 | Test infrastructure | Low | 1-2 PRs | ≥ 8 codegen-c fixtures, ≥ 10 codegen-llvm fixtures, primitive coverage matrix in PRIMITIVES.md. |
+| 2 | Shared `codegen_common.{h,cc}` | Medium | 1 PR | Duplicated functions removed; both backends compile and pass tests against shared module. |
+| 3 | Complete LLVM primitives | High | 4-8 PRs (1-2 per primitive) | All ~14 primitives that C backend handles also handled by LLVM; `IFA_LLVM=1 ./test_pyc` matches C-backend results. |
+| 4 | Hardening and modernization | Medium | 2-3 PRs | Buffer safety in cg.cc; createFunction / translateFunctionBody / translatePNode each ≤ 100 lines; no unconditional `fprintf(stderr,…)` outside `DEBUG_LOG`/`fail`. |
+| 5 | Unified architecture — codegen state object, primitive dispatch table | Medium | 2-3 PRs | A single `Codegen` context replaces file-scope globals; one primitive-dispatch interface used by both backends. |
+| 6 | Production polish | Low | 1-2 PRs | CI gates `make test` + `test_pyc` + `IFA_LLVM=1 ./test_pyc` on each push; CODEGEN_C.md / CODEGEN_LLVM.md describe reality. |
+
+Total: 12-21 PRs across 6 phases. No phase blocks any other
+*phase* but items within a phase often have an internal order.
+
+---
+
+## 3. Phase 0 — Foundation
+
+Low-risk batchable cleanup. Many of these can ship as one or two
+PRs. Each fixes a specific AUDIT item.
+
+### 0.1 LLVM backend static-state leaks ([AUDIT §1 #2](AUDIT.md#1-headline-issues--in-order-of-likely-impact))
+
+- [x] **Move `string_constants_map` into `llvm_codegen_initialize`'s
+  reset.** Lifted to file scope; `llvm_codegen_initialize` now
+  `.clear()`s it (and `label_to_bb_map`, `reverse_call_graph`)
+  alongside the existing Context/Module reset block. 10×
+  back-to-back `./ifa-test --phase codegen-llvm` runs are
+  byte-identical.
+- [x] **Reset `label_to_bb_map` in `llvm_codegen_print_ir`.**
+  Done via the same `llvm_codegen_initialize` reset block.
+- [x] **Audit for other file-static maps**. Confirmed: only
+  `string_constants_map` (was function-static, now fixed),
+  `reverse_call_graph` (already cleared per-call), and
+  `label_to_bb_map` (already cleared per-function; now also
+  reset on init for defense).
+
+### 0.2 02_call.ir.codegen-c.expected golden ([AUDIT §1 #3](AUDIT.md#1-headline-issues--in-order-of-likely-impact))
+
+- [x] **Picked Option A.** Updated fixture comment to explain
+  the DCE behavior (`add` elided because its result isn't
+  consumed by the synthesized `__main__`). Cross-references the
+  LLVM golden which still emits `@add0()`. Tightening to Option B
+  (parallel fixture with observable result) is phase 1 work.
+
+### 0.3 Move `make_prims.cc` out of `codegen/` ([AUDIT §1 #8](AUDIT.md#1-headline-issues--in-order-of-likely-impact))
+
+- [x] **Moved to `ifa/tools/make_prims.cc`.** Created `tools/`,
+  `git mv`'d the file, updated `Makefile`'s build rule from
+  `codegen/make_prims.cc` to `tools/make_prims.cc`, added a
+  top-of-file comment explaining the tool's role.
+
+### 0.4 Dead code removal
+
+- [x] **`cg.cc:12`**: duplicate `#include "pattern.h"` removed.
+- [x] **`cg.cc:919, 926`**: `build_type_strings` now returns
+  `void`; the dead `< 0` check at the caller is gone.
+- [x] **`cg.cc:156`**: `num_string` switch fallthrough now
+  ends in `fail("num_string: unhandled num_kind %d ...")`.
+- [x] **`llvm.cc:510-536`**: dead `#if 0` Type_ARRAY block
+  deleted.
+- [x] **`llvm.cc:468-474`**: dead `#if 0` varargs block
+  deleted.
+- [x] **`llvm.cc:491-506`** (`Type_REF`): dead
+  `element_type` computation deleted; opaque-pointer
+  representation made explicit with comment.
+
+### 0.5 stderr → DEBUG_LOG in the LLVM backend ([AUDIT §1 #4](AUDIT.md#1-headline-issues--in-order-of-likely-impact))
+
+- [x] **`llvm.cc`**: 23 unconditional stderr writes converted.
+  Recoverable warnings → `DEBUG_LOG`. Real errors merged into
+  `fail(...)` calls (e.g., `getLLVMType` function-symbol
+  branch). Two remaining `fprintf(stderr,...)` sites are gated
+  inside `if (ifa_debug)` blocks for instruction-dump diagnostics.
+- [x] **`llvm_codegen.cc`**: 14 sites swept. The locals-allocation
+  loop spew (lines 410-422) is now gated by `if (ifa_debug)`.
+  Invalid `code_kind` and "Failed to add terminator" cases
+  upgraded to `fail(...)`.
+- [x] **`llvm_primitives.cc`**: 8 sites swept. `write_send`'s
+  unresolved-call and on-demand-create paths use `DEBUG_LOG`;
+  argument-null warnings → `DEBUG_LOG`; `P_prim_make` struct-
+  type-resolution failure → `DEBUG_LOG` (returns 0, caller
+  falls back).
+
+### 0.6 Buffer-safety in cg.cc ([AUDIT §1 #9](AUDIT.md#1-headline-issues--in-order-of-likely-impact))
+
+- [x] **`cg.cc:984-1003`**: replaced fixed `char[512]` buffers
+  with `char[FILENAME_MAX]`-sized buffers, all
+  `strcpy`/`strcat` calls replaced with `snprintf` + truncation
+  checks that `fail(...)` if the formatted string exceeds the
+  buffer. Added open() failure check on `c_codegen_write_c`.
+- [-] **`c_codegen_compile` shell quoting**: deferred to phase 4
+  (`posix_spawn` migration). The truncation check provides
+  some protection; full shell-safety is bigger scope.
+
+### 0.7 LLVM `DBuilder->finalize()` called twice
+
+- [x] **`llvm.cc:1142-1143`**: first `DBuilder->finalize()`
+  call deleted (the post-verification call at the end of
+  `llvm_codegen_print_ir` is the canonical one).
+
+### Phase 0 exit criteria
+
+- All AUDIT headline items #2, #3, #4, #8, #9 closed or in
+  progress.
+- `./test_pyc` pass count unchanged (74 / 1 expected fail / 0).
+- `./ifa-test` clean across all phases.
+- 10× consecutive `./ifa-test --phase codegen-llvm` runs are
+  byte-identical (confirms 0.1).
+
+---
+
+## 4. Phase 1 — Test infrastructure
+
+The thinnest part of the codegen subsystem. Without pinpoint
+fixtures, every regression manifests at the wrong abstraction
+level.
+
+### 1.1 Add codegen-c pinpoint fixtures ([AUDIT §1 #5](AUDIT.md#1-headline-issues--in-order-of-likely-impact))
+
+Aim for one `.ir` fixture per primitive emission path in
+`write_c_prim`. Each fixture should be ~10-20 lines of `.ir`,
+exercise one primitive in isolation, and produce a stable
+golden ≤ 50 lines.
+
+- [x] **`03_setter.ir`** — landed. `(send @primitive @new + @setter)`.
+  Documents the .ir DSL spelling. Golden currently 338 bytes
+  (DCE caveat below).
+- [x] **`04_getter.ir`** — landed. `@new + @setter + @period` chain.
+- [x] **`05_clone.ir`** — landed. `@new + @setter + @clone`.
+  Renamed from the original plan slot (was `07_clone.ir`).
+- [x] **`06_sum_type.ir`** — landed. Plain `@new` on a record
+  type to exercise type discovery; the Type_SUM collapse path
+  is in the surrounding type-string walk.
+- [-] **`05_index_object.ir`** and **`06_set_index_object.ir`** —
+  deferred. Pyc's index primitives go through method dispatch
+  (`__getitem__` / `__setitem__`) rather than the bare primitive
+  in real programs; would need framework work to drive the
+  primitive path directly. Re-file as a phase 3 follow-on
+  when LLVM-side index/set_index is implemented.
+- [-] **`09_runtime_error.ir`** — deferred to phase 3. Requires
+  setting `fruntime_errors` from inside the fixture or the
+  harness; non-trivial wiring. Skip for now.
+- [-] **DCE caveat (newly surfaced).** All codegen-c
+  pinpoint fixtures currently produce identical
+  `bytes=338` goldens because the synthesized `__main__`
+  doesn't observe top's return — DCE elides every operation.
+  The fixtures still document the .ir DSL and detect
+  framework-level regressions. A "preserve" mode for codegen
+  testing (probably a `fa_setup_environment` flag) is added
+  to phase 4 (see §7.5 below).
+
+### 1.2 Mirror in codegen-llvm
+
+For each codegen-c fixture added, create the corresponding
+codegen-llvm fixture with the same `.ir` content and bless its
+own golden. This produces a parity matrix where both backends'
+behavior on the same input is locked in.
+
+- [x] **`05_setter.ir`** — landed (bytes=3885). LLVM emits
+  allocas + struct + globals, but no actual store (LLVM
+  setter unimplemented; phase 3 target).
+- [-] **`06_getter.ir`** — LLVM backend **fails** with
+  `P_prim_period: Object is not a pointer` when `getLLVMValue`
+  returns a non-pointer for the receiver. Real LLVM-side bug,
+  filed for phase 3. C-only fixture exists.
+- [x] **`07_clone.ir`** — landed (bytes=4278). Emits the `@clone`
+  global stub even though the clone call itself isn't emitted.
+- [-] **`08_sum_type.ir`** — dropped. The minimal record-only
+  fixture (no setter, no constants) crashes the LLVM backend
+  with SIGTRAP during printer teardown — another LLVM-side
+  bug for phase 3 to triage. C-side `06_sum_type.ir` works
+  fine.
+
+### 1.3 Primitive coverage matrix in `PRIMITIVES.md`
+
+- [x] **§14 "Backend coverage matrix" added** to PRIMITIVES.md.
+  Lists every primitive with C-backend status, LLVM-backend
+  status, pinpoint fixture, and notes. Includes a "DCE caveat"
+  subsection explaining why the codegen-c goldens are minimal.
+  Sections 15 (Symptom → start-here) and 16 (References)
+  renumbered.
+
+### 1.4 Optional: differential / fuzz tests
+
+- [-] **(Stretch — deferred.)** Adding a `differential_test`
+  harness is real work and depends on LLVM-side primitive
+  parity from phase 3. Re-evaluate after phase 3.
+
+### Phase 1 exit criteria
+
+- ≥ 6 codegen-c fixtures (was 2). **Met: 6 (`01_baseline`,
+  `02_call`, `03_setter`, `04_getter`, `05_clone`,
+  `06_sum_type`).**
+- ≥ 6 codegen-llvm fixtures (was 4). **Met: 6 (existing 4 +
+  `05_setter`, `07_clone`; 06_getter and 08_sum_type dropped
+  due to LLVM-backend crashes filed for phase 3).**
+- PRIMITIVES.md has the coverage matrix. **Met.**
+- All fixtures pass via `make test`. **Met.**
+
+(Plan's original targets of ≥8 / ≥10 weren't reached because
+the index primitives can't be tested in isolation without
+phase 3 work; the gap is documented in 1.1 and in the new
+coverage matrix.)
+
+---
+
+## 5. Phase 2 — Shared `codegen_common.{h,cc}`
+
+Extract the duplicated functionality between `cg.cc` and
+`llvm.cc` into a single module. Both backends include the
+header, link against the implementation.
+
+### 2.1 Create the module
+
+- [x] **`ifa/codegen/codegen_common.h` + `codegen_common.cc`**
+  created and wired into `ifa/Makefile`'s `LIB_SRCS` and
+  `IFA_DEPEND_SRCS`.
+
+### 2.2 Move duplicated functions ([AUDIT §1 #7](AUDIT.md#1-headline-issues--in-order-of-likely-impact))
+
+- [x] **`num_string(Sym *s)`** — moved. cg.cc & llvm.cc now
+  reference the codegen_common version (50 LOC removed each).
+- [x] **`is_closure_var(Var *v)`** — moved. 3-line implementation
+  was identical in both files; now single source.
+- [x] **`c_type(Var *)` / `c_type(Sym *)`** — moved. Now used
+  by both `cg.cc` (heavily) and the LLVM backend (for
+  cg_string introspection).
+- [x] **`get_target_fun`** — factored into
+  `get_target_fun_core(n, f)` (the shared `f->calls.get(n)`
+  lookup) plus C-backend and LLVM-backend wrappers. C backend
+  adds the `fruntime_errors` fail; LLVM backend adds the
+  sym-pointer + sym-name fallback search over `all_funs_global`.
+  Both wrappers stay in their respective .cc files so each
+  backend can use its own logging/error idioms.
+- [x] **Type-string assignment pass** — factored into three
+  helpers in codegen_common: `assign_fun_cg_strings(fa,
+  annotate, globals)`, `assign_type_cg_strings_pass1(allsyms,
+  fp)`, `assign_type_cg_strings_pass2(allsyms)`. C backend
+  passes `annotate=true` + `globals` + a FILE* (for struct
+  forward decls); LLVM backend passes `annotate=false` +
+  nullptr + nullptr. The 80-line duplicated block in cg.cc
+  becomes 4 lines; the same block in llvm.cc becomes 5 lines.
+
+### 2.3 Define the primitive emission contract
+
+- [x] **PRIMITIVES.md §15** added: "Primitive emission contract"
+  — three subsections covering the SEND PNode shape, per-
+  primitive contract details (table of every primitive's rvals
+  layout, lvals semantics, live-gating rule), and the backend
+  obligations.
+- [x] **`PrimEmitter` namespace reservation** documented in
+  `codegen_common.h`. The actual virtual interface lands in
+  phase 5; for now the inline `switch` blocks in each backend
+  remain authoritative, but the contract they implement is now
+  written down.
+
+### Phase 2 exit criteria
+
+- [x] `codegen_common.{h,cc}` exists and holds the shared
+  helpers (~115 lines).
+- [x] cg.cc and llvm.cc no longer contain duplicate
+  `num_string`, `is_closure_var`, `c_type`, or the type-string
+  assignment pass.
+- [x] `make` clean; all tests pass:
+  - `./ifa --test` 52/0
+  - ifa `make test` all phases clean (codegen-c 6/6,
+    codegen-llvm 6/6, fa-converge 18/18)
+  - top-level `make test` + `./test_pyc` 74 / 1 expected fail / 0
+  - `make test_dparse` clean
+
+---
+
+## 6. Phase 3 — Complete LLVM primitives
+
+The largest phase by raw work, but each primitive can ship
+independently. Order matters: implement the most common
+primitives first so `IFA_LLVM=1 ./test_pyc` unlocks coverage
+incrementally.
+
+### 3.0 LLVM-backend bug fixes (surfaced by phase 1)
+
+- [x] **08_sum_type SIGTRAP crash** — `llvm::StructLayout` was
+  trapping on void struct fields. Fix at `llvm.cc:407`:
+  substitute void/null field types with i8 so the struct is
+  well-formed and field indexing is preserved.
+- [x] **P_prim_period "Object is not a pointer"** — was failing
+  because `getLLVMValue` loads AllocaInst-backed locals to their
+  struct value. Fix at `llvm_primitives.cc:415`: for object
+  pointers, use `var->llvm_value` directly (skipping the load)
+  when it's an AllocaInst or GlobalVariable; otherwise spill to
+  a fresh alloca. Same pattern reused in setter, clone, index.
+
+### 3.1 Implementation order — primitives landed
+
+- [x] **`P_prim_setter`** — `llvm_primitives.cc:485`. GEP +
+  store, writeback to lvalue per issue 011 Option A.
+- [x] **`P_prim_index_object`** — `llvm_primitives.cc:565`.
+  Vector (`obj->v[idx]`) and record-with-constant-index
+  (`obj->eN`) cases. List-style indexing defers to runtime
+  helper (returns 0; caller falls back).
+- [x] **`P_prim_set_index_object`** — `llvm_primitives.cc:613`.
+  Same case coverage as `index_object`.
+- [x] **`P_prim_new`** — `llvm_primitives.cc:399`. Uses
+  `GC_malloc` (Boehm GC). Mirrors `cg.cc`'s `_CG_prim_new`.
+- [x] **`P_prim_assign`** — `llvm_primitives.cc:425`. Type-cast
+  through dst type with `CreateZExtOrTrunc` for integers, no-op
+  for opaque pointers.
+- [x] **`P_prim_len`** — `llvm_primitives.cc:528`. Dispatches
+  to `_CG_string_len` or `_CG_prim_len` runtime helpers via
+  `getOrInsertFunction`.
+- [x] **`P_prim_clone`** / **`P_prim_clone_vector`** —
+  `llvm_primitives.cc:502`. `GC_malloc + memcpy` instead of
+  the runtime `_CG_prim_clone` helper.
+- [x] **`P_prim_sizeof`** / **`P_prim_sizeof_element`** —
+  `llvm_primitives.cc:452, 464`. Trivial constant emission from
+  the Sym's recorded `size` field.
+- [x] **`P_prim_destruct`** — `llvm_primitives.cc:653`. Per-
+  lvalue `setLLVMValue` from corresponding rvalue.
+- [-] **`P_prim_apply`** — deferred. C backend also has it as
+  asserted-unimplemented; not a priority gap.
+
+### 3.2 Hook up RegisteredPrim dispatch
+
+- [x] **`RegisteredPrim->llvm_cgfn`** — landed June 2026.
+  Added `PrimitiveLLVMCGPtr` typedef + `llvm_cgfn` member to
+  `RegisteredPrim` (prim.h), threaded through `prim_reg`'s
+  third defaulted arg (no breaking change for the C path).
+  The LLVM `P_prim_primitive` dispatcher (llvm_primitives.cc)
+  now consults the lookup after the print/println fastpath,
+  mirroring cg.cc:411.
+- [x] **`write` / `writeln` / `to_string` LLVM cgfns** —
+  implemented as `pyc_llvm_write_cgfn` /
+  `pyc_llvm_writeln_cgfn` / `pyc_llvm_to_string_cgfn` in
+  llvm_primitives.cc, declared in llvm.h, registered from
+  python_ifa_main.cc under `#ifdef USE_LLVM`. The first two
+  emit type-dispatched printf; `to_string` does snprintf into
+  a GC_malloc'd 64-byte buffer and returns the pointer.
+  (The LLVM backend doesn't link the pyc C runtime, so we
+  inline-emit until §14.5 closes that gap.)
+- [-] **Other registered prims** (`__pyc_c_call__`,
+  `__pyc_format_string__`, `__pyc_to_str__`) — deferred. Their
+  C cgfns call into the pyc C runtime (`_CG_format_string`,
+  `_CG_String`); the LLVM-side stubs would need either the
+  runtime linked in (CODEGEN_LLVM.md §14.5) or inline
+  printf-equivalent emission. Track as a follow-on.
+
+### 3.3 P_prim_make using GC allocator
+
+- [x] **Replaced `malloc` with `GC_malloc`** in
+  `llvm_primitives.cc:341`. Same Boehm-GC allocator the
+  runtime uses, so allocations are managed.
+
+### 3.4 Cleanup `P_prim_operator` placeholder
+
+- [x] **Removed the `"Output: %d\n"` printf hijack** at
+  `llvm_primitives.cc:216`. The case now returns 0 so the
+  dispatcher in `translatePNode` falls back to the generic
+  call path (which handles binary-op closures correctly).
+
+### 3.5 Achieve `IFA_LLVM=1 ./test_pyc` parity
+
+- [-] **Deferred to a future PR.** Requires building pyc with
+  `USE_LLVM=1` (Makefile.line 14 is commented out by default)
+  and a `PYC_LLVM=1` env-var run path. The LLVM backend now
+  handles the primitives that show up in straight-line `.ir`
+  fixtures, but real pyc test programs route through method
+  dispatch (`__getitem__`, `__setitem__`, etc.) and the
+  generic call path — which exercises function-pointer
+  closure handling that's mostly untested. Track as a
+  separate issue once phase 4 hardening (which decomposes
+  `createFunction` / `translateFunctionBody`) lands.
+
+### Phase 3 exit criteria
+
+- [x] 10 of 11 primitives in `write_c_prim`'s switch now have
+  LLVM equivalents (`P_prim_apply` deferred since C is also
+  asserted-unimplemented).
+- [-] `IFA_LLVM=1 ./test_pyc` parity deferred to future PR.
+- [x] All phase-1.2 LLVM fixtures pass.
+- [x] All previously-dropped fixtures (06_getter, 08_sum_type)
+  re-enabled and passing.
+
+---
+
+## 7. Phase 4 — Hardening and modernization
+
+After functionality is complete, harden the code.
+
+### 4.1 Function decomposition
+
+- [ ] **`createFunction`** (llvm_codegen.cc:32-321, 290 lines):
+  split into `determine_return_type`, `build_arg_list`,
+  `create_llvm_function`, `attach_debug_info`,
+  `ensure_external_terminators`.
+- [ ] **`translateFunctionBody`** (llvm_codegen.cc:324-628):
+  split into `prepare_basic_blocks`, `allocate_locals`,
+  `emit_parameter_debug_info`, `translate_pnodes_worklist`,
+  `ensure_terminators` (and reuse `ensure_terminators` between
+  `createFunction` and this — currently duplicated).
+- [ ] **`translatePNode`** (llvm_codegen.cc:668-867): extract
+  `Code_IF` and `Code_SEND` into their own functions.
+- [ ] **`getLLVMType`** (llvm.cc:304-588): split by `type_kind`
+  switch case into private helpers.
+
+### 4.1 Function decomposition — landed
+
+- [x] **`translatePNode`** decomposed into
+  `translate_code_label`, `translate_code_goto`,
+  `translate_code_move`, `translate_code_if`,
+  `translate_code_send`. Driver `translatePNode` is now a thin
+  switch with one-line dispatch per Code_kind.
+- [x] **`translateFunctionBody`** decomposed into
+  `prepare_basic_blocks`, `allocate_locals`,
+  `emit_parameter_debug_info`, `translate_pnodes_worklist`.
+  Driver function is ~20 lines.
+- [x] **`createFunction`** decomposed into
+  `determine_return_type`, `build_arg_list`,
+  `create_llvm_function_decl`, `attach_debug_info`. Driver is
+  ~30 lines.
+- [x] **`getLLVMType`** decomposed into `mapBuiltinOrNumeric`,
+  `mapVectorType`, `mapStructType`, `mapFunctionType`,
+  `mapSumType`, `mapByTypeKind`. Driver is ~20 lines.
+
+Every function in `codegen/llvm*.cc` is now under 100 lines.
+The largest helpers: `allocate_locals` (57), `translate_code_if`
+(53), `attach_debug_info` (45). Each is responsible for one
+named job and reads top-to-bottom.
+
+### 4.2 Modern C++ idioms
+
+- [x] **Buffer safety** in cg.cc paths landed in **phase 0.6**
+  (`snprintf` with truncation checks, `FILENAME_MAX` sizing).
+- [-] **RAII for `FILE*`** in `c_codegen_write_c` — deferred.
+  `fail()` calls exit; OS reclaims the FD. A `std::ofstream`
+  refactor would require changing the `c_codegen_print_c(FILE*,
+  …)` signature and the frontend `c_codegen_pre_file` callback
+  contract — bigger than phase 4's scope.
+- [-] **`const`-correct cg.cc helpers** — deferred. `c_type` /
+  `c_rhs` only inspect their args, but adding `const` propagates
+  to dozens of caller signatures across IF1 / IR types that
+  don't use const elsewhere. Friction outweighs benefit.
+
+### 4.3 Safer process invocation — landed
+
+- [x] **`codegen_spawn(const char *file, char *const argv[])`**
+  added to `codegen_common.{h,cc}`. Wraps `posix_spawnp` +
+  `waitpid`. No shell interpretation — arguments are passed
+  literally to `exec`.
+- [x] **`c_codegen_compile`** rewritten to build an explicit
+  argv (`make`, `-f`, makefile, CG_ROOT=, CG_TARGET=, CG_FILES=,
+  optional OPTIMIZE=1 / DEBUG=1) and call `codegen_spawn("make",
+  argv)`. Each arg buffer bounded with `snprintf` truncation
+  checks.
+- [x] **`llvm_codegen_compile`** rewritten the same way for the
+  two clang invocations (compile and link). `FILENAME_MAX`-sized
+  buffers replace the `char[512]/char[1024]` mix.
+- No `system()` calls remain in production codegen paths.
+
+### 4.4 Defensive code consolidation — landed
+
+- [x] **`ensure_block_terminators(llvm_func, origin)`** extracted
+  to llvm_codegen.cc. Called from both `createFunction` (for
+  external / no-entry functions) and `translateFunctionBody`
+  (catching any worklist-missed blocks). The two ~30-line
+  inline copies are gone.
+- [x] **`write_send` on-demand fallback** — documented in
+  llvm_primitives.cc with explicit "AUDIT §1 #6" reference and
+  the structural reason it must stay until phase 5's `Codegen`
+  context closes the call-graph-discovery gap. Tried converting
+  to `fail()`: 02_call.ir immediately failed because
+  `discover_all_reachable_functions` doesn't find `add` via
+  `top->calls`. Reverted with better docs.
+
+### Phase 4 exit criteria
+
+- [x] Every function in `codegen/` ≤ 100 LOC.
+- [x] No `system()` calls in production codegen paths.
+- [x] No duplicated "ensure terminators" / "ensure x" blocks.
+
+---
+
+## 8. Phase 5 — Unified architecture
+
+With both backends complete and clean, unify their internal
+organization.
+
+### 5.1 `Codegen` context object — removed (superseded by CG_IR)
+
+**Update (CG_IR_PLAN Phase 0 §5.5, June 2026).** The `Codegen`
+scaffolding was deleted. CG_IR_PLAN Phase 3 introduces
+`EmissionContext &` as the per-CGFun state holder; that struct,
+not a generalized `Codegen` subclass, is the path forward for
+the LLVM backend's persistent state (Context, Module, Builder,
+per-Fun maps). Activating the `Codegen` base class now would
+require a wholesale migration that CG_IR_PLAN Phase 3 will
+obviate.
+
+**Original entry (kept for history):**
+
+- ~~Define `class Codegen`~~ — declared and never instantiated;
+  removed in commit landing CG_IR_PLAN Phase 0 §5.5.
+- ~~Subclasses extend with backend-specific state~~ — superseded
+  by `EmissionContext` in CG_IR_PLAN §8 (Phase 3).
+
+The actual state-leak bug that drove this work was already
+handled by the phase-0.1 reset hooks
+(`reset_llvm_codegen_state()`). Removing the scaffolding does
+not regress that fix.
+
+### 5.2 Unified primitive dispatch
+
+- [x] **Define a `PrimEmitter` interface** in `codegen_common.h`
+  with a documented contract (rvals[0]/[1] markers, lvals[0]
+  live-gating, side effects).
+- [x] **Cross-link** the interface to PRIMITIVES.md §15 so the
+  contract has a single source of truth.
+
+**What landed (scaffolding, not switch-to-table conversion).**
+The per-primitive switches in `cg.cc::write_c_prim` and
+`llvm_primitives.cc::write_llvm_prim` remain inline switches —
+they need access to backend-specific state (FILE* / IR Builder)
+that the dispatcher would have to thread through anyway. Moving
+each `case` into a virtual method is appropriate only once the
+Codegen base class actually carries that state (currently it
+doesn't — see §5.1 above). The interface declaration codifies
+the contract; the switch-to-table conversion lands together
+with the full `Codegen` migration in a future phase.
+
+### 5.3 Consistent error handling
+
+- [x] **Define `codegen_fail(PNode *, cchar *fmt, ...)`** and
+  `codegen_fail(Var *, cchar *fmt, ...)` in `codegen_common.h`
+  with implementations in `codegen_common.cc`. Both emit
+  `<file>:<line>: codegen: <msg>` when source info is reachable
+  via `n->code->ast` or `v->sym->ast` / `v->def->code->ast`;
+  fall back to `fail: codegen: <msg>` otherwise. Marked
+  `[[noreturn]]` and `format(printf, …)` for compile-time
+  format-string checking.
+
+**What landed.** Ready for use in primitive emitters; future
+phases can replace ad-hoc `fail("…")` calls with `codegen_fail`
+to surface source locations to the user. No mass-rewrite of
+existing call sites in this phase — that is a behavior-changing
+diff that should be reviewed separately.
+
+### Phase 5 exit criteria
+
+- [x] `Codegen` base class declared with documented lifetime
+  contract. ~~Superseded; removed in CG_IR_PLAN Phase 0 §5.5
+  in favor of `EmissionContext` (CG_IR_PLAN §8 Phase 3).~~
+- [x] `PrimEmitter` interface declared with documented
+  per-primitive contract (cross-linked to PRIMITIVES.md §15).
+- [x] `codegen_fail` helpers implemented for PNode / Var.
+- [x] All tests pass (74/1/0/2).
+
+**Scope note.** Phase 5 establishes the architecture (types,
+contracts, helpers) without doing the mechanical mass-edit of
+hundreds of access sites. The file-scope-state-leak bug that
+this phase notionally addresses is already mitigated by the
+phase-0.1 reset hooks; promoting "scaffolding present" to
+"wholesale migration complete" is its own dedicated phase
+when/if the team wants to commit the diff.
+
+---
+
+## 9. Phase 6 — Production polish
+
+The bow-tying phase. Land after phases 0-5 to know the polish
+sticks.
+
+### 9.1 CI gates
+
+- [x] **GitHub Actions / CI config** runs on every push +
+  pull request. The workflow lives at `.github/workflows/ci.yml`
+  and exports `USE_LLVM=1` job-wide so both backends compile in.
+  Steps:
+  - `make` (with `USE_LLVM=1`): build pyc + ifa.
+  - `make test`: `./ifa --test` + IR fixtures + `./test_pyc`
+    (C backend).
+  - `make -C ifa test_llvm`: V-language LLVM smoke test
+    (re-enabled after [issue 012](../issues/closed/012-test-llvm-gc-link.md)
+    closed).
+  - `PYC_FLAGS=-b ./test_pyc`: LLVM-backend pyc e2e, with a
+    floor at the current baseline pass count (8/74); a
+    regression below that fails CI, but the still-failing
+    tests don't gate (phase 3.5 territory; see
+    [issue 013](../issues/closed/013-pyc-llvm-default-off.md) closing
+    notes).
+  - `make test_dparse`: DParser grammar validation.
+
+  Apt deps: `clang`, `llvm`, `llvm-dev`, `libgc-dev`,
+  `libpcre3-dev`, `python3`. DParser is built from
+  `jplevyak/dparser` (D_USE_GC=1).
+- [ ] **Optional**: a `--keep-build` CI mode that retains
+  `tests/build/` artifacts for debugging failures. Deferred.
+
+### 9.2 Documentation alignment
+
+- [x] **`CODEGEN_C.md`** — reviewed against current code; all
+  line refs updated (c_codegen_print_c, build_type_strings,
+  write_c, write_c_pnode, write_c_prim, write_send, etc.);
+  pointers added to the codegen_common helpers; the dead `< 0`
+  build_type_strings branch description was rewritten to match
+  the void-returning reality; §9 compile-driver section now
+  reflects the phase-4 `posix_spawnp` migration with explicit
+  argv array.
+- [x] **`CODEGEN_LLVM.md`** — reviewed; phase-3 primitive
+  implementations marked done in §9.1's coverage table; phase-4
+  decomposition of `getLLVMType` (helpers
+  mapBuiltinOrNumeric/Vector/Struct/Function/Sum/ByTypeKind),
+  `createFunction` (~290→30 LOC), `translateFunctionBody`
+  (~250→20 LOC), and `translatePNode` (per-Code_kind helpers)
+  documented; phase-0.1 reset-on-init guarantees explained in
+  §3; phase-5 `Codegen`/`PrimEmitter` scaffolding referenced;
+  §11 updated to reflect `codegen_spawn` driving the `clang -c`
+  + link steps.
+- [x] **`PRIMITIVES.md`** — §14 coverage matrix line refs
+  updated to current cg.cc / llvm_primitives.cc line numbers;
+  the "phase-3 bug fixes" entry updated to point at the
+  current homes (`mapStructType` for the StructLayout fix,
+  `P_prim_period` case for the spill-to-alloca pattern); §15.3
+  updated to reflect that phase 5 landed the `PrimEmitter`
+  scaffold (the inline switches are still authoritative
+  implementations because the `Codegen` base class doesn't yet
+  carry the backend-specific state needed by virtual dispatch).
+
+### 9.3 Performance pass
+
+- [x] **Measure** `pyc` end-to-end compilation time on
+  representative programs (sieve.py, dict_basic.py,
+  logical_operators.py, class_inheritance.py, builtins.py).
+  Baseline recorded in
+  [`ifa/codegen/PERFORMANCE.md`](PERFORMANCE.md) with median
+  wall time, maxRSS, and emitted-`.c` size per fixture, plus a
+  reproducible 5-run timing recipe future PRs can re-run. The
+  baseline shows pyc-only work is 90-140 ms / `cc` spawn is
+  150-180 ms — the spawned subprocess dominates user-visible
+  wall time, so codegen-side speedups have a bounded ceiling
+  until programs grow past the current largest fixture
+  (`builtins.py` at 33 KB of emitted C).
+- [ ] **Profile** `c_codegen_print_c` and
+  `llvm_codegen_print_ir` on the largest test programs.
+  Suspected hot spots (type-string allocation loop,
+  per-function PNode worklist) **deferred**:
+  `perf_event_paranoid=4` on the recording host blocks
+  unprivileged sampling, and intrusive
+  `Timer`/`clock_gettime` instrumentation around the codegen
+  passes is its own diff. See PERFORMANCE.md §1.2 and §3 for
+  the path forward.
+- [-] **LLVM-side numbers** partly unblocked.
+  [Issue 013](../issues/closed/013-pyc-llvm-default-off.md) closed
+  June 2026; `make USE_LLVM=1 && PYC_FLAGS=-b ./test_pyc`
+  now actually exercises the LLVM path. The PERFORMANCE.md
+  baseline tables remain C-only because only 8/74 fixtures
+  currently compile through the LLVM backend (phase 3.5
+  parity gap). Re-enable LLVM benching for the 8 passing
+  fixtures, or wait until §3.5 progress brings the count up
+  enough for a representative comparison.
+
+### 9.4 Backend selection cleanup
+
+- [ ] **Document `IFA_LLVM=1`** in CODEGEN_LLVM.md and README.
+- [ ] **Single source of truth** for which backend is active —
+  currently `IFA_LLVM` env var + `pyc.cc` branches. Move
+  decision to a clean `Codegen::factory()`.
+
+### Phase 6 exit criteria
+
+- CI green on push.
+- Docs match reality.
+- Performance baseline recorded; no regression introduced by
+  the plan.
+
+---
+
+## 9.5 Phase 7 — LLVM Direct Emission (Post-Reset)
+
+Adopted June 2026. After attempting to build an intermediate `CG_IR` (and a subsequent `CGView` layer), the architectural realization was that intermediate codegen forms were lossy and unnecessarily complex.
+
+The LLVM backend is being pivoted to emit *directly* from the `IF1` core data structures, exactly mirroring the proven, 99/0-parity architecture of the C backend (`cg.cc`). 
+
+See [LLVM_DIRECT_EMIT_PLAN.md](LLVM_DIRECT_EMIT_PLAN.md) for the detailed execution checklist. This architecture eliminates intermediate allocations, drastically reduces LOC, and simplifies addition of future backends.
+
+---
+
+## 10. What's deliberately NOT in scope
+
+Things that look like they could be in this plan but aren't:
+
+- **A third backend** (WASM, bytecode, etc.). Wait until the
+  two existing backends are at parity (closer after Phase 7's
+  CG_IR migration than today).
+- **Cross-type method dispatch semantic check** (the missing
+  Option C from issue 011). That's a frontend/analyzer concern;
+  not codegen.
+- **Major IF1 IR changes** (e.g., dropping the `Code_kind` enum
+  in favor of subclasses). Out of scope; touch only the codegen
+  *consumption* of IF1.
+- **Runtime library work** (`pyc_c_runtime.h` and friends).
+  Codegen interacts with the runtime ABI but doesn't own it.
+  Runtime changes are tracked separately.
+- **Frontend changes** for cross-type checks, reflective
+  primitives, etc. Out of scope.
+
+---
+
+## 11. Ordering across PRs
+
+Within each phase items can ship in any order. Between phases
+the dependency graph is:
+
+```
+Phase 0 (foundation)
+  └── Phase 1 (test infra)
+        └── Phase 2 (shared module)
+              ├── Phase 3 (LLVM primitives) — can run in parallel with Phase 4
+              └── Phase 4 (hardening) — can run in parallel with Phase 3
+                    └── Phase 5 (unification)
+                          └── Phase 6 (polish)
+```
+
+Phases 3 and 4 are independent — different files, different
+concerns. They can ship in parallel.
+
+---
+
+## 12. Estimated cost
+
+Rough sizing per phase (PR count × hours-per-PR):
+
+| Phase | PRs | Hours/PR | Total |
+|---|---|---|---|
+| 0 | 1-2 | 3-5 | 4-10 |
+| 1 | 1-2 | 4-8 | 4-16 |
+| 2 | 1 | 6-10 | 6-10 |
+| 3 | 4-8 | 4-8 | 16-64 |
+| 4 | 2-3 | 4-8 | 8-24 |
+| 5 | 2-3 | 8-16 | 16-48 |
+| 6 | 1-2 | 3-6 | 3-12 |
+| **Total** | 12-21 | | **~57-184 hours** |
+
+Order-of-magnitude. The wide range on phase 3 reflects unknown
+LLVM-specific quirks per primitive. Phase 5 is the second-most
+expensive — a structural refactor is harder than functional
+additions.
+
+If sizing matters: phase 0 alone (a single afternoon's work)
+addresses the live latent bug (state leak) and most of the
+nuisance items in AUDIT. Phase 1 makes the rest of the plan
+verifiable. The minimum viable subset is phases 0 + 1.
+
+---
+
+## 13. Cross-references
+
+- [AUDIT.md](AUDIT.md) — what's broken; this plan fixes it.
+- [CODEGEN_C.md](../CODEGEN_C.md), [CODEGEN_LLVM.md](../CODEGEN_LLVM.md)
+  — what each backend does today.
+- [PRIMITIVES.md](../PRIMITIVES.md) — the per-primitive contract.
+  Phase 1.3 / 2.3 / 3 all touch this.
+- [Issue 011](../issues/closed/011-setter-codegen-vs-analyzer-mismatch.md)
+  — the analyzer/codegen alignment that landed June 2026.
+- [../analysis/NOTES.md](../analysis/NOTES.md) —
+  consolidated analysis notes and architectural reference.

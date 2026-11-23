@@ -1,0 +1,39 @@
+;; phase: finalize
+
+(prim-bound
+  in %add:
+    send[1] = (none)
+)
+
+(live
+  syms:     31 live, 0 dead
+  closures: 2 live (of 2 total)
+)
+
+;; full state:
+;; syms
+(sym %a :is-local :nesting-depth 1)
+(sym %b :is-local :nesting-depth 1)
+(sym %r :is-local :nesting-depth 1)
+(sym %cont)
+(sym %ret)
+(sym %u :is-local :nesting-depth 1)
+(sym %v :is-local :nesting-depth 1)
+(sym %dead_cont)
+
+;; funs
+(fun %add
+  :args (%a %b)
+  :rets (%r)
+  :cont %cont
+  :body
+  (send %a %b => %r)
+)
+(fun %ignored
+  :args (%u)
+  :rets (%v)
+  :cont %dead_cont
+  :body
+  (move %u %v)
+)
+

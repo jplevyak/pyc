@@ -4,7 +4,15 @@
 #include "math.h"
 
 static int sprint_float_val(char *str, size_t size, double val) {
-  int numchars = snprintf(str, size, "%g", val);
+  // %g defaults to 6 significant digits -- too coarse once this is used
+  // to embed a float *constant*'s literal text into generated C code
+  // (cg.cc's write_c, via the no-control-string sprint_imm overload
+  // below): a literal like 1234567.89 would round-trip through the
+  // generated .c file as 1.23457e+06 == 1234570.0, silently losing
+  // precision. %.17g round-trips any double exactly, matching the
+  // convention pyc_c_runtime.h's _CG_str_from_float/
+  // _CG_prim_primitive_to_string(double) already use for the same reason.
+  int numchars = snprintf(str, size, "%.17g", val);
   if (strchr(str, '.') == NULL && strchr(str, 'e') == NULL) {
     if ((size_t)numchars + 2 < size) {
       strcat(str, ".0");
@@ -290,6 +298,10 @@ void coerce_immediate(Immediate *from, Immediate *to) {
 #include "cast_code.cc"
 }
 
+bool check_coerce_immediate(Immediate *from, Immediate *to) {
+#include "check_cast.cc"
+}
+
 #define DO_FOLD(_op)                                           \
   switch (imm->const_kind) {                                   \
     case IF1_NUM_KIND_NONE:                                    \
@@ -541,6 +553,68 @@ void coerce_immediate(Immediate *from, Immediate *to) {
       break;                                              \
   }
 
+// issues/041: `%`'s own dedicated fold, found while porting the
+// colorsys shim -- P_prim_mod used to fold via DO_FOLDI, whose FLOAT
+// case is a deliberate stub (raw C `%` is invalid on floats), so any
+// compile-time-constant float modulo (e.g. `hue % 1.0`) hit
+// assert(!"case") in the compiler itself, not generated/runtime code.
+// float uses fmod() instead of `%`; both int and float then apply the
+// same truncated-to-floored sign adjustment pyc_c_runtime.h's
+// _CG_prim_mod / cg_emit_llvm.cc's P_prim_mod case now use for the
+// non-constant-folded path (confirmed separately broken: pyc's `%`
+// gave C's -1 for `-7 % 3` instead of Python's 2, even for plain
+// integers) -- constant folding must match runtime behavior exactly,
+// or the same expression could evaluate differently depending on
+// whether FA happened to fold it.
+#define DO_FOLDMOD_INT(_ta, _va)                             \
+  {                                                          \
+    _ta r = im1._va % im2._va;                               \
+    if (r != 0 && ((r < 0) != (im2._va < 0))) r += im2._va;   \
+    imm->_va = r;                                             \
+  }
+#define DO_FOLDMOD_UINT(_ta, _va) imm->_va = im1._va % im2._va
+#define DO_FOLDMOD_FLOAT(_ta, _va)                                        \
+  {                                                                        \
+    _ta r = (_ta)fmod((double)im1._va, (double)im2._va);                  \
+    if (r != 0 && ((r < 0) != (im2._va < 0))) r += im2._va;               \
+    imm->_va = r;                                                         \
+  }
+#define DO_FOLDMOD()                                                       \
+  switch (imm->const_kind) {                                               \
+    case IF1_NUM_KIND_NONE:                                                \
+      break;                                                               \
+    case IF1_NUM_KIND_UINT: {                                              \
+      switch (imm->num_index) {                                           \
+        case IF1_INT_TYPE_1: DO_FOLDMOD_UINT(bool, v_bool); break;         \
+        case IF1_INT_TYPE_8: DO_FOLDMOD_UINT(uint8, v_uint8); break;       \
+        case IF1_INT_TYPE_16: DO_FOLDMOD_UINT(uint16, v_uint16); break;    \
+        case IF1_INT_TYPE_32: DO_FOLDMOD_UINT(uint32, v_uint32); break;    \
+        case IF1_INT_TYPE_64: DO_FOLDMOD_UINT(uint64, v_uint64); break;    \
+        default: assert(!"case");                                         \
+      }                                                                    \
+      break;                                                               \
+    }                                                                      \
+    case IF1_NUM_KIND_INT: {                                               \
+      switch (imm->num_index) {                                           \
+        case IF1_INT_TYPE_1: DO_FOLDMOD_UINT(bool, v_bool); break;         \
+        case IF1_INT_TYPE_8: DO_FOLDMOD_INT(int8, v_int8); break;          \
+        case IF1_INT_TYPE_16: DO_FOLDMOD_INT(int16, v_int16); break;       \
+        case IF1_INT_TYPE_32: DO_FOLDMOD_INT(int32, v_int32); break;       \
+        case IF1_INT_TYPE_64: DO_FOLDMOD_INT(int64, v_int64); break;       \
+        default: assert(!"case");                                         \
+      }                                                                    \
+      break;                                                               \
+    }                                                                      \
+    case IF1_NUM_KIND_FLOAT:                                               \
+      switch (imm->num_index) {                                           \
+        case IF1_FLOAT_TYPE_32: DO_FOLDMOD_FLOAT(float32, v_float32); break;    \
+        case IF1_FLOAT_TYPE_64: DO_FOLDMOD_FLOAT(float64, v_float64); break;    \
+        case IF1_FLOAT_TYPE_128: DO_FOLDMOD_FLOAT(float128, v_float128); break; \
+        default: assert(!"case");                                              \
+      }                                                                        \
+      break;                                                                   \
+  }
+
 #define DO_FOLD1(_op)                           \
   switch (imm->const_kind) {                    \
     case IF1_NUM_KIND_NONE:                     \
@@ -680,18 +754,23 @@ void fold_result(Immediate *im1, Immediate *im2, Immediate *imm) {
     im1 = t;
   }
   if (im1->const_kind == IF1_NUM_KIND_FLOAT) {
-    if (int_type_precision[im2->const_kind] <= float_type_precision[im1->const_kind]) {
+    // Survey B2 (same fix as coerce_num in analysis/fa.cc): index
+    // the precision tables by num_index, not the kind enum, and
+    // widen to float64 when a >=32-bit int doesn't fit -- the old
+    // code both misindexed and returned the NARROW float for the
+    // wide-int case.
+    if (int_type_precision[im2->num_index] <= float_type_precision[im1->num_index]) {
       imm->const_kind = im1->const_kind;
       imm->num_index = im1->num_index;
       return;
     }
-    if (int_type_precision[im2->const_kind] >= 32) {
+    if (int_type_precision[im2->num_index] >= 32) {
       imm->const_kind = IF1_NUM_KIND_FLOAT;
-      imm->num_index = IF1_FLOAT_TYPE_32;
+      imm->num_index = IF1_FLOAT_TYPE_64;
       return;
     }
     imm->const_kind = IF1_NUM_KIND_FLOAT;
-    imm->num_index = IF1_FLOAT_TYPE_64;
+    imm->num_index = IF1_FLOAT_TYPE_32;
     return;
   }
   // mixed signed and unsigned
@@ -715,6 +794,23 @@ void fold_result(Immediate *im1, Immediate *im2, Immediate *imm) {
   imm->const_kind = IF1_NUM_KIND_UINT;
   imm->num_index = IF1_INT_TYPE_1;
   return;
+}
+
+// True if an integer-kind immediate is zero (any width). Used to bail
+// out of folding div/mod: FA feeds fold_constant speculative constants
+// from contours that may be dead at runtime, and folding an integer
+// division by zero would SIGFPE the compiler itself (issue 025,
+// tonyjpegdecoder).
+static bool imm_int_is_zero(const Immediate &im) {
+  if (im.const_kind != IF1_NUM_KIND_UINT && im.const_kind != IF1_NUM_KIND_INT) return false;
+  switch (im.num_index) {
+    case IF1_INT_TYPE_1: return !im.v_bool;
+    case IF1_INT_TYPE_8: return !im.v_uint8;
+    case IF1_INT_TYPE_16: return !im.v_uint16;
+    case IF1_INT_TYPE_32: return !im.v_uint32;
+    case IF1_INT_TYPE_64: return !im.v_uint64;
+    default: return false;
+  }
 }
 
 int fold_constant(int op, Immediate *aim1, Immediate *aim2, Immediate *imm) {
@@ -757,11 +853,27 @@ int fold_constant(int op, Immediate *aim1, Immediate *aim2, Immediate *imm) {
     case P_prim_plus:
     case P_prim_minus:
     case P_prim_not:
+    case P_prim_await:
+      // `~` (bitwise invert) is undefined on a float operand (Python
+      // raises TypeError); the DO_FOLD1I float case below has no
+      // implementation and would hit its assert(!"case") stub. This
+      // only happens when an upstream type-inference imprecision feeds
+      // a float constant into what should be an int-only op, so bail
+      // (leave unfolded) rather than crash -- same fallback the div-
+      // by-zero and string-operand cases above already rely on.
+      if (op == P_prim_not && im1.const_kind == IF1_NUM_KIND_FLOAT) return -1;
       imm->const_kind = im1.const_kind;
       imm->num_index = im1.num_index;
       break;
   }
   if (coerce.const_kind) {
+    // A numeric coercion target can't apply to a non-numeric constant
+    // operand (const_kind >= STRING), e.g. a string in a mixed
+    // `str == int` comparison. Bail (return "not folded") so the
+    // operation is handled at runtime instead of aborting
+    // coerce_immediate on an unhandled cast case (issue 025 bucket E,
+    // sudoku2).
+    if (im1.const_kind >= IF1_CONST_KIND_STRING || (aim2 && im2.const_kind >= IF1_CONST_KIND_STRING)) return -1;
     coerce_immediate(&im1, &coerce);
     im1 = coerce;
     if (aim2) {
@@ -777,10 +889,12 @@ int fold_constant(int op, Immediate *aim1, Immediate *aim2, Immediate *imm) {
       DO_FOLD(*);
       break;
     case P_prim_div:
+      if (aim2 && imm_int_is_zero(im2)) return -1;  // leave for runtime
       DO_FOLD(/);
       break;
     case P_prim_mod:
-      DO_FOLDI(%);
+      if (aim2 && imm_int_is_zero(im2)) return -1;  // leave for runtime
+      DO_FOLDMOD();
       break;
     case P_prim_add:
       DO_FOLD(+);
@@ -835,6 +949,9 @@ int fold_constant(int op, Immediate *aim1, Immediate *aim2, Immediate *imm) {
       break;
     case P_prim_not:
       DO_FOLD1I(~);
+      break;
+    case P_prim_await:
+      DO_FOLD1(+);
       break;
     case P_prim_lnot:
       DO_FOLD1(!);

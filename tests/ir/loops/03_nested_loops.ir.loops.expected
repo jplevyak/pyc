@@ -1,0 +1,8 @@
+;; phase: loops
+
+;; Fun %nested
+(loops %nested
+l0 depth=1 members=[%p1 %p10 %p2 %p3 %p4 %p5 %p6 %p7 %p8 %p9]
+  l1 depth=2 members=[%p4 %p5 %p6 %p7 %p8]
+)
+

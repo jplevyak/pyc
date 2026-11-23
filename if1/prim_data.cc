@@ -56,6 +56,12 @@ Prim *prim_sizeof = 0;
 Prim *prim_sizeof_element = 0;
 Prim *prim_typeof = 0;
 Prim *prim_typeof_element = 0;
+Prim *prim_is = 0;
+Prim *prim_await = 0;
+Prim *prim_copy = 0;
+Prim *prim_make_seq = 0;  // issues/110
+Prim *prim_yield = 0;
+Prim *prim_id = 0;
 
 void prim_init(Primitives *p, IF1 *if1) {
   char *n;
@@ -68,8 +74,14 @@ void prim_init(Primitives *p, IF1 *if1) {
   p->prim_map[0][0].put(n, prim_operator);
   static PrimType prim_period_arg_types[] = {PRIM_TYPE_ANY, PRIM_TYPE_ANY};
   static PrimType prim_period_ret_types[] = {PRIM_TYPE_ANY};
-  prim_period =
-      new Prim(1, ".", "prim_period", 3, 1, 1, prim_period_arg_types, prim_period_ret_types, PRIM_NON_FUNCTIONAL);
+  // prim_period is a pure read (or an unobservable closure-field write
+  // during closure-create). IFA lowers computed-attribute semantics —
+  // __getattr__ / property descriptors — to method calls, so raw
+  // prim_period never carries an untracked side effect. Marking it
+  // PRIM_NON_FUNCTIONAL would over-conserve at the Sym-level pass while
+  // FA-level mark_live_pnodes correctly kills unused field reads /
+  // closure allocations via lval-liveness.
+  prim_period = new Prim(1, ".", "prim_period", 3, 1, 1, prim_period_arg_types, prim_period_ret_types, 0);
   n = (char *)if1->strings.put((char *)".");
   p->prims.add(prim_period);
   p->prim_map[1][1].put(n, prim_period);
@@ -98,8 +110,16 @@ void prim_init(Primitives *p, IF1 *if1) {
   n = (char *)if1->strings.put((char *)"/");
   p->prims.add(prim_div);
   p->prim_map[1][1].put(n, prim_div);
-  static PrimType prim_mod_arg_types[] = {PRIM_TYPE_ANY_INT_A, PRIM_TYPE_ANY_INT_B};
-  static PrimType prim_mod_ret_types[] = {PRIM_TYPE_ANY_INT_A};
+  // issues/041: was ANY_INT-only, stale relative to _CG_prim_mod
+  // (pyc_c_runtime.h) / P_prim_mod (cg_emit_llvm.cc) actually
+  // supporting float operands (via fmod + Python's floored-sign
+  // adjustment) -- every other arithmetic prim here (*, /, +, -, **)
+  // already declares ANY_NUM, matching real support for both; % was
+  // simply never updated. Left as ANY_INT under -r (strict mode)
+  // before this fix, float `%` was a hard compile-time error despite
+  // running correctly in the default/tolerant mode.
+  static PrimType prim_mod_arg_types[] = {PRIM_TYPE_ANY_NUM_A, PRIM_TYPE_ANY_NUM_B};
+  static PrimType prim_mod_ret_types[] = {PRIM_TYPE_ANY_NUM_AB};
   prim_mod = new Prim(6, "%", "prim_mod", 3, 1, 1, prim_mod_arg_types, prim_mod_ret_types, 0);
   n = (char *)if1->strings.put((char *)"%");
   p->prims.add(prim_mod);
@@ -288,6 +308,15 @@ void prim_init(Primitives *p, IF1 *if1) {
   n = (char *)if1->strings.put((char *)"make");
   p->prims.add(prim_make);
   p->prim_map[0][0].put(n, prim_make);
+  // issues/110: make_seq(kind, iterable) -- a container of `kind` whose
+  // element type is the iterable's element type, with no fixed arity.
+  static PrimType prim_make_seq_arg_types[] = {PRIM_TYPE_ANY, PRIM_TYPE_ANY};
+  static PrimType prim_make_seq_ret_types[] = {PRIM_TYPE_ANY};
+  prim_make_seq =
+      new Prim(61, "make_seq", "prim_make_seq", -3, 0, 1, prim_make_seq_arg_types, prim_make_seq_ret_types, 0);
+  n = (char *)if1->strings.put((char *)"make_seq");
+  p->prims.add(prim_make_seq);
+  p->prim_map[0][0].put(n, prim_make_seq);
   static PrimType prim_vector_arg_types[] = {PRIM_TYPE_ANY};
   static PrimType prim_vector_ret_types[] = {PRIM_TYPE_ANY};
   prim_vector = new Prim(37, "make_vector", "prim_vector", -2, 0, 1, prim_vector_arg_types, prim_vector_ret_types, 0);
@@ -351,8 +380,12 @@ void prim_init(Primitives *p, IF1 *if1) {
   p->prim_map[1][0].put(n, prim_meta_apply);
   static PrimType prim_destruct_arg_types[] = {PRIM_TYPE_ANY};
   static PrimType prim_destruct_ret_types[] = {PRIM_TYPE_ANY};
-  prim_destruct = new Prim(46, "destruct", "prim_destruct", 2, 0, 1, prim_destruct_arg_types, prim_destruct_ret_types,
-                           PRIM_NON_FUNCTIONAL);
+  // prim_destruct is tuple/record unpacking (one SEND, multiple lvals,
+  // one per element — see cg.cc:destruct_prim). No intrinsic side
+  // effect. Previously PRIM_NON_FUNCTIONAL to work around the
+  // speculative Sym-level mark_dead checking only lvals[0]; that pass
+  // was retired in issue 005, so the workaround flag goes too.
+  prim_destruct = new Prim(46, "destruct", "prim_destruct", 2, 0, 1, prim_destruct_arg_types, prim_destruct_ret_types, 0);
   n = (char *)if1->strings.put((char *)"destruct");
   p->prims.add(prim_destruct);
   p->prim_map[0][0].put(n, prim_destruct);
@@ -414,4 +447,45 @@ void prim_init(Primitives *p, IF1 *if1) {
   n = (char *)if1->strings.put((char *)"typeof_element");
   p->prims.add(prim_typeof_element);
   p->prim_map[0][0].put(n, prim_typeof_element);
+  // prim_is: real identity comparison (CPython `is`
+  // semantics on non-None operands).  Two args, one
+  // bool result; pointer equality at codegen.  See
+  // ifa/issues/028 and __pyc__/00_runtime.py comments.
+  static PrimType prim_is_arg_types[] = {PRIM_TYPE_ANY, PRIM_TYPE_ANY};
+  static PrimType prim_is_ret_types[] = {PRIM_TYPE_ANY};
+  prim_is = new Prim(56, "is", "prim_is", -3, 0, 1, prim_is_arg_types, prim_is_ret_types, 0);
+  n = (char *)if1->strings.put((char *)"is");
+  p->prims.add(prim_is);
+  p->prim_map[0][0].put(n, prim_is);
+
+  static PrimType prim_await_arg_types[] = {PRIM_TYPE_ANY};
+  static PrimType prim_await_ret_types[] = {PRIM_TYPE_ANY};
+  prim_await = new Prim(57, "await", "prim_await", -2, 0, 1, prim_await_arg_types, prim_await_ret_types, PRIM_NON_FUNCTIONAL);
+  n = (char *)if1->strings.put((char *)"await");
+  p->prims.add(prim_await);
+  p->prim_map[0][0].put(n, prim_await);
+
+  static PrimType prim_copy_arg_types[] = {PRIM_TYPE_ANY};
+  static PrimType prim_copy_ret_types[] = {PRIM_TYPE_ANY};
+  prim_copy = new Prim(58, "copy", "prim_copy", -2, 0, 1, prim_copy_arg_types, prim_copy_ret_types, 0);
+  n = (char *)if1->strings.put((char *)"copy");
+  p->prims.add(prim_copy);
+  p->prim_map[0][0].put(n, prim_copy);
+
+  // issues/014: modeled directly on prim_await above -- one ANY-typed
+  // arg (the yielded value), one ANY-typed result (what a future
+  // .send() would provide; always None in v1 scope).
+  static PrimType prim_yield_arg_types[] = {PRIM_TYPE_ANY};
+  static PrimType prim_yield_ret_types[] = {PRIM_TYPE_ANY};
+  prim_yield = new Prim(59, "yield", "prim_yield", -2, 0, 1, prim_yield_arg_types, prim_yield_ret_types, PRIM_NON_FUNCTIONAL);
+  n = (char *)if1->strings.put((char *)"yield");
+  p->prims.add(prim_yield);
+  p->prim_map[0][0].put(n, prim_yield);
+
+  static PrimType prim_id_arg_types[] = {PRIM_TYPE_ANY};
+  static PrimType prim_id_ret_types[] = {PRIM_TYPE_ANY};
+  prim_id = new Prim(60, "id", "prim_id", -2, 0, 1, prim_id_arg_types, prim_id_ret_types, 0);
+  n = (char *)if1->strings.put((char *)"id");
+  p->prims.add(prim_id);
+  p->prim_map[0][0].put(n, prim_id);
 }

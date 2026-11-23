@@ -20,6 +20,11 @@ class CreationSet;
 
 class MPosition : public gc {
  public:
+  // Issue 035: stable serial for deterministic hashing/ordering —
+  // MPositions key arg/filter Maps, and raw-pointer bucketing made
+  // map iteration order follow heap layout across runs.
+  static inline int id_counter = 1;
+  int id = id_counter++;
   Vec<const void *> pos;
   MPosition *cp, *up, *next, *down;
   void copy(MPosition &p);
@@ -62,6 +67,10 @@ class MPosition : public gc {
   int prefix_to_last(MPosition &p);
   MPosition() : cp(0), up(0), next(0), down(0) {}
   MPosition(MPosition &p);
+};
+
+template <> struct PointerHash<MPosition *> {
+  static uintptr_t hash(MPosition *c) { return c ? (uintptr_t)c->id : 0; }
 };
 
 inline int MPosition::prefix_to_last(MPosition &p) {
@@ -129,6 +138,9 @@ typedef MapElem<MPosition *, Sym *> MapMPositionSym;
 void build_patterns(FA *fa);
 void add_patterns(FA *fa, Fun *f);
 void build_arg_positions(FA *fa);
+
+// Clear pattern.cc module-level state. Called by ifa_reset().
+void pattern_reset();
 int positional_to_named(PNode *pn, CreationSet *cs, MPosition &p, MPosition *result_p);
 int pattern_match(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
                   PNode *visibility_point, Vec<Match *> &matches);
@@ -136,5 +148,38 @@ MPosition *cannonicalize_mposition(MPosition &p);
 MPosition *build_arg_positions(Fun *f, MPosition *up = 0);
 
 extern int pattern_match_hits, pattern_match_complete, pattern_matches;
+// ifa/185: bumped whenever a CreationSet loses its static arity. A match
+// cache entry is keyed on AType pointers, and that change is invisible to
+// them, so an entry whose candidates dispatch on arity records the epoch
+// it was built at and is a miss once the epoch moves.
+extern int dispatch_arity_epoch;
+
+// issues/103: a call whose every candidate was rejected because a keyword
+// argument names no formal of it, keyed by the send's PNode: the callee's
+// name and the keyword, so the type violation at that call can say what
+// CPython says ("f() got an unexpected keyword argument 'k'").
+struct UnexpectedKeyword {
+  cchar *fun_name;
+  cchar *keyword;
+};
+UnexpectedKeyword *unexpected_keyword_at(PNode *send_pnode);
+// issues/189: why the matcher declined a call's `*` or `**` actual, keyed
+// by the send's PNode, so its violation can say so instead of "illegal
+// call argument type".
+cchar *unpacking_refusal_at(PNode *send_pnode);
+
+// ifa/207 step 2: IFA_STANDING. See pattern.cc.
+extern int standing_generation;
+int standing_mode();
+void standing_record(Vec<AVar *> &args, Vec<cchar *> &names, AVar *send, int is_closure, Partial_kind partial,
+                     PNode *visibility_point, Vec<Match *> &matches);
+int standing_try(Vec<AVar *> &args, AVar *send, int is_closure, Partial_kind partial, PNode *visibility_point,
+                 Vec<Match *> &admitted, Vec<Match *> *check);
+
+// ifa/207: skip a dispatch whose inputs did not change. See pattern.cc.
+int dispatch_unchanged(Vec<AVar *> &args, AVar *send, int is_closure, Partial_kind partial, PNode *visibility_point,
+                       int *ret);
+void dispatch_remember(Vec<AVar *> &args, AVar *send, int is_closure, Partial_kind partial, PNode *visibility_point,
+                       int ret, Vec<Match *> *matches);
 
 #endif

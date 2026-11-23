@@ -14,6 +14,7 @@ BasicSym::BasicSym(void)
       aspect(NULL),
       must_specialize(NULL),
       must_implement(NULL),
+      dispatch_arity(-1),
       ast(NULL),
       var(NULL),
       asymbol(NULL),
@@ -36,6 +37,10 @@ BasicSym::BasicSym(void)
       is_external(0),
       is_this(0),
       is_fake(0),
+      is_async(0),
+      is_generator(0),
+      is_static_method(0),
+      is_class_method(0),
       intent(0),
       is_meta_type(0),
       is_unique_type(0),
@@ -46,9 +51,12 @@ BasicSym::BasicSym(void)
       is_vector(0),
       fun_returns_value(0),
       live(0),
+      can_raise(0),
+      direct_raise(0),
       type_kind(0),
       num_kind(0),
       num_index(0),
+      clone_methods_per_cs(0),
       clone_for_constants(0),
       dispatch_types_built(0),
       type_live(0) {}
@@ -203,6 +211,26 @@ Sym *unalias_type(Sym *s) {
   return s;
 }
 
+bool c_call_arg_type_mismatch(Sym *declared_raw, Sym *actual) {
+  Sym *declared = unalias_type(declared_raw);
+  if (!declared || !actual || declared == actual) return false;
+  // Any two numeric types are safely C-castable regardless of
+  // width/precision (int vs int64, int vs float, ...) -- only a
+  // pointer-representable type (num_kind == 0: str, bytes, records,
+  // `_CG_any`, ...) paired with a numeric one is the actual danger (a
+  // straight C assignment/comparison between a pointer and an
+  // integer).
+  if (declared->num_kind || actual->num_kind) return !(declared->num_kind && actual->num_kind);
+  // Two non-numeric types: require their C representations to agree
+  // exactly. No `_CG_any` exemption -- `_CG_any` is `void*`, which C++
+  // converts implicitly FROM any other pointer type but never TO one,
+  // so an actual `_CG_any` reaching a call declared to take a real
+  // pointer type (str's `char*`, ...) is exactly the unsafe direction
+  // C++ refuses to convert implicitly.
+  cchar *dc = declared->cg_string, *ac = actual->cg_string;
+  return dc && ac && strcmp(dc, ac) != 0;
+}
+
 void if1_set_int_type(IF1 *p, Sym *t, int signd, int size) {
   int ss = 0;
   size >>= 3;
@@ -331,6 +359,8 @@ void Sym::inherits_add(Sym *s) {
   implements.add(s);
   specializes.add(s);
   includes.add(s);
+  s->implementors.set_add(this);
+  s->specializers.set_add(this);
 }
 
 void Sym::must_implement_and_specialize(Sym *s) {
@@ -367,7 +397,11 @@ Sym *Sym::coerce_to(Sym *to) {
 }
 
 void Sym::convert_constant_string_to_immediate() {
-  if (!is_constant) return;
+  // Only a number is parsed from its text. A string, bytes or symbol has no
+  // num_kind, and resetting const_kind to it erased the IF1_CONST_KIND_STRING
+  // that if1_const set: the LLVM backend then found no string constant and
+  // printed every V string literal as "(null)".
+  if (!is_constant || !type || !type->num_kind) return;
   imm.const_kind = type->num_kind;
   imm.num_index = type->num_index;
   convert_string_to_immediate(constant, &imm);
@@ -375,7 +409,17 @@ void Sym::convert_constant_string_to_immediate() {
 
 static Sym *int_constant_internal(IF1 *i, int n, Sym *t) {
   Immediate imm;
-  imm.v_int32 = n;
+  // Immediate's v_int32/v_int64 overlap in a union; int64_constant()
+  // (t=sym_int64) needs the wider member set so codegen's int64 read
+  // sees `n` properly sign-extended, not the union's untouched upper
+  // 32 bits (garbage -- confirmed: int64_constant(INT_MIN) emitted
+  // as the unsigned magnitude 2147483648, not -2147483648, since only
+  // v_int32's low half had ever been written). Setting v_int64 (not
+  // v_int32) also leaves v_int32 correct for int32_constant callers
+  // on this codebase's assumed little-endian platforms -- sign
+  // extension only fills the upper bytes, the low 4 match `n` either
+  // way.
+  imm.v_int64 = n;
   if (n >= 0 && n < 10) {
     char c[2];
     c[0] = n + '0';

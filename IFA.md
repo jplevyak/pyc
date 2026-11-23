@@ -1,0 +1,744 @@
+# IFA — Iterative Flow Analysis
+
+A working reference for LLMs (and humans) maintaining the IFA implementation
+in this tree. Pairs the 1994 OOPSLA paper (`ifa-submit.pdf`,
+Plevyak & Chien) with the actual code in `ifa/analysis/`.
+
+The reader is expected to know SSA, points-to / type-inference style flow
+analysis, and ML/Self-style polymorphic OO. This document is a map, not a
+re-derivation of the paper.
+
+---
+
+## 1. What IFA is, in one paragraph
+
+**IFA is a simultaneous data and control flow analysis based on abstract
+interpretation against a type-value lattice.** It starts with the
+**minimum** function contours (`EntrySet`) and data contours
+(`CreationSet`) and proceeds **in passes**, splitting them to increase
+precision — by types, by setters, and so on.
+
+It is for high-level object-oriented and functional languages where data
+flow and control flow are mutually dependent: object types decide dynamic
+dispatch targets, which decide which code runs, which produces the next
+round of object types. Neither can be computed first, which is what
+*simultaneous* means here. Classical k-CFA and OPS pre-commit to a fixed
+abstract representation (a fixed number of contours per program point)
+before the analysis runs; IFA starts minimal (≈0-CFA) and, where the
+result is too imprecise, **iteratively refines the abstract domain** and
+re-runs until a fixed point is reached. The paper reports much better
+precision than 0-CFA/OPS at competitive cost (Tables/Figures 12-17), with
+80-100% of dynamic dispatch sites statically bound.
+
+### 1.1 The splitting rule — the one that keeps getting forgotten
+
+**A contour is NEVER split because a surrounding contour was split.
+Splitting is only ever on demand.**
+
+A contour exists because something *observed a distinction that required
+it*. Splitting driven by structure — because the enclosing function
+contour split, because the allocation site is distinct, because the shape
+of the IR happened to fan out — is a defect, however well it converges,
+and however good the resulting precision looks. Precision bought
+structurally is contours nobody asked for.
+
+The rule constrains the two contour kinds in opposite directions, and the
+direction is easy to invert by accident:
+
+- Splitting an `EntrySet` must not, by itself, create `CreationSet`s.
+- Splitting an `EntrySet` **is** a legitimate *means* to an end: you split
+  a function contour **so that** creation points separate and a demanded
+  `CreationSet` split becomes possible. That is the ES split serving the
+  CS split, not causing it.
+
+**The rule holds on the EntrySet side and not on the CreationSet side**,
+and the asymmetry is measurable rather than a matter of opinion:
+
+- **EntrySets DO start minimal** — one per function on the first pass —
+  and split on demand. A program calling `f(1)` and `f(2.5)` gives `f`
+  exactly two contours, which is what its argument types asked for.
+- **CreationSets did not.** `creation_point` memoizes on `v->cs_map` where
+  `v` is an AVar — a *(variable × contour)* pair — so it mints one
+  CreationSet per *(allocation site × contour)* and never asks whether two
+  could be the same. CS identity is therefore decided by structure before
+  any demand test runs. That is true by construction; it needs no
+  measurement to see. `ifa/issues/128` is this.
+
+  **`PYC_CSDCPA1=2` — start merged, one CreationSet per sym — is now the
+  DEFAULT.** `PYC_CSDCPA1=0` restores the old maximal start.
+  `ifa/issues/129` is the plan, and carries what the flip costs and what is
+  still owed for it.
+
+Two cautions on the second point, both learned by measurement:
+
+- "every ES split multiplies CreationSets as a side effect" is the general
+  shape of the identity rule, but it is NOT reliable per-change: the one
+  ES-split mechanism built to serve a CS split (`PYC_ESBLOCK`) mints
+  *fewer* CreationSets through `creation_point`, not more. See 128's route
+  histogram before repeating the claim about a specific change.
+- Reducing the CreationSet count is not automatically progress. Merging
+  tuple CreationSets costs ten corpus programs and makes the contour it
+  was meant to help WORSE. 128 and `ifa/issues/133` pull against each
+  other; `ifa/issues/146` E is what the start-merged flip actually needs.
+
+*(`PYC_CSSPLIT=1` — a CreationSet following an ES split by construction —
+was listed here as a second live violation. It was REMOVED 2026-09-08,
+ifa/146 A.)*
+
+**How to tell the difference when reviewing a change.** Ask what OBSERVED
+the distinction. A type violation at a use site, a setter confluence, an
+element union with no representation — those are demands. "The enclosing
+contour split", "this is a different allocation site", "the receiver
+differs" are not; they are structure, and two of them are also provenance
+(§11.0).
+
+---
+
+## 2. Vocabulary cheat-sheet (paper ↔ code)
+
+| Paper term | Code type | Notes |
+|---|---|---|
+| program text variable `x` | `Sym *` / `Var *` | `Sym` is the symbol, `Var` is the usage in IF1 |
+| flow value | `CreationSet *` (CS) | A specific allocation site / concrete shape |
+| abstract type (set of flow values) | `AType *` (`Vec<CreationSet*>`) | Canonicalized & hash-consed |
+| contour | `EntrySet *` (ES) for functions; `CreationSet *` for objects | What gets "split" |
+| flow edge | `AVar` forward/backward links | `flow_vars`, `flow_var_to_var` |
+| call edge | `AEdge *` | Connects an `EntrySet` to another `EntrySet` |
+| function (callee specialization) | `EntrySet *` | One ES = one specialization of one `Fun` |
+| object/instance (CreationSet) | `CreationSet *` | A canonical creation/allocation contour |
+| `Func(c)` (function contribution) | union over edges in `EntrySet::edges` | drives `analyze_edge` and dispatch |
+| `Conf(c)` (call contribution) | `add_send_edges_pnode` | maps caller contours to callee contour |
+| `Object(c)` (object contour) | `CreationSet` with its `var_map` / `vars` | object inspection |
+| `AssignSet(v,Val)` / `Block(v)` / `Path(v)` | `Setters` + `mark_map` + reach‐ability over `forward`/`backward` | see §6 splitting |
+| Split (function, contour, data) | `split_entry_set`, `find_or_make_filtered_entry_set`, `creation_point` | see §6 |
+| Concretize / clone | `clone.cc` (`determine_clones`, `clone_functions`) | post-pass that maps the abstract analysis back into concrete types/functions for codegen |
+
+`AVar` = (`Var`, contour) pair. `make_AVar(Var, EntrySet*)` chooses the right
+contour automatically: globals → `GLOBAL_CONTOUR`, nested-function vars →
+the appropriate display entry, internal vars → the entry set itself.
+
+---
+
+## 3. The algorithm at a glance
+
+The implementation in `ifa/analysis/` directly mirrors the paper:
+
+```
+FA::analyze(top)                      // fa.cc:3822
+  initialize()                        // basic types, primitives, patterns, top edge
+  loop:
+    initialize_pass()                 // clear violations + refresh top edge
+    refresh_top_edge(top_edge)
+    while (edge_worklist || send_worklist):
+        analyze_edge()                // (re)bind ES, propagate args/rets, see §5
+        add_send_edges_pnode()        // make calls happen for new types
+        add_es_constraints()          // (re)scan EntrySet's PNodes
+    complete_pass()                   // collect violations
+  while extend_analysis() == true     // §6 — split & request another pass
+  set_void_lub_types_to_void()
+  remove_unused_closures()
+  report violations / errors
+```
+
+Then (separately):
+
+```
+clone(fa)                              // clone.cc:1024
+  initialize()                         // build called_ess, called_css maps
+  determine_layouts()                  // ivar offsets
+  determine_clones()                   // ES/CS equivalence fixed point
+  build_concrete_types()               // SUM / RECORD / TAGGED / Type_FUN, etc.
+  clone_functions()                    // duplicate Fun for each equiv class, rebuild calls
+```
+
+The flow loop is essentially 0-CFA per iteration. The novelty lives in
+`extend_analysis()` — the splitter that refines the abstract domain and
+re-runs the flow loop.
+
+---
+
+## 4. Core data structures (header: `ifa/analysis/fa.h`)
+
+### `AType : public Vec<CreationSet*>`
+The lattice element: a *set* of concrete creation sites (≈ "this value
+could be one of these objects/constants"). Constants are summarized into
+their base type once the cap `num_constants_per_variable` (default 1) is
+exceeded — see `type_cannonicalize`. Hash-consed via `cannonical_atypes`,
+so pointer equality on `AType*` means semantic equality. Three memoized
+binary ops: `union_map`, `intersection_map`, `diff_map`.
+
+Empty `AType` = `bottom_type`. There is no single `top_type` element; the
+named `top_type = union(any_type, void_type)`. `unknown_type`, `any_type`,
+`void_type`, `bool_type`, `true_type`, `false_type`, `size_type`,
+`anyint_type`, `anynum_kind`, `symbol_type`, `string_type`, `tuple_type`,
+`function_type` are all module-level (`fa.cc:29-45`) and built once in
+`initialize()` (`fa.cc:2792`).
+
+### `CreationSet` (CS)
+One per allocation contour. Holds:
+- `sym` (the kind, e.g. `sym_closure`, `sym_tuple`, user class) and `type`
+  (the concrete type assigned after cloning).
+- `vars` — instance variables as `AVar`s (each `AVar` bound to **this CS**
+  as its contour).
+- `var_map` — name → ivar AVar (used by `P_prim_period` / `P_prim_setter`).
+- `defs` — every `AVar` that creates this CS (`creation_point` populates).
+- `ess` — entry sets restricted by this CS, `es_backedges` — ES backedges.
+- `equiv` (clone.cc) — equivalence class for cloning.
+- `split` — parent CS this one was split from.
+- `closure_used`, `tuple_able`, `clone_for_constants` — feature flags set
+  during analysis.
+
+CSes are *shared per (Sym, creation context)* — multiple AVars can point
+at the same CS. Creation goes through `creation_point(AVar v, Sym s, int n)`
+(`fa.cc:267`).
+
+### `EntrySet` (ES)
+One per function specialization. Holds:
+- `fun` — the underlying `Fun*`.
+- `args`, `rets`, `filters` (per-position `AType*` filter for arg dispatch).
+- `edges` — incoming `AEdge`s.
+- `out_edges`, `out_edge_map` — outgoing calls; map is `PNode → vec<AEdge>`.
+- `creates` — CSes allocated in this ES.
+- `display` — lexical-parent chain for nested functions (one per nesting
+  level). Critical for closure semantics.
+- `live_pnodes` — PNodes actually exercised.
+- `backedges`, `es_cs_backedges`, `cs_backedges`,
+  `pending_es_backedge_map` — recursion bookkeeping used by splitting.
+- `split` — parent ES this one was split from.
+- `equiv` (clone.cc) — equivalence class for cloning.
+
+### `AEdge`
+A call edge: `from` ES → `to` ES, via a specific `pnode`, applying a
+particular `match : Match*`. `args` is the positional arg map; `rets` is
+the per-result `AVar`. `filtered_args` are post-filter AVars used to gate
+flow when an ES has type filters on its arguments.
+
+### `AVar`
+The flow node for `(Var, contour)`. The flow graph lives here:
+- `forward` / `backward` — pointer-set of `AVar`s data flows to/from.
+- `gen` — types this AVar generates locally (constants, creation points).
+- `in` — accumulated types arriving via `forward` edges + `gen`.
+- `out` = `in ∩ restrict` (filtered).
+- `restrict` — upper-bound filter (declared/inferred type bound).
+- `lvalue` — paired lvalue AVar for assignment.
+- `container` — for elements of compound objects (`set_container`).
+- `arg_of_send` — AVar dependencies for send (call) re-evaluation.
+- `setters` / `setter_class` — for the AssignSet splitting machinery (§6).
+- `mark_map` — distance marks for marked-confluence splitting.
+- `cs_map` — per-Sym CS map for `creation_point`.
+
+### `ATypeViolation`
+Recorded when something doesn't type-check: kind ∈ {PRIMITIVE_ARGUMENT,
+SEND_ARGUMENT, DISPATCH_AMBIGUITY, MEMBER, MATCH, NOTYPE, BOXING,
+CLOSURE_RECURSION}. Splitting tries to resolve these; survivors are
+reported via `if1->callback->report_analysis_errors` and `show_violations`.
+
+### `FA`
+Owns: `funs`, `ess` / `ess_set`, `css` / `css_set`, `top_edge`, the
+`PDB *pdb` and (post-pass) `CDB *cdb`. Tunables: `num_constants_per_variable`,
+`tuple_index_base`, `permit_boxing`, `no_unused_instance_variables`.
+
+---
+
+## 5. The flow loop (`fa.cc`)
+
+### 5.1 Top edge
+`make_top_edge(top)` (`fa.cc:2099`) creates a synthetic `AEdge` whose `to`
+ES is the entry contour for `main`. `refresh_top_edge` plumbs
+`sym___main__` so the iteration has a starting position. The top edge is
+re-enqueued at the start of every pass — `initialize_pass()` doesn't clear
+ES/CS state, only violation state, so cached structure carries over.
+
+### 5.2 Worklists
+Three queues live as `static` globals in `fa.cc:61-63`:
+- `edge_worklist : Que<AEdge>` — new/changed call edges.
+- `send_worklist : Que<AVar>` — sends whose receiver/arg `out` changed.
+- `es_worklist  : Que<EntrySet>` — ES needing re-scan (e.g. an `if`'s
+  predicate produced a new value, so dead-code analysis must redo).
+
+Each item carries an `in_*_worklist` bit so it isn't double-enqueued; the
+bit is cleared on pop. The order in `FA::analyze`'s inner loop is: drain
+edges → drain sends → drain ES, repeat until all empty.
+
+### 5.3 Per-edge analysis (`analyze_edge`, `fa.cc:2033`)
+1. `make_entry_set(e, edges)` — pick (or build) the target ES. May
+   produce more than one edge (one per CS when splitting on dispatch).
+2. For each chosen edge `ee`:
+   - **Filter check**: skip if `type_intersection(actual, formal_filter)
+     == bottom_type` — this argument can't take the filter.
+   - For each positional position `p`: flow `actual → filtered → formal`,
+     where `filtered` is an extra AVar that materializes the filter so
+     splitting can blame causality. Hook `container` for nested args (§4
+     `set_container`). Closures point `filtered` back at the closure CS.
+   - Materialize a continuation AVar if needed.
+   - Flow the ES's `rets` back into the call site `e->rets`.
+   - First time this ES is touched: `add_es_constraints(ee->to)` — walk
+     every PNode, build per-Code constraints (`add_pnode_constraints`).
+
+### 5.4 PNode constraints (`add_pnode_constraints`, `fa.cc:1934`)
+Dispatch on `code->kind`:
+- `MOVE` — direct `flow_vars`.
+- `SEND` — `add_send_constraints` (cheap, type-independent) + queue
+  `add_send_edges_pnode`.
+- `IF` — mark predicate AVar `is_if_arg`; the predicate's `update_in`
+  enqueues the ES so liveness/branch-folding can refine.
+- `LABEL` / `GOTO` — nothing to do here; CFG is in `PNode`.
+- `phi` / `phy` — pre-collected lists are walked at constraint time.
+
+### 5.5 Send semantics (`add_send_edges_pnode`, `fa.cc:1499`)
+Non-primitive sends go through pattern matching (Match library):
+`all_applications` enumerates the receiver's possible CSes and for each
+calls `application`, which:
+- If the CS is `sym_closure` (i.e. a partial application capturing args
+  and a callable) → `partial_application`: tack the captured args on and
+  recurse into the captured function.
+- Otherwise → `function_dispatch`: run `pattern_match`, then
+  `make_AEdges` per matching `Match` (and possibly synthesize a
+  `make_closure` if the match is partial).
+
+Primitive sends inline a large switch over `Prim::index`. Highlights:
+- `P_prim_period` (`obj.sel`) — name lookup via `cs->var_map`. Methods
+  are detected (intersection with `function_type`) and dispatched via
+  `make_period_closure`.
+- `P_prim_index_object` / `P_prim_set_index_object` — index into
+  CSes; if the CS is `is_vector` flow goes through the element AVar
+  (`get_element_avar`), else through the individual ivar AVars when the
+  index is a constant.
+- `P_prim_clone`, `P_prim_clone_vector` — `structural_assignment` copies
+  ivars between a source CS and a fresh `creation_point(result, sym)`.
+- `P_prim_isinstance`, `P_prim_issubclass`, `P_prim_typeof`,
+  `P_prim_len`, `P_prim_sizeof[_element]`, `P_prim_coerce` — produce
+  constant `true_type`/`false_type`/`make_size_constant_type` /
+  `make_abstract_type` results when the answer is statically decidable;
+  otherwise widen.
+- Numeric primitives — type fold via `type_num_fold`, with constant
+  folding via `fold_constant` when both arg AVars are singleton constants
+  (single-element `AType`s with `imm.const_kind`).
+- `P_prim_destruct` — recursive `destruct` against `t->has` produces
+  MATCH violations on shape mismatch.
+
+### 5.6 Inter-procedural propagation
+`update_in(v, t)` (`fa.cc:199`) re-computes `out = in ∩ restrict`. If `out`
+changed it:
+1. wakes `arg_of_send` listeners (the send PNodes that depend on this
+   AVar's value),
+2. wakes the owning ES if `is_if_arg`,
+3. propagates to every `forward` AVar.
+
+This is the inner cycle of the abstract interpreter.
+
+---
+
+## 6. The iterative part (`extend_analysis`, `fa.cc:3707`)
+
+Each completed pass runs `extend_analysis`. Returning `true` causes the
+outer loop in `FA::analyze` to `clear_results()` and re-execute.
+
+The order is significant — earlier strategies are cheap and most often
+sufficient, later ones target rarer imprecision sources:
+
+1. **Type-based ES splitting (function splitting)** — `split_ess_for_type`
+   → `split_entry_set` → `find_or_make_filtered_entry_set`. Detect
+   confluences (`collect_type_confluences`) where two contributors deliver
+   different *base types* into an AVar; build a new ES per type filter on
+   that argument. Existing edges are re-targeted via `split_edges`.
+   See paper §5.3 "Function Splitting".
+
+2. **~~Mark-based ES splitting~~ — REMOVED.** `split_ess_for_mark_type` no
+   longer exists (ifa/146 D). Mark distance is depth-from-a-generating-AVar,
+   so no type tuple can name what it separates — it is provenance, and the
+   paper's answer to recursion-meets-polymorphism is one pyc does not use.
+   Removing it took guard trips 18 → 10, analysis time −55%, contours
+   −12.3%.
+
+3. **Setter-based splitting (data splitting on AssignSets)** —
+   `compute_setters` builds `Setters` (canonical sets of "AVars that wrote
+   me") and `setter_class` equivalence; `split_for_setters` and
+   `split_for_setters_of_setters` propagate splits backwards through the
+   write graph until *paths* (`Path(v)` in paper §5.4) are unambiguous.
+   Paper §5.4 "Data Splitting" — implemented as a backward problem over
+   `AVar::backward`, with `update_setter` propagating set growth.
+
+4. **~~Setter+marks splitting~~ — off by default** with the marks
+   (`PYC_NOMARK` defaults to 1). `MARK_SETTER` / `MARK_SETTER_OF_SETTER`
+   remain in `FAPassStage` but do not run.
+
+5. **Violation-driven splitting** — `split_for_violations`. Any
+   `type_violations` recorded during the pass become drivers:
+   `collect_violation_imprecisions` traces back from the failure site to
+   the responsible AVars, then re-runs (1) with `SPLIT_DYNAMIC` on those.
+   This is the part that resolves real dispatch ambiguities. It is
+   **first-stage-wins**: gated on `!analyze_again`, so any earlier stage
+   claiming progress starves it for that pass (ifa/issues/148).
+
+**Three stages this list used to omit, and one of them is the only
+CreationSet-side splitter there is:**
+
+6. **`CSM_ELEMENT_CS`** — `split_container_methods_per_element_cs`
+   (`PYC_CSM`, ifa/issues/075). Container-method split for list/dict
+   receivers with divergent element types. Runs every pass, BEFORE
+   `TYPE_CONFLUENCE`.
+
+7. **`PER_CS_RECEIVER`** — `split_for_per_cs_method_receivers`
+   (ifa/issues/045). Method contours per receiver CreationSet, for classes
+   the frontend marked `clone_methods_per_cs` via
+   `__pyc_clone_constants__`. Runs only on quiescence of every stage above.
+   Violation-driven stages never separate same-class receiver CSs — no
+   violation arises in the merged method itself — which is why this exists;
+   `ifa/issues/134` tracks removing the annotation that gates it.
+
+8. **`CS_DEF_PARTITION`** — `split_css_by_defs` (ifa/issues/133),
+   `PYC_CSDEFSPLIT` default 1. **The CreationSet-side separator**, and the
+   mechanism §1.1's rule actually calls for: when a type confluence lands on
+   a CreationSet contour, stage 1 can only drop it (it knows how to split an
+   EntrySet, not a CreationSet), so this partitions that CreationSet's own
+   creation points (`cs->defs`). shedskin's ladder route 4, and like it the
+   **last rung**, gated on quiescence so anything a finer route can separate
+   is separated first. At the default it declines everything, because
+   it declines wherever a CreationSet has only one creation point, which is
+   most of them — it exists for the start-merged posture, which is now the
+   default.
+
+`CARTESIAN_PRODUCT` is also still in the enum and is **removed**
+(ifa/146 E): it fanned a formal into one contour per single CreationSet
+whenever a positional formal's type held ≥2, which asked for no demand at
+all.
+
+If no stage produced a split (`analyze_again == 0`), the analysis is at a
+fixed point: `clear_results()` is NOT called, the outer loop exits, and we
+move to cloning.
+
+A hard stop exists at `IFA_PASS_LIMIT = 100` (in `fa.h:11`) to keep
+pathological inputs bounded. When tripped, the analysis just stops and
+reports whatever violations remain.
+
+### Splitting bookkeeping
+`record_backedges` propagates `pending_es_backedge_map` so a child ES
+inherits its parent's recursion bookkeeping. `is_es_recursive`,
+`is_es_cs_recursive` (`fa.cc:2905`-`2927`) cache "this ES participates in a
+recursion SCC" so the splitter doesn't try to split inside a cycle (paper
+§6.1 — recursion limits splitting on recursive structures).
+
+`update_display` keeps the lexical display correct as ESes get cloned
+for nested functions. Since
+[issues/100](issues/closed/100-FA-display-removed-from-contour-identity.md) that
+is *all* it does: the display is built from the first edge to reach a
+contour and consumed only by `make_AVar`'s enclosing-scope resolution
+(and `clone.cc`'s equivalence). It is deliberately **not** part of
+contour identity — there is no consistency assert and no compatibility
+check keyed on it, so two edges with different lexical displays may share
+a contour and resolve enclosing-scope Vars through the first stamp.
+
+---
+
+## 7. Constants, primitives, and numeric folding
+
+- Primitives are declared in `if1->primitives`, initialized in
+  `initialize_primitives()`. Each `Prim::args[]` is an `AType*` filter
+  (constructed from `PRIM_TYPE_*` codes — `ANY`, `STRING`, `SIZE`,
+  `TUPLE`, `CONT`, `REF`, `ANY_NUM_A/B`, `ANY_INT_A/B`, `ALL`).
+- Constant folding for binary numeric primitives: only triggers when both
+  arg AVars have `out->n == 1` (singleton AType) and that single CS has
+  `sym->imm.const_kind` set. See `fa.cc:1555`-`1566`.
+- `coerce_num` (`fa.cc:314`) is the C-style usual-arithmetic-conversion;
+  it never narrows.
+- `type_cannonicalize` enforces `num_constants_per_variable` (default 1):
+  if a variable would hold more than the limit of distinct constants, the
+  type is widened to the base type. This is a precision/cost knob.
+- `make_size_constant_type(n)` / `make_constant(imm, sym)` — used to
+  feed the constant lattice when something is statically known
+  (e.g. `len(tuple)` → exact size).
+
+---
+
+## 8. From flow to code: cloning (`clone.cc`)
+
+After analysis the world is described in terms of `AVar` × contour pairs,
+but the IF1 IR needs concrete `Sym`s and `Fun`s for codegen. `clone()`
+collapses equivalent contours and synthesizes concrete types.
+
+See [CLONE.md](CLONE.md) for the full algorithm + implementation walk
+(paper: Plevyak & Chien, "Type Directed Cloning for Object-Oriented
+Programs", LCPC '95, `clone-lcpc95.pdf`). Quick summary of how the two
+pieces connect:
+
+- `clone()` consumes `fa->ess` / `fa->css` / `fa->funs` plus all the
+  per-AVar state IFA produced, and writes back `cs->type`, `av->type`,
+  `Fun::calls`, `Fun::called`, plus possibly new cloned `Fun`s.
+- It assumes IFA has reached a fixed point (`extend_analysis` returned
+  false) and that `fa->ess_set` / `fa->css_set` are populated.
+- It calls back into the frontend via `if1->callback->make_LUB_type`
+  whenever it needs to collapse a mixed-type AVar into a single Sym.
+
+CDB (`cdb.h`/`cdb.cc`) is a *compilation database* — sketched but not
+fully wired (`write_cdb` returns -1). The intent (paper §6, "additional
+language features") is to feed last run's profile/ES info back into the
+next run for incremental analysis. Currently inert.
+
+PDB (`pdb.h`/`pdb.cc`) is a tiny program-wide function table holding the
+IF1 instance and `LoopGraph`. `pdb` is a process-wide singleton.
+
+---
+
+## 9. Hooks the analysis depends on
+
+`fa.cc` reaches into:
+
+- `if1->callback->finalize_functions()` — called once in `initialize()`
+  before any types are built. Frontends must have populated `Fun`s and
+  symbols by this point.
+- `if1->callback->reanalyze(type_violations)` — the outer `do/while` in
+  `FA::analyze` calls this; a frontend can force another pass even when
+  `extend_analysis` thinks we're done (used for late constraint discovery).
+- `if1->callback->make_LUB_type(sym)` — clone.cc uses this when a SUM
+  type collapses into a real union/LUB sym understood by codegen.
+- `if1->callback->report_analysis_errors(type_violations)` — frontend-
+  formatted diagnostics.
+
+The pattern library (`pattern.cc`) owns `pattern_match`,
+`build_arg_positions`, `build_patterns`, `cannonicalize_mposition`,
+`Match::merge`. IFA treats it as opaque; it produces the `Match*` objects
+that drive `make_AEdges`.
+
+---
+
+## 10. Build, run, debug
+
+- Build: `make` from `ifa/` (clang++, llvm-config, Boehm GC, PCRE,
+  dparser). See `AGENTS.md`.
+- Run analysis on a V program: `./ifa tests/<x>.v`. Add `-d`/`-v` for
+  debug/verbose, `-l <flags>` for selective log channels — the splitter
+  uses `LOG_SPLITTING` extensively.
+- `IFA_LLVM=1 ./ifa <x>.v` switches to the LLVM backend.
+- Useful pretty-printers (debugger entry points):
+  `pp(AVar*)`, `pp(AType*)`, `pp(CreationSet*)` at the very end of
+  `fa.cc`, and `fa_print_backward`, `fa_dump_var_types`, `fa_dump_types`,
+  `show_avar_call_tree`, `show_violations`.
+- `write_code_exit` (global int, `fa.cc:25`) lets you dump IF1 after
+  a particular pass and stop — set it from gdb to bisect.
+
+The verbose pass summary line printed each pass:
+
+```
+PASS N COMPLETE: T sec, flow F (%), match M (%), extend E (%)
+```
+
+If `match` dominates, pattern dispatch is the cost; if `extend`
+dominates, splitting is. The paper (§6.2) notes IFA is empirically
+"close to" the same complexity as 0-CFA — extend cost is usually low.
+
+---
+
+## 11. Commentary, gotchas, open issues
+
+These are notes for whoever maintains this code next.
+
+### 11.0 Contour identity keys on types only — provenance is never the answer
+
+**Author's directive.** Contour identity — `EntrySet` or `CreationSet` —
+may key on **deduced types and CreationSet partitioning only**. Where a
+value came from is never a component of it, and "record where it came from
+so we can separate it later" is never the design.
+
+Provenance is anything answering *where did this come from* rather than
+*what is this*: allocation site (`v->var->id`), the lexical display
+(`EntrySet::display`), mark distance, recursion depth, which module a
+creation point lives in, a per-write tag naming the container a value
+passed through.
+
+A third category is legitimate and is not provenance: what the target
+language can **represent** — arity, member width, `None` beside a scalar.
+Those may participate in identity, and language-specific ones belong
+behind `IFACallbacks` (the `bool_is_numeric()` precedent), not baked into
+`fa.cc`. `ifa/issues/132`'s title is exactly that distinction.
+
+The test: **does this rule encode what the deduced types ARE, where the
+value CAME FROM, or what the target can REPRESENT?** Only the middle one
+is banned.
+
+**Corollary.** A merge you cannot undo is not a reason to record
+provenance — it is a reason to split coarser and let the analysis
+re-derive. `analyze_to_convergence` resets *before* every pass
+(`clear_results`), so derived ATypes are already re-derived from bottom;
+only the DECISIONS persist -- the CreationSet assignment (`av->cs_map`,
+which `split_css` can re-point), the EntrySets and each call edge's binding
+to one (`AEdge::to`), and the split ledger (ifa/issues/111). Wholesale splitting by creation point therefore costs
+precision, not correctness. If the precision cost bites, the answer is a
+finer demand test (shedskin's ladder tries no-confusion, confluence
+partition and path partition before wholesale — all keyed on deduced
+types), never an attribution record.
+
+Every application of this rule has paid: removing the display from
+compatibility checks cut contours 40-80% corpus-wide (ifa/100); retiring
+mark-based splitting (`PYC_NOMARK`, default 1) gave −55% analysis time and
+−12.3% contours; and the per-site `v<id>|` prefix in `cselem_shape_key` is
+measured to fragment contour identity 2.53× (ifa/129).
+
+See CLAUDE.md's "Provenance is never the answer", and ifa/issues 100, 128,
+129, 132, 133.
+
+### 11.1 Pointer-equality everywhere
+AType / Setters / SettersClasses are hash-consed. **All comparisons assume
+canonicalized inputs.** Constructing an `AType` and forgetting to call
+`type_cannonicalize` before storing it in a map will silently produce
+duplicates that compare unequal. The public constructors (`make_AType`,
+`make_abstract_type`) canonicalize for you; raw `new AType(...)` requires
+manual `type_cannonicalize`.
+
+### 11.2 Hidden invariants that aren't asserted
+- `AVar::contour` is `EntrySet*` iff `contour_is_entry_set`; otherwise
+  it's `CreationSet*` or `GLOBAL_CONTOUR` (sentinel value `(void*)1`).
+  Lots of code casts based on this bit — getting it wrong corrupts the
+  flow graph silently.
+- `EntrySet::edges` is indexed by `AEdge*` pointer hashing (`EdgeHash`)
+  but `EntrySet::out_edges` is a plain `Vec`. They overlap but aren't
+  symmetric: `out_edges` gates which edges count for violation
+  collection, while `edges` gates which edges contribute to splitting.
+  Mixing them up is a recurring source of bugs.
+- `make_AVar(Var, EntrySet)` for a non-internal global routes through
+  `GLOBAL_CONTOUR`, which makes the global a true singleton.  Code that
+  passes a real ES expecting a per-ES global will not get one.
+
+### 11.3 Splitter stage-progress logging
+The 8 stage-transition prints inside `extend_analysis`
+("split_ess_for_type", "split_for_setters", …) route through
+`log(LOG_SPLITTING, …)` like the rest of the splitter's logging.
+Enable them with `-ls` on the command line. Previously these were
+gated on the global `-d` flag via a `DEBUG_PRINT` macro; unified
+onto the LOG_SPLITTING channel June 2026.
+
+### 11.4 `IFA_PASS_LIMIT = 100`
+Soft cap on outer iterations. The compile-time macro provides the
+default for the runtime field `FA::pass_limit` — frontends override
+the field for pathological inputs or fail-fast tests. On trip the
+splitter forces termination, logs `PASS LIMIT … reached at pass … N
+violations remain (mid-iteration)` on `LOG_SPLITTING`, and sets
+`FA::pass_limit_hit = true`. `type_violations` is **not** cleared —
+downstream consumers see the snapshot and can check
+`pass_limit_hit` to distinguish "converged, these are the real
+errors" from "we ran out of passes mid-iteration, treat as
+indicative." Production benchmarks converge in single-digit passes
+(paper Table 2), so 100 is generous; the cap stays soft because
+existing programs with leftover violations are correctly handled by
+the frontend (boxing fallback, diagnostic emission).
+
+### 11.5 Compilation-database (CDB) is removed
+The `cdb.{cc,h}` scaffolding and the `check_es_db` stub used to live
+here as a half-built cache of analysis decisions from the previous
+compile. Removed June 2026; intent and revival plan in
+[notes/001-compilation-database.md](notes/001-compilation-database.md).
+This is still the biggest latent optimization opportunity in the
+analysis — and what the paper called the "compilation database"
+feature.
+
+### 11.6 Eager splitting / setter equivalence classes — removed
+Three `#if 0` blocks (`initial_compatibility`,
+`setters_classes_cannonicalize`, and the "group" pass inside
+`compute_setters`) plus the supporting `SettersClasses`
+infrastructure used to live here as breadcrumbs for an eager
+entry-set splitting mode. Removed June 2026 along with the dormant
+infra; intent in
+[notes/002-eager-splitting.md](notes/002-eager-splitting.md). They
+hinted at a planned eager-splitting mode that was deemed not worth
+it for the benchmarks at the time.
+
+### 11.7 `P_prim_meta_apply` and `P_prim_cast` transfer functions
+Both transfer functions are structured `fail()` calls — they name
+the primitive, report the source position when available, and
+point at the design note. No live frontend currently emits either
+prim (V grammar has no cast syntax; pyc never references
+`prim_cast`; the `@meta_apply` send in `for1.v.code` is the
+symbol-named builtin, not the primitive). The constants stay
+because `clone.cc` references them. If you hit one of these
+failures you've either fed IFA a hand-written `.ir` fixture or
+added a new frontend path — see
+[notes/003-cast-and-meta-apply-prims.md](notes/003-cast-and-meta-apply-prims.md)
+for the original `#if 0` sketch, the missing dependencies, and
+what reviving each prim would require.
+
+### 11.8 Two `make_closure_var` overloads
+`fa.cc:1090` and `fa.cc:1105`. Both legitimately needed (AVar vs Var
+input). The pattern recurs: many helpers come in AVar and Var pairs.
+
+### 11.9 `qsort_by_id`
+Frequently called on Vecs of AVar/AEdge/EntrySet/CreationSet — gives
+deterministic iteration order despite GC allocation jitter. Don't remove
+"unnecessary" sorts; some downstream logic assumes ID order (notably the
+splitter, where edge order affects which class wins a split).
+
+### 11.10 GC discipline
+Everything inherits `gc` (Boehm-GC tracked). No manual `delete`. But
+`Vec<>` members own pointers and `clear()`s them lazily — be careful
+when reusing a Vec across passes that you haven't kept a pointer-set
+that contains stale entries. `clear_results()` in particular wipes a lot
+of state; anything cached outside the FA must be recomputed.
+
+### 11.11 "Boxing" handling
+`fa->permit_boxing` defaults to false; mixed-basic-type AVars
+(`mixed_basics`) become `ATypeViolation_BOXING`. Setting permit_boxing
+true silences the violation but leaves codegen on its own to materialize
+a union representation. Currently only used by frontends that opt in
+explicitly.
+
+### 11.12 NOTYPE reaching codegen
+A live NOTYPE AVar is a fatal violation (ifa/158). What reaches codegen
+untyped is therefore dead text, and codegen reads its Var as having no
+type (`_CG_void`). `convert_NOTYPE_to_void()`, which used to void every
+remaining bottom AVar under `fruntime_errors`, was deleted on 2026-11-07
+(ifa/102): a census found it touched only values with a dead def and no
+live use.
+
+### 11.13 Tests
+`tests/` in `ifa/` are the V-language regression suite. There is no
+unit test layer for `fa.cc` itself; the only way to exercise specific
+splitting paths is via crafted V programs. Worth building lower-level
+fuzz tests for `type_union/intersection/diff` and `type_cannonicalize`
+if you start refactoring those.
+
+### 11.14 Code-style observations (suggestions, not edicts)
+- `static` global worklists in `fa.cc` make `FA` non-reentrant. Two
+  concurrent analyses on the same process would corrupt each other.
+  Refactoring into per-FA worklists would enable threaded compilation
+  but is invasive.
+- `DEBUG_PRINT` should be wired to `log_level` like the rest of the
+  codebase; right now it's a separate gate.
+- A few `goto Lfound` / `goto Lagain` patterns (e.g. `creation_point`,
+  `qsort_pointers`, `qsort_by_id`) are clear once you read them, but a
+  light refactor into early-return style would help new readers.
+- `EdgeHash`, `ATypeChainHashFns`, and `SettersHashFns` still use
+  the hand-rolled `100003` / `13` / `open_hash_primes[i % 256]`
+  mixers. The pairwise pointer hashers (`PendingMapHash`,
+  `ATypeViolationHashFuns`, `ATypeFoldChainHashFns`) were unified
+  on a single `combine_hash(uintptr_t, uintptr_t)` helper in
+  June 2026; the sequence/sorted hashers above still inline their
+  mixers.
+
+---
+
+## 12. Where to read first when something's wrong
+
+| Symptom | Start here |
+|---|---|
+| "type X bleeds where it shouldn't" | `update_in`, `flow_var_to_var`, `flow_vars` |
+| "spurious dispatch ambiguity" | `function_dispatch` → `pattern_match`; check `Match::formal_filters` |
+| "infinite analysis loop" | watch `analysis_pass`, set `write_code_exit`, inspect `extend_analysis`'s 5 stages |
+| "wrong call target after cloning" | see [CLONE.md](CLONE.md) §13 |
+| "constant not folded" | `type_num_fold`, check `out->n == 1` and `imm.const_kind` |
+| "method lookup misses" | `P_prim_period` in `add_send_edges_pnode`, check `cs->var_map` |
+| "closure variable not captured" | `make_closure`, `make_closure_var`, `update_display` |
+| "nested function sees wrong outer scope" | `EntrySet::display`, `update_display`, `make_AVar` for nested vars |
+| "violation reported but program is fine" | `collect_var_type_violations`, `mixed_basics`, NOTYPE/BOXING |
+| "splitter never resolves the violation" | log `LOG_SPLITTING`; check which of the 5 stages declines, in order |
+
+---
+
+## 13. References
+
+- Plevyak, J. & Chien, A. "Iterative Flow Analysis", OOPSLA '94 (the
+  PDF in this tree: `ifa-submit.pdf`). The code is a direct descendant.
+- Shivers, O. "Control Flow Analysis in Scheme" — k-CFA / 0-CFA, the
+  baseline IFA improves on.
+- Oxhøj, Palsberg, Schwartzbach — type inference for OO via constraints
+  (closure-analysis style, cited as related work in §8 of the paper).
+- Agesen et al., Chambers & Ungar — Self-style customization, the
+  cloning approach IFA's `clone.cc` mirrors.

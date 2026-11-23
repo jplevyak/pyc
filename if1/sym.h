@@ -46,6 +46,7 @@ extern cchar *type_kind_string[];
 #define CLEAR_VARIABLE(_m) memset(&(_m), 0, sizeof(_m))
 
 #define LOCALLY_NESTED -1
+#define DISPATCH_ARITY_DYNAMIC -2  // Sym::dispatch_arity: only a CS with no static arity
 
 class BasicSym : public gc {
  public:
@@ -56,6 +57,15 @@ class BasicSym : public gc {
   Sym *aspect;           // masquarade as type (e.g. superclass)
   Sym *must_specialize;  // dispatch constraints
   Sym *must_implement;   // type checking constraints
+  // ifa/185: a dispatch constraint on a formal's ARITY, -1 for none. A
+  // CreationSet matches only if it has a static arity equal to this one.
+  // Arity is part of a fixed-arity container's type (ifa/132), so this
+  // refines must_specialize the way a subclass does: a call whose
+  // receiver holds tuples of several arities reaches one target per
+  // arity, each seeing only its own, with no contour split.
+  // DISPATCH_ARITY_DYNAMIC instead admits only a CS with NO static arity
+  // (a runtime-length tuple, on list layout).
+  int dispatch_arity;
   IFAAST *ast;           // AST node which defined this symbol
   Var *var;              // used by fa.cpp
   IFASymbol *asymbol;    // front end interface object
@@ -68,6 +78,18 @@ class BasicSym : public gc {
   unsigned int is_constant : 1;     // Sym is a constant
   unsigned int is_lvalue : 1;       // Sym is an lvalue
   unsigned int is_local : 1;        // Sym is local (can be converted into SSU)
+  // ifa/issues/039: some USE of this local is reachable by a path that
+  // does not assign it. Lives on the Sym, not the Var, because SSU
+  // RENAMES Vars (`new Var(v->sym)`) after find_maybe_unbound runs, so
+  // a flag on the pre-rename Var never reaches FA. The sym is shared
+  // across every renamed copy and is per-function for a local, which is
+  // exactly the granularity this fact has.
+  unsigned int maybe_unbound : 1;
+  // ifa/issues/039: NO path reaching some use assigns this local
+  // (`def f(): print(y); y = 1`). Strictly stronger than
+  // maybe_unbound, and a compile error in EVERY environment: there is
+  // no execution on which the program is correct.
+  unsigned int definitely_unbound : 1;
   unsigned int is_default_arg : 1;  // Sym is a default argument
   unsigned int is_exact_match : 1;  // must_specialize/implement is must_BE_EXACT
   unsigned int is_module : 1;       // Sym is a module
@@ -79,6 +101,23 @@ class BasicSym : public gc {
   unsigned int is_external : 1;     // Sym is "external", so constraints are type
   unsigned int is_this : 1;         // Sym is "this" (member function "target")
   unsigned int is_fake : 1;         // Sym not necessary at run time
+  unsigned int is_async : 1;        // Sym is an async function
+  unsigned int is_generator : 1;    // Sym is a generator function (body
+                                     // contains yield); compiled as a
+                                     // C++20 coroutine like is_async, but
+                                     // driven by __next__ instead of an
+                                     // event loop -- see issues/014.
+  unsigned int is_static_method : 1;  // fun Sym: class-scope function with NO
+                                      // receiver (Python @staticmethod / C++-
+                                      // style static). Stored as a prototype
+                                      // field like any method, but reads
+                                      // through an instance must flow the raw
+                                      // function value UNBOUND (P_prim_period's
+                                      // bare-value rule) instead of binding
+                                      // the receiver.
+  unsigned int is_class_method : 1;   // fun Sym: Python @classmethod -- first
+                                      // formal receives the CLASS value the
+                                      // call was made through, not an instance.
 
   unsigned int intent : 2;  // Sym is "in", "inout", or "out"
 
@@ -94,11 +133,37 @@ class BasicSym : public gc {
 
   unsigned int fun_returns_value : 1;  // used by analysis.cpp
   unsigned int live : 1;               // used by if1.cpp
+  unsigned int can_raise : 1;  // pyc frontend (issue 011): fun Sym transitively
+                                // (directly, or via a resolved plain-call edge)
+                                // reaches a raise/assert -- gates whether a call
+                                // site needs a post-call pending-exception check
+                                // at all. Conservative: an unresolvable callee
+                                // (method dispatch, builtin, constructor, a
+                                // variable holding a callable) forces this true
+                                // on the CALLER, since it can't be disproven.
+                                // Computed BEFORE FA runs (syntactic call graph);
+                                // see Fun::can_raise for the precise, post-FA
+                                // refinement that also handles method dispatch.
+  unsigned int direct_raise : 1;  // pyc frontend (issue 011): this fun Sym's OWN
+                                   // IF1 body contains a raise/assert (set directly
+                                   // at build_if1 time, not syntactically inferred).
+                                   // Seeds Fun::can_raise's post-FA fixed point --
+                                   // every Fun clone of this Sym shares the same
+                                   // IF1 body, so the bit is clone-invariant.
 
   unsigned int type_kind : 4;
   unsigned int num_kind : 3;   // Sort of number class
   unsigned int num_index : 3;  // Precision of number class
 
+  unsigned int clone_methods_per_cs : 1;  // class Sym: split method EntrySets per
+                                           // receiver CreationSet as a PRECISION
+                                           // move (no violation needed) -- set by
+                                           // the frontend for classes whose ctor
+                                           // params are clone_for_constants, so
+                                           // per-constant instance CSs keep their
+                                           // field constants foldable inside
+                                           // methods (ifa/issues/045, motivated
+                                           // by 040's range/__pyc_more__ trace).
   unsigned int clone_for_constants : 1;  // analysis should attempt to make this
                                          // a constant
   unsigned int dispatch_types_built : 1;
@@ -151,6 +216,35 @@ class Sym : public BasicSym {
   Vec<Sym *> specializers;    // used by fa.cpp, specializers *type*
   Vec<Sym *> dispatch_types;  // used by fa.cpp, pattern.cpp  *type*
 
+  Vec<cchar *> match_args;  // pyc frontend (issues/023): class-body
+                            // `__match_args__ = (...)` literal, read back
+                            // at compile time to map positional class-
+                            // pattern args (`case Point(0, 0):`) to
+                            // attribute names           *type*
+
+  Vec<cchar *> clone_elides_fields;  // pyc frontend (issues/078): set ONLY
+                            // on a class's prototype Sym (`cls->self`).
+                            // Field names this class's own __init__
+                            // unconditionally overwrites (proven by a
+                            // static, pre-FA AST check -- see
+                            // compute_init_elidable_fields in
+                            // python_ifa_build_syms.cc) before any
+                            // instance is observable. fa.cc's
+                            // structural_assignment consults this to
+                            // skip copying these fields when cloning
+                            // FROM this exact Sym -- which can only ever
+                            // be the one sym_clone(proto, t) PNode
+                            // gen_class_pyda synthesizes in __new__,
+                            // never a user clone() call (the prototype
+                            // Sym is never reachable from Python
+                            // source). Does NOT affect this class's OWN
+                            // field (still seeded normally by the
+                            // class-body statement), so subclass
+                            // prototype-inheritance copies and direct
+                            // `ClassName.attr` reads are unaffected --
+                            // see issue 078's "Attempt 1" for why that
+                            // distinction matters.      *type*
+
   void *temp;  // algorithmic temp             *type*
   llvm::Type *llvm_type;
   llvm::DIType *llvm_type_di_cache; // Cache for debug information type
@@ -178,8 +272,29 @@ class Sym : public BasicSym {
   int imm_int(int *);
 };
 
+// Content-based hashing for `Vec<Sym*>::set_add` / `set_in`. The
+// `id` field comes from BasicSym and is monotonically assigned at
+// construction, so iteration order is deterministic across runs
+// (see ifa/notes/004).
+template <> struct PointerHash<Sym *> {
+  static uintptr_t hash(Sym *c) { return c ? (uintptr_t)c->id : 0; }
+};
+
 
 Sym *unalias_type(Sym *s);
+
+// ifa/issues/096 (extends closed/077): shared by both codegen backends
+// (python_ifa_main.cc's c_call_codegen for C, cg_emit_llvm.cc's
+// emit_send_primitive for LLVM) so a __pyc_c_call__ site's declared
+// argument type vs. the actual resolved type -- a real, unsafe
+// mismatch (e.g. a salvage-degraded `_CG_any` reaching a call that
+// declares `str`) vs. one of the two categories 077 found aren't real
+// mismatches (a bare `Type_ALIAS` declared type like `int`; two
+// numeric types of different width/precision) -- is judged identically
+// by both, rather than each backend rediscovering the same false
+// positives independently.
+bool c_call_arg_type_mismatch(Sym *declared, Sym *actual);
+
 void convert_constant_to_immediate(Sym *sym);
 int compar_syms(const void *ai, const void *aj);  // for use with qsort
 Sym *size_constant(int n);

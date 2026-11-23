@@ -36,7 +36,11 @@ class IF1 : public gc {
 };
 
 Sym *if1_register_sym(IF1 *p, Sym *, cchar *name = 0);
-Sym *if1_const(IF1 *p, Sym *typ, cchar *value, Immediate *imm = 0, Sym *asym = 0);
+// `len`: explicit byte length of `value` when it's a string/bytes
+// literal that may contain an embedded NUL (ifa/issues/070) -- -1
+// (default) means "not provided, fall back to strlen(value)",
+// preserving existing callers' behavior unchanged.
+Sym *if1_const(IF1 *p, Sym *typ, cchar *value, Immediate *imm = 0, Sym *asym = 0, int len = -1);
 Sym *if1_make_symbol(IF1 *p, cchar *name, cchar *end = 0);
 void if1_set_builtin(IF1 *p, Sym *s, cchar *name, cchar *end = 0);
 Sym *if1_get_builtin(IF1 *p, cchar *name, cchar *end = 0);
@@ -72,10 +76,18 @@ int if1_numeric_alignment(IF1 *p, Sym *t);
 cchar *if1_cannonicalize_string(IF1 *p, cchar *start, cchar *end = 0);
 void if1_finalize_closure(IF1 *p, Sym *c);
 
-void if1_write(FILE *fp, IF1 *p, int start = 0);
+void if1_write(FILE *fp, IF1 *p);
 void if1_write_log();
 
 void if1_finalize(IF1 *p);
+// Sub-steps of if1_finalize, exposed for the test harness so the
+// IF1 state can be inspected between bind-prims and DCE. Production
+// callers should keep using if1_finalize(), which is the composition.
+void if1_finalize_set_top(IF1 *p);
+void if1_finalize_bind_prims(IF1 *p);
+void if1_finalize_dce(IF1 *p);
+void if1_finalize_flatten_and_fixup_nesting(IF1 *p);
+void if1_simple_dead_code_elimination(IF1 *p);
 void if1_set_primitive_types(IF1 *if1);
 
 void if1_code(FILE *fp);
@@ -91,8 +103,6 @@ extern IF1 *if1;
 
 static inline Sym *new_Sym(cchar *name = 0) { return if1->callback->new_Sym(name); }
 
-void print_syms(FILE *fp, Vec<Sym *> *syms);
-void print_code(FILE *fp, Code *code, int indent, int lf = 1);
 void pp(Code *code);
 
 #endif

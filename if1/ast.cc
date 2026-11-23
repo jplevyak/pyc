@@ -8,6 +8,17 @@
 static int type_hierarchy_built = 0;
 static int finalized_types = 0;
 
+// Reset ast.cc module-level state plus the global builtin-Sym pointers.
+// Called by ifa_reset() so the next init_ast() re-creates them on the
+// fresh IF1.
+void ast_reset() {
+  type_hierarchy_built = 0;
+  finalized_types = 0;
+#define S(_n) sym_##_n = NULL;
+#include "builtin_symbols.h"
+#undef S
+}
+
 void new_module(Sym *&sym, Sym *fun) {
   if (!sym) sym = new_Sym();
   sym->type = sym_module;
@@ -143,12 +154,22 @@ void init_default_builtin_types() {
 
   new_builtin_lub_type(sym_anyint, "anyint", 0, sym_int8, sym_uint8, sym_int16, sym_uint16, sym_int32, sym_uint32,
                        sym_int64, sym_uint64, NULL);
+  // ifa/issues/081: opt-in only (IFACallbacks::bool_is_numeric, ifa.h).
+  // ifa's own default keeps `bool` a primitive type disjoint from the
+  // numeric lattice; a frontend whose language treats bool as an int
+  // subtype (pyc/Python: isinstance(True, int) is True) can ask for
+  // `bool` to be a real specializer of `anyint` here, so it participates
+  // in FA's numeric constant-fold/coercion (coerce_num, type_num_fold)
+  // instead of vanishing from it (which used to produce an empty,
+  // unindexable AType and crash the compiler on e.g. `n * True`).
+  if (if1->callback && if1->callback->bool_is_numeric()) sym_bool->inherits_add(sym_anyint);
 
   new_builtin_lub_type(sym_anyfloat, "anyfloat", 0, sym_float32, sym_float64, sym_float128, NULL);
   new_builtin_lub_type(sym_anycomplex, "anycomplex", 0, sym_complex32, sym_complex64, sym_complex128, NULL);
   new_builtin_lub_type(sym_anynum, "anynum", 0, sym_anyint, sym_anyfloat, sym_anycomplex, NULL);
 
   new_builtin_primitive_type(sym_string, "string");
+  new_builtin_primitive_type(sym_bytes, "bytes");
 
   if1_set_primitive_types(if1);
 
@@ -372,6 +393,30 @@ Lnotdone:;
     fail("inconsistent precedence graph in C3 linearization");
 }
 
+// ifa/130 A1: the same linearization, computed without caching it into
+// `dispatch_types`, for a caller that needs a class's MRO before the type
+// hierarchy is final (the pyc frontend building a class's prototype: a
+// class's `specializes` can still grow after that, and the cache would
+// freeze it). A base whose cache is already built is read from it.
+void c3_mro(Sym *c, Vec<Sym *> &out) {
+  out.clear();
+  if (!c->specializes.n) return;
+  Vec<Sym *> rdone;
+  Vec<Vec<Sym *> *> todo;
+  rdone.add(c);
+  for (Sym *x : c->specializes) {
+    Vec<Sym *> *xm = new Vec<Sym *>;
+    if (x->dispatch_types_built)
+      xm->copy(x->dispatch_types);
+    else
+      c3_mro(x, *xm);
+    todo.add(xm);
+  }
+  todo.add(new Vec<Sym *>(c->specializes));
+  merge(rdone, todo);
+  out.move(rdone);
+}
+
 static void c3_linearization(Sym *c) {
   if (c->dispatch_types_built) return;
   c->dispatch_types_built = 1;
@@ -430,6 +475,7 @@ void build_type_hierarchy(int compute_structural_value_hierarchy) {
   }
   // compute structural type hierarchy
   if (compute_structural_value_hierarchy) compute_structural_type_hierarchy(types);
+
   // map subtyping and subclassing to meta_types
   for (Sym *s : types.asvec) if (!s->is_meta_type) {
     for (Sym *ss : s->implementors) if (ss && s->meta_type != ss->meta_type)
@@ -453,10 +499,24 @@ void build_type_hierarchy(int compute_structural_value_hierarchy) {
   types.asset.set_union(meta_types.asset);
   types.asvec.clear();
   types.asvec.append(types.asset);
-  // build implementors/specializers
+  // build implementors/specializers (transitive closure)
   for (Sym *s : new_types) {
     for (Sym *x : s->implements) for (Sym *y : x->implements) add_implementor(s, y);
     for (Sym *x : s->specializes) for (Sym *y : x->specializes) add_specializer(s, y);
+  }
+  // Also run the closure for constants/symbols/funs added since last
+  // call. They didn't get into `new_types` (which is gated on
+  // type_kind) but their implements/specializes still need to propagate
+  // up the type chain — e.g., a constant %k1 :type @int32 must end up
+  // in sym_any->specializers (via the int32→anyint→anynum→any chain),
+  // not just sym_int32->specializers. Without this, pattern_match
+  // can't match a typed-constant arg against a sym_any-typed formal.
+  for (int x = type_hierarchy_built; x < if1->allsyms.n; x++) {
+    Sym *s = if1->allsyms[x];
+    if (s->type_kind) continue;  // already handled via new_types
+    if (!s->is_constant && !s->is_symbol && !s->is_fun) continue;
+    for (Sym *xx : s->implements) for (Sym *y : xx->implements) add_implementor(s, y);
+    for (Sym *xx : s->specializes) for (Sym *y : xx->specializes) add_specializer(s, y);
   }
   // linearize classes for dispatch
   for (int x = type_hierarchy_built; x < if1->allsyms.n; x++) c3_linearization(if1->allsyms[x]);
@@ -470,14 +530,70 @@ static void collect_includes(Sym *s, Vec<Sym *> &include_set, Vec<Sym *> &includ
   }
 }
 
+// ifa/issues/110: append src's members to dst, skipping any NAME dst
+// already carries. Two things duplicate without this:
+//
+//   - the recursion below descends into a base's own includes even
+//     though that base's `has` was already flattened (include_
+//     instance_variables walks collect_includes' post-order, so bases
+//     are processed first) -- so a grandparent's members arrive twice;
+//   - two bases of a multiple-inheritance class can define one name.
+//
+// First writer wins, which for the second case is Python's MRO rule.
+static void append_new_members(Sym *dst, Sym *src) {
+  for (Sym *m : src->has) {
+    if (m->name) {
+      bool dup = false;
+      for (Sym *e : dst->has)
+        if (e->name == m->name) {
+          dup = true;
+          break;
+        }
+      if (dup) continue;
+    }
+    dst->has.add(m);
+  }
+}
+
+// ifa/issues/110: a class's own member that OVERRIDES an inherited one
+// must land on the inherited member's INDEX, not after it.
+//
+// `has` indices are the emitted struct's field suffixes (cg.cc writes
+// `eN` for has[N], and every method/field lookup in codegen_common.cc
+// scans has by name for the first live match). A method shared between
+// a base and a subclass is emitted ONCE, taking `_CG_any` and blind-
+// casting to the base's struct type -- which is sound only while the
+// subclass's layout is a prefix-compatible extension of the base's.
+// Appending an override at the end broke exactly that: `class S(B)`
+// overriding one method got a SECOND slot for it, pushing every field
+// after it down one, so a sibling method inherited from B read the
+// override's function pointer where the field should be. 19 lines with
+// no iterator protocol in them hung forever (see this issue's repro).
+//
+// Replacing in place keeps both properties: most-derived wins (the
+// subclass's Sym is what any name lookup finds), and the index still
+// matches the base's.
 static void collect_include_vars(Sym *s, Sym *in = 0) {
   Vec<Sym *> saved;
   if (!in)
     saved.move(s->has);
   else
-    in->has.append(s->has);
+    append_new_members(in, s);
   for (Sym *ss : s->includes) if (ss->type_kind == Type_RECORD) collect_include_vars(ss, in ? in : s);
-  if (!in) s->has.append(saved);
+  if (!in)
+    for (Sym *own : saved) {
+      int at = -1;
+      if (own->name)
+        for (int i = 0; i < s->has.n; i++)
+          if (s->has[i]->name == own->name) {
+            at = i;
+            break;
+          }
+      if (at >= 0)
+        s->has[at] = own;
+      else
+        s->has.add(own);
+    }
 }
 
 static void include_instance_variables(IF1 *i) {

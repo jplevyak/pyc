@@ -1,0 +1,29 @@
+;; 03_nested_loops.ir — inner while inside outer while.
+;; Companion to loops/03_nested_loops.ir. With the loop-tree fix
+;; (issue 004), the inner body PNodes should be in a depth-2 loop
+;; and receive peak execution_frequency = LOOP_FREQUENCY^2 = 100.
+
+(sym %c1 :is-local)
+(sym %c2 :is-local)
+(sym %x :is-local)
+(sym %r :is-local)
+(sym %tcont)
+
+(fun %top
+  :args (%c1 %c2 %x)
+  :rets (%r)
+  :cont %tcont
+  :body
+    (label %L_o_top)
+    (if %c1 %L_o_body %L_o_end)
+    (label %L_o_body)
+    (label %L_i_top)
+    (if %c2 %L_i_body %L_i_end)
+    (label %L_i_body)
+    (move %x %r)
+    (goto %L_i_top)
+    (label %L_i_end)
+    (goto %L_o_top)
+    (label %L_o_end))
+
+(entry %top)

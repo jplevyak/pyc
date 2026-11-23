@@ -1,0 +1,23 @@
+;; phase: dispatch
+
+(summary rc=-1 ess=3 edges=12)
+
+(es @__main__#0
+  send consume ? => ?
+    → %consume#0
+      args→ [1]:{consume} [2]:{V}
+  send consume ? => ?
+    → %consume#0
+      args→ [1]:{consume} [2]:{V}
+)
+
+(es %consume#0
+  send next it => e
+    → %next#0
+      args→ [1]:{next} [2]:{It}
+)
+
+(es %next#0
+  (no out edges)
+)
+

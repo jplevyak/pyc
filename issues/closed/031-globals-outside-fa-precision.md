@@ -1,0 +1,221 @@
+# Issue 031: Globals live outside all of FA's precision machinery
+
+**Status: CLOSED (2026-07-04, archived 2026-08-06).** Steps 1
+(GLOBAL_CONTOUR → real EntrySet) and 2 (SSU-eligible temp routing)
+implemented and verified same day as filing — see "What landed"
+below. Step 3 (multiple closure shapes in one global) was always
+explicitly out of scope here, folded into
+[030](030-DISPATCH-polymorphic-dispatch-fat-pointers.md)'s own
+scope — nothing remains open under this number.
+Originally filed as the common-root-cause writeup for pyc issues
+[001](../../../issues/closed/001-fa-crash-captured-locals.md) /
+[002](../../../issues/closed/002-fa-crash-escaped-closure.md) /
+[005](../../../issues/closed/005-while-true-fa-crash.md), all three of which
+are individually fixed. This issue tracks the underlying structural
+gap so future symptoms are recognized as instances of it, and
+proposes the design-native cleanup.
+**Affects:** `analysis/fa.cc` (`make_AVar`, `update_in`,
+`GLOBAL_CONTOUR` sentinel and its ~15 scattered guards),
+`optimize/ssu.cc` (locals-only renaming), `analysis/clone.cc`
+(concretization over shared global AVars), both codegen backends
+(consumers of the resulting union types).
+**Related:** `029`/`030` (polymorphic dispatch — the *other* half of
+"a callable-valued cell with more than one shape").
+
+## The core issue
+
+FA has one first-class context mechanism — EntrySet contours, with
+per-call-site `filtered` AVars, restrict predicates (issue-025
+narrowing), per-ES liveness and cloning. Values that stay on that
+track get refined types everywhere. But `make_AVar`
+(`analysis/fa.cc:206`) routes variables onto three tracks:
+
+1. **EntrySet contour** (locals, internals) — first-class.
+2. **Display** (`nesting_depth != 0` and not this function's own
+   frame) — classic Algol displays; assumes stack-disciplined
+   nesting. Broke for escaping closures (issue 001); pyc's fix
+   moved captured state onto the CreationSet track (closure-carrier
+   classes), i.e. *onto a first-class track* — the right pattern.
+3. **`GLOBAL_CONTOUR`** (`(void*)1` sentinel) — one shared AVar per
+   global Var, program-wide.
+
+Track 3 is second-class in two independent ways, and each way has
+already produced a shipped bug:
+
+- **Not a real EntrySet.** Any per-ES machinery that touches a
+  global AVar must special-case the sentinel or crash. Issue 005
+  (`while True:` → `is_if_arg` set on `sym_true`'s global AVar →
+  `update_in` dereferenced `(EntrySet*)1`) was exactly this; the
+  fix was one more guard (`fa.cc:283`), joining ~15 existing
+  `!= GLOBAL_CONTOUR` checks scattered through fa.cc/clone.cc.
+  Every new per-ES feature is a fresh opportunity for the next 005.
+- **No flow-sensitivity and no per-read refinement.** Globals are
+  exempt from SSU renaming (`ssu.cc` `new_Var`/`get_Var`:
+  `if (!v->sym->is_local) return v;`), so all stores union into one
+  cell, observed identically at every read — a global's type is the
+  eternal union of everything ever assigned. Issue 002 Case B was
+  exactly this: the idiomatic `stash = None` initializer made every
+  read of `stash` a `SUM{nil_type, closure}`. (For locals, the same
+  program shape is precise: SSU splits the None def from the
+  closure def.) The 002B fix taught codegen the nullable-closure
+  SUM; the *union itself* remains, and any global that ever holds
+  two structurally different non-nil values still degrades to a SUM
+  that only 029/030's dispatch machinery could call through.
+
+Issue 001 belongs to the same family via track 2: all three issues
+are cases of "a value needing type refinement passed through a
+contour mechanism that doesn't refine."
+
+## What already works (and should be the model)
+
+- Issue 001's resolution is the template: don't patch the
+  second-class track, move the data onto a first-class one
+  (captured locals → CreationSet fields on a carrier class).
+- `SUM{nil_type, T}` is already a first-class codegen idiom
+  (nullable pointer, `assign_type_cg_strings_pass2`), now including
+  `T = closure` (002B fix, `closure_fun_type`).
+- FA dispatch is already sound over global-typed unions (it
+  resolved `stash()` correctly even when the static type was
+  `None ∪ closure`).
+
+## Proposed cleanup (in design order, independently landable)
+
+1. **Promote the global contour to a real EntrySet.** Replace the
+   `(void*)1` sentinel with a distinguished singleton EntrySet
+   (natural candidate: the top-level Fun's unique ES, which
+   `make_top_edge` already guarantees exists, or a dedicated
+   always-empty `GlobalEntrySet`). Then `update_in`'s `is_if_arg`
+   enqueue, `creation_point`'s `es->split` path, and every other
+   `(EntrySet*)av->contour` deref work uniformly; the ~15 sentinel
+   guards (including the 005 guard) become dead and can be deleted.
+   Mechanical but wide; needs care at the few places that use
+   `contour == GLOBAL_CONTOUR` as a *semantic* test ("is this a
+   global?") — those should switch to an explicit predicate
+   (`av->contour == fa->global_es` or a flag), notably
+   `clone.cc:initialize` (global_avars collection),
+   `escape.cc` ("globals always escape"), and
+   `make_AVar`'s own routing.
+2. **Per-read-site refinement for globals ("load temps").** Treat a
+   global as a memory cell, not a register: at IF1 build (or as an
+   FA-side transform mirroring `get_filtered`), each *read* of a
+   global flows through a fresh internal local temp
+   (`global_cell → read_temp` MOVE). The temp is on the first-class
+   track: SSU-renamed, ES-contoured, eligible for issue-025
+   narrowing (`if g is not None: g()` then refines the *temp*, not
+   the shared cell) and for precise concretization. The cell keeps
+   the sound flow-insensitive union; reads stop being forced to
+   carry it verbatim. This is the FA-native analogue of what SSU
+   already does for locals, and it composes with narrowing exactly
+   the way `filtered` args compose with formal filters.
+3. **Multiple closure shapes in one global** — out of scope here;
+   that is 029/030 (dispatch over a union of callable types), and
+   after (2) the residual need for it shrinks to programs that
+   genuinely keep differently-shaped callables in one cell.
+
+Step 1 removes the crash class (005-alikes) structurally; step 2
+removes the imprecision class (002B-alikes) structurally. Neither
+is urgent — the shipped guards and the 002B nullable-closure fix
+cover today's known symptoms — but any new FA feature that touches
+per-ES state should check this issue first, and if a new
+GLOBAL_CONTOUR guard is about to be added, that is the signal to do
+step 1 instead.
+
+## Verification sketch (original)
+
+- Step 1: full suites (both backends) + `ifa-test` unchanged;
+  delete the 005 guard and confirm `while True:` tests still pass;
+  grep proves no `(void *)1` sentinel remains.
+- Step 2: `closure_in_global.py` stays green; add a narrowing
+  variant asserting the *temp's* type at the guarded call site is
+  closure-only (e.g. via `-l F` var-type log), not `None ∪ closure`.
+
+## What landed (2026-07-04)
+
+### Step 1 — GLOBAL_CONTOUR is now a real EntrySet
+
+- `fa.h`: `GLOBAL_CONTOUR` is now `((void *)::fa->global_es)`; new
+  `FA::global_es` member. Keeping the macro `void *`-typed was
+  deliberate: `unique_AVar` has both `(Var *, void *)` and
+  `(Var *, EntrySet *)` overloads, and only the void* one must be
+  selected for globals (the EntrySet overload sets
+  `contour_is_entry_set`, which would change clone-equivalence and
+  every `contour is a CreationSet` test of the form
+  `!contour_is_entry_set && contour != GLOBAL_CONTOUR`).
+- `fa.cc` `FA::analyze`: creates the singleton at entry —
+  `fun = top` (so incidental `es->fun` derefs are safe), never
+  registered in `fa->ess` (clone/equivalence passes never see it),
+  and `in_es_worklist` permanently 1, so every standard
+  `if (!es->in_es_worklist)` enqueue check skips it naturally.
+- Guards removed: `update_in`'s issue-005 special case (the deref
+  is now safe and the enqueue self-suppresses), `creation_point`'s
+  `es = 0` sentinel dodge (`global_es->split` is always null), and
+  `show_call_tree`'s skip (`global_es->edges` is always empty).
+  The remaining `contour != GLOBAL_CONTOUR` comparisons are
+  *semantic* ("is this contour a CreationSet?" / "is this AVar
+  global?") and still correct as pointer comparisons.
+
+### Step 2 — global reads are loads into per-read local temps
+
+Implemented in the pyc frontend (`python_ifa_build_if1.cc`,
+`PY_name` load path + `is_module_data_var`): each *read* of a
+module-level data variable emits `if1_move(cell, temp)` and the
+expression consumes the temp; stores still write the cell
+directly. The temp is `is_local`/`LOCALLY_NESTED`, i.e. on FA's
+first-class track (EntrySet-contoured, SSU-renamable), so no
+global Var ever appears as a SEND rval / if-condition operand
+anymore — verified in the IF1 dump (`(MOVE (temp N) (var
+"stash"))` before the call, where previously the SEND consumed
+`(var "stash")` directly).
+
+`is_module_data_var` intentionally excludes everything downstream
+passes match by identity: functions (call dispatch), classes/types
+(instantiation, isinstance), modules (attribute resolution),
+interned symbols, constants, and builtin unique objects
+(`is_external`/`is_builtin` — None/nil, void, unknown). The first
+implementation attempt missed that last category and tempified
+`None` reads, which hit codegen's constant-elision protocol
+(`mark_live_avar` skips constant rvals on the assumption consumers
+inline the literal; a load temp for nil got declared but its
+defining MOVE dead-elided — 11 test failures, all the
+`is`-identity/None-narrowing family). Worth remembering: **any new
+Var whose type concretizes to a bare constant (esp. nil) must not
+be consumed by emission paths that reference the variable name**
+— that protocol mismatch is a pre-existing codegen sharp edge,
+not specific to this change.
+
+### Honest scope note: cross-read narrowing did NOT land
+
+The original sketch hoped `if g is not None: g()` would narrow.
+It does not: the condition read and the body read are now two
+*different* temps, and issue-025's recognizer (correctly) narrows
+only the Var it saw in the predicate. Narrowing across two loads
+of the same cell requires proving no intervening store (no calls
+between the loads) — i.e. load CSE, a real dataflow optimization,
+not a contour question. In practice this costs nothing today:
+the nullable-SUM codegen (issue 002 Case B fix, `closure_fun_type`
++ the long-standing `SUM{nil,T}` nullable-pointer idiom) already
+compiles the guarded-call and guarded-field-access shapes
+correctly without narrowing, and the local-copy idiom
+(`t = g; if t is not None: t.f()`) gets full narrowing through
+the existing machinery. File a separate issue if a shape ever
+genuinely needs cross-load narrowing.
+
+### Verification results
+
+- `./test_pyc`: 126 passed / 0 failed (three consecutive clean
+  runs; one earlier single-run transient `expr_evaluator` COMPILE
+  flake matches issue 021's known nondeterminism class and did not
+  reproduce). `PYC_FLAGS=-b ./test_pyc`: 126 / 0. `ifa/ifa-test`:
+  14 / 0.
+- New test `tests/global_cell_semantics.py` (both backends +
+  CPython cross-verified): global closure rebinding observed by
+  the next call, global object rebinding observed by field reads,
+  a loop whose condition re-reads a global mutated by its callee,
+  and store/read interleaving at module top level — locks in the
+  memory-cell (fresh-load-per-read) semantics against any future
+  caching regression.
+- `tests/closure_in_global.py` (issue 002 Case B) stays green with
+  the call now routed through the load temp.
+- Structural check: IF1 dump shows every global read as a MOVE
+  into a temp; `fibheap_full.py` (the issue-005 regression
+  carrier) passes with the update_in guard gone.

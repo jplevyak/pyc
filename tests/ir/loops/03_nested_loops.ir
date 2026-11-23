@@ -1,0 +1,33 @@
+;; 03_nested_loops.ir — inner while inside outer while.
+;;
+;; Locks the nested loop-tree shape: l0 (outer, depth=1) containing
+;; l1 (inner, depth=2). Pre-issue-004 this fixture reported the two
+;; loops as siblings; the find_loop walk-up-to-REP fix plus the
+;; collapse entry-pred-inheritance fix together produce the correct
+;; nested tree. See ifa/issues/004-find-local-loops-siblings.md
+;; (closed).
+
+(sym %c1 :is-local)
+(sym %c2 :is-local)
+(sym %x :is-local)
+(sym %r :is-local)
+(sym %cont)
+
+(fun %nested
+  :args (%c1 %c2 %x)
+  :rets (%r)
+  :cont %cont
+  :body
+    (label %L_o_top)
+    (if %c1 %L_o_body %L_o_end)
+    (label %L_o_body)
+    (label %L_i_top)
+    (if %c2 %L_i_body %L_i_end)
+    (label %L_i_body)
+    (move %x %r)
+    (goto %L_i_top)
+    (label %L_i_end)
+    (goto %L_o_top)
+    (label %L_o_end))
+
+(entry %nested)
