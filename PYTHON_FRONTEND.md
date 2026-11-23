@@ -719,6 +719,30 @@ decorator builds. Names are resolved through the module's own imports of
 binds the names; pyc never evaluates an annotation. Design and limits:
 [issues/195](issues/195-typing-and-dataclasses.md).
 
+### 11.3 `enum`, and metamethods
+
+The same file lowers a module-level class whose base is an enum class
+(`lower_enums`): each member assignment becomes an instance made with
+`__pyc_new_instance__(C)` (the prototype clone, without calling `C`), named,
+valued and added after the class statement; `pyc_lib/enum.py` holds the
+rest. `PYC_DBG_ENUM=1` prints the generated code, and `pyc_enum_check`
+(after `build_syms`) refuses an enum subclass the lowering could not see.
+
+What CPython's metaclass does on the class itself comes from
+`@__pyc_metamethod__`, a marker like `@staticmethod` that `build_syms`
+consumes. The method's receiver formal is typed by the class's META type,
+so its receiver is the class value. It is not a member of the class: the
+name is not bound in the class scope, so there is no prototype slot and no
+instance method. It is inherited, because ifa makes a subclass's meta type
+a subtype of its base's. `for x in C`, `C[k]`, `len(C)` and `x in C`
+dispatch to metamethods. A metamethod named `__call__` takes the shape of
+the `__new__` wrapper (its first formal is the callee), so `C(...)` calls
+it. A class with one in its MRO gets no `__new__` wrapper
+(`ctx.meta_call_classes`, `gen_class_pyda`). For a class value, FA's
+`P_prim_period` prefers a metamethod to the prototype's member of the same
+name, as `len(C)` looks on `type(C)`. Design and limits:
+[issues/208](issues/208-enum.md).
+
 ---
 
 ## 12. The DParser grammar (`python.g`)

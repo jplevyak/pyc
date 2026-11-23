@@ -92,6 +92,9 @@ class PycAST : public IFAAST {
   // decorator-application loop (markers are not real decorators).
   uint32 is_staticmethod : 1;
   uint32 is_classmethod : 1;
+  // @__pyc_metamethod__: a method of the class's META type (its receiver is
+  // the class value), see build_syms_pyda's PY_decorated case.
+  uint32 is_metamethod : 1;
 
   PycAST();
 };

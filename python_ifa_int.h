@@ -180,6 +180,10 @@ class PycCompiler : public PycCallbacks {
   // Empty for a plain def, whose wrapper is built entirely in build_if1
   // and needs no cross-pass handoff.
   Map<Sym *, Sym *> gen_method_wrapper;
+  // Classes whose body defines an `@__pyc_metamethod__ def __call__`: a call
+  // of the class (or of a subclass) goes to it, as to a metaclass __call__,
+  // and gen_class_pyda builds no __new__ wrapper for them.
+  Vec<Sym *> meta_call_classes;
 
   // Per plain-def GENERATOR's coroutine-body Fun, its __pyc_generator__
   // wrapper Fun -- created BEFORE the body is walked, so a recursive
@@ -366,6 +370,7 @@ cchar *resolve_relative_module(cchar *mod, PycCompiler &ctx);
 void lower_ctypes(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);
 void lower_typing_and_dataclasses(Vec<PycModule *> &mods, Vec<PyDAST *> &imported);  // issues/195
 void pyc_dataclass_check(PycCompiler &ctx);  // issues/195, after build_syms
+void pyc_enum_check(PycCompiler &ctx);       // issues/208, after build_syms
 extern cchar *pyc_ffi_shim;
 void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out);
 int build_syms(PycModule *x, PycCompiler &ctx);

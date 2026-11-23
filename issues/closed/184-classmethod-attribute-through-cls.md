@@ -67,3 +67,15 @@ receiver answered this way is left out of the selector dispatch.
 `.known_issue` removed; the `__name__` line moved to
 `tests/class_name_attribute.py` for 190). It also covers a plain method and a
 staticmethod read through `cls`.
+
+## Addendum (2026-11-22): codegen never emitted a read that did not fold
+
+Every read verified above folded to a constant. A read whose value is only
+known at run time (`len(cls.items)` with `B.items = [1] * n`) reached
+codegen as a period on a META-typed receiver, which neither backend
+handled. Both refused it: `the attribute 'items' is not a field of the
+receiver's type 'B'`. FA gives each class value its own contour, so the
+receiver is one class, and the read is now a field of that class's
+prototype global (`cg_meta_proto_var`, `cg.cc`, `cg_emit_llvm.cc`).
+`tests/classmethod_cls_attribute_runtime.py` covers it. Found by
+issues/208, whose metamethods read the class's members through `cls`.

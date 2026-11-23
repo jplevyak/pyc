@@ -1288,7 +1288,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       // processing so the names are never resolved as variables, and
       // record them on the def's PycAST for gen_fun_pyda (formal-list
       // convention) and build_if1_pyda (skip in the application loop).
-      bool marker_static = false, marker_class = false;
+      bool marker_static = false, marker_class = false, marker_meta = false;
       for (int i = 0; i < n->children.n - 1; i++) {
         Vec<PyDAST *> decs;
         if (n->children[i]->kind == PY_suite)
@@ -1300,6 +1300,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
           if (dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) continue;
           if (decorator_name_is(dec->children[0]->str_val, "staticmethod")) marker_static = true;
           else if (decorator_name_is(dec->children[0]->str_val, "classmethod")) marker_class = true;
+          else if (decorator_name_is(dec->children[0]->str_val, "__pyc_metamethod__")) marker_meta = true;
           // issues/171 #13, issues/007: inject_property_accessors consumes
           // every @property that is a method's outermost decorator, in the
           // program's modules and the imported ones. One left here is not
@@ -1313,7 +1314,10 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
       }
       // Pre-scope: process decorators (markers excluded -- their names
       // intentionally resolve to nothing).
-      if (!marker_static && !marker_class)
+      if (marker_meta && (marker_static || marker_class || n->children.n != 2 ||
+                          (n->children[0]->kind == PY_suite && n->children[0]->children.n != 1)))
+        fail("error line %d: @__pyc_metamethod__ must be a method's only decorator", n->line);
+      if (!marker_static && !marker_class && !marker_meta)
         for (int i = 0; i < n->children.n - 1; i++) build_syms_pyda(n->children[i], ctx);
       // Dispatch to funcdef or classdef handling
       if (def->kind == PY_funcdef) {
@@ -1325,9 +1329,24 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
         if (varargsl)
           for (auto c : varargsl->children.values())
             if (c->kind == PY_arg_default) build_syms_pyda(c->children[1], ctx);
-        PycSymbol *ps = make_PycSymbol(ctx, def->children[0]->str_val, PYC_LOCAL);
         bool marker_method = (marker_static || marker_class) && ctx.in_class() && ctx.cls()->type_kind == Type_RECORD;
-        if (marker_method) {
+        if (marker_meta && !(ctx.in_class() && ctx.cls()->type_kind == Type_RECORD))
+          fail("error line %d: @__pyc_metamethod__ is for a method of a class", n->line);
+        // A metamethod is NOT a member of the class: its name is not bound in
+        // the class scope (so no prototype slot, no instance method, and an
+        // instance `__call__` forwarder is not made for a meta `__call__`).
+        // It is found by dispatch alone, on the class's meta type, which
+        // ifa's type hierarchy makes a subtype of every base's meta type, so
+        // a subclass inherits it (build_type_hierarchy, ifa/if1/ast.cc).
+        PycSymbol *ps = marker_meta ? nullptr : make_PycSymbol(ctx, def->children[0]->str_val, PYC_LOCAL);
+        if (marker_meta) {
+          def_ast->is_metamethod = 1;
+          def_ast->rval = new_sym(def_ast, def->children[0]->str_val);
+          def_ast->sym = new_sym(def_ast, 1);
+          def_ast->rval->alias = def_ast->sym;
+          def_ast->sym = def_fun_pyda(def, def_ast, def_ast->sym, ctx);
+          if (!strcmp(def->children[0]->str_val, "__call__")) ctx.meta_call_classes.set_add(ctx.cls());
+        } else if (marker_method) {
           // Method-FIELD shape (mirrors PY_funcdef's is_method branch):
           // the public name is a class prototype field whose alias is
           // the function, installed via a setter send. The function
@@ -1423,7 +1442,7 @@ int build_syms_pyda(PyDAST *n, PycCompiler &ctx) {
             x->value->sym->is_local = 1;
             x->value->sym->nesting_depth = LOCALLY_NESTED;
           }
-        if (!marker_method) maybe_synthesize_closure_pyda(def_ast, ctx, true);
+        if (!marker_method && !marker_meta) maybe_synthesize_closure_pyda(def_ast, ctx, true);
         exit_scope(ctx);
       } else if (def->kind == PY_classdef) {
         goto Lclassdef_inner;
@@ -2418,7 +2437,15 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   // (dispatch is resolved statically at the class-qualified call site
   // in build_if1_pyda, so no receiver specialization is needed).
   bool is_method = in && !in->is_fun && !ast->is_staticmethod && !ast->is_classmethod;
-  if (cls && fn->is_generator) {
+  // @__pyc_metamethod__ def __call__(cls, ...): the shape of the __new__
+  // wrapper, whose first formal IS the callee (the class value), so a call
+  // of the class dispatches to it as a call of any value does.
+  bool meta_call = ast->is_metamethod && ast->rval && ast->rval->name && !strcmp(ast->rval->name, "__call__");
+  if (ast->is_metamethod && fn->is_generator)
+    fail("error line %d: a @__pyc_metamethod__ cannot be a generator", ctx.lineno);
+  if (meta_call) {
+    // as[0] is `cls`, added with the other formals below.
+  } else if (cls && fn->is_generator) {
     // A capturing generator (sunfish's `moves()` inside `bound`): the
     // carrier now dispatches to its generator WRAPPER (build_if1_pyda's
     // PY_funcdef), so the coroutine body is value-carried, like a plain
@@ -2463,14 +2490,21 @@ void gen_fun_pyda(PyDAST *n, PycAST *ast, PycCompiler &ctx) {
   }
   // issues/171 #7: the hidden return-cell formal goes first, so a `*args`
   // formal stays last; build_generator_wrapper finds it by identity.
-  int self_i = retcell ? 2 : 1;
+  int self_i = meta_call ? 0 : retcell ? 2 : 1;
   if (retcell) as.add(retcell);
   get_syms_args_pyda(ast, varargsl, as, ctx);
   if (!cls && is_method) {
     if (as.n > self_i) {
       fn->self = as[self_i];
-      fn->self->must_implement_and_specialize(in);
-    }
+      // A metamethod's receiver is the class VALUE, typed by the class's
+      // meta type (a class value's type, add_var_constraint).
+      if (ast->is_metamethod) {
+        if (!in->meta_type) make_meta_type(in);
+        fn->self->must_implement_and_specialize(in->meta_type);
+      } else
+        fn->self->must_implement_and_specialize(in);
+    } else if (ast->is_metamethod)
+      fail("error line %d: a @__pyc_metamethod__ takes the class as its first parameter", ctx.lineno);
   }
   if (varargsl && is_method)
     for (auto c : varargsl->children.values())
@@ -3268,8 +3302,20 @@ void gen_class_pyda(PyDAST *cdef, PycAST *ast, PycCompiler &ctx, char *vector_si
     as.add(fn->self);
     if1_closure(if1, fn, body, as.n, as.v);
   }
+  // A meta `__call__` (`@__pyc_metamethod__ def __call__(cls, ...)`) on the
+  // class or a base replaces the call of the class, as a metaclass
+  // `__call__` replaces type.__call__: no __new__ wrapper, which would be a
+  // second, more specific candidate for every call.
+  bool meta_call = false;
+  {
+    Vec<Sym *> mro;
+    c3_mro(cls, mro);
+    if (!mro.n) mro.add(cls);
+    for (Sym *c : mro)
+      if (ctx.meta_call_classes.set_in(c)) meta_call = true;
+  }
   while (1) {
-    if (is_record) {
+    if (is_record && !meta_call) {
       fn = new_fun(ast);
       fn->init = init_sym;
       fn->nesting_depth = ctx.scope_stack.n;

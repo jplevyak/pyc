@@ -1,0 +1,1 @@
+fail: error enum_intenum_refused.py:7: enum.IntEnum is not supported: its members are int instances with a name, and pyc has no int subclass that carries attributes (issues/208)

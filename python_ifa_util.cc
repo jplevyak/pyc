@@ -115,7 +115,8 @@ PycAST::PycAST()
       is_object_index(0),
       is_slice(0),
       is_staticmethod(0),
-      is_classmethod(0) {
+      is_classmethod(0),
+      is_metamethod(0) {
   label[0] = label[1] = 0;
 }
 

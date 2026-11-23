@@ -1,0 +1,7 @@
+(5.976e+24, 6378140.0) 5.976e+24
+9.80 3.70
+True False [<Size.SMALL: 1>, <Size.MEDIUM: 2>, <Size.LARGE: 3>]
+Size.LARGE Size.MEDIUM
+ValueError: 0 is not a valid Size
+Mode.WRITE ['r', 'w'] 2 3
+reading writing

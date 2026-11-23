@@ -1415,6 +1415,19 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
     static int off = -1;
     if (off < 0) off = getenv("PYC_NO_FORCED_SPLIT") ? atoi(getenv("PYC_NO_FORCED_SPLIT")) : 0;
     if (!off) ast->rval->clone_for_constants = 1;
+  } else if (f == sym___pyc_new_instance__) {
+    // __pyc_new_instance__(C): a new instance of the class C, without calling
+    // C -- the clone of its prototype that C's __new__ wrapper starts from,
+    // with no __init__. For library code whose class replaces its own call
+    // with a meta __call__ (pyc_lib/enum.py), and so has no other way to
+    // make an instance. C must name a class, statically.
+    if (pos_args.n != 1) fail("bad number of arguments to builtin function %s", f->name);
+    PycAST *a0 = getAST(pos_args[0], ctx);
+    Sym *c = a0->sym;
+    if (!c || c->type_kind != Type_RECORD || !c->self || c->is_vector)
+      fail("error line %d: __pyc_new_instance__ takes a class, by name", ctx.lineno);
+    ast->rval = new_sym(ast);
+    if1_send(if1, &ast->code, 3, 1, sym_primitive, sym_clone, c->self, ast->rval)->ast = ast;
   } else if (f == sym___pyc_c_call__) {
     Code *send = if1_send1(if1, &ast->code, ast);
     if1_add_send_arg(if1, send, sym_primitive);
@@ -3615,7 +3628,8 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
             // not runtime decorators -- never applied.
             if (!(dec->children.n >= 2 && dec->children[1]->kind == PY_arglist) &&
                 (decorator_name_is(dec->children[0]->str_val, "staticmethod") ||
-                 decorator_name_is(dec->children[0]->str_val, "classmethod")))
+                 decorator_name_is(dec->children[0]->str_val, "classmethod") ||
+                 decorator_name_is(dec->children[0]->str_val, "__pyc_metamethod__")))
               continue;
             PyDAST *fname_node = dec->children[0];
             PycAST *fname_ast = getAST(fname_node, ctx);

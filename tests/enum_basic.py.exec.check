@@ -1,0 +1,14 @@
+Color.RED <Color.GREEN: 2> BLUE 3
+True RED
+['RED', 'GREEN', 'BLUE'] 3
+['RED', 'GREEN', 'BLUE', 'CRIMSON']
+Color.GREEN Color.BLUE True
+True True False
+True False True
+green=2 Color.GREEN
+Color.RED Color.BLUE Color.GREEN
+[1, 2, 10, 11] Shape.HEXAGON
+[<Color.BLUE: 3>, <Color.GREEN: 2>, <Color.RED: 1>]
+r True
+ValueError: 9 is not a valid Color
+stop go ? 

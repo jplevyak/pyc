@@ -73,7 +73,7 @@ struct Binds {
 
 struct Env {
   cchar *filename = nullptr;
-  Binds typing, dc;
+  Binds typing, dc, en;
 };
 
 [[noreturn]] void err(PyDAST *at, const char *f, ...) __attribute__((format(printf, 2, 3)));
@@ -578,6 +578,266 @@ void lower_dataclass(Env &env, PyDAST *decorated, PyDAST *cdef, PyDAST *args, st
   all_dcs.push_back(d);
 }
 
+// ------------------------------------------------------------------ enum
+//
+// issues/208. A module-level class whose base is an enum class -- Enum or
+// ReprEnum named through the module's imports of `enum`, or an enum class
+// defined earlier in the same module -- becomes the class CPython's EnumType
+// builds. IntEnum and StrEnum are refused (their members are ints / strs). pyc_lib/enum.py has the rest, and says what it
+// is.
+//
+// A body statement `NAME = value` (or `NAME: T = value`) is a MEMBER, by
+// CPython's rule (enum._EnumDict): NAME is not a _sunder_, __dunder__ or
+// __private name, and the value is not a function (a lambda; a def is not an
+// assignment). The value is evaluated where it stands, in the class body,
+// into a module global (as a dataclass default is), and the statement is
+// removed. After the class, in definition order:
+//
+//     Color.__pyc_members__ = []; Color.__members__ = {}
+//     Color.__pyc_enum_name__ = "Color"
+//     G = <auto() value>                      # for each auto() member
+//     M = __pyc_new_instance__(Color)         # not Color(...): that looks up
+//     M._name_ = "RED"; M._value_ = G
+//     M.__init__(*G)                          # only if the class has __init__
+//     Color.RED = __pyc_enum__.__pyc_enum_add__(Color, M)
+//     __pyc_enum__.__pyc_enum_unique__(Color) # for @unique
+
+std::vector<PyDAST *> all_enums;  // every lowered enum classdef, for pyc_enum_check
+
+struct EnumClass {
+  std::string name;
+  bool has_members = false;
+  bool init = false;      // defines __init__ (or inherits it from an enum in this module)
+  bool gen_next = false;  // defines _generate_next_value_ (or inherits one)
+};
+
+// The enum library's roots, by the name the module imports them under.
+bool enum_root(Env &env, PyDAST *b, std::string &root) {
+  root = member_of(env.en, b);
+  return root == "Enum" || root == "IntEnum" || root == "StrEnum" || root == "ReprEnum";
+}
+
+// The bases of a classdef.
+Vec<PyDAST *> class_bases(PyDAST *cdef) {
+  Vec<PyDAST *> bases;
+  for (int i = 1; i < cdef->children.n - 1; i++) {
+    if (cdef->children[i]->kind == PY_tuple || cdef->children[i]->kind == PY_testlist)
+      for (PyDAST *b : cdef->children[i]->children) bases.add(b);
+    else
+      bases.add(cdef->children[i]);
+  }
+  return bases;
+}
+
+// Is this classdef an enum class? Its enum base in this module, if any.
+bool is_enum_class(Env &env, PyDAST *cdef, std::map<std::string, EnumClass *> &by_name, EnumClass *&base,
+                   std::string &root) {
+  bool is = false;
+  base = nullptr;
+  root.clear();
+  for (PyDAST *b : class_bases(cdef)) {
+    std::string r;
+    if (enum_root(env, b, r)) {
+      // An IntEnum / StrEnum member IS an int / a str; pyc has no subclass
+      // of int or str that carries attributes, so it cannot make one.
+      if (r == "IntEnum" || r == "StrEnum")
+        err(cdef, "enum.%s is not supported: its members are %s instances with a name, and pyc has no %s subclass that "
+                  "carries attributes (issues/208)",
+            r.c_str(), r == "IntEnum" ? "int" : "str", r == "IntEnum" ? "int" : "str");
+      is = true;
+      root = r;
+    } else if (member_of(env.en, b) == "Flag" || member_of(env.en, b) == "IntFlag")
+      err(cdef, "enum.%s is not supported (issues/208)", member_of(env.en, b).c_str());
+    else if (b->kind == PY_name && b->str_val && by_name.count(b->str_val)) {
+      is = true;
+      base = by_name[b->str_val];
+    }
+  }
+  return is;
+}
+
+bool dunder_or_sunder(const std::string &n) {
+  size_t l = n.size();
+  if (l > 4 && n.compare(0, 2, "__") == 0 && n.compare(l - 2, 2, "__") == 0) return true;  // __dunder__
+  if (l > 2 && n[0] == '_' && n[l - 1] == '_' && n[1] != '_' && n[l - 2] != '_') return true;  // _sunder_
+  return false;
+}
+
+// `auto()`, through the module's imports of enum.
+bool is_auto_call(Env &env, PyDAST *v) {
+  if (!v || v->kind != PY_power || v->children.n != 2 || v->children[1]->kind != PY_call) return false;
+  if (member_of(env.en, v->children[0]) != "auto") return false;
+  if (v->children[1]->children.n) err(v, "auto() takes no arguments");
+  return true;
+}
+
+// The length of a tuple display, or -1.
+int tuple_literal(PyDAST *v) {
+  if (v && (v->kind == PY_tuple || (v->kind == PY_testlist && v->children.n > 1))) return v->children.n;
+  return -1;
+}
+
+void lower_enum(Env &env, PyDAST *cdef, Vec<PyDAST *> &decorators, std::map<std::string, EnumClass *> &by_name,
+                EnumClass *base, const std::string &root, std::string &after) {
+  static int next_enum = 1;
+  int k = next_enum++;
+  EnumClass *e = new EnumClass;
+  e->name = cdef->children[0]->str_val;
+  if (base) {
+    if (base->has_members)
+      err(cdef, "%s: cannot extend enum %s, which has members", e->name.c_str(), base->name.c_str());
+    e->init = base->init;
+    e->gen_next = base->gen_next;
+  }
+  bool unique = false;
+  for (PyDAST *d : decorators) {
+    if (d->kind == PY_decorator && d->children.n == 1 && member_of_text(env.en, trimmed(d->children[0]->str_val)) == "unique")
+      unique = true;
+    else
+      err(cdef, "a decorator on enum class %s other than @unique is not supported (issues/208)", e->name.c_str());
+  }
+  PyDAST *&body = class_body(cdef);
+  struct Member {
+    std::string name, global;
+    bool is_auto;
+    int tuple;  // the value is a tuple display of this length, else -1
+  };
+  std::vector<Member> members;
+  Vec<PyDAST *> nbody;
+  for (PyDAST *st : body->children) {
+    PyDAST *d = st->kind == PY_decorated ? st->children.last() : st;
+    if (d->kind == PY_funcdef && d->children[0]->str_val) {
+      std::string fname = d->children[0]->str_val;
+      if (fname == "__init__") e->init = true;
+      if (fname == "_generate_next_value_") e->gen_next = true;
+      if (fname == "__new__") err(d, "%s: __new__ in an enum class is not supported (issues/208)", e->name.c_str());
+    }
+    PyDAST *target = nullptr, *value = nullptr;
+    if (st->kind == PY_assign && st->children.n == 2) target = st->children[0], value = st->children[1];
+    if (st->kind == PY_annassign && st->children.n == 3) target = st->children[0], value = st->children[2];
+    if (!target || target->kind != PY_name || !target->str_val) {
+      if (target && st->kind == PY_assign)
+        err(st, "%s: only `NAME = value` defines an enum member here (issues/208)", e->name.c_str());
+      nbody.add(st);
+      continue;
+    }
+    std::string name = target->str_val;
+    if (name == "_ignore_") err(st, "%s: _ignore_ is not supported (issues/208)", e->name.c_str());
+    if (name == "_order_") continue;  // CPython only checks it against the definition order
+    if (dunder_or_sunder(name) || name.compare(0, 2, "__") == 0 || value->kind == PY_lambda) {
+      nbody.add(st);
+      continue;
+    }
+    for (Member &m : members)
+      if (m.name == name) err(st, "%s: '%s' already defined as %s", e->name.c_str(), name.c_str(), name.c_str());
+    Member m{name, fmt("__pyc_en_%d_%s__", k, name.c_str()), is_auto_call(env, value), tuple_literal(value)};
+    if (!m.is_auto) {
+      std::vector<PyDAST *> ph;
+      std::string gen = fmt("    global %s\n    %s = %s\n", m.global.c_str(), m.global.c_str(), ph_name(ph, value).c_str());
+      for (PyDAST *c : *parse_body(gen, st, ph)) nbody.add(c);
+    }
+    members.push_back(m);
+  }
+  if (!nbody.n) nbody.add(new_node(PY_pass_stmt, body));
+  body->children.clear();
+  for (PyDAST *c : nbody) body->add(c);
+  e->has_members = !members.empty();
+  by_name[e->name] = e;
+  all_enums.push_back(cdef);
+  if (!e->has_members) {
+    if (unique) after += fmt("__pyc_enum__.__pyc_enum_unique__(%s)\n", e->name.c_str());
+    return;
+  }
+  cchar *c = e->name.c_str();
+  after += fmt("%s.__pyc_members__ = []\n%s.__members__ = {}\n%s.__pyc_enum_name__ = \"%s\"\n", c, c, c, c);
+  for (size_t i = 0; i < members.size(); i++) {
+    Member &m = members[i];
+    if (m.is_auto) {
+      std::string last = "[";
+      for (size_t j = 0; j < i; j++) last += (j ? ", " : "") + members[j].global;
+      last += "]";
+      if (e->gen_next)
+        after += fmt("%s = %s._generate_next_value_(\"%s\", 1, %d, %s)\n", m.global.c_str(), c, m.name.c_str(), (int)i,
+                     last.c_str());
+      else if (!i)
+        after += fmt("%s = 1\n", m.global.c_str());
+      else
+        after += fmt("%s = __pyc_enum__.__pyc_enum_next__(%s)\n", m.global.c_str(), last.c_str());
+    }
+    std::string mv = fmt("__pyc_en_%d_m_%s__", k, m.name.c_str());
+    after += fmt("%s = __pyc_new_instance__(%s)\n%s._name_ = \"%s\"\n%s._value_ = %s\n", mv.c_str(), c, mv.c_str(),
+                 m.name.c_str(), mv.c_str(), m.global.c_str());
+    // CPython calls __init__(*value) for a tuple value, else
+    // __init__(value). A tuple display's elements are passed by index:
+    // its length is known here.
+    if (e->init) {
+      std::string args = m.global;
+      if (m.tuple >= 0) {
+        args.clear();
+        for (int j = 0; j < m.tuple; j++) args += fmt("%s%s[%d]", j ? ", " : "", m.global.c_str(), j);
+      }
+      after += fmt("%s.__init__(%s)\n", mv.c_str(), args.c_str());
+    }
+    after += fmt("%s.%s = __pyc_enum__.__pyc_enum_add__(%s, %s)\n", c, m.name.c_str(), c, mv.c_str());
+  }
+  if (unique) after += fmt("__pyc_enum__.__pyc_enum_unique__(%s)\n", c);
+}
+
+// Every module-level enum class, lowered in place; the statements that make
+// its members follow it.
+void lower_enums(Env &env, PyDAST *mod) {
+  std::map<std::string, EnumClass *> by_name;
+  Vec<PyDAST *> out;
+  bool any = false;
+  for (PyDAST *st : mod->children) {
+    PyDAST *cdef = st->kind == PY_decorated ? st->children.last() : st;
+    EnumClass *base;
+    std::string root;
+    if (cdef->kind != PY_classdef || !is_enum_class(env, cdef, by_name, base, root)) {
+      out.add(st);
+      continue;
+    }
+    any = true;
+    Vec<PyDAST *> decs;
+    if (st->kind == PY_decorated)
+      for (PyDAST *d : decorators_of(st)) decs.add(d);
+    std::string after;
+    lower_enum(env, cdef, decs, by_name, base, root, after);
+    out.add(cdef);  // its decorators are consumed
+    cdef->parent = mod;
+    if (!after.empty()) {
+      PyDAST *g = dparse_python_buf_to_ast("<enum>", after.c_str(), (int)after.size());
+      if (getenv("PYC_DBG_ENUM")) fprintf(stderr, "--- enum: generated after %s:%d\n%s", cdef->filename, cdef->line, after.c_str());
+      if (!g) fail("internal error: the enum lowering generated code that does not parse (%s:%d)", cdef->filename, cdef->line);
+      set_origin(g, cdef->filename, cdef->line);
+      for (PyDAST *c : g->children) out.add(c);
+    }
+  }
+  if (!any) return;
+  std::string imp = "import enum as __pyc_enum__\n";
+  PyDAST *g = dparse_python_buf_to_ast("<enum>", imp.c_str(), (int)imp.size());
+  set_origin(g, env.filename, 1);
+  mod->children.clear();
+  mod->add(g->children[0]);
+  for (PyDAST *c : out) mod->add(c);
+}
+
+// An enum class the lowering did not see (not at module level).
+void check_enum_unsupported(Env &env, PyDAST *n, bool top) {
+  if (!n) return;
+  if (!top && n->kind == PY_classdef)
+    for (PyDAST *b : class_bases(n)) {
+      std::string r;
+      if (enum_root(env, b, r)) err(n, "an enum class is supported at module level only (issues/208)");
+    }
+  if (n->kind == PY_power && n->children.n >= 2 && n->children[1]->kind == PY_call) {
+    std::string r;
+    if (enum_root(env, n->children[0], r))
+      err(n, "the functional API enum.%s(...) is not supported (issues/208)", r.c_str());
+  }
+  for (PyDAST *c : n->children) check_enum_unsupported(env, c, n->kind == PY_module || (top && n->kind == PY_decorated));
+}
+
 // What the lowering did not consume is a use of `dataclasses` it does not
 // support (fields(), asdict(), a dataclass that is not at module level).
 void check_unsupported(Env &env, PyDAST *n) {
@@ -600,6 +860,7 @@ void lower_module(PyDAST *mod, cchar *filename) {
     if (st->kind == PY_import_name || st->kind == PY_import_from) {
       scan_import(env.typing, "typing", st);
       scan_import(env.dc, "dataclasses", st);
+      scan_import(env.en, "enum", st);
     }
   if (env.typing.star || env.dc.star)
     for (PyDAST *st : mod->children)
@@ -608,6 +869,11 @@ void lower_module(PyDAST *mod, cchar *filename) {
         err(st, "`from %s import *` is not supported; import the names (issues/195)", m);
       }
   if (env.typing.mods.size() || env.typing.names.size()) lower_typing(env, mod);
+  if (env.en.mods.size() || env.en.names.size()) {
+    if (env.en.star) err(mod, "`from enum import *` is not supported; import the names (issues/208)");
+    check_enum_unsupported(env, mod, true);
+    lower_enums(env, mod);
+  }
   if (!env.dc.mods.size() && !env.dc.names.size()) return;
   std::map<std::string, DC *> by_name;
   bool need_frozen_import = false;
@@ -681,6 +947,37 @@ void pyc_dataclass_check(PycCompiler &ctx) {
                  d->cdef->filename, d->cdef->line, d->name.c_str());
         for (Sym *x : b->implements) todo.add(x);
       }
+    }
+  }
+}
+
+// After build_syms: an enum class the lowering did not see. The lowering
+// finds an enum class by its base as the module names it, so a subclass of
+// an enum class imported from ANOTHER module (or reached through any name
+// the imports do not bind) is left a plain class: its members would stay
+// the raw values, `print(Sub.A)` printing `3` where CPython prints `Sub.A`.
+// Such a class inherits the enum machinery's meta `__call__`; refuse it if
+// it defines anything CPython would make a member (enum._EnumDict's rule).
+void pyc_enum_check(PycCompiler &ctx) {
+  Vec<Sym *> lowered;
+  for (PyDAST *c : all_enums)
+    if (Sym *s = getAST(c, ctx)->sym) lowered.set_add(s);
+  Vec<Sym *> todo, seen;
+  for (Sym *r : ctx.meta_call_classes) todo.add(r);
+  while (todo.n) {
+    Sym *x = todo.pop();
+    if (!x || seen.set_in(x)) continue;
+    seen.set_add(x);
+    for (Sym *sub : x->specializers)
+      if (sub && sub != x && sub->type_kind == Type_RECORD) todo.add(sub);
+    if (ctx.meta_call_classes.set_in(x) || lowered.set_in(x)) continue;
+    for (Sym *m : x->has) {
+      if (!m || m->in != x || !m->name || (m->alias && m->alias->is_fun)) continue;
+      std::string n = m->name;
+      if (dunder_or_sunder(n) || n.compare(0, 2, "__") == 0) continue;
+      fail("error: enum class %s: its base is not an enum class pyc can see here, so '%s' would not be a member "
+           "(issues/208)",
+           x->name ? x->name : "?", m->name);
     }
   }
 }

@@ -745,6 +745,7 @@ int ast_to_if1_extend(Vec<PycModule *> &all_mods, BaselineIF1State bl) {
   }
   pyc_ffi_bind_exports(*ctx);  // issues/188: callback trampolines are exported (ifa/212)
   pyc_dataclass_check(*ctx);    // issues/195
+  pyc_enum_check(*ctx);         // issues/208
   // issue 011: user-level call graph (the builtin module's own was
   // already computed once in ast_to_if1_baseline). all_mods.n here
   // (not the n_user snapshot) so imports build_syms pulled in mid-loop
@@ -1441,7 +1442,9 @@ static void hoist_decorated_method(cchar *cname, PyDAST *body, int i, Vec<PyDAST
       decs.add(stmt->children[k]);
     for (PyDAST *d : decs) {
       char *dn = plain_decorator_name(d);
-      if (dn && (!strcmp(dn, "staticmethod") || !strcmp(dn, "classmethod") || !strcmp(dn, "property"))) return;
+      if (dn && (!strcmp(dn, "staticmethod") || !strcmp(dn, "classmethod") || !strcmp(dn, "property") ||
+                 !strcmp(dn, "__pyc_metamethod__")))
+        return;
     }
   }
   PyDAST *params = def->children[1];
@@ -1769,7 +1772,8 @@ static bool class_wants_accessors(PyDAST *n) {
           decs.add(stmt->children[k]);
         for (PyDAST *d : decs) {
           char *dn = plain_decorator_name(d);
-          if (!dn || (strcmp(dn, "staticmethod") && strcmp(dn, "classmethod"))) return true;
+          if (!dn || (strcmp(dn, "staticmethod") && strcmp(dn, "classmethod") && strcmp(dn, "__pyc_metamethod__")))
+            return true;
         }
       }
     }

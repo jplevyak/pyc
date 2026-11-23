@@ -85,6 +85,7 @@ Ordered by value against effort. Items in one row are independent.
 | --- | --- |
 | [172](172-stopiteration-value-reads-the-global-exception-slot.md) | `except StopIteration as e: e.value` reads the one global exception slot, the union of every raise in the program. |
 | [190](190-class-name-attribute.md) | A class has no `__name__` (`C.__name__`, `cls.__name__`). |
+| [208](208-enum.md) | `enum` landed 2026-11-22: `Enum`, `auto`, `unique`, aliases, `_missing_`, `__init__` on values, class-level iteration, `len`, `in`, lookup by value and by name, through new metamethods (`@__pyc_metamethod__`). `IntEnum`/`StrEnum` (no int/str subclass carrying attributes), `Flag`, the functional API are refused. `Color[missing]` raises past its handler (175). |
 | [207](207-core-library-batch.md) | the core batch landed 2026-11-20: itertools, functools (`lru_cache`, `cache`, `wraps`, `cmp_to_key`), Counter/OrderedDict/deque, math (with CPython's errors), bisect, operator, time, random, string.Template. `partial`, `total_ordering`, `namedtuple`, `attrgetter` not done; `nonlocal` and builtin classes as values found unsupported. |
 | [205](205-textwrap.md) | `textwrap` landed 2026-11-20; widths count UTF-8 bytes (203). Fixed on the way: `del l[-1]` deleted nothing, `del` of a missing index or key did nothing, str lacked `isalpha`/`isalnum`/`expandtabs`/... |
 | [206](206-argparse.md) | `argparse` is refused at the import, with the reason (decided 2026-11-20): its Namespace's attributes are named and typed at run time. Two ways to support it are recorded. |
@@ -101,6 +102,7 @@ Ordered by value against effort. Items in one row are independent.
 | issue | what |
 | --- | --- |
 | [187](187-self-import-overflows-the-frontend.md) | `import X` from `X.py` recurses without bound in the frontend. |
+| [209](209-star-call-of-a-float-tuple-into-a-none-method.md) | `p.g(*t)` with a float tuple into a method returning None emits an invalid cast on both backends (C clang error, LLVM verifier). |
 | [201](201-list-layout-tuple-at-a-computed-format-segfaults.md) | a list-layout tuple (`tuple(list)`, a slice) as a computed format's operand is passed as one argument and segfaults. |
 | [188](188-static-ctypes-subset.md) | **foreign calls**: the static `ctypes` subset landed 2026-11-11; callbacks, out-parameters, arrays, unions and `--jit` are not done. |
 | [196](196-compiling-shedskin-with-pyc.md) | **compiling shedskin itself**: `ast` (CPython's parser and node classes), `getattr` with a computed name, about 15 standard-library modules, `NamedTuple`. |
