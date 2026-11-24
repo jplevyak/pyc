@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Code } from '@/components/Code';
 import { Callout, DocLayout, PageHero } from '@/components/DocPage';
-import { DPARSER, GITHUB, RELEASES, releaseName, releaseTarball } from '@/content/site';
+import { DPARSER, GITHUB, INSTALL_SH, RELEASE, RELEASES, releaseName, releaseTarball, repo } from '@/content/site';
 
 export const metadata: Metadata = {
   title: 'Install',
@@ -30,9 +30,26 @@ export default function Install() {
       <DocLayout toc={TOC}>
         <h2 id="download">Download a release</h2>
         <p>
-          Each <a href={RELEASES}>release</a> has a self-contained build: <code>bin/pyc</code>, with
-          LLVM and the Boehm GC linked in, and <code>lib/pyc/</code>, its library, which pyc finds
-          beside itself. Unpack it anywhere:
+          Each <a href={RELEASES}>release</a> has a self-contained build for Linux (x86-64, arm64)
+          and macOS (Apple silicon, Intel). The install script picks the one for your machine,
+          checks it against the release&apos;s <code>SHA256SUMS</code>, and installs it under{' '}
+          <code>~/.local</code>, without root:
+        </p>
+        <Code lang="shell">{`
+$ curl -fsSL ${INSTALL_SH} | sh
+`}</Code>
+        <p>
+          It unpacks to <code>~/.local/share/pyc/&lt;version&gt;/</code> and links{' '}
+          <code>~/.local/bin/pyc</code> to it, and re-running it upgrades.{' '}
+          <code>sh -s -- --version {RELEASE}</code> pins a release, and <code>--prefix DIR</code>{' '}
+          installs somewhere else. It refuses a system older than the requirements below, and
+          says what is missing if <code>clang++</code> or <code>make</code> is not installed. Read
+          it first if you like: <a href={repo('blob/main/website/public/install.sh')}>install.sh</a>.
+        </p>
+        <p>
+          Or by hand. A tarball holds <code>bin/pyc</code>, with LLVM and the Boehm GC linked in,
+          and <code>lib/pyc/</code>, its library, which pyc finds beside itself. Unpack it
+          anywhere:
         </p>
         <Code lang="shell" title="Linux x86-64">{`
 $ curl -LO ${releaseTarball('linux', 'x86_64')}

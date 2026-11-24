@@ -77,14 +77,25 @@ A field that holds different types in different objects needs no declaration: a 
 ## Install
 
 Each [release](https://github.com/jplevyak/pyc/releases) has a self-contained build for Linux
-(x86-64, arm64) and macOS (Apple silicon, Intel). Unpack it anywhere and put its `bin/` on your
-`PATH`:
+(x86-64, arm64) and macOS (Apple silicon, Intel). The install script picks the right one, checks
+it against the release's `SHA256SUMS`, and installs it under `~/.local` without root:
 
 ```sh
-curl -LO https://github.com/jplevyak/pyc/releases/download/v0.1.2/pyc-0.1.2-linux-x86_64.tar.gz
-tar xzf pyc-0.1.2-linux-x86_64.tar.gz
-export PATH="$PWD/pyc-0.1.2-linux-x86_64/bin:$PATH"
+curl -fsSL https://pyc-lang.org/install.sh | sh
 pyc hello.py && ./hello
+```
+
+It unpacks to `~/.local/share/pyc/<version>/` and links `~/.local/bin/pyc` to it; re-running it
+upgrades. `sh -s -- --version 0.2.0` pins a release and `--prefix DIR` installs elsewhere. It
+refuses a system older than the requirements below rather than install a pyc that cannot run. The
+script is [`website/public/install.sh`](website/public/install.sh).
+
+Or by hand: unpack the tarball anywhere and put its `bin/` on your `PATH`:
+
+```sh
+curl -LO https://github.com/jplevyak/pyc/releases/download/v0.2.0/pyc-0.2.0-linux-x86_64.tar.gz
+tar xzf pyc-0.2.0-linux-x86_64.tar.gz
+export PATH="$PWD/pyc-0.2.0-linux-x86_64/bin:$PATH"
 ```
 
 (For Linux on arm64, `linux-aarch64`; for macOS, `darwin-arm64` or `darwin-x86_64`. Each release
