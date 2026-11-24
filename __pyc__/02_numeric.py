@@ -68,12 +68,17 @@ class int:
     return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __floordiv__(self, x):
     # Python floors; C `/` truncates toward zero, so a bare prim gave
-    # -7 // 3 == -2 instead of -3. `%` is already Python-correct (floored),
-    # and `self - (self % x)` is therefore an exact multiple of x -- so the
-    # division below is exact and truncation and flooring agree.
-    return __pyc_operator__(
-        self - (self % x),
-        __pyc_symbol__("/"), x)
+    # -7 // 3 == -2 instead of -3. _CG_int_floordiv truncates and steps
+    # down when the signs differ and the division is inexact. (This was
+    # `(self - self % x) / x`, whose subtraction passes int64 near its
+    # limits: -9223372036854775807 // 10**18 was 8, not -10 -- issues/211.)
+    # It is one runtime call, not Python-level q * x / q - 1: those method
+    # calls, with an operand the permissive coercion widens, kept flow
+    # analysis from finishing its first pass on fysphun (issues/212). A
+    # float right operand floors as a float, as CPython's does.
+    if isinstance(x, float):
+      return float(self).__floordiv__(x)
+    return __pyc_c_call__(int, "_CG_int_floordiv", int, self, int, x)
   def __iadd__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __isub__(self, x):
@@ -98,7 +103,8 @@ class int:
   def __iand__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("&"), x)
   def __ifloordiv__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+    # `x //= y` floors like `//` (it was a bare C `/`, so -7 //= 3 gave -2).
+    return self.__floordiv__(x)
   def __invert__(self):
     return __pyc_operator__(__pyc_symbol__("~"), self)
   def __pos__(self):
@@ -183,9 +189,10 @@ class float:
     return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __floordiv__(self, x):
     # float // float is floor(a / b) AS A FLOAT (7.0 // 2.0 == 3.0), not
-    # the quotient -- a bare prim `/` returned 3.5. Same identity as the
-    # int case: `%` is floored, so self - (self % x) is an exact multiple.
-    return __pyc_operator__(self - (self % x), __pyc_symbol__("/"), x)
+    # the quotient -- a bare prim `/` returned 3.5. CPython's algorithm, in
+    # the runtime: `(self - self % x) / x` gave a zero the wrong sign
+    # (-1.0 // -2.5 was -0.0; issues/211).
+    return __pyc_c_call__(float, "_CG_float_floordiv", float, self, float, float(x))
   def __iadd__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("+"), x)
   def __isub__(self, x):
@@ -199,7 +206,8 @@ class float:
   def __ipow__(self, x):
     return __pyc_operator__(self, __pyc_symbol__("**"), x)
   def __ifloordiv__(self, x):
-    return __pyc_operator__(self, __pyc_symbol__("/"), x)
+    # `x //= y` floors like `//` (it was a bare `/`: -7.0 //= 2.0 gave -3.5).
+    return self.__floordiv__(x)
   # NB deliberately no __invert__: CPython's float has no `~` (bitwise
   # invert is int-only; `~3.14` raises TypeError). float used to define
   # one anyway, so any receiver whose static type merely *included*

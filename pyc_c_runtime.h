@@ -729,6 +729,82 @@ inline int64 _CG_frexp_e(double x) { int e; frexp(x, &e); return (int64)e; }
 inline double _CG_modf_frac(double x) { double i; return modf(x, &i); }
 inline double _CG_modf_int(double x) { double i; modf(x, &i); return i; }
 
+// int // int, floored (issues/211): truncate, then step down when the
+// signs differ and the division is inexact. q * b never exceeds |a|, so
+// nothing passes int64 that the answer does not. b == 0 and
+// INT64_MIN // -1 trap as the bare `/` did (issues/175, 177).
+inline int64 _CG_int_floordiv(int64 a, int64 b) {
+  int64 q = a / b;
+  if ((a < 0) != (b < 0) && q * b != a) q -= 1;
+  return q;
+}
+
+// float // float, CPython's float_floor_div (Objects/floatobject.c,
+// _float_div_mod): the floored quotient as a float, with a zero result
+// signed as a / b is (-1.0 // -2.5 is 0.0, not -0.0). Division by zero is
+// left to IEEE, as pyc's / is (issues/175).
+inline double _CG_float_floordiv(double vx, double wx) {
+  double mod = fmod(vx, wx);
+  double div = (vx - mod) / wx;
+  if (mod) {
+    if ((wx < 0) != (mod < 0)) div -= 1.0;
+  }
+  double floordiv;
+  if (div) {
+    floordiv = floor(div);
+    if (div - floordiv > 0.5) floordiv += 1.0;
+  } else {
+    floordiv = copysign(0.0, vx / wx);
+  }
+  return floordiv;
+}
+
+// round() (issues/211). CPython rounds half to even; nearbyint does in the
+// default rounding mode, which pyc never changes.
+inline double _CG_round_even(double x) { return nearbyint(x); }
+// round(x, ndigits) for a float, as CPython's double_round: the exact value
+// of x rounded half-even to ndigits decimals, parsed back. printf's %f and %e
+// are that exact, correctly rounded conversion on glibc and macOS (dtoa).
+inline double _CG_round_ndigits(double x, int64 nd) {
+  if (!isfinite(x) || x == 0.0) return x;
+  if (nd > 323) return x;               // CPython's NDIGITS_MAX: x is exact
+  if (nd < -308) return 0.0 * x;        // NDIGITS_MIN: a signed zero
+  char buf[900];
+  if (nd >= 0) {
+    snprintf(buf, sizeof(buf), "%.*f", (int)nd, x);
+    return strtod(buf, NULL);
+  }
+  // Rounding to a multiple of m = 10**-nd. The exact decimal expansion
+  // (at most 767 significant digits) gives the exponent and the digits.
+  double ax = fabs(x);
+  snprintf(buf, sizeof(buf), "%.800e", ax);
+  const char *ep = strchr(buf, 'e');
+  int e10 = ep ? atoi(ep + 1) : 0;
+  int keep = e10 + 1 + (int)nd;         // significant digits that survive
+  double r;
+  if (keep >= 1) {
+    snprintf(buf, sizeof(buf), "%.*e", keep - 1, ax);
+    r = strtod(buf, NULL);
+  } else if (keep < 0) {
+    r = 0.0;                            // ax < m / 10 < m / 2
+  } else {
+    // ax is in [m/10, m): it rounds to m above m/2 and to 0 (even) at or
+    // below it. The first digit decides unless it is a 5.
+    int first = buf[0] - '0';
+    int rest_zero = 1;
+    for (const char *p = buf + 2; p < ep; ++p)
+      if (*p != '0') { rest_zero = 0; break; }
+    int up = first > 5 || (first == 5 && !rest_zero);
+    if (up) {
+      snprintf(buf, sizeof(buf), "1e%d", (int)-nd);
+      r = strtod(buf, NULL);
+    } else {
+      r = 0.0;
+    }
+  }
+  return copysign(r, x);
+}
+
 // pyc_lib/os (issues/202): each call returns 0 or the errno, so the Python
 // side raises the OSError subclass CPython does without another call
 // between the failure and the read of errno. A helper that returns a

@@ -468,10 +468,38 @@ def divmod(a, b):
   # match (divmod(-7, 3) == (-3, 2)), so no sign fixup is needed here.
   return (a // b, a % b)
 
-def round(x):
-  # Simple form only (round(x) -> int). Uses libc round: half-away-
-  # from-zero, a documented divergence from Py3 banker's rounding.
-  return int(__pyc_c_call__(float, "round", float, float(x)))
+def round(number, ndigits=None):
+  # CPython's round() (issues/211): half to even, so round(2.5) is 2. A float
+  # with no ndigits gives an int; with ndigits, a float rounded as CPython's
+  # double_round does (the exact binary value, so round(2.675, 2) is 2.67).
+  # An int stays an int, rounded half-even to 10**-ndigits when ndigits < 0.
+  # Anything else calls its __round__. `ndigits is None` and the isinstance
+  # tests fold per contour.
+  if isinstance(number, float):
+    if ndigits is None:
+      if number != number:
+        raise ValueError("cannot convert float NaN to integer")
+      if number > 1.7976931348623157e308 or number < -1.7976931348623157e308:
+        raise OverflowError("cannot convert float infinity to integer")
+      return int(__pyc_c_call__(float, "_CG_round_even", float, number))
+    return __pyc_c_call__(float, "_CG_round_ndigits", float, number, int, ndigits)
+  if isinstance(number, int):
+    if ndigits is None:
+      return number
+    if ndigits >= 0:
+      return number
+    if ndigits < -18:
+      # 10**19 is past int64, and every int64 is under half of it.
+      return 0
+    m = 10 ** (-ndigits)
+    q = number // m
+    r = number % m      # not number - q*m, which can pass int64 when the answer does not
+    if 2 * r > m or (2 * r == m and q % 2 == 1):
+      q += 1
+    return q * m
+  if ndigits is None:
+    return number.__round__()
+  return number.__round__(ndigits)
 
 def map(f, seq):
   r = []
