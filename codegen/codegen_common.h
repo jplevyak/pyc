@@ -92,6 +92,8 @@ bool cg_union_read_arms(Fun *f, Sym *recv, cchar *symbol, Vec<Sym *> &members, V
 // tag. When such a member exists (`{list, str}` against `list`) no run-time
 // test can answer, and this refuses the program -- as an undispatchable
 // `len(x)` on the same value is refused -- rather than fold it to False.
+// Returns 2 when the members that are not instances are exactly None: the
+// test is then `x is not None`, a null-pointer compare, tag or no tag.
 int cg_isinstance_tag_targets(PNode *pn, Sym *cls_type, Vec<Sym *> &concrete);
 
 // Is field i of record s live (present in the emitted struct)?
@@ -602,5 +604,11 @@ extern Fun *cg_census_fun;
 void cg_trap_census(cchar *backend, cchar *kind, Fun *f);
 cchar *cg_trap_c_at(cchar *s, int line);
 #define cg_trap_c(s) cg_trap_c_at(s, __LINE__)
+
+// ifa/issues/212: the one live clone of each exported function
+// (Sym::export_name), in fa->funs order. C calls one entry point, so an
+// exported function with two live clones is an error naming it: FA split
+// it on a demand nobody can satisfy, and codegen does not pick one.
+void cg_exported_funs(FA *fa, Vec<Fun *> &out);
 
 #endif  // _codegen_common_H_

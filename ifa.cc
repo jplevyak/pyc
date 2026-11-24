@@ -7,6 +7,7 @@
 #include "optimize/dom.h"
 #include "analysis/escape.h"
 #include "fa.h"
+#include "clone.h"
 #include "fun.h"
 #include "graph.h"
 #include "html.h"
@@ -32,6 +33,7 @@ void ifa_reset() {
   // pointers held by another (e.g., fa_reset clears AType globals which
   // reference Sym globals that ast_reset nulls).
   fa_reset();
+  clone_reset();
   pattern_reset();
   ast_reset();
   if1 = NULL;
@@ -263,7 +265,7 @@ void ifa_dbg_bodies(cchar *tag) {
 
 void ifa_graph(cchar *fn) { graph(pdb->fa, fn); }
 
-void ifa_html(cchar *fn, cchar *mktree_dir) { dump_html(pdb->fa, fn, mktree_dir); }
+void ifa_html(cchar *source_fn, cchar *cg_base) { dump_html(pdb->fa, source_fn, cg_base); }
 
 void ifa_code(cchar *fn) {
   char hfn[512];

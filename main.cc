@@ -1,6 +1,9 @@
 #define EXTERN
 #include "ifa_version.h"
 #include "ifadefs.h"
+#include "fa.h"
+#include "html.h"
+#include "inline.h"
 #include "log.h"
 #include "parse.h"
 #include "unit.h"
@@ -28,6 +31,12 @@ static ArgumentDescription arg_desc[] = {
 
     {"", ' ', "-- Internal / development options (not a stable CLI contract) --", NULL, NULL, NULL, NULL},
     {"html", 't', "Write Program in HTML", "T", &fhtml, "IFA_HTML", NULL},
+    {"browse", 'B', "Generate HTML and open in local browser (implies --html)", "T", &ifa_open_html, "IFA_BROWSE", NULL},
+    {"html-open", ' ', "Generate HTML and open in local browser (implies --html)", "T", &ifa_open_html, "IFA_HTML_OPEN",
+     NULL},
+    {"html-max-size", ' ', "Budget in MB for per-pass explorer detail (default 100)", "I", &ifa_html_max_size_mb,
+     "IFA_HTML_MAX_SIZE", NULL},
+    {"dump-json", ' ', "Output compilation database as JSON", "T", &ifa_dump_json, "IFA_DUMP_JSON", NULL},
     {"code", 'c', "Write Program in Core Code", "T", &fcode, "IFA_CODE", NULL},
     {"graph", 'G', "Write Program Graphs", "T", &fgraph, "IFA_GRAPH", NULL},
     {"graph-format", ' ', "GraphViz = 0, VCG = 1", "I", &fgraph_vcg, "IFA_GRAPH_FORMAT", NULL},
@@ -72,14 +81,26 @@ int main(int argc, char *argv[]) {
   graph_type = !fgraph_vcg ? GraphViz : VCG;
   strcpy(config_filenames, ifa_config_filenames);
   init_config();
+  if (ifa_open_html) {
+    fhtml = 1;
+  }
   if (fhtml || log_flags[0]) init_logs();
+  if (fhtml) {
+    ifa_dump_html = 1;
+    fa_events_enable();
+    inline_events_enable();
+  }
+  if (ifa_dump_json) {
+    fa_events_enable();
+    inline_events_enable();
+  }
   if (do_unit_tests) _exit(UnitTest::run_all());
   int status = 0;
   for (int i = 0; i < arg_state.nfile_arguments; i++) {
     // A failed compile must fail the process: `make test_llvm` used to go
     // on and run a stale ./test_llvm, which hid a type error for days.
     if (compile_one_file(arg_state.file_argument[i]) < 0) status = 1;
-    if (fhtml) ifa_html(arg_state.file_argument[i], ".");
+    if (fhtml || ifa_dump_json) ifa_html(arg_state.file_argument[i], arg_state.file_argument[i]);
     if (fcode) ifa_code(arg_state.file_argument[i]);
   }
   return status;

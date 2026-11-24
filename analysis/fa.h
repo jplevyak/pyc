@@ -622,6 +622,10 @@ class TypeWorld : public gc {
   AType *function_type = nullptr;
 };
 
+// Set by fa_events_enable(), which drivers call while parsing options --
+// before any FA exists. An FA built afterwards starts with events on.
+extern bool fa_events_requested;
+
 class FA : public gc {
  public:
   PDB *pdb;
@@ -629,6 +633,17 @@ class FA : public gc {
   Patterns *patterns;
   Vec<Fun *> funs;
   AEdge *top_edge;
+  // ifa/issues/212: one more root per exported function (Sym::export_name),
+  // an outside caller passing its declared types. `export_vars` holds the
+  // actual-argument Vars of each root edge, in position order. An object
+  // formal (a class type) receives every CreationSet of that class, fed
+  // where each is made (creation_point): `export_object_classes` and
+  // `export_object_formals` are parallel.
+  Vec<AEdge *> export_edges;
+  Vec<Vec<Var *> *> export_vars;
+  Vec<Sym *> export_object_classes;
+  Vec<Var *> export_object_formals;  // made on the root edge's current EntrySet
+  Vec<AEdge *> export_object_edges;  // the root edge each formal is an actual of
   Vec<EntrySet *> ess;      // all used entry sets as array
   Vec<EntrySet *> ess_set;  // all used entry sets as set
   Vec<Sym *> basic_types;
@@ -849,7 +864,7 @@ class FA : public gc {
         best_violations(INT_MAX),
         stall_passes(0),
         nonimprove_passes(0),
-        fa_events_enabled(false) {}
+        fa_events_enabled(fa_events_requested) {}
 
   int analyze(Fun *f);
   int concretize();

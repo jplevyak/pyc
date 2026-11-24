@@ -17,6 +17,7 @@
 #include "fail.h"
 #include "fun.h"
 #include "graph.h"
+#include "html.h"
 #include "if1.h"
 #include "inline.h"
 #include "log.h"
@@ -43,6 +44,10 @@ const char *kStageName[FA::kNumFAPassStages] = {
 // ifa/issues/074: which splitter stage is running, for the per-stage
 // churn probes (IFA_DBG_STAGE). -1 outside extend_analysis.
 static int cur_split_stage = -1;
+static cchar *cur_split_subkind = nullptr;
+static CreationSet *cur_split_demand_cs = nullptr;
+static ATypeViolation *cur_split_viol = nullptr;
+static cchar *cur_split_note = nullptr;
 bool fgraph_pass_contours = false;
 int write_code_exit = 0;
 int analysis_pass = 0;
@@ -104,8 +109,12 @@ void fa_reset() {
 // The free functions below delegate via `pdb->fa` because they are
 // called *before* FA::analyze sets the global `fa` pointer.
 
-void fa_events_enable()  { if (pdb && pdb->fa) pdb->fa->fa_events_enabled = true; }
-void fa_events_disable() { if (pdb && pdb->fa) pdb->fa->fa_events_enabled = false; }
+// The request is sticky: drivers enable events while parsing options, when
+// pdb->fa does not exist yet (that call used to do nothing), so the FA
+// constructor reads fa_events_requested.
+bool fa_events_requested = false;
+void fa_events_enable()  { fa_events_requested = true;  if (pdb && pdb->fa) pdb->fa->fa_events_enabled = true; }
+void fa_events_disable() { fa_events_requested = false; if (pdb && pdb->fa) pdb->fa->fa_events_enabled = false; }
 void fa_events_reset()   { if (pdb && pdb->fa) pdb->fa->fa_events_storage.clear(); }
 const Vec<FAPassEvent *> &fa_events_get() {
   static const Vec<FAPassEvent *> empty;
@@ -466,6 +475,8 @@ static bool is_clone_methods_per_cs(Sym *s) {
   Sym *cmc = s->clone_methods_per_cs ? s : (s->type ? unalias_type(s->type) : 0);
   return cmc && cmc->clone_methods_per_cs;
 }
+
+static void feed_export_formals(CreationSet *cs);  // ifa/issues/212
 
 CreationSet *creation_point(AVar *v, Sym *s, int arity) {
   dbg_cs_route = nullptr;
@@ -923,6 +934,10 @@ Lfound:
   cs->defs.set_add(v);
   if (v->contour_is_entry_set) ((EntrySet *)v->contour)->creates.set_add(cs);
   update_gen(v, make_AType(cs));
+  // ifa/issues/212. Not the class's prototype (`Sym::self`, which holds its
+  // class attributes): it is a CreationSet of the class but no instance of
+  // it, and nothing hands it to C.
+  if (fa->export_object_formals.n && !(s->self && v->var && v->var->sym == s->self)) feed_export_formals(cs);
   return cs;
 }
 
@@ -1303,11 +1318,15 @@ static int edge_constant_incompatibility(AEdge *e, EntrySet *es) {
 // enclosing-scope Var resolves through the first stamp, so two callers'
 // captured variables union rather than staying separate.
 static void update_display(AEdge *e, EntrySet *es) {
+  // ifa/issues/212: a root edge (an exported function's outside caller) has
+  // no sending contour. An exported function is at top level, so its one
+  // enclosing scope is the top's contour (make_export_edge checks the depth).
+  EntrySet *from = e->from ? e->from : fa->top_edge->to;
   for (int i = es->display.n; i < es->fun->sym->nesting_depth; i++)
-    if (i < e->from->display.n)
-      es->display.add(e->from->display[i]);
+    if (i < from->display.n)
+      es->display.add(from->display[i]);
     else
-      es->display.add(e->from);
+      es->display.add(from);
 }
 
 
@@ -1817,6 +1836,7 @@ void set_container(AVar *av, AVar *container) {
 // later, which reached tuple.__getitem__ with no element type. Every pass
 // must re-derive from bottom; this makes the reset complete for them.
 Vec<Var *> fa_internal_vars;
+Map<Var *, PNode *> set_index_tval_store;
 
 void fill_tvals(Fun *fn, PNode *p, int n) {
   p->tvals.fill(n);
@@ -3501,6 +3521,98 @@ static AEdge *make_top_edge(Fun *top) {
   return e;
 }
 
+// ifa/issues/212: an exported function's root edge. The outside caller
+// passes the closure itself and one value of each declared type: a number
+// type is that type's abstract value ("some int64"), as a value C returns
+// is; any other type is an object, an instance of that class or a
+// subclass, and C hands back whichever one the program gave it, so the
+// formal receives EVERY such CreationSet (creation_point feeds it). That
+// keys on type, never on where an object came from.
+static bool export_is_object(Sym *t) { return !t->num_kind; }
+
+static void refresh_export_edge(int i) {
+  AEdge *e = fa->export_edges[i];
+  Vec<Var *> &vars = *fa->export_vars[i];
+  Fun *f = e->match->fun;
+  for (int k = 0; k < f->positional_arg_positions.n; k++) {
+    MPosition *cp = f->positional_arg_positions[k];
+    e->match->formal_filters.put(cp, fa->type_world.any_type);
+    AVar *av = make_AVar(vars[k], e->to);
+    e->args.put(cp, av);
+    e->filtered_args.put(cp, av);
+    if (!k)
+      update_gen(av, f->sym->abstract_type);
+    else {
+      Sym *t = f->sym->export_args[k - 1];
+      if (!export_is_object(t)) update_gen(av, make_abstract_type(t));
+    }
+  }
+}
+
+static void make_export_edge(Fun *f) {
+  Sym *s = f->sym;
+  if (f->positional_arg_positions.n != s->export_args.n + 1)
+    fail("exported function %s (%s) declares %d argument types for %d formals", s->name ? s->name : "?",
+         s->export_name, s->export_args.n, f->positional_arg_positions.n - 1);
+  if (f->is_varargs) fail("exported function %s (%s) cannot take varargs", s->name ? s->name : "?", s->export_name);
+  // Its C caller cannot supply a closure: only the top level may enclose it.
+  if (s->nesting_depth > fa->top_edge->to->fun->sym->nesting_depth + 1)
+    fail("exported function %s (%s) is nested in another function, whose variables its C caller cannot supply",
+         s->name ? s->name : "?", s->export_name);
+  AEdge *e = new AEdge();
+  e->match = new Match(f);
+  e->pnode = new PNode();
+  Vec<AEdge *> edges;
+  make_entry_set(e, edges);
+  assert(edges.n == 1);
+  Vec<Var *> *vars = new Vec<Var *>;
+  for (int k = 0; k < f->positional_arg_positions.n; k++) {
+    Sym *t = k ? s->export_args[k - 1] : s;
+    // The outside caller's actual: a variable of its own, as the top edge's
+    // __main__ is, never the type Sym itself.
+    Var *v = new Var(new_Sym("__export_arg__"));
+    // Contoured on the root's own EntrySet, which every pass resets, so an
+    // object formal holds exactly this pass's CreationSets: a global AVar
+    // kept a CreationSet a later split had emptied.
+    v->is_internal = 1;
+    vars->add(v);
+    if (k && export_is_object(t)) {
+      fa->export_object_classes.add(t);
+      fa->export_object_formals.add(vars->last());
+      fa->export_object_edges.add(e);
+    }
+  }
+  fa->export_edges.add(e);
+  fa->export_vars.add(vars);
+  refresh_export_edge(fa->export_edges.n - 1);
+}
+
+// A new instance of an exported object formal's class reaches the formal,
+// and its root edge is analyzed again: analyze_edge skips an edge with an
+// empty argument, as the root's is until the first instance is made.
+static void feed_export_formals(CreationSet *cs) {
+  for (int i = 0; i < fa->export_object_classes.n; i++) {
+    Sym *t = fa->export_object_classes[i];
+    if (cs->sym != t && !t->specializers.set_in(cs->sym)) continue;
+    AEdge *e = fa->export_object_edges[i];
+    // On the EntrySet the root edge enters now: the split stage may move it.
+    AVar *av = make_AVar(fa->export_object_formals[i], e->to);
+    AType *before = av->out;
+    update_gen(av, make_AType(cs));
+    if (av->out != before && !e->in_edge_worklist) {
+      e->in_edge_worklist = 1;
+      fa->edge_worklist.enqueue(e);
+    }
+  }
+}
+
+// Every root's entry contour: the top's, then each exported function's.
+static void root_entry_sets(Vec<EntrySet *> &out) {
+  if (fa->top_edge && fa->top_edge->to) out.add(fa->top_edge->to);
+  for (AEdge *e : fa->export_edges)
+    if (e->to) out.add(e->to);
+}
+
 static bool is_return_value(AVar *av) {
   EntrySet *es = (EntrySet *)av->contour;
   for (AVar *v : es->rets) if (v == av) return true;
@@ -4555,6 +4667,7 @@ static void initialize_pass() {
   fa->dirty_avar_count = 0;    // issue 033 M4 probe
   fa->examined_avar_count = 0;  // issue 033 M4 probe
   refresh_top_edge(fa->top_edge);
+  for (int i = 0; i < fa->export_edges.n; i++) refresh_export_edge(i);
 }
 
 static void mark_es_backedges(EntrySet *es, Accum<EntrySet *> &ess) {
@@ -4575,7 +4688,10 @@ static void mark_es_backedges(EntrySet *es, Accum<EntrySet *> &ess) {
 
 static void compute_recursive_entry_sets() {
   Accum<EntrySet *> ess;
-  mark_es_backedges(fa->top_edge->to, ess);
+  Vec<EntrySet *> roots;
+  root_entry_sets(roots);
+  for (EntrySet *r : roots)
+    if (r->dfs_color == DFS_white) mark_es_backedges(r, ess);
   for (EntrySet *es : ess.asvec) es->dfs_color = DFS_white;
 }
 
@@ -4621,7 +4737,10 @@ static void mark_es_cs_backedges(EntrySet *es, Accum<EntrySet *> &ess, Accum<Cre
 static void compute_recursive_entry_creation_sets() {
   Accum<EntrySet *> ess;
   Accum<CreationSet *> css;
-  mark_es_cs_backedges(fa->top_edge->to, ess, css);
+  Vec<EntrySet *> roots;
+  root_entry_sets(roots);
+  for (EntrySet *r : roots)
+    if (r->dfs_color == DFS_white) mark_es_cs_backedges(r, ess, css);
   for (EntrySet *es : ess.asvec) es->dfs_color = DFS_white;
   for (CreationSet *cs : css.asvec) cs->dfs_color = DFS_white;
 }
@@ -4631,7 +4750,18 @@ int is_es_recursive(EntrySet *es) {
   return es->backedges.n;
 }
 
+// ifa/issues/212: an edge the split stage groups. Every call edge, and an
+// exported function's root edge, which shares its EntrySet with the
+// program's own calls and never recurses. Not the top edge, the one caller
+// of its contour.
+static bool is_split_caller(AEdge *e) {
+  if (e->from) return true;
+  for (AEdge *x : fa->export_edges) if (x == e) return true;
+  return false;
+}
+
 static int is_es_recursive(AEdge *e) {
+  if (!e->from) return 0;  // a root edge
   EntrySet *es = e->from->split ? e->from->split : e->from;
   for (AEdge *ee : es->backedges) if (ee->pnode == e->pnode && ee->fun == e->fun) return 1;
   return 0;
@@ -4643,6 +4773,7 @@ int is_es_cs_recursive(EntrySet *es) {
 }
 
 static int is_es_cs_recursive(AEdge *e) {
+  if (!e->from) return 0;  // a root edge
   EntrySet *es = e->from->split ? e->from->split : e->from;
   for (AEdge *ee : es->es_cs_backedges) if (ee->pnode == e->pnode && ee->fun == e->fun) return 1;
   return 0;
@@ -5032,10 +5163,16 @@ static bool cs_slot_sig_equal(CreationSet *a, CreationSet *b) {
 
 [[nodiscard]] static int split_edges(AVar *av, int fsetters, int fmark) {
   int again = 0;
+  const int aes_before = fa->all_entry_sets.n;
   EntrySet *es = (EntrySet *)av->contour;
   Vec<AEdge *> all_edges;
   for (AEdge *ee : es->edges) if (ee) all_edges.add(ee);
   qsort_by_id(all_edges);
+  Vec<AEdge *> snap_e;
+  Vec<EntrySet *> snap_to;
+  if (html_telemetry_on()) {
+    for (AEdge *ee : all_edges) if (ee) { snap_e.add(ee); snap_to.add(ee->to); }
+  }
   MPosition *p = nullptr;
   form_MPositionAVar(x, es->args) {
     if (x->value == av) {
@@ -5308,8 +5445,12 @@ static bool cs_slot_sig_equal(CreationSet *a, CreationSet *b) {
       for (int i = 0; i < targets.n; i++) {
         if (!i)
           redispatch(ee, targets[i]);
-        else
+        else {
           ee = copy_AEdge(ee, targets[i]);
+          // A copy is part of the partition too: record it as an edge that
+          // moved from the original's pre-split contour.
+          if (html_telemetry_on()) { snap_e.add(ee); snap_to.add(old); }
+        }
       }
     }
     if (ee->to != old) {
@@ -5323,6 +5464,15 @@ static bool cs_slot_sig_equal(CreationSet *a, CreationSet *b) {
       log(LOG_SPLITTING, "DISPATCH ES %d:%d, %s %d, %d -> %d\n", ee->from->id, ee->pnode->lvals[0]->sym->id,
           es->fun->sym->name ? es->fun->sym->name : "", es->fun->sym->id, old ? old->id : -1, ee->to->id);
     }
+  }
+  if (again && html_telemetry_on()) {
+    cchar *sk = cur_split_subkind
+                    ? cur_split_subkind
+                    : (cur_split_stage == (int)FAPassStage::PER_CS_RECEIVER
+                           ? "PER_CS_RECEIVER"
+                           : (cur_split_stage == (int)FAPassStage::CSM_ELEMENT_CS ? "CSM_ELEMENT_CS" : "SPLIT_EDGES_DYNAMIC"));
+    html_record_es_split(fa, cur_split_stage, sk, es, av, p, fsetters, fmark, snap_e, snap_to, aes_before,
+                         cur_split_demand_cs, cur_split_viol, cur_split_note);
   }
   return again;
 }
@@ -5647,7 +5797,7 @@ static ESSplitDecision *decide_entry_set_split(AVar *av, int fsetters, int fmark
   }
   bool have_nonrec = false;
   if (!fsetters)
-    for (AEdge *ee : all_edges) if (ee && ee->from && !is_es_recursive(ee)) { have_nonrec = true; break; }
+    for (AEdge *ee : all_edges) if (ee && is_split_caller(ee) && !is_es_recursive(ee)) { have_nonrec = true; break; }
   // ifa/168: a partial overlap is a consequence of not splitting, not
   // evidence against it, when this contour owns the single creation point of
   // a CreationSet whose element is irrepresentable (list.__deepcopy__'s
@@ -5663,7 +5813,7 @@ static ESSplitDecision *decide_entry_set_split(AVar *av, int fsetters, int fmark
       }
   int nedges = 0, non_rec_edges = 0;
   for (AEdge *ee : all_edges) if (ee) {
-    if (!ee->from) continue;
+    if (!is_split_caller(ee)) continue;
     nedges++;
     bool rec = !fsetters ? is_es_recursive(ee) : is_es_cs_recursive(ee);
     if (rec) {
@@ -5674,7 +5824,7 @@ static ESSplitDecision *decide_entry_set_split(AVar *av, int fsetters, int fmark
       AType *ety = ety_at(ee);
       // No live non-recursive caller: a dead cycle; leave it fused.
       bool separable = have_nonrec && ety->n;
-      if (separable) for (AEdge *oe : all_edges) if (oe && oe != ee && oe->from) {
+      if (separable) for (AEdge *oe : all_edges) if (oe && oe != ee && is_split_caller(oe)) {
         AType *oty = ety_at(oe);
         if (!oty->n || oty == ety) continue;
         if (type_intersection(ety, oty) != fa->type_world.bottom_type && !owns_demanded_cs) {
@@ -5789,7 +5939,7 @@ static ESSplitDecision *decide_entry_set_split(AVar *av, int fsetters, int fmark
   // whether a re-derived split is a state change or genuinely nothing.
   Vec<AEdge *> snap_e;
   Vec<EntrySet *> snap_to;
-  if (getenv("IFA_DBG_REPARK"))
+  if (getenv("IFA_DBG_REPARK") || html_telemetry_on())
     for (AEdge *ee : es->edges) if (ee) { snap_e.add(ee); snap_to.add(ee->to); }
   AVar *av = dec->av;
   MPosition *avpos = dec->avpos;
@@ -6300,6 +6450,14 @@ static ESSplitDecision *decide_entry_set_split(AVar *av, int fsetters, int fmark
             fa->all_entry_sets.n - aes_before, snap_e.n, moved);
   }
   if (split) {
+    if (html_telemetry_on()) {
+      cchar *sk = cur_split_subkind
+                      ? cur_split_subkind
+                      : (fsetters ? (fmark ? "MARK_SETTER_COMPAT" : "SETTER_COMPAT")
+                                  : (fmark ? "MARK_TYPE_COMPAT" : "TYPE_COMPAT"));
+      html_record_es_split(fa, cur_split_stage, sk, es, av, avpos, fsetters, fmark, snap_e, snap_to, aes_before,
+                           cur_split_demand_cs, cur_split_viol, cur_split_note);
+    }
     ++census.aes_apply_split;
     if (fa->all_entry_sets.n == aes_before) {
       ++census.aes_apply_split_nogrowth;
@@ -6864,6 +7022,12 @@ int fa_split_numeric_confluences() {
     if (keys.n < 2 || !any_pure) continue;
     // the first group keeps `es`; every other group moves to a fresh contour
     sort_cstrings(keys);
+    const int aes_before = fa->all_entry_sets.n;
+    Vec<AEdge *> snap_e;
+    Vec<EntrySet *> snap_to;
+    if (html_telemetry_on()) {
+      for (AEdge *e : in) if (e) { snap_e.add(e); snap_to.add(e->to); }
+    }
     for (int i = 1; i < keys.n; i++) {
       Vec<AEdge *> *g = groups.get(keys[i]);
       EntrySet *tes = nullptr;
@@ -6880,6 +7044,10 @@ int fa_split_numeric_confluences() {
         fprintf(stderr, "[numsplit] p=%d fun=%s es=%d keeps {%s} x%d; es=%d takes {%s} x%d\n", analysis_pass,
                 es->fun->sym->name ? es->fun->sym->name : "?", es->id, keys[0], groups.get(keys[0])->n,
                 tes ? tes->id : -1, keys[i], g->n);
+    }
+    if (html_telemetry_on()) {
+      html_record_es_split(fa, cur_split_stage, "NUMERIC_SEED_SPLIT", es, es->args.get(demand_pos), demand_pos, 0, 0,
+                           snap_e, snap_to, aes_before, nullptr, nullptr, keys[0]);
     }
   }
   return nsplit;
@@ -7588,6 +7756,9 @@ static uint cs_group_signature(CreationSet *cs, Vec<AVar *> &compatible_set) {
           v->cs_map->put(cs->sym, new_cs);
         }
         analyze_again = 1;
+        if (html_telemetry_on()) {
+          html_record_cs_split(fa, cur_split_stage, "SETTER_EQ_CLASS", cs, new_cs, !route, compatible_set, nullptr, nullptr, av);
+        }
         if (!route) {
           log(LOG_SPLITTING, "SPLIT CS %d %s %d -> %d\n", cs->id, cs->sym->name ? cs->sym->name : "", cs->sym->id,
               new_cs->id);
@@ -8414,7 +8585,12 @@ static EntrySet *find_blocking_es(CreationSet *cs, CSFlowGraph *g, Vec<AVar *> &
             analysis_pass, cs->id, bes->id, (bes->fun && bes->fun->sym && bes->fun->sym->name) ? bes->fun->sym->name : "?",
             all_edges.n, groups.n);
   log(LOG_SPLITTING, "SPLIT BLOCKING ES es %d edges %d groups %d\n", bes->id, all_edges.n, groups.n);
-  return apply_entry_set_split(dec);
+  cur_split_subkind = "BLOCKING_ES";
+  cur_split_demand_cs = cs;
+  int r = apply_entry_set_split(dec);
+  cur_split_subkind = nullptr;
+  cur_split_demand_cs = nullptr;
+  return r;
 }
 
 // ifa/133 steps 3-4: peel one group of creation points off a CreationSet.
@@ -8507,6 +8683,10 @@ static CreationSet *cs_peel_group(CreationSet *cs, Vec<AVar *> &group, cchar *ro
   Vec<AVar *> new_defs;
   cs->defs.set_difference(moved, new_defs);
   cs->defs.move(new_defs);
+  if (html_telemetry_on()) {
+    cchar *sk = (route && !strcmp(route, "no_confusion")) ? "LADDER_NO_CONFUSION" : "LADDER_PATH_PARTITION";
+    html_record_cs_split(fa, cur_split_stage, sk, cs, new_cs, join_to == nullptr, moved, route, cs, nullptr);
+  }
   if (dbg)
     fprintf(stderr, "[csladder] p=%d cs=%d %s %s %d site(s) -> cs=%d\n", analysis_pass, cs->id, route,
             join_to ? "JOIN" : "SPLIT", n_move, new_cs->id);
@@ -8718,7 +8898,12 @@ static CreationSet *cs_peel_group(CreationSet *cs, Vec<AVar *> &group, cchar *ro
               dec->groups.n);
   }
   log(LOG_SPLITTING, "SPLIT ES BY CALL SITE es %d edges %d groups %d\n", es->id, all_edges.n, dec->groups.n);
-  return apply_entry_set_split(dec);
+  cur_split_subkind = "ES_BY_CALL_SITE";
+  cur_split_demand_cs = g ? g->cs : nullptr;
+  int r = apply_entry_set_split(dec);
+  cur_split_subkind = nullptr;
+  cur_split_demand_cs = nullptr;
+  return r;
 }
 
 bool classes_are_related(Vec<Sym *> &classes) {
@@ -9142,6 +9327,20 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
     Vec<AVar *> new_defs;
     O->defs.set_difference(moved, new_defs);
     O->defs.move(new_defs);
+    if (html_telemetry_on()) {
+      for (int g = 0; g < ngroups; g++) {
+        if (!gcs[(size_t)g] || gcs[(size_t)g] == O) continue;
+        Vec<AVar *> g_defs;
+        cchar *g_sig = nullptr;
+        for (int i = 0; i < defs.n; i++) {
+          if (gid[(size_t)i] == g) {
+            g_defs.add(defs.v[i]);
+            if (!g_sig) g_sig = sig[(size_t)i].c_str();
+          }
+        }
+        html_record_cs_split(fa, cur_split_stage, "OWNER_OF_DEMANDED", O, gcs[(size_t)g], true, g_defs, g_sig, I, nullptr);
+      }
+    }
     return 1;
   }
   if (dbg && cands.empty())
@@ -9368,8 +9567,11 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
       }
     }
   }
-  for (AVar *fv : per_cs_formals)
-    if (fv && split_edges(fv, 0, 0)) {
+  for (AVar *fv : per_cs_formals) {
+    cur_split_subkind = "UNTAGGED_DISPATCH";
+    int r = fv ? split_edges(fv, 0, 0) : 0;
+    cur_split_subkind = nullptr;
+    if (r) {
       if (dbg_ut)
         fprintf(stderr, "[untagged] split es=%d fun=%s per receiver CreationSet (%d)\n",
                 ((EntrySet *)fv->contour)->id,
@@ -9378,6 +9580,7 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
                 fv->out->type->sorted.n);
       analyze_again = 1;
     }
+  }
   Vec<CreationSet *> css;
   for (CreationSet *cs : tc_cs_dropped)
     if (cs && fa->css_set.set_in(cs)) css.set_add(cs);
@@ -9867,6 +10070,7 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
       // actually reach ITS objects. The blind content walk cannot say that:
       // on the enumerate shape both Point creation points sit behind one
       // list contour and every path reaches both.
+      bool by_numeric = false;
       if (ngroups < 2 && csnumsplit_enabled() && higher_stages_idle) {
         Vec<AVar *> mix;
         cs_numeric_mix_content(cs, mix);
@@ -9880,6 +10084,7 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
           if (ngroups >= 2) {
             g = gn;
             informative = 1;
+            by_numeric = true;
             if (dbg)
               fprintf(stderr, "[csdefsplit] p=%d cs=%d sym=%s defs=%d NUMERIC-KEY -> %d groups\n", analysis_pass,
                       cs->id, cs->sym->name ? cs->sym->name : "?", defs.n, ngroups);
@@ -9944,12 +10149,14 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
           }
           if (one_site && ctrs.set_count() == defs.n) {
             Vec<AVar *> moved;
+            Vec<CreationSet *> j_ncs;
             for (int i = 1; i < defs.n; i++) {
               CreationSet *ncs = new CreationSet(cs);
               ncs->split = cs;
               if (cur_split_stage >= 0 && cur_split_stage < FA::kNumFAPassStages) ++fa->dbg_stage_csmint[cur_split_stage];
               defs.v[i]->cs_map->put(cs->sym, ncs);
               moved.set_add(defs.v[i]);
+              j_ncs.add(ncs);
               if (dbg)
                 fprintf(stderr, "[csdefsplit] p=%d cs=%d sym=%s JOINSPLIT def av=%d es=%d -> cs=%d\n", analysis_pass,
                         cs->id, cs->sym->name ? cs->sym->name : "?", defs.v[i]->id, ((EntrySet *)defs.v[i]->contour)->id,
@@ -9958,6 +10165,14 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
             Vec<AVar *> new_defs;
             cs->defs.set_difference(moved, new_defs);
             cs->defs.move(new_defs);
+            if (html_telemetry_on()) {
+              for (int i = 1; i < defs.n; i++) {
+                Vec<AVar *> single_def;
+                single_def.add(defs.v[i]);
+                html_record_cs_split(fa, cur_split_stage, "PARENT_FIRST_JOINSPLIT", cs, j_ncs.v[i - 1], true, single_def,
+                                     "parent-first join split", cs, defs.v[i]);
+              }
+            }
             analyze_again = 1;
             continue;
           }
@@ -10008,6 +10223,7 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
       // The group holding the first def keeps the CreationSet; each other
       // group gets ONE new contour shared by all its creation points.
       std::vector<CreationSet *> gcs((size_t)ngroups, nullptr);
+      std::vector<bool> gcs_is_new((size_t)ngroups, false);
       gcs[(size_t)gid[0]] = cs;
       for (int i = 0; i < defs.n; i++) {
         if (gcs[(size_t)gid[(size_t)i]] == cs) continue;  // stays with the parent
@@ -10020,6 +10236,7 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
           ncs->split = cs;
           if (cur_split_stage >= 0 && cur_split_stage < FA::kNumFAPassStages) ++fa->dbg_stage_csmint[cur_split_stage];
           gcs[(size_t)gid[(size_t)i]] = ncs;
+          gcs_is_new[(size_t)gid[(size_t)i]] = true;
         }
         CreationSet *ncs = gcs[(size_t)gid[(size_t)i]];
         defs.v[i]->cs_map->put(cs->sym, ncs);
@@ -10031,12 +10248,27 @@ static int split_owner_of_demanded(CreationSet *I, bool dbg) {
         log(LOG_SPLITTING, "SPLIT CS BY DEF %d %s -> %d (av %d group %d)\n", cs->id,
             cs->sym->name ? cs->sym->name : "", ncs->id, defs.v[i]->id, gid[(size_t)i]);
       }
-    }
-    if (moved.n) {
-      Vec<AVar *> new_defs;
-      cs->defs.set_difference(moved, new_defs);
-      cs->defs.move(new_defs);
-      analyze_again = 1;
+      if (moved.n) {
+        Vec<AVar *> new_defs;
+        cs->defs.set_difference(moved, new_defs);
+        cs->defs.move(new_defs);
+        if (html_telemetry_on()) {
+          cchar *sk = by_numeric ? "CS_NUMERIC_KEY" : "CS_ASSIGN_SET_KEY";
+          for (int grp = 0; grp < ngroups; grp++) {
+            if (!gcs[(size_t)grp] || gcs[(size_t)grp] == cs) continue;
+            Vec<AVar *> g_defs;
+            cchar *g_sig = nullptr;
+            for (int i = 0; i < defs.n; i++) {
+              if (gid[(size_t)i] == grp) {
+                g_defs.add(defs.v[i]);
+                if (!g_sig) g_sig = sig[(size_t)i].c_str();
+              }
+            }
+            html_record_cs_split(fa, cur_split_stage, sk, cs, gcs[(size_t)grp], gcs_is_new[(size_t)grp], g_defs, g_sig, cs, nullptr);
+          }
+        }
+        analyze_again = 1;
+      }
     }
   }
   return analyze_again;
@@ -11184,6 +11416,11 @@ static void controlling_ifs(PNode *site, Vec<PNode *> &out) {
     X->const_positions.add(p);
     ++const_demand_positions;
     ++added;
+    if (html_telemetry_on()) {
+      Vec<CreationSet *> dense_keys;
+      for (CreationSet *ck : keys) if (ck) dense_keys.add(ck);
+      html_record_const_demand(fa, cur_split_stage, X, p, dense_keys, nonconst, why);
+    }
     if (dbg) {
       AVar *fav = X->args.get(p);
       fprintf(stderr, "[constdemand] p=%d es=%d fun=%s formal=%s constants=%d%s <- viol av=%d kind=%d\n", analysis_pass,
@@ -11339,6 +11576,22 @@ static void controlling_ifs(PNode *site, Vec<PNode *> &out) {
         int o = d->rvals.v[0]->sym == sym_primitive ? 2 : 1;
         if (d->rvals.n > o + 1) push(make_AVar(d->rvals[o + 1], X));
       }
+      // The same for a STORE: `set_index_object(self, key, value)` writes
+      // the field `key` selects, and the walk reaches the store through
+      // the value it wrote (its tval, a writer of the field). Two stores
+      // through one `list.__setitem__` contour, `a[3] = int` and
+      // `a[4] = int`, have identical types, so nothing else separates them:
+      // with the key merged to {3, 4} neither store is constant-indexed, and
+      // each writes every field of the record -- a list `[int x6, list]`
+      // then reads `{int, list}` at index 6 (tests/termios_fcntl.py's
+      // `a[3] = a[3] & ~ICANON; a[4] = B9600`). The key's callers
+      // disagreeing on a constant is the demand's answer.
+      if (a->var && a->var->is_internal)
+        if (PNode *d = set_index_tval_store.get(a->var))
+          if (X->fun->fa_all_PNodes.in(d)) {
+            int o = d->rvals.v[0]->sym == sym_primitive ? 2 : 1;
+            if (d->rvals.n > o + 1) push(make_AVar(d->rvals[o + 1], X));
+          }
     }
     if (dbg && getenv("IFA_DBG_CONSTDEMAND")[0] >= '2')
       fprintf(stderr, "  [constdemand-walk] viol av=%d kind=%d es=%d fun=%s reached=%d\n", v->av->id, (int)v->kind,
@@ -13499,9 +13752,10 @@ static void settle_gated_liveness() {
   // and its bottom-typed arguments are not violations. Keep the contours
   // reachable from the top through live sends.
   if (!fa->top_edge || !fa->top_edge->to) return;
-  Vec<EntrySet *> reached, stack;
-  reached.set_add(fa->top_edge->to);
-  stack.add(fa->top_edge->to);
+  Vec<EntrySet *> reached, stack, roots;
+  root_entry_sets(roots);
+  for (EntrySet *r : roots)
+    if (reached.set_add(r)) stack.add(r);
   // Through out_edge_map, keyed by the SENDING node, exactly as clone.cc
   // builds Fun::calls: an AEdge's own `pnode` is not always that node (a
   // method call through a bound closure, pygmy's `self.isoccluded(...)`),
@@ -13705,6 +13959,9 @@ static void complete_pass() {
   if (getenv("IFA_DBG_STAGE"))
     fprintf(stderr, "VIOL p=%d n=%d ess=%d css=%d\n", analysis_pass, fa->type_violations.set_count(), fa->ess.n,
             fa->css.n);
+  if (html_telemetry_on()) {
+    html_record_fa_pass(fa, analysis_pass);
+  }
   pass_timer.stop();
 }
 
@@ -13995,6 +14252,8 @@ static void analyze_to_convergence() {
     // the cheap part -- hq2x pass 15 walked ~30 000 AVars with 79 dirty
     // in 0.081s.
     fa->edge_worklist.enqueue(fa->top_edge);
+    for (AEdge *e : fa->export_edges)  // ifa/issues/212
+      if (!e->in_edge_worklist) e->in_edge_worklist = 1, fa->edge_worklist.enqueue(e);
     // ifa/186: an AVar whose `out` changes is queued, and pushes whatever
     // `out` is by then to its `forward` set once the edges drain, ahead of
     // the sends. Pushing every change at once re-walked the whole
@@ -14025,6 +14284,7 @@ static void analyze_to_convergence() {
       }
     }
     fa->defer_flow = false;
+    int pass_before_extend = analysis_pass;
     complete_pass();
     arity_flipped = dispatch_arity_epoch != arity_epoch_at_start;
     bool raise_grew = compute_es_can_raise();  // on the converged graph; see its comment
@@ -14109,6 +14369,9 @@ static void analyze_to_convergence() {
       if (getenv("PYC_DBG_STAGEDELTA"))
         fprintf(stderr, "PASSEND p=%d extend=%d reanalyze=%d fills=%d retract=%d arity=%d viol=%d\n",
                 analysis_pass, ext, rea, fil, ret, arity_flipped ? 1 : 0, fa->type_violations.set_count());
+      if (html_telemetry_on()) {
+        html_finalize_fa_pass(fa, pass_before_extend);
+      }
       loop_again = (ext || rea || fil || ret || ow || raise_grew || arity_flipped);
     }
   } while (loop_again && analysis_pass <= fa->pass_limit);
@@ -14143,6 +14406,8 @@ int FA::analyze(Fun *top) {
   }
   initialize();
   top_edge = make_top_edge(top);
+  for (Fun *f : pdb->funs)
+    if (f->sym->export_name) make_export_edge(f);
   analyze_to_convergence();
   // Experimental: mid-FA inlining (issue 026 followup).
   // After first convergence, run simple_inlining to fold
