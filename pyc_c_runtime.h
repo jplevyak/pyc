@@ -1427,7 +1427,8 @@ inline void _cg_tm_from(struct tm *t, int64 year, int64 mon, int64 mday, int64 h
   t->tm_yday = (int)(yday - 1);
   t->tm_isdst = (int)isdst;
   t->tm_gmtoff = (long)gmtoff;
-  t->tm_zone = zone && *zone ? zone : NULL;
+  // tm_zone is `char *` on macOS, `const char *` in glibc; strftime only reads it.
+  t->tm_zone = zone && *zone ? (char *)zone : NULL;
 }
 inline char *_CG_strftime_fields(char *fmt, int64 year, int64 mon, int64 mday, int64 hour, int64 min, int64 sec,
                                  int64 wday, int64 yday, int64 isdst, int64 gmtoff, char *zone) {
