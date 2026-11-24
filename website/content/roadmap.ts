@@ -96,6 +96,7 @@ export const TRACKS: Track[] = [
           'collections: Counter, OrderedDict, the rest of deque and defaultdict',
           'math with CPython’s errors; bisect, operator; time, random and string additions',
           'os and os.path, pathlib, textwrap, logging',
+          're: findall, finditer, sub, split, named groups, flags, lookaround',
         ],
       },
       {
@@ -104,7 +105,6 @@ export const TRACKS: Track[] = [
         items: [
           'functools: partial, total_ordering',
           'collections: namedtuple',
-          're: findall, finditer, sub, split, named groups',
         ],
       },
       {

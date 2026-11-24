@@ -46,7 +46,7 @@ when it changes behaviour, and is refused under `--strict` (see [Modes](#modes))
   time. Partial implementations of common standard-library modules live in
   [`pyc_lib/`](pyc_lib), including `math`, `random`, `time`, `sys`, `os` and `os.path`,
   `pathlib`, `fnmatch`, `textwrap`, `collections`, `itertools`, `functools`, `bisect`,
-  `operator`, `heapq`, `copy`, `struct`, `string`, `socket`, `logging` and part of `re`
+  `operator`, `heapq`, `copy`, `struct`, `string`, `socket`, `logging` and `re`
   ([issues/207](issues/207-core-library-batch.md) lists what is not there). File I/O uses `open()`, which takes a str or a `pathlib`
   path.
 - **Type hints and dataclasses**: annotations are accepted and ignored, `typing` provides its

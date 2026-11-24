@@ -1,0 +1,1 @@
+CPython answers what pyc refuses: findall returns [('a', '1')] and lastindex is None (issues/210).

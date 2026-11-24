@@ -1,0 +1,11 @@
+<re.Match object; span=(1, 6), match='ab=12'> 2 v ('ab', '12', None) {'k': 'ab', 'v': '12'} None (4, 6)
+ab 12 1 6 ('ab', '12', '-') 12:ab
+(None, 'b')
+['one', 'two', 'three']
+['a\nc', 'abc'] ['abc']
+hello AbC
+('555', '1234')
+re.compile('a', re.IGNORECASE|re.MULTILINE) 32 34
+<re.Match object; span=(0, 2), match='ab'>
+None ['a', 'b'] ['ab', 'c_d']
+('',) abac

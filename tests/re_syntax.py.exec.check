@@ -1,0 +1,10 @@
+['a', 'b'] 'hi'
+['a', 'b'] ['1', '3'] ['5', '7']
+a\.b\-c\ d\#e
+error: missing ), unterminated subpattern at position 0
+error: unbalanced parenthesis at position 1
+error: nothing to repeat at position 0
+error: bad escape \q at position 0
+error: unterminated character set at position 0
+error: min repeat greater than max repeat at position 2
+error: look-behind requires fixed-width pattern

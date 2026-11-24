@@ -1,0 +1,63 @@
+'|ab| |cd|'
+'XbXXcX'
+['', 'a', '', 'a', '']
+['a', 'ba', 'b']
+'-a-b-c-'
+['']
+['']
+(2, 3)
+['a', 'b']
+None
+None
+'345'
+'12'
+'123'
+['22', '3']
+'123'
+None
+None
+['Hello', 'WORLD']
+'aA'
+['1']
+'ABc'
+None
+'aaaa'
+'aa'
+'aa'
+'aaab'
+'x{a}'
+('ab',)
+('a', 'bcd', '')
+('b', 'a')
+('a',)
+[', ', '  ']
+['a.b-c@d.org']
+['a', ']']
+['A', 'B', 'C']
+['A', 'B']
+'\t\n'
+['\x08']
+['a', 'b', 'c']
+'[]c [b]'
+'hihi'
+'\\-\\.'
+('bbaa', 2)
+(?P<y>\d{4})-(?P<m>\d\d) 2 {'y': 1, 'm': 2} re.compile('(?P<y>\\d{4})-(?P<m>\\d\\d)')
+(?P<y>\d{4})-(?P<m>\d\d) on 2024-05-01 0 13 m 2
+re.compile('a', re.IGNORECASE|re.DOTALL)
+error: multiple repeat at position 2
+error: multiple repeat at position 4
+error: bad character in group name '1' at position 4
+error: redefinition of group name 'n' as group 2; was group 1 at position 12
+error: invalid group reference 2 at position 4
+error: unknown extension ?z at position 1
+error: global flags not at the start of the expression at position 1
+error: bad character range z-a at position 1
+error: incomplete escape \x4 at position 0
+error: unknown group name 'x' at position 4
+error: cannot refer to an open group at position 2
+error: bad character range \d-z at position 1
+error: bad escape \q at position 0
+error: invalid group reference 2 at position 1
+IndexError: unknown group name 'x'
+IndexError: no such group

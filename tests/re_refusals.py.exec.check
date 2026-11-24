@@ -1,0 +1,3 @@
+refused: pyc: findall() with 2 groups returns tuples, which pyc cannot type together with the string results of fewer groups (issues/210); use [m.groups() for m in re.finditer(...)]
+refused: pyc: Match.lastindex is None here (no group matched), and an int that may be None has no representation in pyc (issues/210)
+None
