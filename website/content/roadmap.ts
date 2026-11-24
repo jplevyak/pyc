@@ -109,8 +109,12 @@ export const TRACKS: Track[] = [
       },
       {
         title: 'The modern idioms',
-        state: 'planned',
-        items: ['dataclasses (fields, asdict, replace)', 'enum', 'typing checked under --strict'],
+        state: 'active',
+        items: [
+          'enum: Enum, auto and unique landed; IntEnum, StrEnum and Flag next',
+          'dataclasses (fields, asdict, replace)',
+          'typing checked under --strict',
+        ],
       },
       {
         title: 'Applications',

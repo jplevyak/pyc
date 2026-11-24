@@ -39,6 +39,7 @@ export const MODULES: LibModule[] = [
   { name: 'time', status: 'partial', covers: 'time, time_ns, sleep, perf_counter, monotonic, process_time and their _ns forms, struct_time, gmtime, localtime, mktime, strftime, asctime, ctime' },
   { name: 'dataclasses', status: 'partial', covers: '@dataclass and field(...)', note: 'The frontend generates the class CPython’s decorator builds. fields, asdict, astuple and replace are refused at import.' },
   { name: 'typing', status: 'ok', covers: 'The names programs import: Any, Optional, Union, Callable, List, Dict, Tuple, Iterable, TypeVar, cast, overload, ...', note: 'Annotations are accepted and ignored; inference supplies the types.' },
+  { name: 'enum', status: 'partial', covers: 'Enum, auto, unique; members by name, by value and by iteration (Color(1), Color["RED"], for m in Color, len, in), aliases, _missing_, __init__ on member values', note: 'IntEnum and StrEnum (an int or str subclass carrying attributes), Flag/IntFlag and the functional API are refused (issues/208).' },
   { name: 'ctypes', status: 'partial', path: 'ctypes/__init__.py', covers: 'CDLL, argtypes, restype, the c_* types, Structure, POINTER, byref, pointer, sizeof', note: 'Lowered at compile time to direct C calls. A use outside the subset is refused with its line.' },
   { name: 'socket', status: 'partial', covers: 'socket (bind, listen, accept, recv, send, setsockopt), gethostname' },
   { name: 'select', status: 'partial', covers: 'select', note: "CPython's results, timeouts and errors, over poll(2). poll, epoll and kqueue are not provided." },
@@ -54,7 +55,7 @@ export interface Wanted {
 
 // The next modules to write, ordered roughly by how often real programs import them.
 export const WANTED: Wanted[] = [
-  { name: 'enum', why: 'Enumerations compile to integers with names, with no run-time cost.' },
+  { name: 'enum (complete)', why: 'IntEnum, StrEnum and Flag.' },
   { name: 'collections.namedtuple', why: 'A tuple subclass with named fields; typing.NamedTuple with it.' },
   { name: 'functools (complete)', why: 'partial and total_ordering.' },
   { name: 're (complete)', why: 'findall, finditer, sub, split, named groups, flags.' },
