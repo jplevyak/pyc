@@ -92,7 +92,7 @@ export const TRACKS: Track[] = [
         state: 'done',
         items: [
           'itertools: the full set, from chain and islice to groupby and batched',
-          'functools: lru_cache, cache, wraps, cmp_to_key',
+          'functools: lru_cache, cache, wraps, cmp_to_key, partial, total_ordering',
           'collections: Counter, OrderedDict, the rest of deque and defaultdict',
           'math with CPython’s errors; bisect, operator; time, random and string additions',
           'os and os.path, pathlib, textwrap, logging',
@@ -103,7 +103,7 @@ export const TRACKS: Track[] = [
         title: 'Finish the modules that exist',
         state: 'active',
         items: [
-          'functools: partial, total_ordering',
+          'functools.partial with keyword arguments (issues/189)',
           'collections: namedtuple',
         ],
       },

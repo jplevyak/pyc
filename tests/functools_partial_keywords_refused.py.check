@@ -1,0 +1,1 @@
+fail: error functools_partial_keywords_refused.py:10: functools.partial with keyword arguments is not supported: binding them needs '**' into named parameters (issues/189)

@@ -152,3 +152,28 @@ class _CmpToKey:
 
 def cmp_to_key(mycmp):
     return _CmpToKey(mycmp)
+
+
+# partial: CPython's semantics for positional arguments. The stored
+# arguments go before the call's through tuple.__pyc_call_prepended__, one
+# overload per arity of the stored tuple (python_ifa_main.cc), so they bind
+# the function's named parameters with their own types. Keyword arguments,
+# stored or given at the call, need `**` into named parameters, which is
+# issues/189 step 2: the frontend refuses a partial built with keywords
+# (python_ifa_dataclass.cc), and `keywords` is always empty.
+class partial:
+    def __init__(self, func, *args):
+        self.func = func
+        self.args = args
+        self.keywords = {}
+
+    def __call__(self, *args):
+        return self.args.__pyc_call_prepended__(self.func, args)
+
+
+# total_ordering is lowered by the frontend (python_ifa_dataclass.cc): a
+# module-level class it decorates gets CPython's generated comparison
+# methods, and any other use of the name is refused there. This definition
+# only gives the import a name to bind.
+def total_ordering(cls):
+    return cls

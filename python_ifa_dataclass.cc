@@ -40,6 +40,7 @@
 */
 #include "python_ifa_int.h"
 #include "python_parse.h"
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <set>
@@ -73,7 +74,7 @@ struct Binds {
 
 struct Env {
   cchar *filename = nullptr;
-  Binds typing, dc, en;
+  Binds typing, dc, en, ft;
 };
 
 [[noreturn]] void err(PyDAST *at, const char *f, ...) __attribute__((format(printf, 2, 3)));
@@ -852,6 +853,152 @@ void check_unsupported(Env &env, PyDAST *n) {
   for (PyDAST *c : n->children) check_unsupported(env, c);
 }
 
+// ------------------------------------------------------- total_ordering
+//
+// A module-level class decorated `@total_ordering` (functools, named
+// through the module's imports) gets the comparison methods CPython's
+// decorator adds: of `__lt__ __le__ __gt__ __ge__`, the ROOT is the greatest
+// name the class defines or inherits (max() over the strings, so __lt__
+// first), and each of the others it does not have is CPython's formula over
+// the root (functools._convert). CPython's `if op_result is NotImplemented`
+// step is left out: pyc has no NotImplemented value, so a root cannot
+// return one. Inherited operations come from base classes defined earlier in
+// the same module; a base pyc cannot see here (imported) is refused, since
+// it may define one. Any other use of the name is refused.
+
+const char *const ordering_ops[] = {"__lt__", "__le__", "__gt__", "__ge__"};
+
+// CPython's functools._convert: {root: {op: body over `r` and `self == other`}}.
+const char *ordering_formula(const std::string &root, const std::string &op) {
+  static const std::map<std::pair<std::string, std::string>, const char *> f = {
+      {{"__lt__", "__gt__"}, "not r and self != other"}, {{"__lt__", "__le__"}, "r or self == other"},
+      {{"__lt__", "__ge__"}, "not r"},                   {{"__le__", "__ge__"}, "not r or self == other"},
+      {{"__le__", "__lt__"}, "r and self != other"},     {{"__le__", "__gt__"}, "not r"},
+      {{"__gt__", "__lt__"}, "not r and self != other"}, {{"__gt__", "__ge__"}, "r or self == other"},
+      {{"__gt__", "__le__"}, "not r"},                   {{"__ge__", "__le__"}, "not r or self == other"},
+      {{"__ge__", "__gt__"}, "r and self != other"},     {{"__ge__", "__lt__"}, "not r"},
+  };
+  return f.at({root, op});
+}
+
+bool is_total_ordering_decorator(Env &env, PyDAST *dec) {
+  return dec->kind == PY_decorator && dec->children.n == 1 && dec->children[0]->str_val &&
+         member_of_text(env.ft, trimmed(dec->children[0]->str_val)) == "total_ordering";
+}
+
+// The ordering operations each module-level class has, by class name, own
+// and inherited (nullopt-like: `unknown` when a base is not visible).
+struct Ordering {
+  std::set<std::string> ops;
+  bool unknown_base = false;
+};
+
+void lower_total_ordering(Env &env, PyDAST *mod) {
+  std::map<std::string, Ordering> classes;
+  for (int i = 0; i < mod->children.n; i++) {
+    PyDAST *st = mod->children[i];
+    PyDAST *cdef = st->kind == PY_decorated ? st->children.last() : st;
+    if (cdef->kind != PY_classdef || !cdef->children.n || !cdef->children[0]->str_val) continue;
+    Ordering o;
+    for (int b = 1; b < cdef->children.n - 1; b++) {
+      Vec<PyDAST *> bases;
+      if (cdef->children[b]->kind == PY_tuple)
+        for (PyDAST *x : cdef->children[b]->children) bases.add(x);
+      else
+        bases.add(cdef->children[b]);
+      for (PyDAST *x : bases) {
+        if (x->kind == PY_name && x->str_val && !strcmp(x->str_val, "object")) continue;
+        auto it = x->kind == PY_name && x->str_val ? classes.find(x->str_val) : classes.end();
+        if (it == classes.end()) {
+          o.unknown_base = true;
+          continue;
+        }
+        o.ops.insert(it->second.ops.begin(), it->second.ops.end());
+        o.unknown_base |= it->second.unknown_base;
+      }
+    }
+    PyDAST *&body = class_body(cdef);
+    for (PyDAST *m : body->children) {
+      PyDAST *fd = m->kind == PY_decorated ? m->children.last() : m;
+      if (fd->kind == PY_funcdef && fd->children.n && fd->children[0]->str_val)
+        for (const char *op : ordering_ops)
+          if (!strcmp(fd->children[0]->str_val, op)) o.ops.insert(op);
+    }
+    std::string name = cdef->children[0]->str_val;
+    bool decorated = false;
+    if (st->kind == PY_decorated) {
+      Vec<PyDAST *> rest;
+      for (PyDAST *x : decorators_of(st)) {
+        if (!is_total_ordering_decorator(env, x)) {
+          rest.add(x);
+          continue;
+        }
+        // CPython applies decorators bottom-up: one below this was applied
+        // first, and pyc lowers only @dataclass, already done.
+        decorated = true;
+      }
+      if (decorated) {
+        if (o.ops.empty())
+          err(cdef, "must define at least one ordering operation: < > <= >= (class %s, @total_ordering)", name.c_str());
+        if (o.unknown_base)
+          err(cdef,
+              "@total_ordering on %s: a base class defined outside this module may define an ordering operation, "
+              "which pyc cannot see here",
+              name.c_str());
+        std::string root = *std::max_element(o.ops.begin(), o.ops.end());
+        std::string gen;
+        for (const char *op : ordering_ops)
+          if (!o.ops.count(op))
+            gen += fmt("  def %s(self, other):\n    r = self.%s(other)\n    return %s\n", op, root.c_str(),
+                       ordering_formula(root, op));
+        std::vector<PyDAST *> none;
+        if (!gen.empty())
+          for (PyDAST *c : *parse_body(gen, cdef, none)) body->add(c);
+        for (const char *op : ordering_ops) o.ops.insert(op);
+        PyDAST *decs = new_node(PY_suite, st);
+        for (PyDAST *x : rest) decs->add(x);
+        st->children.v[0] = decs;
+        decs->parent = st;
+        if (!rest.n) {
+          mod->children.v[i] = cdef;
+          cdef->parent = mod;
+        }
+      }
+    }
+    classes[name] = o;
+  }
+  // Every other use of the name: a call, a nested class, a decorator on a
+  // function.
+  std::function<void(PyDAST *)> check = [&](PyDAST *n) {
+    if (!n || n->kind == PY_import_name || n->kind == PY_import_from) return;
+    if ((n->kind == PY_decorator && is_total_ordering_decorator(env, n)) || member_of(env.ft, n) == "total_ordering")
+      err(n, "functools.total_ordering is supported as the decorator of a module-level class only");
+    // partial(f, ..., k=v): binding the stored keywords needs `**` into named
+    // parameters (pyc_lib/functools.py).
+    if (n->kind == PY_power && n->children.n >= 2) {
+      PyDAST *call = nullptr;
+      if (n->children[0]->kind == PY_name && n->children[1]->kind == PY_call && member_of(env.ft, n->children[0]) == "partial")
+        call = n->children[1];
+      else if (n->children.n >= 3 && n->children[2]->kind == PY_call && member_of(env.ft, n) == "partial")
+        call = n->children[2];
+      if (call && call->children.n) {
+        PyDAST *al = call->children[0];
+        Vec<PyDAST *> items;
+        if (al->kind == PY_arglist)
+          for (PyDAST *c : al->children) items.add(c);
+        else
+          items.add(al);
+        for (PyDAST *a : items)
+          if (a->kind == PY_keyword_arg)
+            err(n, "functools.partial with keyword arguments is not supported: binding them needs '**' into named "
+                   "parameters (issues/189)");
+      }
+    }
+    for (PyDAST *c : n->children) check(c);
+  };
+  check(mod);
+}
+
 void lower_module(PyDAST *mod, cchar *filename) {
   if (!mod || mod->kind != PY_module) return;
   Env env;
@@ -861,6 +1008,7 @@ void lower_module(PyDAST *mod, cchar *filename) {
       scan_import(env.typing, "typing", st);
       scan_import(env.dc, "dataclasses", st);
       scan_import(env.en, "enum", st);
+      scan_import(env.ft, "functools", st);
     }
   if (env.typing.star || env.dc.star)
     for (PyDAST *st : mod->children)
@@ -874,7 +1022,11 @@ void lower_module(PyDAST *mod, cchar *filename) {
     check_enum_unsupported(env, mod, true);
     lower_enums(env, mod);
   }
-  if (!env.dc.mods.size() && !env.dc.names.size()) return;
+  bool has_ft = env.ft.mods.size() || env.ft.names.size();
+  if (!env.dc.mods.size() && !env.dc.names.size()) {
+    if (has_ft) lower_total_ordering(env, mod);
+    return;
+  }
   std::map<std::string, DC *> by_name;
   bool need_frozen_import = false;
   for (int i = 0; i < mod->children.n; i++) {
@@ -893,6 +1045,7 @@ void lower_module(PyDAST *mod, cchar *filename) {
     }
   }
   check_unsupported(env, mod);
+  if (has_ft) lower_total_ordering(env, mod);
   if (need_frozen_import) {
     std::string text = "from dataclasses import FrozenInstanceError as __pyc_dc_FrozenInstanceError__\n";
     PyDAST *g = dparse_python_buf_to_ast("<dataclass>", text.c_str(), (int)text.size());

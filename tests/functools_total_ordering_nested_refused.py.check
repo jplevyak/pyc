@@ -1,0 +1,1 @@
+fail: error functools_total_ordering_nested_refused.py:6: functools.total_ordering is supported as the decorator of a module-level class only

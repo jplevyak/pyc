@@ -17,7 +17,7 @@ export const MODULES: LibModule[] = [
   { name: 'random', status: 'ok', covers: 'seed, random, getrandbits, randbytes, uniform, randrange (with step), randint, choice, choices (weights, cum_weights), shuffle, sample, triangular, gauss, normalvariate, expovariate, lognormvariate', note: 'True MT19937 with CPython’s seeding, so seeded programs match CPython draw for draw.' },
   { name: 'collections', status: 'partial', covers: 'deque (maxlen, rotate, extendleft, insert, remove, index, reverse), defaultdict, Counter (arithmetic, most_common, total, elements), OrderedDict (move_to_end, popitem(last=))', note: 'namedtuple is not implemented yet. Counter and OrderedDict are not dict subclasses, so isinstance(c, dict) is False.' },
   { name: 'itertools', status: 'ok', covers: 'count, cycle, repeat, accumulate, chain (and from_iterable), islice, compress, dropwhile, takewhile, filterfalse, starmap, groupby, zip_longest, pairwise, batched, product, permutations, combinations, combinations_with_replacement', note: 'Each consumes its input exactly as CPython’s documented equivalent does.' },
-  { name: 'functools', status: 'partial', covers: 'reduce, lru_cache (with cache_info and cache_clear), cache, wraps, update_wrapper, cmp_to_key', note: 'partial and total_ordering are not implemented yet.' },
+  { name: 'functools', status: 'partial', covers: 'reduce, lru_cache (with cache_info and cache_clear), cache, wraps, update_wrapper, cmp_to_key, partial, total_ordering', note: 'partial takes positional arguments; one with keyword arguments is refused at compile time (issues/189). total_ordering decorates a module-level class.' },
   { name: 'bisect', status: 'ok', covers: 'bisect_left, bisect_right, insort_left, insort_right, with key=', note: "CPython's algorithms." },
   { name: 'operator', status: 'partial', covers: 'the comparison, arithmetic, bitwise, sequence and in-place operator functions; itemgetter', note: 'attrgetter and methodcaller read an attribute named at run time, which pyc does not do.' },
   { name: 'heapq', status: 'ok', covers: 'heappush, heappop, heapreplace, heappushpop, heapify', note: "Mirrors CPython's heapq.py." },
@@ -57,7 +57,7 @@ export interface Wanted {
 export const WANTED: Wanted[] = [
   { name: 'enum (complete)', why: 'IntEnum, StrEnum and Flag.' },
   { name: 'collections.namedtuple', why: 'A tuple subclass with named fields; typing.NamedTuple with it.' },
-  { name: 'functools (complete)', why: 'partial and total_ordering.' },
+  { name: 'functools.partial keywords', why: 'partial(f, key=value), which needs ** into named parameters.' },
   { name: 'json', why: 'Serialization of typed records, and parsing into a declared shape.' },
   { name: 'asyncio', why: 'A CPython-compatible front end for the event loop async/await already compiles to.' },
   { name: 'statistics, fractions, decimal', why: 'Numeric work beyond math.' },

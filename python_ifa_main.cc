@@ -878,6 +878,16 @@ static void scan_star_args(PyDAST *n, bool &has_star, int &max_call_args, bool s
   }
 }
 
+// Whether `n` contains the identifier `name` (a generated intrinsic's call
+// site, not a user name).
+static bool mentions_name(PyDAST *n, cchar *name) {
+  if (!n) return false;
+  if (n->str_val && !strcmp(n->str_val, name)) return true;
+  for (PyDAST *c : n->children)
+    if (mentions_name(c, name)) return true;
+  return false;
+}
+
 // ifa/185: the dispatch constraints of the generated tuple methods'
 // formals, keyed on each parameter's PyDAST (pyc_formal_dispatch).
 static Map<PyDAST *, PycFormalDispatch *> formal_dispatch;
@@ -954,7 +964,8 @@ static void emit_tuple_arity_eq(FILE *f, int max_arity, std::vector<TupleDefSpec
 // A constant index is one field. Before arity dispatch the constant
 // indices came from an unroll to max_arity behind `n >= k` guards, which
 // did not fold once one contour held several arities.
-static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::vector<TupleDefSpec> &specs) {
+static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, bool call_prepended,
+                                     std::vector<TupleDefSpec> &specs) {
   const PycFormalDispatch none = {-1, false}, dyn_self = {DISPATCH_ARITY_DYNAMIC, false},
                           dyn_tuple = {DISPATCH_ARITY_DYNAMIC, true};
   auto self_k = [](int k) { return PycFormalDispatch{k, false}; };
@@ -992,6 +1003,29 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, std::ve
     }
     fprintf(f, "    return n < %d\n", k);
     specs.push_back({dyn_self, tuple_k(k)});
+  }
+  // functools.partial's call (pyc_lib/functools.py): `f(*stored, *args)`,
+  // which the grammar does not have, as `f(stored[0], ..., *args)` for each
+  // arity of the stored tuple. The elements keep their own types and `*args`
+  // binds by its arity (issues/189 step 1), so the call binds named
+  // parameters. A runtime-length tuple concatenates (the unconstrained body).
+  //
+  // Not `f(*(stored + args))` with a fixed-arity tuple.__add__ (issues/213):
+  // overloads for each PAIR of arities cost analysis time where they are
+  // never called (itertools_more FA 7.4 s to 9.2 s), and a sum's arity needs
+  // the per-arity methods too (logging_basic 13 arities to 26).
+  for (int k : arities) {
+    if (!call_prepended) break;
+    fputs("  def __pyc_call_prepended__(self, f, args):\n", f);
+    fputs("    return f(", f);
+    for (int i = 0; i < k; i++) fprintf(f, "__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d), ", i);
+    fputs("*args)\n", f);
+    specs.push_back({self_k(k), none, none});
+  }
+  if (call_prepended) {
+    fputs("  def __pyc_call_prepended__(self, f, args):\n", f);
+    fputs("    return f(*(self + args))\n", f);
+    specs.push_back({none, none, none});
   }
   fputs("  def __lt__(self, t):\n", f);
   fputs("    if t is None: return False\n", f);
@@ -1225,7 +1259,13 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   std::vector<TupleDefSpec> arity_specs;
   fputs("class __pyc_tuple_arity__:\n", f);
   emit_tuple_arity_eq(f, max_arity, arity_specs);
-  emit_tuple_arity_methods(f, arities, arity_specs);
+  // Only a program that calls it (pyc_lib/functools.py's partial) gets
+  // __pyc_call_prepended__: an overload costs analysis time where it is
+  // never called (serial_pty, whose tuple arities reach 60: FA 5.9 s to
+  // 12.2 s with them and no contour changed).
+  bool call_prepended = false;
+  for (PyDAST *a : asts) call_prepended = call_prepended || mentions_name(a, "__pyc_call_prepended__");
+  emit_tuple_arity_methods(f, arities, call_prepended, arity_specs);
   fclose(f);
   std::string gen_src(buf, sz);
   free(buf);
