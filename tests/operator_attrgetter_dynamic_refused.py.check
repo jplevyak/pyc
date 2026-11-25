@@ -1,0 +1,1 @@
+fail: error operator_attrgetter_dynamic_refused.py:12: operator.attrgetter takes constant attribute names in pyc, which resolves attributes at compile time (issues/216)

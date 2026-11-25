@@ -964,7 +964,7 @@ static void emit_tuple_arity_eq(FILE *f, int max_arity, std::vector<TupleDefSpec
 // A constant index is one field. Before arity dispatch the constant
 // indices came from an unroll to max_arity behind `n >= k` guards, which
 // did not fold once one contour held several arities.
-static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, bool call_prepended,
+static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, bool call_prepended, bool map_fixed,
                                      std::vector<TupleDefSpec> &specs) {
   const PycFormalDispatch none = {-1, false}, dyn_self = {DISPATCH_ARITY_DYNAMIC, false},
                           dyn_tuple = {DISPATCH_ARITY_DYNAMIC, true};
@@ -1026,6 +1026,23 @@ static void emit_tuple_arity_methods(FILE *f, std::vector<int> &arities, bool ca
     fputs("  def __pyc_call_prepended__(self, f, args):\n", f);
     fputs("    return f(*(self + args))\n", f);
     specs.push_back({none, none, none});
+  }
+  // dataclasses.astuple / asdict over a tuple field (pyc_lib/
+  // _dataclasses_convert.py): CPython's `type(obj)(inner(v) for v in obj)`,
+  // with f applied to each element in its own type, for each arity; a
+  // runtime-length tuple maps through a list (issues/216).
+  for (int k : arities) {
+    if (!map_fixed) break;
+    fputs("  def __pyc_map__(self, f):\n", f);
+    fputs("    return (", f);
+    for (int i = 0; i < k; i++) fprintf(f, "f(__pyc_primitive__(__pyc_symbol__(\"index_object\"), self, %d)), ", i);
+    fputs(")\n", f);
+    specs.push_back({self_k(k), none});
+  }
+  if (map_fixed) {
+    fputs("  def __pyc_map__(self, f):\n", f);
+    fputs("    return tuple([f(x) for x in self])\n", f);
+    specs.push_back({none, none});
   }
   fputs("  def __lt__(self, t):\n", f);
   fputs("    if t is None: return False\n", f);
@@ -1265,7 +1282,10 @@ static void inject_tuple_methods_over(Vec<PycModule *> &mods, Vec<PyDAST *> &ast
   // 12.2 s with them and no contour changed).
   bool call_prepended = false;
   for (PyDAST *a : asts) call_prepended = call_prepended || mentions_name(a, "__pyc_call_prepended__");
-  emit_tuple_arity_methods(f, arities, call_prepended, arity_specs);
+  // Likewise __pyc_map__, for a program that converts a dataclass.
+  bool map_fixed = false;
+  for (PyDAST *a : asts) map_fixed = map_fixed || mentions_name(a, "__pyc_map__");
+  emit_tuple_arity_methods(f, arities, call_prepended, map_fixed, arity_specs);
   fclose(f);
   std::string gen_src(buf, sz);
   free(buf);
@@ -1848,6 +1868,12 @@ int ast_to_if1(Vec<PycModule *> &mods) {
   prescan_imported_modules(mods, *make_search_path(), imported);
   lower_ctypes(mods, imported);  // issues/188: before the property scan, which reads the classes it generates
   lower_typing_and_dataclasses(mods, imported);  // issues/195: also before it (a frozen field's setter)
+  {
+    // The lowering can add an import (issues/216): parse what it reaches.
+    Vec<PyDAST *> added;
+    prescan_added_imports(mods, imported, *make_search_path(), added);
+    for (PyDAST *a : added) imported.add(a);
+  }
   inject_property_accessors(mods, imported);  // issues/171 #13: @property getters
   Vec<PyDAST *> asts;
   for (PycModule *m : mods) asts.add(m->pymod);

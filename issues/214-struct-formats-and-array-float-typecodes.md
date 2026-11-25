@@ -127,7 +127,7 @@ struct or array, or compare bools:
 1049 EntrySets, so the growth is the struct lowering. Every added contour
 has the same types as an existing one: `int.__eq__(int64, int64)` goes from
 61 contours to 89, and msp_ss's own `comTxRx` from 1 to 7. They are
-constant splits ([ifa/151](../ifa/issues/151-split-an-entryset-on-a-constant-argument-on-demand.md)'s
+constant splits ([ifa/151](../ifa/issues/closed/151-split-an-entryset-on-a-constant-argument-on-demand.md)'s
 CONST_DEMAND). Both builds enter it with the same violations (63 at the
 first pass it runs, then 8, then 0). In the new build its backward walk
 passes through the lowered readers' constant `size` formals

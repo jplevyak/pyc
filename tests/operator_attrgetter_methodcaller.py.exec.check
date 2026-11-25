@@ -1,0 +1,7 @@
+[1, 2, 3] ['p2', 'p3', 'p1']
+(3, 'p3') 2 ['p3', 'p1', 'p2']
+operator.attrgetter('x') operator.attrgetter('p.x', 'p.y')
+[10, 5] [35, 15, 25] [10, 5]
+ABC bbnbnb ['a', 'b']
+operator.methodcaller('scaled', 10, off=5) operator.methodcaller('upper') operator.methodcaller('m', 1, 'z', k=2.5)
+p1 ['A', 'b', 'c']

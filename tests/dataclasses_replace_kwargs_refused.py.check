@@ -1,0 +1,1 @@
+fail: error dataclasses_replace_kwargs_refused.py:13: dataclasses.replace() takes keyword arguments after the object; '*' and '**' are not supported (issues/216)

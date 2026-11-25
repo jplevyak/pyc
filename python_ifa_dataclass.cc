@@ -74,7 +74,7 @@ struct Binds {
 
 struct Env {
   cchar *filename = nullptr;
-  Binds typing, dc, en, ft;
+  Binds typing, dc, en, ft, op;
 };
 
 [[noreturn]] void err(PyDAST *at, const char *f, ...) __attribute__((format(printf, 2, 3)));
@@ -230,6 +230,20 @@ struct DC {
 std::vector<DC *> all_dcs;  // every dataclass in the program, for pyc_dataclass_check
 int next_id = 1;
 
+// What the whole program asks of its dataclasses (issues/216), found before
+// any module is lowered, since a dataclass in one module may be converted or
+// replaced in another. Each generated method exists only when used.
+struct Uses {
+  bool fields = false, astuple = false, asdict = false;
+  std::vector<std::vector<std::string>> replace_sets;  // sorted keyword names, one method each
+  int replace_id(const std::vector<std::string> &names) {
+    for (size_t i = 0; i < replace_sets.size(); i++)
+      if (replace_sets[i] == names) return (int)i;
+    replace_sets.push_back(names);
+    return (int)replace_sets.size() - 1;
+  }
+} uses;
+
 // The decorators of a PY_decorated: a PY_suite of them, or one.
 Vec<PyDAST *> decorators_of(PyDAST *decorated) {
   Vec<PyDAST *> out;
@@ -315,6 +329,20 @@ void set_origin(PyDAST *n, cchar *filename, int line) {
   for (PyDAST *c : n->children) set_origin(c, filename, line);
 }
 
+// Each `__pyc_dc_ph_N__` name under g becomes the user's expression ph[N],
+// which keeps its own origin.
+void fill_placeholders(PyDAST *g, std::vector<PyDAST *> &ph) {
+  for (int i = 0; i < g->children.n; i++) {
+    PyDAST *c = g->children[i];
+    int k;
+    if (c && c->kind == PY_name && c->str_val && sscanf(c->str_val, "__pyc_dc_ph_%d__", &k) == 1) {
+      g->children.v[i] = ph[k];
+      ph[k]->parent = g;
+    } else if (c)
+      fill_placeholders(c, ph);
+  }
+}
+
 // Parse generated statements as a class body, placeholders `__pyc_dc_ph_N__`
 // replaced by the user's expressions, which keep their own origin.
 Vec<PyDAST *> *parse_body(const std::string &stmts, PyDAST *at, std::vector<PyDAST *> &ph) {
@@ -324,18 +352,7 @@ Vec<PyDAST *> *parse_body(const std::string &stmts, PyDAST *at, std::vector<PyDA
   if (!g || !g->children.n || g->children[0]->kind != PY_classdef)
     fail("internal error: the dataclass lowering generated code that does not parse (%s:%d)", at->filename, at->line);
   set_origin(g, at->filename, at->line);
-  std::function<void(PyDAST *)> fill = [&](PyDAST *n) {
-    for (int i = 0; i < n->children.n; i++) {
-      PyDAST *c = n->children[i];
-      int k;
-      if (c && c->kind == PY_name && c->str_val && sscanf(c->str_val, "__pyc_dc_ph_%d__", &k) == 1) {
-        n->children.v[i] = ph[k];
-        ph[k]->parent = n;
-      } else if (c)
-        fill(c);
-    }
-  };
-  fill(g);
+  fill_placeholders(g, ph);
   PyDAST *body = g->children[0]->children.last();
   Vec<PyDAST *> *out = new Vec<PyDAST *>;
   if (body->kind == PY_suite)
@@ -477,6 +494,44 @@ std::string generate_methods(DC *d) {
     else
       s += fmt("    def __hash__(self):\n        raise TypeError(\"unhashable type: '%s'\")\n", cname.c_str());
   }
+  if (uses.fields)
+    s += fmt("    @classmethod\n    def __pyc_dc_fields__(cls):\n        return __pyc_dc_%d_fields__\n", d->id);
+  auto per_field = [&](const char *open, const char *each, const char *close) {
+    std::string e = open;
+    for (Field &f : d->fields) e += fmt(each, f.name.c_str(), f.name.c_str());
+    return e + close;
+  };
+  if (uses.astuple)
+    s += "    def __pyc_dc_astuple__(self):\n        return " +
+         per_field("(", "__pyc_dc_astuple_value__(self.%.0s%s), ", ")") + "\n";
+  if (uses.asdict)
+    s += "    def __pyc_dc_asdict__(self):\n        return " +
+         per_field("{", "\"%s\": __pyc_dc_asdict_value__(self.%s), ", "}") + "\n";
+  // replace(obj, **changes): CPython's _replace, for each set of keywords
+  // the program passes. A name that is not an init field raises what
+  // CPython's does.
+  for (size_t id = 0; id < uses.replace_sets.size(); id++) {
+    std::vector<std::string> &names = uses.replace_sets[id];
+    std::string params = "self", err_stmt, args;
+    for (const std::string &n : names) {
+      params += ", " + n;
+      Field *f = find_field(d, n);
+      if (err_stmt.empty() && f && !f->init)
+        err_stmt = fmt("        raise ValueError(\"field %s is declared with init=False, it cannot be specified with "
+                       "replace()\")\n",
+                       n.c_str());
+      if (err_stmt.empty() && !f)
+        err_stmt = fmt("        raise TypeError(\"%s.__init__() got an unexpected keyword argument '%s'\")\n",
+                       cname.c_str(), n.c_str());
+    }
+    for (Field &f : d->fields) {
+      if (!f.init) continue;
+      bool changed = std::find(names.begin(), names.end(), f.name) != names.end();
+      args += fmt("%s%s=%s%s", args.empty() ? "" : ", ", f.name.c_str(), changed ? "" : "self.", f.name.c_str());
+    }
+    s += fmt("    def __pyc_dc_replace_%d__(%s):\n", (int)id, params.c_str());
+    s += err_stmt.empty() ? fmt("        return %s(%s)\n", cname.c_str(), args.c_str()) : err_stmt;
+  }
   if (d->frozen)
     for (Field &f : d->fields) {
       s += fmt("    def __pyc_set_%s__(self, v):\n"
@@ -533,7 +588,25 @@ void lower_dataclass(Env &env, PyDAST *decorated, PyDAST *cdef, PyDAST *args, st
     lower_field(env, d, st, gen, ph, keep);
     if (keep) nbody.add(st);
     if (!gen.empty())
-      for (PyDAST *c : *parse_body(gen, st, ph)) nbody.add(c);
+      for (PyDAST *c : *parse_body(gen, st, ph)) {
+        // The class attribute `NAME = default` is a store to the class, not
+        // through a frozen field's raising setter (__pyc_set_NAME__): that
+        // raised at class creation, left pending to the next check
+        // (issues/216).
+        if (c->kind == PY_assign && c->children[0]->kind == PY_name) c->children[0]->is_raw_field = 1;
+        nbody.add(c);
+      }
+  }
+  if (uses.fields) {
+    // One tuple of Field per class, made with it (CPython keeps them in
+    // __dataclass_fields__, so fields(x) returns the same objects each time).
+    std::string g = fmt("__pyc_dc_%d_fields__", d->id), t = "(";
+    for (Field &f : d->fields)
+      t += fmt("__pyc_dc_Field__(\"%s\", %s, %s, %s), ", f.name.c_str(), f.init ? "True" : "False",
+               f.repr ? "True" : "False", f.compare ? "True" : "False");
+    std::vector<PyDAST *> none;
+    for (PyDAST *c : *parse_body(fmt("    global %s\n    %s = %s)\n", g.c_str(), g.c_str(), t.c_str()), cdef, none))
+      nbody.add(c);
   }
   std::vector<PyDAST *> none;
   Vec<PyDAST *> *methods = parse_body(generate_methods(d), cdef, none);
@@ -565,6 +638,17 @@ void lower_dataclass(Env &env, PyDAST *decorated, PyDAST *cdef, PyDAST *args, st
   }
   body->children.clear();
   for (PyDAST *c : nbody) body->add(c);
+  // Last (it moves the body in cdef->children, which `body` refers into).
+  if ((uses.astuple || uses.asdict) && !d->base) {
+    // The marker the conversion's isinstance tests (pyc_lib/dataclasses.py),
+    // last, so the class's own bases keep their order.
+    PyDAST *mark = new_node(PY_name, cdef);
+    mark->str_val = strdup("__pyc_dc_base__");
+    PyDAST *suite = cdef->children.pop();
+    cdef->children.add(mark);
+    cdef->children.add(suite);
+    mark->parent = cdef;
+  }
   // The decorator is applied.
   Vec<PyDAST *> rest;
   for (PyDAST *x : decorators_of(decorated)) {
@@ -839,18 +923,99 @@ void check_enum_unsupported(Env &env, PyDAST *n, bool top) {
   for (PyDAST *c : n->children) check_enum_unsupported(env, c, n->kind == PY_module || (top && n->kind == PY_decorated));
 }
 
+// `replace(obj, ...)` / `dataclasses.replace(obj, ...)` at the head of a
+// PY_power: the number of children the call takes (2 or 3), or 0.
+int replace_head(Env &env, PyDAST *n) {
+  if (n->kind != PY_power || n->children.n < 2) return 0;
+  if (n->children[1]->kind == PY_call && member_of(env.dc, n->children[0]) == "replace") return 2;
+  if (n->children.n >= 3 && n->children[2]->kind == PY_call && member_of(env.dc, n) == "replace") return 3;
+  return 0;
+}
+
+Vec<PyDAST *> call_args(PyDAST *call) {
+  Vec<PyDAST *> items;
+  if (!call->children.n) return items;
+  PyDAST *al = call->children[0];
+  if (al->kind == PY_arglist)
+    for (PyDAST *c : al->children) items.add(c);
+  else
+    items.add(al);
+  return items;
+}
+
+// The keyword names of a replace() call, sorted: which generated method it
+// calls (issues/216).
+std::vector<std::string> replace_names(PyDAST *n, PyDAST *call) {
+  Vec<PyDAST *> items = call_args(call);
+  if (!items.n || items[0]->kind == PY_keyword_arg || items[0]->kind == PY_star_arg || items[0]->kind == PY_dstar_arg)
+    err(n, "dataclasses.replace() takes the object as its one positional argument here (issues/216)");
+  std::vector<std::string> names;
+  for (int i = 1; i < items.n; i++) {
+    if (items[i]->kind != PY_keyword_arg || !items[i]->children[0]->str_val)
+      err(n, "dataclasses.replace() takes keyword arguments after the object; '*' and '**' are not supported (issues/216)");
+    names.push_back(items[i]->children[0]->str_val);
+  }
+  std::sort(names.begin(), names.end());
+  return names;
+}
+
+// replace(obj, k=v, ...)  ->  obj.__pyc_dc_replace_N__(k=v, ...), in place.
+// The keywords stay keywords, so they are evaluated in source order.
+void lower_replace_call(Env &env, PyDAST *n, int head) {
+  PyDAST *call = n->children[head - 1];
+  Vec<PyDAST *> items = call_args(call);
+  int id = uses.replace_id(replace_names(n, call));
+  std::vector<PyDAST *> ph;
+  std::string text = fmt("__pyc_dc_e__ = __pyc_dc_obj__.__pyc_dc_replace_%d__(", id);
+  for (int i = 1; i < items.n; i++)
+    text += fmt("%s%s=%s", i > 1 ? ", " : "", items[i]->children[0]->str_val, ph_name(ph, items[i]->children[1]).c_str());
+  text += ")\n";
+  PyDAST *g = dparse_python_buf_to_ast("<dataclass>", text.c_str(), (int)text.size());
+  if (!g || !g->children.n) fail("internal error: the replace() lowering does not parse (%s:%d)", n->filename, n->line);
+  set_origin(g, n->filename, n->line);
+  fill_placeholders(g, ph);
+  PyDAST *expr = g->children[0]->children.last();  // PY_power(__pyc_dc_obj__, .m, (...))
+  PyDAST *obj = items[0];
+  Vec<PyDAST *> out;
+  if (obj->kind == PY_power)
+    for (PyDAST *c : obj->children) out.add(c);
+  else
+    out.add(obj);
+  for (int i = 1; i < expr->children.n; i++) out.add(expr->children[i]);
+  for (int i = head; i < n->children.n; i++) out.add(n->children[i]);
+  n->children.clear();
+  for (PyDAST *c : out) {
+    n->children.add(c);
+    c->parent = n;
+  }
+}
+
 // What the lowering did not consume is a use of `dataclasses` it does not
-// support (fields(), asdict(), a dataclass that is not at module level).
+// support (make_dataclass, a dataclass that is not at module level); a
+// replace() call is lowered here.
 void check_unsupported(Env &env, PyDAST *n) {
   if (!n || n->kind == PY_import_from || n->kind == PY_import_name) return;
   PyDAST *args;
   if (is_dataclass_decorator(env, n, args))
     err(n, "@dataclass is supported on a class at module level only (issues/195)");
+  if (int head = replace_head(env, n)) lower_replace_call(env, n, head);
   std::string m = member_of(env.dc, n);
-  if (!m.empty() && m != "FrozenInstanceError") {
+  if (m == "replace") err(n, "dataclasses.replace is supported as a call only (issues/216)");
+  if (!m.empty() && m != "FrozenInstanceError" && m != "Field" && m != "fields" && m != "astuple" && m != "asdict")
     err(n, "dataclasses.%s is not supported (issues/195)", m.c_str());
-  }
   for (PyDAST *c : n->children) check_unsupported(env, c);
+}
+
+// The program-wide scan behind `uses`: every name of fields/astuple/asdict,
+// and the keyword set of every replace() call.
+void scan_uses(Env &env, PyDAST *n) {
+  if (!n || n->kind == PY_import_from || n->kind == PY_import_name) return;
+  if (int head = replace_head(env, n)) uses.replace_id(replace_names(n, n->children[head - 1]));
+  std::string m = member_of(env.dc, n);
+  if (m == "fields") uses.fields = true;
+  if (m == "astuple") uses.astuple = true;
+  if (m == "asdict") uses.asdict = true;
+  for (PyDAST *c : n->children) scan_uses(env, c);
 }
 
 // ------------------------------------------------------- total_ordering
@@ -999,8 +1164,7 @@ void lower_total_ordering(Env &env, PyDAST *mod) {
   check(mod);
 }
 
-void lower_module(PyDAST *mod, cchar *filename) {
-  if (!mod || mod->kind != PY_module) return;
+Env module_env(PyDAST *mod, cchar *filename) {
   Env env;
   env.filename = filename;
   for (PyDAST *st : mod->children)
@@ -1009,7 +1173,183 @@ void lower_module(PyDAST *mod, cchar *filename) {
       scan_import(env.dc, "dataclasses", st);
       scan_import(env.en, "enum", st);
       scan_import(env.ft, "functools", st);
+      scan_import(env.op, "operator", st);
     }
+  return env;
+}
+
+// ------------------------------------------------------------- operator
+//
+// issues/216. `operator.attrgetter(...)` and `operator.methodcaller(...)`
+// read an attribute named by a string. pyc resolves attributes at compile
+// time, so the names must be constants, and then each call site is a class
+// of its own, generated at the top of the module:
+//
+//   attrgetter("a", "b.c")      class __pyc_attrgetter_N__:
+//                                 def __call__(self, obj): return (obj.a, obj.b.c)
+//                                 def __repr__(self): return "operator.attrgetter('a', 'b.c')"
+//   methodcaller("m", e, k=f)   class __pyc_methodcaller_N__:
+//                                 def __init__(self, a0, k0): ...
+//                                 def __call__(self, obj): return obj.m(self.a0, k=self.k0)
+//
+// The call becomes `__pyc_attrgetter_N__()` / `__pyc_methodcaller_N__(e, f)`,
+// so the arguments are evaluated once, where the caller is made, as in
+// CPython. A name that is not a constant is refused.
+
+int op_counter = 0;
+
+// The text of a plain string literal ('a', "a.b"), or false.
+bool literal_text(PyDAST *v, std::string &out) {
+  if (!v || v->kind != PY_string || !v->str_val) return false;
+  std::string s = trimmed(v->str_val);
+  if (s.size() < 2 || (s[0] != '\'' && s[0] != '"') || s.back() != s[0]) return false;
+  if (s.size() >= 6 && s.compare(0, 3, std::string(3, s[0])) == 0) return false;  // triple-quoted
+  out = s.substr(1, s.size() - 2);
+  return out.find('\\') == std::string::npos && out.find(s[0]) == std::string::npos;
+}
+
+bool identifier(const std::string &s) {
+  if (s.empty() || !(isalpha((unsigned char)s[0]) || s[0] == '_')) return false;
+  for (char c : s)
+    if (!(isalnum((unsigned char)c) || c == '_')) return false;
+  return true;
+}
+
+// The callee a PY_power's head names in `operator`, and how many children
+// the call takes (2: `attrgetter(...)`, 3: `operator.attrgetter(...)`).
+std::string op_call(Env &env, PyDAST *n, int &head) {
+  head = 0;
+  if (n->kind != PY_power || n->children.n < 2) return "";
+  if (n->children[1]->kind == PY_call) {
+    std::string m = member_of(env.op, n->children[0]);
+    if (!m.empty()) head = 2;
+    return m;
+  }
+  if (n->children.n >= 3 && n->children[2]->kind == PY_call) {
+    std::string m = member_of(env.op, n);
+    if (!m.empty()) head = 3;
+    return m;
+  }
+  return "";
+}
+
+// Replace the call at the head of n (its first `head` children) by `expr`,
+// a PY_power, keeping any trailers after the call.
+void splice_head(PyDAST *n, int head, PyDAST *expr) {
+  Vec<PyDAST *> out;
+  for (PyDAST *c : expr->children) out.add(c);
+  for (int i = head; i < n->children.n; i++) out.add(n->children[i]);
+  n->children.clear();
+  for (PyDAST *c : out) {
+    n->children.add(c);
+    c->parent = n;
+  }
+}
+
+// Parse `__pyc_e__ = EXPR` with placeholders; returns EXPR.
+PyDAST *parse_expr(const std::string &expr, PyDAST *at, std::vector<PyDAST *> &ph) {
+  std::string text = "__pyc_e__ = " + expr + "\n";
+  PyDAST *g = dparse_python_buf_to_ast("<operator>", text.c_str(), (int)text.size());
+  if (!g || !g->children.n) fail("internal error: generated code does not parse (%s:%d)", at->filename, at->line);
+  set_origin(g, at->filename, at->line);
+  fill_placeholders(g, ph);
+  return g->children[0]->children.last();
+}
+
+void lower_operator(Env &env, PyDAST *mod) {
+  std::string classes;
+  std::function<void(PyDAST *)> walk = [&](PyDAST *n) {
+    if (!n || n->kind == PY_import_name || n->kind == PY_import_from) return;
+    int head;
+    std::string m = op_call(env, n, head);
+    if (head && (m == "attrgetter" || m == "methodcaller")) {
+      Vec<PyDAST *> items = call_args(n->children[head - 1]);
+      int id = op_counter++;
+      if (m == "attrgetter") {
+        if (!items.n) err(n, "attrgetter expected 1 argument, got 0");
+        std::string body, rep;
+        for (PyDAST *a : items) {
+          std::string name;
+          if (a->kind == PY_keyword_arg || a->kind == PY_star_arg || a->kind == PY_dstar_arg || !literal_text(a, name))
+            err(n, "operator.attrgetter takes constant attribute names in pyc, which resolves attributes at compile "
+                   "time (issues/216)");
+          for (size_t b = 0;;) {
+            size_t e = name.find('.', b);
+            if (!identifier(name.substr(b, e == std::string::npos ? std::string::npos : e - b)))
+              err(n, "operator.attrgetter: '%s' is not an attribute name", name.c_str());
+            if (e == std::string::npos) break;
+            b = e + 1;
+          }
+          body += (body.empty() ? "obj." : ", obj.") + name;
+          rep += (rep.empty() ? "'" : ", '") + name + "'";
+        }
+        if (items.n > 1) body = "(" + body + ")";
+        classes += fmt("class __pyc_attrgetter_%d__:\n"
+                       "    def __call__(self, obj):\n        return %s\n"
+                       "    def __repr__(self):\n        return \"operator.attrgetter(%s)\"\n",
+                       id, body.c_str(), rep.c_str());
+        std::vector<PyDAST *> none;
+        splice_head(n, head, parse_expr(fmt("__pyc_attrgetter_%d__()", id), n, none));
+      } else {
+        std::string name;
+        if (!items.n || items[0]->kind != PY_string || !literal_text(items[0], name) || !identifier(name))
+          err(n, "operator.methodcaller takes a constant method name in pyc, which resolves attributes at compile "
+                 "time (issues/216)");
+        std::string params = "self", init, call, rep = "\"operator.methodcaller('" + name + "'\"", ctor;
+        std::vector<PyDAST *> ph;
+        for (int i = 1; i < items.n; i++) {
+          PyDAST *a = items[i];
+          if (a->kind == PY_star_arg || a->kind == PY_dstar_arg)
+            err(n, "operator.methodcaller with '*' or '**' arguments is not supported (issues/216)");
+          std::string slot = fmt("__pyc_mc_%d__", i);
+          params += ", " + slot;
+          init += fmt("        self.%s = %s\n", slot.c_str(), slot.c_str());
+          PyDAST *value = a;
+          std::string kw;
+          if (a->kind == PY_keyword_arg) {
+            kw = a->children[0]->str_val;
+            value = a->children[1];
+          }
+          call += (call.empty() ? "" : ", ") + (kw.empty() ? "" : kw + "=") + "self." + slot;
+          rep += " + \", " + (kw.empty() ? "" : kw + "=") + "\" + repr(self." + slot + ")";
+          ctor += (ctor.empty() ? "" : ", ") + ph_name(ph, value);
+        }
+        if (init.empty()) init = "        pass\n";
+        classes += fmt("class __pyc_methodcaller_%d__:\n"
+                       "    def __init__(%s):\n%s"
+                       "    def __call__(self, obj):\n        return obj.%s(%s)\n"
+                       "    def __repr__(self):\n        return %s + \")\"\n",
+                       id, params.c_str(), init.c_str(), name.c_str(), call.c_str(), rep.c_str());
+        splice_head(n, head, parse_expr(fmt("__pyc_methodcaller_%d__(%s)", id, ctor.c_str()), n, ph));
+      }
+    } else if (member_of(env.op, n) == "attrgetter" || member_of(env.op, n) == "methodcaller")
+      err(n, "operator.%s is supported as a call with constant names only (issues/216)", member_of(env.op, n).c_str());
+    for (PyDAST *c : n->children) walk(c);
+  };
+  walk(mod);
+  if (classes.empty()) return;
+  PyDAST *g = dparse_python_buf_to_ast("<operator>", classes.c_str(), (int)classes.size());
+  if (!g) fail("internal error: the operator lowering generated code that does not parse (%s)", env.filename);
+  set_origin(g, env.filename, 1);
+  Vec<PyDAST *> all;
+  for (PyDAST *c : g->children) all.add(c);
+  for (PyDAST *c : mod->children) all.add(c);
+  mod->children.clear();
+  for (PyDAST *c : all) {
+    mod->add(c);
+    c->parent = mod;
+  }
+}
+
+void scan_module_uses(PyDAST *mod, cchar *filename) {
+  if (!mod || mod->kind != PY_module) return;
+  Env env = module_env(mod, filename);
+  if (env.dc.mods.size() || env.dc.names.size()) scan_uses(env, mod);
+}
+
+void lower_module(PyDAST *mod, cchar *filename) {
+  if (!mod || mod->kind != PY_module) return;
+  Env env = module_env(mod, filename);
   if (env.typing.star || env.dc.star)
     for (PyDAST *st : mod->children)
       if (st->kind == PY_import_from && st->children.n < 2) {
@@ -1022,6 +1362,7 @@ void lower_module(PyDAST *mod, cchar *filename) {
     check_enum_unsupported(env, mod, true);
     lower_enums(env, mod);
   }
+  if (env.op.mods.size() || env.op.names.size()) lower_operator(env, mod);
   bool has_ft = env.ft.mods.size() || env.ft.names.size();
   if (!env.dc.mods.size() && !env.dc.names.size()) {
     if (has_ft) lower_total_ordering(env, mod);
@@ -1046,12 +1387,21 @@ void lower_module(PyDAST *mod, cchar *filename) {
   }
   check_unsupported(env, mod);
   if (has_ft) lower_total_ordering(env, mod);
-  if (need_frozen_import) {
-    std::string text = "from dataclasses import FrozenInstanceError as __pyc_dc_FrozenInstanceError__\n";
+  std::string text;
+  if (need_frozen_import) text += "from dataclasses import FrozenInstanceError as __pyc_dc_FrozenInstanceError__\n";
+  if (!by_name.empty()) {
+    // What the generated methods name (issues/216).
+    if (uses.fields) text += "from dataclasses import Field as __pyc_dc_Field__\n";
+    if (uses.astuple || uses.asdict)
+      text += "from dataclasses import __pyc_dataclass__ as __pyc_dc_base__\n"
+              "from _dataclasses_convert import _astuple_value as __pyc_dc_astuple_value__\n"
+              "from _dataclasses_convert import _asdict_value as __pyc_dc_asdict_value__\n";
+  }
+  if (!text.empty()) {
     PyDAST *g = dparse_python_buf_to_ast("<dataclass>", text.c_str(), (int)text.size());
     set_origin(g, filename, 1);
     Vec<PyDAST *> all;
-    all.add(g->children[0]);
+    for (PyDAST *c : g->children) all.add(c);
     for (PyDAST *c : mod->children) all.add(c);
     mod->children.clear();
     for (PyDAST *c : all) mod->add(c);
@@ -1061,6 +1411,10 @@ void lower_module(PyDAST *mod, cchar *filename) {
 }  // namespace
 
 void lower_typing_and_dataclasses(Vec<PycModule *> &mods, Vec<PyDAST *> &imported) {
+  // First what the program asks of its dataclasses, in every module.
+  auto scan = [](PyDAST *mod, cchar *filename) { scan_module_uses(mod, filename); };
+  for (int i = 1; i < mods.n; i++) scan(mods[i]->pymod, mods[i]->filename);
+  for (PyDAST *a : imported) scan(a, a && a->filename ? a->filename : "<imported module>");
   for (int i = 1; i < mods.n; i++) lower_module(mods[i]->pymod, mods[i]->filename);
   for (PyDAST *a : imported) lower_module(a, a && a->filename ? a->filename : "<imported module>");
 }

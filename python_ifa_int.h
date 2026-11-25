@@ -373,6 +373,7 @@ void pyc_dataclass_check(PycCompiler &ctx);  // issues/195, after build_syms
 void pyc_enum_check(PycCompiler &ctx);       // issues/208, after build_syms
 extern cchar *pyc_ffi_shim;
 void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out);
+void prescan_added_imports(Vec<PycModule *> &mods, Vec<PyDAST *> &imported, Vec<cchar *> &roots, Vec<PyDAST *> &out);
 int build_syms(PycModule *x, PycCompiler &ctx);
 void scope_sym(PycCompiler &ctx, Sym *sym, cchar *name = 0);
 Sym *make_string(cchar *s, int len = -1);

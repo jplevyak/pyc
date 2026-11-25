@@ -3686,6 +3686,19 @@ static void prescan_imports(PyDAST *n, const PrescanMod &in, Vec<cchar *> &roots
   for (PyDAST *c : n->children) prescan_imports(c, in, roots, work, out);
 }
 
+// Again after the AST lowerings, which can add an import (issues/216: the
+// dataclass conversion helpers) to a user module or to an imported one: walk
+// every module's imports, and add to `out` the ones not parsed before.
+void prescan_added_imports(Vec<PycModule *> &mods, Vec<PyDAST *> &imported, Vec<cchar *> &roots, Vec<PyDAST *> &out) {
+  Vec<PrescanMod> work;
+  for (int i = 1; i < mods.n; i++) work.add(PrescanMod{mods[i]->pymod, nullptr, false});
+  for (PyDAST *a : imported) work.add(PrescanMod{a, nullptr, false});
+  for (int i = 0; i < work.n; i++) {
+    PrescanMod in = work[i];
+    prescan_imports(in.ast, in, roots, work, out);
+  }
+}
+
 void prescan_imported_modules(Vec<PycModule *> &mods, Vec<cchar *> &roots, Vec<PyDAST *> &out) {
   Vec<PrescanMod> work;
   for (int i = 1; i < mods.n; i++) work.add(PrescanMod{mods[i]->pymod, nullptr, false});

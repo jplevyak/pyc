@@ -1,0 +1,12 @@
+['x', 'y'] ['x', 'y'] True
+[('name', True, True, True, None, False), ('qty', True, True, True, None, False), ('tags', True, False, True, None, False), ('note', False, True, False, None, False)]
+(1.5, 2.5) {'x': 1.5, 'y': 2.5} (1.0, 2.0, 3.0) ['x', 'y', 'z']
+((0.0, 1.0), (2.0, 3.0), (1, 'x'))
+('bolt', 3, ['m4'], 'BOLT') Item(name='bolt', qty=3, note='BOLT')
+['m4'] ['m4', 'copied']
+Point(x=1.5, y=9.0) Point(x=1.5, y=2.5) False True False
+Item(name='bolt', qty=7, note='BOLT') Seg(a=Point(x=0.0, y=1.0), b=Point(x=5.0, y=5.0), pair=(1, 'x'))
+Point3(x=0.5, y=2.0, z=4.0)
+[(0.0, 0.0), (1.0, 1.0), (2.0, 4.0)] [0.0, 1.0, 4.0]
+ValueError field note is declared with init=False, it cannot be specified with replace()
+TypeError Point.__init__() got an unexpected keyword argument 'w'

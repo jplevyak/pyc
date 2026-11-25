@@ -1,7 +1,9 @@
 # pyc shim for the standard `operator` module (issues/207): each function
 # is the operator it names, so it dispatches as the operator does.
 # attrgetter and methodcaller read attributes by a name given at run time,
-# which pyc does not do (a compile error: no such name here).
+# so each call is lowered by the frontend to a class of its own, and the
+# names must be constants (python_ifa_dataclass.cc, lower_operator,
+# issues/216). The definitions at the end only let the names import.
 
 def lt(a, b): return a < b
 def le(a, b): return a <= b
@@ -92,3 +94,13 @@ class itemgetter:
         if len(self._items) == 1:
             return obj[self._items[0]]
         return tuple([obj[i] for i in self._items])
+
+
+def attrgetter(attr):
+    # Every call is lowered by the frontend; this binds the name.
+    return attr
+
+
+def methodcaller(name):
+    # Every call is lowered by the frontend; this binds the name.
+    return name

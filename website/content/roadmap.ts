@@ -98,6 +98,7 @@ export const TRACKS: Track[] = [
           'os and os.path, pathlib, textwrap, logging',
           're: findall, finditer, sub, split, named groups, flags, lookaround',
           'struct: every format code, with typed fields; array: the float typecodes',
+          'operator: attrgetter and methodcaller with constant names',
         ],
       },
       {
@@ -113,7 +114,7 @@ export const TRACKS: Track[] = [
         state: 'active',
         items: [
           'enum: Enum, auto and unique landed; IntEnum, StrEnum and Flag next',
-          'dataclasses (fields, asdict, replace)',
+          'dataclasses: fields, astuple, asdict and replace landed; is_dataclass and Field.type next',
           'typing checked under --strict',
         ],
       },
