@@ -885,83 +885,190 @@ static Sym *struct_module_function(cchar *name, PycCompiler &ctx) {
   return y ? y->sym : nullptr;
 }
 
-// struct.unpack / unpack_from with a CONSTANT format, lowered to a tuple
-// literal of per-field readers so every position has its own type:
-//   unpack_from('<II8s', data, off)
-//     -> (_unpack_int(data, off, 0, 4, False, True),
-//         _unpack_int(data, off, 4, 4, False, True),
-//         _unpack_bytes(data, off, 8, 8))
-// The generic unpack_from (pyc_lib/struct.py) builds ONE list, so it can
-// only return ints -- a `s` field beside an integer field would be a
-// {int, bytes} element with no representation. shedskin rewrites
-// struct.unpack the same way (graph.py, struct_unpack); this matches
-// CPython's result exactly. Returns 0 (not lowered; the call proceeds
-// normally) for anything it does not handle precisely: a non-literal
-// format, `@`/no prefix (native mode ALIGNS fields, which the generic
-// path does not model either), a keyword argument, or a code other than
-// x b B h H i I l L q Q s. Only the direct-name form reaches here
-// (`from struct import unpack_from`); `struct.unpack_from(...)` takes the
-// member-call path.
-static int lower_struct_unpack(Sym *f, Vec<PyDAST *> &pos_args, Vec<PyDAST *> &kw_keys, PycAST *ast,
-                               PycCompiler &ctx) {
-  if (!f || kw_keys.n) return 0;
-  bool is_from = f == struct_module_function("unpack_from", ctx);
-  bool is_plain = !is_from && f == struct_module_function("unpack", ctx);
-  if (!is_from && !is_plain) return 0;
-  if (pos_args.n != (is_from ? 3 : 2) && !(is_from && pos_args.n == 2)) return 0;
-  PyDAST *fa = pos_args[0];
-  if (fa->kind != PY_string || !fa->str_val) return 0;
+// struct.pack / unpack / unpack_from with a CONSTANT format, lowered to
+// one call per field of pyc_lib/struct.py's readers and writers, so every
+// position has its own type (issues/214):
+//   unpack_from('<If8s', data, off)
+//     -> b = _unpack_base(data, off, 16, True)
+//        (_unpack_int(data, b, 0, 4, False, True),
+//         _unpack_float(data, b, 4, 4, True),
+//         _unpack_bytes(data, b, 8, 8))
+//   pack('<If', n, x) -> _cat(_pack_int(n, "I", 4, False, True), _pack_float(x, 4, True))
+// The loop versions in struct.py pass every value through one list, which
+// holds one type: a float or bytes field beside an integer one would be a
+// union with no representation. shedskin rewrites struct.unpack the same
+// way (graph.py, struct_unpack); the result is CPython's exactly. Returns 0
+// (not lowered; the call proceeds to the loop version, which raises
+// CPython's struct.error) for a format it cannot read here: not a literal,
+// an escape in it, or a bad code or count. `f` is the callee by symbol
+// identity, for both `pack(...)` after `from struct import pack` and
+// `struct.pack(...)`.
+struct StructField {
+  char code;
+  int at, size;  // size: bytes of one item; for 's'/'p' the count
+};
+
+static bool parse_struct_format(PyDAST *fa, Vec<StructField> &fields, int &total, bool &little) {
+  if (fa->kind != PY_string || !fa->str_val) return false;
   bool is_raw, is_fstring, is_bytes;
   const char *p = skip_string_prefix(fa->str_val, &is_raw, &is_fstring, &is_bytes);
   char q = *p;
-  if (is_fstring || (q != '\'' && q != '"')) return 0;
+  if (is_fstring || (q != '\'' && q != '"')) return false;
   p++;
   const char *end = strchr(p, q);
-  if (!end || memchr(p, '\\', end - p)) return 0;
-  if (p == end || !strchr("<>!=", *p)) return 0;
-  bool little = *p == '<' || *p == '=';
-  p++;
-  struct Field { int at, size; bool is_signed, is_bytes; };
-  Vec<Field> fields;
+  if (!end || memchr(p, '\\', end - p)) return false;
+  bool native = true;
+  little = true;
+  if (p < end && strchr("<>!=@", *p)) {
+    native = *p == '@';
+    little = *p != '>' && *p != '!';
+    p++;
+  }
   int at = 0, count = -1;
   for (; p < end; p++) {
     char c = *p;
-    if (c >= '0' && c <= '9') { count = (count < 0 ? 0 : count) * 10 + (c - '0'); continue; }
-    if (c == ' ' || c == '\t') continue;
+    if (c >= '0' && c <= '9') {
+      count = (count < 0 ? 0 : count) * 10 + (c - '0');
+      if (count > (1 << 20)) return false;
+      continue;
+    }
+    if (strchr(" \t\n\r\v\f", c)) {
+      if (count >= 0) return false;
+      continue;
+    }
     int n = count < 0 ? 1 : count;
     count = -1;
-    if (c == 's') {
-      fields.add(Field{at, n, false, true});
+    int size = strchr("xcbB?sp", c) ? 1 : strchr("hHe", c) ? 2 : strchr("iIf", c) ? 4
+             : strchr("lL", c) ? (native ? 8 : 4) : strchr("qQd", c) ? 8 : (strchr("nNP", c) && native) ? 8 : 0;
+    if (!size) return false;
+    if (native && size > 1) at = (at + size - 1) / size * size;
+    if (c == 's' || c == 'p') {
+      fields.add(StructField{c, at, n});
       at += n;
       continue;
     }
-    int size = (c == 'x' || c == 'b' || c == 'B') ? 1 : (c == 'h' || c == 'H') ? 2
-             : (c == 'i' || c == 'I' || c == 'l' || c == 'L') ? 4 : (c == 'q' || c == 'Q') ? 8 : 0;
-    if (!size) return 0;
-    if (c == 'x') { at += n; continue; }
-    bool sgn = c == 'b' || c == 'h' || c == 'i' || c == 'l' || c == 'q';
-    for (int k = 0; k < n; k++, at += size) fields.add(Field{at, size, sgn, false});
-  }
-  if (count >= 0 || !fields.n) return 0;
-  Sym *read_int = struct_module_function("_unpack_int", ctx);
-  Sym *read_bytes = struct_module_function("_unpack_bytes", ctx);
-  if (!read_int || !read_bytes) return 0;
-  Sym *buf = getAST(pos_args[1], ctx)->rval;
-  Sym *base = pos_args.n == 3 ? getAST(pos_args[2], ctx)->rval : int64_constant(0);
-  Vec<Sym *> vals;
-  for (Field &fd : fields) {
-    Code *send = if1_send1(if1, &ast->code, ast);
-    if1_add_send_arg(if1, send, fd.is_bytes ? read_bytes : read_int);
-    if1_add_send_arg(if1, send, buf);
-    if1_add_send_arg(if1, send, base);
-    if1_add_send_arg(if1, send, int64_constant(fd.at));
-    if1_add_send_arg(if1, send, int64_constant(fd.size));
-    if (!fd.is_bytes) {
-      if1_add_send_arg(if1, send, fd.is_signed ? sym_true : sym_false);
-      if1_add_send_arg(if1, send, little ? sym_true : sym_false);
+    if (c == 'x') {
+      at += n;
+      continue;
     }
-    Sym *v = new_sym(ast);
-    if1_add_send_result(if1, send, v);
+    for (int k = 0; k < n; k++, at += size) fields.add(StructField{c, at, size});
+  }
+  if (count >= 0) return false;
+  total = at;
+  return true;
+}
+
+// A call of a struct.py function, followed by the pending-exception check
+// every plain call gets: the writers raise CPython's struct.error.
+static Sym *struct_send(PycAST *ast, PycCompiler &ctx, Sym *fn, std::initializer_list<Sym *> args) {
+  Code *send = if1_send1(if1, &ast->code, ast);
+  if1_add_send_arg(if1, send, fn);
+  for (Sym *a : args) if1_add_send_arg(if1, send, a);
+  Sym *v = new_sym(ast);
+  if1_add_send_result(if1, send, v);
+  emit_exc_check(&ast->code, ast, ctx, resolve_plain_callee(fn, ctx));
+  return v;
+}
+
+// `array('f', ...)` / `array('d', ...)` with a CONSTANT float typecode
+// builds pyc_lib/array.py's `_floatarray`, whose list holds floats; the
+// integer typecodes keep `array`. CPython's array is one C buffer whatever
+// the typecode, but here the element type is part of the class, and the
+// typecode is the only thing that says which (issues/214). `f` is the
+// callee by symbol identity: the class `from array import array` binds or
+// `array.array`. Returns the class to call instead, or null.
+static Sym *float_array_class(Sym *f, Vec<PyDAST *> &pos_args, PycCompiler &ctx) {
+  if (!f || !pos_args.n) return nullptr;
+  PycModule *m = get_module("array", ctx);
+  if (!m || !m->ctx || !m->pymod) return nullptr;
+  PycScope *ms = m->ctx->saved_scopes.get(m->pymod);
+  PycSymbol *cls = ms ? ms->map.get(cannonicalize_string("array")) : nullptr;
+  PycSymbol *fcls = ms ? ms->map.get(cannonicalize_string("_floatarray")) : nullptr;
+  if (!cls || !fcls || cls->sym != f) return nullptr;
+  PyDAST *tc = pos_args[0];
+  if (tc->kind != PY_string || !tc->str_val) return nullptr;
+  bool is_raw, is_fstring, is_bytes;
+  const char *p = skip_string_prefix(tc->str_val, &is_raw, &is_fstring, &is_bytes);
+  if (is_fstring || is_bytes || (*p != '\'' && *p != '"')) return nullptr;
+  if ((p[1] != 'f' && p[1] != 'd') || p[2] != p[0]) return nullptr;
+  return fcls->sym;
+}
+
+static int lower_struct_call(Sym *f, Vec<PyDAST *> &pos_args, Vec<PyDAST *> &kw_keys, PycAST *ast,
+                             PycCompiler &ctx) {
+  if (!f || kw_keys.n || !pos_args.n) return 0;
+  bool is_pack = f == struct_module_function("pack", ctx);
+  bool is_from = !is_pack && f == struct_module_function("unpack_from", ctx);
+  bool is_plain = !is_pack && !is_from && f == struct_module_function("unpack", ctx);
+  if (!is_pack && !is_from && !is_plain) return 0;
+  if (is_plain && pos_args.n != 2) return 0;
+  if (is_from && pos_args.n != 2 && pos_args.n != 3) return 0;
+  Vec<StructField> fields;
+  int total = 0;
+  bool little = true;
+  if (!parse_struct_format(pos_args[0], fields, total, little)) return 0;
+  auto fn = [&](cchar *name) {
+    Sym *s = struct_module_function(name, ctx);
+    if (!s) fail("error line %d: struct.%s is missing from pyc_lib/struct.py", ctx.lineno, name);
+    return s;
+  };
+  Sym *t_little = little ? sym_true : sym_false;
+  if (is_pack) {
+    int nargs = pos_args.n - 1;
+    if (nargs != fields.n) {
+      ast->rval = struct_send(ast, ctx, fn("_pack_count_error"), {int64_constant(fields.n), int64_constant(nargs)});
+      return 1;
+    }
+    Sym *acc = nullptr;
+    int at = 0;
+    for (int k = 0; k < fields.n; k++) {
+      StructField &fd = fields[k];
+      Sym *v = getAST(pos_args[k + 1], ctx)->rval;
+      Sym *piece;
+      char c = fd.code;
+      if (c == 's') piece = struct_send(ast, ctx, fn("_pack_bytes"), {v, int64_constant(fd.size)});
+      else if (c == 'p') piece = struct_send(ast, ctx, fn("_pack_pascal"), {v, int64_constant(fd.size)});
+      else if (c == 'c') piece = struct_send(ast, ctx, fn("_pack_char"), {v});
+      else if (c == '?') piece = struct_send(ast, ctx, fn("_pack_bool"), {v});
+      else if (c == 'e' || c == 'f' || c == 'd') piece = struct_send(ast, ctx, fn("_pack_float"), {v, int64_constant(fd.size), t_little});
+      else {
+        char code[2] = {c, 0};
+        bool sgn = strchr("bhilqn", c) != nullptr;
+        piece = struct_send(ast, ctx, fn("_pack_int"), {v, make_string(cannonicalize_string(code)), int64_constant(fd.size),
+                                                   sgn ? sym_true : sym_false, t_little});
+      }
+      if (fd.at > at) {
+        Sym *pad = struct_send(ast, ctx, fn("_pad"), {int64_constant(fd.at - at)});
+        acc = acc ? struct_send(ast, ctx, fn("_cat"), {acc, pad}) : pad;
+      }
+      acc = acc ? struct_send(ast, ctx, fn("_cat"), {acc, piece}) : piece;
+      at = fd.at + fd.size;
+    }
+    if (total > at) {
+      Sym *pad = struct_send(ast, ctx, fn("_pad"), {int64_constant(total - at)});
+      acc = acc ? struct_send(ast, ctx, fn("_cat"), {acc, pad}) : pad;
+    }
+    if (!acc) acc = struct_send(ast, ctx, fn("_pad"), {int64_constant(0)});
+    ast->rval = acc;
+    return 1;
+  }
+  Sym *buf = getAST(pos_args[1], ctx)->rval;
+  Sym *off = pos_args.n == 3 ? getAST(pos_args[2], ctx)->rval : int64_constant(0);
+  Sym *base = struct_send(ast, ctx, fn("_unpack_base"), {buf, off, int64_constant(total), is_from ? sym_true : sym_false});
+  Vec<Sym *> vals;
+  for (StructField &fd : fields) {
+    char c = fd.code;
+    Sym *at = int64_constant(fd.at);
+    Sym *v;
+    if (c == 's') v = struct_send(ast, ctx, fn("_unpack_bytes"), {buf, base, at, int64_constant(fd.size)});
+    else if (c == 'c') v = struct_send(ast, ctx, fn("_unpack_bytes"), {buf, base, at, int64_constant(1)});
+    else if (c == 'p') v = struct_send(ast, ctx, fn("_unpack_pascal"), {buf, base, at, int64_constant(fd.size)});
+    else if (c == '?') v = struct_send(ast, ctx, fn("_unpack_bool"), {buf, base, at});
+    else if (c == 'e' || c == 'f' || c == 'd') v = struct_send(ast, ctx, fn("_unpack_float"), {buf, base, at, int64_constant(fd.size), t_little});
+    else {
+      bool sgn = strchr("bhilqn", c) != nullptr;
+      v = struct_send(ast, ctx, fn("_unpack_int"), {buf, base, at, int64_constant(fd.size), sgn ? sym_true : sym_false, t_little});
+    }
     vals.add(v);
   }
   Code *send = if1_send1(if1, &ast->code, ast);
@@ -996,7 +1103,6 @@ static int build_builtin_call_pyda(PycAST *atom_ast, PyDAST *call_trailer, PycAS
         pos_args.add(arg);
     }
   }
-  if (lower_struct_unpack(f, pos_args, kw_keys, ast, ctx)) return 1;
   // issues/020: str(x) -- unlike print/super/etc., `str` is a real class
   // (__pyc__/01_str.py), not a compiler-level builtin Sym, so it isn't in
   // builtin_functions and must be resolved by name here (same pattern as
@@ -4852,6 +4958,17 @@ static int build_if1_pyda(PyDAST *n, PycCompiler &ctx) {
           if ((star_val || dstar_val) && pending_member && qual_fn)
             fail("error line %d: '*' and '**' unpacking in a call of a classmethod is not supported (issues/182)",
                  ctx.lineno);
+          // struct calls with a constant format, and an array with a constant
+          // float typecode (issues/214), by the callee's symbol: the bare
+          // name for `pack(...)`, the module member for `struct.pack(...)`.
+          if (!pending_member && !star_val && !dstar_val) {
+            Sym *callee = (i == 1 && n->children[0]->kind == PY_name) ? atom_ast->sym : cur_val;
+            if (lower_struct_call(callee, pos_args, kw_keys, ast, ctx)) {
+              cur_val = ast->rval;
+              continue;
+            }
+            if (Sym *fcls = float_array_class(callee, pos_args, ctx)) cur_val = fcls;
+          }
           // Check for builtin call (only for direct name invocations, no pending member)
           if (!pending_member && build_builtin_call_pyda(atom_ast, trailer, ast, ctx)) {
             cur_val = ast->rval;

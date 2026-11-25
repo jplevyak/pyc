@@ -2013,6 +2013,18 @@ inline char *_CG_char_from_string(void *s, int i) { return _CG_one_char_string((
 // broke shedskin_examples/sha.
 inline char *_CG_byte_from_int(int64 v) { return _CG_one_char_string((unsigned char)(v & 255)); }
 
+// IEEE bit patterns for struct's e/f/d formats and array's f/d typecodes,
+// as unsigned values in an int64. A double converts to binary32 / binary16
+// by C's conversion, which rounds to nearest-even exactly as CPython's
+// PyFloat_Pack4 / PyFloat_Pack2 do; an out-of-range finite value becomes an
+// infinity, which the Python side turns into CPython's OverflowError.
+inline int64 _CG_float_bits64(double x) { int64 r; memcpy(&r, &x, 8); return r; }
+inline double _CG_float_from_bits64(int64 b) { double x; memcpy(&x, &b, 8); return x; }
+inline int64 _CG_float_bits32(double x) { float y = (float)x; uint32_t r; memcpy(&r, &y, 4); return (int64)r; }
+inline double _CG_float_from_bits32(int64 b) { uint32_t u = (uint32_t)b; float y; memcpy(&y, &u, 4); return (double)y; }
+inline int64 _CG_float_bits16(double x) { _Float16 y = (_Float16)x; uint16_t r; memcpy(&r, &y, 2); return (int64)r; }
+inline double _CG_float_from_bits16(int64 b) { uint16_t u = (uint16_t)b; _Float16 y; memcpy(&y, &u, 2); return (double)y; }
+
 // CPython's str repr: quote with ' unless the text contains ' and no ";
 // escape the backslash, \n \r \t and the chosen quote; other control
 // bytes (< 0x20, 0x7f) as \xNN. Bytes >= 0x80 are UTF-8 sequences for

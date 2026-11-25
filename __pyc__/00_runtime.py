@@ -487,6 +487,50 @@ class bool:
     return self.__xor__(x)
   def __iand__(self, x):
     return self.__and__(x)
+  # The rest of int's operators, on the bool's integer value 0 or 1, in
+  # the same form (issues/214): `True >> 1`, `-True`, `True // 2` had no
+  # method at all, and isinstance(True, int) now sends a bool down a
+  # program's int branch.
+  def __floordiv__(self, x):
+    if self:
+      return 1 // x
+    return 0 // x
+  def __truediv__(self, x):
+    if self:
+      return 1 / x
+    return 0 / x
+  def __mod__(self, x):
+    if self:
+      return 1 % x
+    return 0 % x
+  def __pow__(self, x):
+    if self:
+      return 1 ** x
+    return 0 ** x
+  def __lshift__(self, x):
+    if self:
+      return 1 << x
+    return 0 << x
+  def __rshift__(self, x):
+    if self:
+      return 1 >> x
+    return 0 >> x
+  def __neg__(self):
+    if self:
+      return -1
+    return 0
+  def __pos__(self):
+    if self:
+      return 1
+    return 0
+  def __invert__(self):
+    if self:
+      return -2
+    return -1
+  def bit_count(self):
+    if self:
+      return 1
+    return 0
   def __and__(self, x):
     if isinstance(x, bool):
       if self:

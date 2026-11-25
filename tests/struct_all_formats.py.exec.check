@@ -1,0 +1,33 @@
+b'\x00\x00\x00\x00\x00\x00\xf8?' b'\xbf\xb9\x99\x99\x99\x99\x99\x9a' b'\xcd\xcc\xcc=' b'{\xff'
+(3.141592653589793,) (0.10000000149011612,)
+(0.3330078125,) (inf,) (nan,)
+b'\x00\x00\x80\xff' b'\x00\x00\x00\x00\x00\x00\x00@' b'\x00\x00\x80?' b'\x00\x00'
+b'\x07\x00\x00\x00\x00\x00 @name\x00\x00\x00\x00\x01Z' 18
+7 2.5 b'name' True b'Z'
+b'\x04abcd' b'\x02ab\x00\x00' (b'ab',) b'abc'
+(False, True) b'\x00\x01' b'' (b'',)
+b'\x01\x00\x00\x00\x02\x00\x00\x00' b'\x01\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00' b'\x01\x02\x00\x00\x00\x00\x00\x00\x00'
+8 8 4 8 8 5 8
+(-3, 0.25) (-1, 2, 3)
+b'\x01\x00\x00\x00\x02\x00' b'\xff\xfe' (513, 1e+100)
+(770,)
+error: 'h' format requires -32768 <= number <= 32767
+error: 'B' format requires 0 <= number <= 255
+error: 'B' format requires 0 <= number <= 255
+error: 'b' format requires -128 <= number <= 127
+error: 'L' format requires 0 <= number <= 4294967295
+error: 'Q' format requires 0 <= number <= 18446744073709551615
+error: required argument is not an integer
+error: required argument is not a float
+OverflowError: float too large to pack with f format
+OverflowError: float too large to pack with e format
+error: argument for 's' must be a bytes object
+error: char format requires a bytes object of length 1
+error: pack expected 1 items for packing (got 2)
+error: unpack requires a buffer of 4 bytes
+error: unpack_from requires a buffer of at least 5 bytes for unpacking 4 bytes at offset 1 (actual buffer size is 2)
+error: offset -5 out of range for 2-byte buffer
+error: bad char in struct format
+error: bad char in struct format
+error: repeat count given without format specifier
+error: bad char in struct format

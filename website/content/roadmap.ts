@@ -97,6 +97,7 @@ export const TRACKS: Track[] = [
           'math with CPython’s errors; bisect, operator; time, random and string additions',
           'os and os.path, pathlib, textwrap, logging',
           're: findall, finditer, sub, split, named groups, flags, lookaround',
+          'struct: every format code, with typed fields; array: the float typecodes',
         ],
       },
       {
