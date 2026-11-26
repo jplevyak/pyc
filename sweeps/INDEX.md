@@ -47,6 +47,8 @@ COUNT. It also put the corrected figure at 8; the measurement found 6.)*
 
 | key | date | result |
 |---|---|---|
+| `check__PYC_SOSTARGETS_2__799183aa+7174753f` | 2026-11-25 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=9 with_warnings=22 cs/shapes=3072/882=3.48 pratio=2.15 n=77 (stdout column re-derived after the macOS vary_script fix, ifa/196) |
+| `check__default__799183aa+7174753f` | 2026-11-25 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=9 with_warnings=22 cs/shapes=3112/882=3.53 pratio=2.17 n=77 (stdout column re-derived after the macOS vary_script fix, ifa/196) |
 | `check__default__f2b1544d+8c6f33fe` | 2026-11-25 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=22 cs/shapes=3112/882=3.53 pratio=2.17 n=77 |
 | `check__default__5499f7f7+7e701eac` | 2026-11-25 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=22 cs/shapes=3112/882=3.53 pratio=2.17 n=77 |
 | `check__default__6b970e6b+c656d7e3` | 2026-11-24 | programs=77 compile_fail=0 run_fail=0 stdout_differs=1 unverifiable=0 with_warnings=22 cs/shapes=3120/883=3.53 pratio=2.17 n=77 |

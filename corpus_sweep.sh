@@ -473,14 +473,27 @@ echo "sweep $KEY: ${#PROGS[@]} programs, mode=$MODE, compile -j$JC, run -J$JR"
 # delete script, learned by diffing the first sample against every other.
 # All ranges are in the FIRST sample's numbering, so they concatenate.
 # More samples can only ADD varying lines, never remove one.
+# Parsed from diff's POSIX default output, whose hunk headers are
+# `L1[,L2]{a,c,d}R1[,R2]` with the BASE's lines on the left: `c` and `d`
+# hunks name base lines that vary, `a` hunks add none. (It used GNU diff's
+# --*-group-format at first. Apple's diff has no such option, so on macOS
+# the script came out empty, nothing was filtered, and every timing line
+# read as a stdout mismatch: 45 of 77 on 2026-11-25, ifa/196.) Apple's
+# diff also ends a line at a bare `\r`, which sed does not, so a progress
+# line drawn with `\r` (mandelbrot2) shifted every range after it. `\r` is
+# mapped to \036 first, so diff numbers lines exactly as sed does.
 vary_script() {  # vary_script BASE OTHER...
   local base=$1 v="" f
   shift
   for f in "$@"; do
     [ -s "$f" ] || continue
-    v="$v$(diff --unchanged-group-format='' --old-group-format='%df,%dld;' \
-                --new-group-format='' --changed-group-format='%df,%dld;' \
-                "$base" "$f" 2>/dev/null)"
+    v="$v$(diff <(tr '\r' '\036' < "$base") <(tr '\r' '\036' < "$f") 2>/dev/null | awk '
+      /^[0-9]+(,[0-9]+)?[acd][0-9]+(,[0-9]+)?$/ {
+        match($0, /[acd]/); op = substr($0, RSTART, 1)
+        if (op == "a") next
+        n = split(substr($0, 1, RSTART - 1), r, ",")
+        printf "%d,%dd;", r[1], (n > 1 ? r[2] : r[1])
+      }')"
   done
   printf '%s' "$v"
 }
