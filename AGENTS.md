@@ -52,7 +52,7 @@ completion (closed 2026-11-03). It holds the two-question test and the
 non-monotone diagnostic that identifies an arbitrary lever, and lists what
 was removed with the measurement for each. The one default-path violation
 that remains, the SETTER stage nominating on a fact, is
-[ifa/196](ifa/issues/196-the-setter-stage-splits-on-a-fact.md). As of 2026-10-13, no violation is known
+[ifa/196](ifa/issues/closed/196-the-setter-stage-splits-on-a-fact.md). As of 2026-10-13, no violation is known
 to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
 test, now asks for a demand. On 2026-10-15 every off-by-default lever
 measured dead, non-monotone or inert was deleted, `PYC_SLOTARITY`,
@@ -74,7 +74,7 @@ The flip cut container CreationSets from 4.41 per shape to 3.19 per shape
 (sweep `4b61e721`). The plan is
 [ifa/129](ifa/issues/closed/129-plan-demand-driven-creation-set-splitting.md)
 (landed, closed 2026-11-03); what is still open is
-[ifa/196](ifa/issues/196-the-setter-stage-splits-on-a-fact.md).
+[ifa/196](ifa/issues/closed/196-the-setter-stage-splits-on-a-fact.md).
 
 The dependency runs one way only: an EntrySet is split **so that** a
 CreationSet split becomes possible, when a demand test has asked for one.

@@ -101,7 +101,7 @@ The obvious next step is skipping to a pattern's literal first character
 in `search`.
 
 **Compile time** is the larger cost, and it is not this module's: it is
-[ifa/196](../ifa/issues/196-the-setter-stage-splits-on-a-fact.md)'s SETTER
+[ifa/196](../ifa/issues/closed/196-the-setter-stage-splits-on-a-fact.md)'s SETTER
 stage. One test using most of the module took 24 s to compile (54 analysis
 passes; 18 s of flow analysis); with `PYC_NOSETTER=1` it takes 12 passes and
 3 s and prints the same output. The tail of passes is SETTER splitting
