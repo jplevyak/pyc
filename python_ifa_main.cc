@@ -512,11 +512,11 @@ static void writeln_codegen(FILE *fp, PNode *n, Fun *f) {
 // and pyc_report_accommodations judges once analysis has converged, so a
 // contour reached only in a transient pass reports nothing.
 static std::vector<std::pair<PNode *, EntrySet *>> pyc_accommodation_sites;
+static std::set<std::pair<PNode *, EntrySet *>> pyc_accommodation_seen;
 
 static void accommodation_transfer_function(PNode *pn, EntrySet *es) {
   if (pn->lvals.n) update_gen(make_AVar(pn->lvals[0], es), make_abstract_type(sym_nil_type));
-  static std::set<std::pair<PNode *, EntrySet *>> seen;
-  if (seen.insert({pn, es}).second) pyc_accommodation_sites.push_back({pn, es});
+  if (pyc_accommodation_seen.insert({pn, es}).second) pyc_accommodation_sites.push_back({pn, es});
 }
 
 static void accommodation_codegen(FILE *fp, PNode *n, Fun *f) {
@@ -561,7 +561,8 @@ bool pyc_report_accommodations() {
   std::sort(diags.begin(), diags.end(), [](const AccDiag &a, const AccDiag &b) {
     if (a.path != b.path) return a.path < b.path;
     if (a.line != b.line) return a.line < b.line;
-    return strcmp(a.flag, b.flag) < 0;
+    if (int c = strcmp(a.flag, b.flag)) return c < 0;
+    return strcmp(a.msg, b.msg) < 0;
   });
   std::set<std::string> printed;
   for (auto &d : diags) {
@@ -574,6 +575,8 @@ bool pyc_report_accommodations() {
       fprintf(stderr, "%s:%d: error: %s; accepted only by permissive mode's %s accommodation (issues/171)\n",
               d.path.c_str(), d.line, d.msg, d.flag);
   }
+  pyc_accommodation_sites.clear();
+  pyc_accommodation_seen.clear();
   return ok;
 }
 
