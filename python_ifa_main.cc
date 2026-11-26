@@ -533,7 +533,14 @@ static cchar *accommodation_arg(PNode *pn, int i) {
 // into the contour that reached it. Returns false when one is refused.
 bool pyc_report_accommodations() {
   bool ok = true;
-  std::set<std::string> printed;
+  struct AccDiag {
+    std::string path;
+    int line;
+    cchar *flag;
+    cchar *msg;
+    bool accept;
+  };
+  std::vector<AccDiag> diags;
   for (auto &site : pyc_accommodation_sites) {
     PNode *pn = site.first;
     EntrySet *es = site.second;
@@ -541,23 +548,31 @@ bool pyc_report_accommodations() {
     cchar *flag = accommodation_arg(pn, 2), *msg = accommodation_arg(pn, 3);
     cchar *v = getenv(flag);
     bool accept = fruntime_errors && (!v || atoi(v));
-    std::vector<std::pair<std::string, int>> where;
+    bool any = false;
     for (AEdge *e : es->edges)
-      if (e && e->pnode && e->pnode->code && e->pnode->code->ast)
-        where.push_back({e->pnode->code->pathname() ? e->pnode->code->pathname() : "?", e->pnode->code->line()});
-    if (where.empty()) where.push_back({"?", 0});
-    std::sort(where.begin(), where.end());
-    for (auto &w : where) {
-      std::string key = std::string(flag) + "|" + w.first + ":" + std::to_string(w.second);
-      if (!printed.insert(key).second) continue;
-      if (accept)
-        fprintf(stderr, "%s:%d: warning: %s: %s. Permissive only; %s=0 or --strict refuses (issues/171)\n",
-                w.first.c_str(), w.second, flag, msg, flag);
-      else
-        fprintf(stderr, "%s:%d: error: %s; accepted only by permissive mode's %s accommodation (issues/171)\n",
-                w.first.c_str(), w.second, msg, flag);
-    }
+      if (e && e->pnode && e->pnode->code && e->pnode->code->ast) {
+        diags.push_back({e->pnode->code->pathname() ? e->pnode->code->pathname() : "?", e->pnode->code->line(), flag,
+                         msg, accept});
+        any = true;
+      }
+    if (!any) diags.push_back({"?", 0, flag, msg, accept});
     if (!accept) ok = false;
+  }
+  std::sort(diags.begin(), diags.end(), [](const AccDiag &a, const AccDiag &b) {
+    if (a.path != b.path) return a.path < b.path;
+    if (a.line != b.line) return a.line < b.line;
+    return strcmp(a.flag, b.flag) < 0;
+  });
+  std::set<std::string> printed;
+  for (auto &d : diags) {
+    std::string key = std::string(d.flag) + "|" + d.path + ":" + std::to_string(d.line);
+    if (!printed.insert(key).second) continue;
+    if (d.accept)
+      fprintf(stderr, "%s:%d: warning: %s: %s. Permissive only; %s=0 or --strict refuses (issues/171)\n",
+              d.path.c_str(), d.line, d.flag, d.msg, d.flag);
+    else
+      fprintf(stderr, "%s:%d: error: %s; accepted only by permissive mode's %s accommodation (issues/171)\n",
+              d.path.c_str(), d.line, d.msg, d.flag);
   }
   return ok;
 }
