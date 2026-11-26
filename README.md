@@ -86,16 +86,16 @@ pyc hello.py && ./hello
 ```
 
 It unpacks to `~/.local/share/pyc/<version>/` and links `~/.local/bin/pyc` to it; re-running it
-upgrades. `sh -s -- --version 0.2.0` pins a release and `--prefix DIR` installs elsewhere. It
+upgrades. `sh -s -- --version 0.3.0` pins a release and `--prefix DIR` installs elsewhere. It
 refuses a system older than the requirements below rather than install a pyc that cannot run. The
 script is [`website/public/install.sh`](website/public/install.sh).
 
 Or by hand: unpack the tarball anywhere and put its `bin/` on your `PATH`:
 
 ```sh
-curl -LO https://github.com/jplevyak/pyc/releases/download/v0.2.0/pyc-0.2.0-linux-x86_64.tar.gz
-tar xzf pyc-0.2.0-linux-x86_64.tar.gz
-export PATH="$PWD/pyc-0.2.0-linux-x86_64/bin:$PATH"
+curl -LO https://github.com/jplevyak/pyc/releases/download/v0.3.0/pyc-0.3.0-linux-x86_64.tar.gz
+tar xzf pyc-0.3.0-linux-x86_64.tar.gz
+export PATH="$PWD/pyc-0.3.0-linux-x86_64/bin:$PATH"
 ```
 
 (For Linux on arm64, `linux-aarch64`; for macOS, `darwin-arm64` or `darwin-x86_64`. Each release
@@ -416,7 +416,7 @@ make test-links      # every relative Markdown link resolves (needs no build)
 ```
 
 The end-to-end suite compiles each `tests/*.py`, runs it, and compares its output with the
-expected output and with CPython's. When green it reports 581 passed and 18 known issues on each
+expected output and with CPython's. When green it reports 613 passed and 18 known issues on each
 backend. Tests carrying a `.known_issue` sidecar are filed bugs with CPython's answer as the
 expected output; they report `KNOWN` and flip to `PASS` once fixed. `make test` stops at the first
 failing group, so check its exit status rather than reading the tail of its output.

@@ -50,11 +50,11 @@ by demand is a defect, however well it converges.
 [ifa/146](ifa/issues/closed/146-remove-all-arbitrary-splitting.md) tracked it to
 completion (closed 2026-11-03). It holds the two-question test and the
 non-monotone diagnostic that identifies an arbitrary lever, and lists what
-was removed with the measurement for each. The one default-path violation
-that remains, the SETTER stage nominating on a fact, is
-[ifa/196](ifa/issues/closed/196-the-setter-stage-splits-on-a-fact.md). As of 2026-10-13, no violation is known
-to be live on the default path; the last, `SETTER_OF_SETTER`'s confluence
-test, now asks for a demand. On 2026-10-15 every off-by-default lever
+was removed with the measurement for each. The last default-path violation,
+the SETTER stage nominating on a fact, was retired 2026-11-26
+([ifa/196](ifa/issues/closed/196-the-setter-stage-splits-on-a-fact.md));
+Route 4 (`CS_DEF_PARTITION`) now occupies Stage 3's slot before Stage 5.
+On 2026-10-15 every off-by-default lever
 measured dead, non-monotone or inert was deleted, `PYC_SLOTARITY`,
 `PYC_TYPEMOVE` and `PYC_RETDEMAND` with them, so the inventory is empty.
 The writer split (closed/178) has no known program that needs it.
@@ -73,8 +73,9 @@ types
 The flip cut container CreationSets from 4.41 per shape to 3.19 per shape
 (sweep `4b61e721`). The plan is
 [ifa/129](ifa/issues/closed/129-plan-demand-driven-creation-set-splitting.md)
-(landed, closed 2026-11-03); what is still open is
-[ifa/196](ifa/issues/closed/196-the-setter-stage-splits-on-a-fact.md).
+(landed, closed 2026-11-03), and Stage 3 (`SETTER` / `SETTER_OF_SETTER`) is
+retired ([ifa/196](ifa/issues/closed/196-the-setter-stage-splits-on-a-fact.md),
+closed 2026-11-26).
 
 The dependency runs one way only: an EntrySet is split **so that** a
 CreationSet split becomes possible, when a demand test has asked for one.

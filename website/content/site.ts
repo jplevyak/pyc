@@ -4,7 +4,7 @@ export const DPARSER = 'https://github.com/jplevyak/dparser';
 export const RELEASES = 'https://github.com/jplevyak/pyc/releases';
 
 /** The current release: the v* tag the release workflow published. */
-export const RELEASE = '0.2.0';
+export const RELEASE = '0.3.0';
 /** The install script, served from website/public/install.sh. */
 export const INSTALL_SH = `${SITE_URL}/install.sh`;
 /** A release tarball's name, for os linux or darwin and its arch. */
@@ -29,8 +29,8 @@ export const FACTS = {
   corpusCompile: 77,
   corpusRun: 77,
   corpusMatch: 59,
-  // README.md "Testing": test_pyc.py on each backend (2026-11-21)
-  e2ePass: 581,
+  // README.md "Testing": test_pyc.py on each backend (2026-11-26)
+  e2ePass: 613,
   // the rows of content/libraries.ts, one per pyc_lib/ module or package
   libModules: 30,
 };

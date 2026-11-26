@@ -43,7 +43,7 @@ export const TRACKS: Track[] = [
         state: 'done',
         items: [
           'LLVM backend with JIT and REPL alongside the C backend',
-          '76 of 77 shedskin programs compile and run; every comparable one but one matches CPython',
+          '77 of 77 shedskin programs compile and run; every comparable one but one matches CPython',
           'Demand-driven contour splitting, from minimum contours',
           'pyc -x: #! scripts with a content-hashed compile cache',
         ],
@@ -76,7 +76,6 @@ export const TRACKS: Track[] = [
         title: 'The whole corpus, statically resolved',
         state: 'planned',
         items: [
-          'othello3 within the compile budget',
           'Zero run-time dispatch: every call resolved statically',
         ],
       },

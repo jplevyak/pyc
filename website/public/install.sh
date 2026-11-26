@@ -9,7 +9,7 @@
 # previous version stays in share/pyc/ until you delete it.
 #
 # Settings (environment, or `sh -s -- --flag` when piped):
-#   PYC_VERSION=0.2.0    a specific release        (--version 0.2.0)
+#   PYC_VERSION=0.3.0    a specific release        (--version 0.3.0)
 #                        default: the latest
 #   PYC_PREFIX=DIR       install under DIR         (--prefix DIR)
 #                        default: ~/.local
