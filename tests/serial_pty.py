@@ -26,6 +26,17 @@ def err(f):
         print("ValueError", e)
 
 
+# What the port writes reaches the master asynchronously (the kernel pushes
+# the tty flip buffer from a work queue), so one os.read returns only what
+# has arrived: two port writes can come back as two reads under load. Read
+# the master until the expected count is in.
+def read_master(n):
+    got = b""
+    while len(got) < n:
+        got += os.read(m, n - len(got))
+    return got
+
+
 m, s = os.openpty()
 name = os.ttyname(s)
 
@@ -35,7 +46,7 @@ print(ser.is_open, ser.name == name, ser.port == name, ser.baudrate, ser.bytesiz
 print(ser.readable(), ser.writable(), ser.seekable(), ser.isOpen(), ser.fileno() >= 0)
 
 print(ser.write(b"hello"), ser.write([1, 2, 3]))
-print(os.read(m, 100))
+print(read_master(8))
 
 os.write(m, b"abc\n")
 print(ser.read(2), ser.in_waiting, ser.inWaiting(), ser.readline())
@@ -120,7 +131,7 @@ err(lambda: ser.fileno())
 
 with serial.Serial(name, 9600, timeout=0.3) as p:
     p.write(b"ctx")
-    print(p.is_open, os.read(m, 10))
+    print(p.is_open, read_master(3))
 print(p.is_open)
 
 q = serial.Serial(name, 19200, 8, 'E', 1, 0.3, 0, 0)
